@@ -1,0 +1,6 @@
+{
+  "name": "Self-Learning Trading Bot v2.0",
+  "description": "Nexus Desk - Institutional paper-trading terminal with multi-agent specialist swarm, walk-forward validation lab, and fail-closed risk execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

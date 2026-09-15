@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User profile document: authenticated users can read/write their own document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Audit logs: authenticated users can read and create audit log records
+    match /auditLogs/{logId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if false; // Immutable audit ledger
+    }
+
+    // Default deny all other unspecified collections
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nexus Trading Terminal Blueprint",
+  "description": "Schema definitions for Firebase Firestore collections supporting the autonomous trading terminal and authentication",
+  "collections": {
+    "users": {
+      "description": "Trader profiles and RBAC role assignments",
+      "fields": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["commander", "trader", "auditor"] },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      }
+    },
+    "auditLogs": {
+      "description": "Security and trade execution audit ledger",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      }
+    }
+  }
+}

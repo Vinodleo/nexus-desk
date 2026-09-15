@@ -1,0 +1,904 @@
+%PDF-1.3
+%ºß¬à
+3 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 4 0 R
+>>
+endobj
+4 0 obj
+<<
+/Length 8342
+>>
+stream
+0.5670000000000001 w
+0 G
+BT
+/F1 8 Tf
+9.1999999999999993 TL
+0.549 g
+51.0236220472441033 813.5435433070865656 Td
+(NEXUS DESK · SYSTEM ARCHITECTURE & LEARNING SPECIFICATION) Tj
+ET
+BT
+/F1 8 Tf
+9.1999999999999993 TL
+0.549 g
+519.1319685039370597 813.5435433070865656 Td
+(Page 1) Tj
+ET
+0.86 G
+0.5669291338582678 w
+51.0236220472441033 807.8742519685039269 m
+544.2519685039370643 807.8742519685039269 l
+S
+51.0236220472441033 34.0159842519683977 m
+544.2519685039370643 34.0159842519683977 l
+S
+BT
+/F1 8 Tf
+9.1999999999999993 TL
+0.549 g
+51.0236220472441033 22.6774015748030706 Td
+(CONFIDENTIAL · INSTITUTIONAL RISK & QUANT ARCHITECTURE) Tj
+ET
+BT
+/F1 8 Tf
+9.1999999999999993 TL
+0.549 g
+449.7719685039370461 22.6774015748030706 Td
+(GENERATED: 2026-09-14) Tj
+ET
+0.06 0.09 0.16 rg
+51.0236220472441033 790.8663779527558972 493.2283464566929752 -79.3700787401574814 re
+f
+BT
+/F2 16 Tf
+18.3999999999999986 TL
+1. g
+68.031496062992133 762.5199212598424765 Td
+(NEXUS DESK TRADING TERMINAL) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0.58 0.639 0.722 rg
+68.031496062992133 739.8427559055118081 Td
+(Technical Architecture, Multi-Agent Workflow & In-Context Learning Engine) Tj
+ET
+BT
+/F2 13 Tf
+14.9499999999999993 TL
+0.059 0.09 0.165 rg
+51.0236220472441033 677.480551181102328 Td
+(1. Executive Overview & Design Principles) Tj
+ET
+0.06 0.73 0.51 RG
+2.8346456692913389 w
+51.0236220472441033 671.8112598425196893 m
+130.393700787401599 671.8112598425196893 l
+S
+BT
+/F1 9.5 Tf
+10.9249999999999989 TL
+0.2 0.255 0.333 rg
+51.0236220472441033 654.8033858267716596 Td
+(Nexus Desk is an autonomous institutional paper-trading terminal built with a multi-agent hierarchy and a fail-closed) Tj
+T* (risk management engine. Rather than operating as an unobservable, black-box trading system, the terminal enforces) Tj
+T* (explicit boundaries between Signal Detection, Pre-Flight Risk Filtering, Multi-Agent Veto Gates, and Execution) Tj
+T* (Monitoring.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 591.8742519685039269 Td
+(• Fail-Closed Architecture:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+174.2775590551181324 591.8742519685039269 Td
+(Trading halts immediately if connectivity breaks, a circuit breaker trips, or the manual Kill) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 579.1183464566928478 Td
+(Switch is engaged.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 562.1104724409448181 Td
+(• Human-in-the-Loop Supervision:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+207.2175590551181301 562.1104724409448181 Td
+(Three execution modes \(Manual, Semi-Auto, Auto Within Limits\) allow operators to) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 549.3545669291338527 Td
+(maintain direct veto authority over strategy recommendations.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 532.346692913385823 Td
+(• Continuous In-Context Adaptation:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+216.6675590551181187 532.346692913385823 Td
+(Closed trades automatically undergo post-mortem autopsies that update a) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 519.5907874015747439 Td
+(persistent Memory Bank to reject low-probability setups in future iterations.) Tj
+ET
+BT
+/F2 13 Tf
+14.9499999999999993 TL
+0.059 0.09 0.165 rg
+51.0236220472441033 491.24433070866138 Td
+(2. Multi-Agent Hierarchy & Roles) Tj
+ET
+0.06 0.73 0.51 RG
+2.8346456692913389 w
+51.0236220472441033 485.5750393700786844 m
+130.393700787401599 485.5750393700786844 l
+S
+BT
+/F1 9.5 Tf
+10.9249999999999989 TL
+0.2 0.255 0.333 rg
+51.0236220472441033 468.5671653543307116 Td
+(The terminal coordinates five specialized algorithmic agents, each responsible for an isolated step in the trade) Tj
+T* (decision pipeline:) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 432.8506299212598378 Td
+(• Market Radar Scanner:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+165.187559055118129 432.8506299212598378 Td
+(Continuously ingests order book ticks, monitoring price velocity, 24-hour volume surges, and) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 420.0947244094488155 Td
+(RSI divergence across pairs \(BTC, ETH, SOL, JUP, etc.\).) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 403.0868503937007858 Td
+(• Strategy Agent \(Breakout-v2.0\):) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+201.9075590551181278 403.0868503937007858 Td
+(Evaluates trend breakouts above dynamic resistance levels with volume threshold) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 390.3309448818897636 Td
+(confirmation. Automatically computes calibrated Entry, Stop-Loss, and Take-Profit price levels.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 373.3230708661417339 Td
+(• Pre-Flight Risk Engine:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+166.3575590551181165 373.3230708661417339 Td
+(Evaluates candidate proposals against capital constraints, ensuring gross open positions do) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 360.5671653543307116 Td
+(not exceed 5, individual ticket sizing respects max equity percentage, and market spread remains acceptable.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 343.5592913385826819 Td
+(• Commander Supervisor:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+172.387559055118146 343.5592913385826819 Td
+(Maintains high-level oversight of gross desk exposure, win/loss streaks, and market volatility) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 330.8033858267716596 Td
+(regimes. Authorizes autonomous self-approval and generates the executive briefing.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 313.7955118110236299 Td
+(• Autopsy & Reflection Agent:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+189.2175590551181017 313.7955118110236299 Td
+(Inspects every closed position immediately upon exit, categorizing whether profit or loss) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 301.0396062992125508 Td
+(was driven by trend continuation, false breakout, or chop, and formulating persistent lessons.) Tj
+ET
+BT
+/F2 13 Tf
+14.9499999999999993 TL
+0.059 0.09 0.165 rg
+51.0236220472441033 272.6931496062992437 Td
+(3. Step-by-Step Execution Lifecycle) Tj
+ET
+0.06 0.73 0.51 RG
+2.8346456692913389 w
+51.0236220472441033 267.0238582677164914 m
+130.393700787401599 267.0238582677164914 l
+S
+BT
+/F2 10.5 Tf
+12.0749999999999993 TL
+0.118 0.161 0.231 rg
+51.0236220472441033 250.0159842519684616 Td
+(Step 1: Signal Identification & Radar Scoring) Tj
+ET
+BT
+/F1 9.5 Tf
+10.9249999999999989 TL
+0.2 0.255 0.333 rg
+51.0236220472441033 235.8427559055118081 Td
+(The Market Radar analyzes high-frequency tick data. When an asset crosses key momentum thresholds and breaks) Tj
+T* (its 20-period moving average with elevated relative volume, a trade candidate is flagged.) Tj
+ET
+BT
+/F2 10.5 Tf
+12.0749999999999993 TL
+0.118 0.161 0.231 rg
+51.0236220472441033 200.1262204724408775 Td
+(Step 2: Proposal Formulation & Risk Verification) Tj
+ET
+BT
+/F1 9.5 Tf
+10.9249999999999989 TL
+0.2 0.255 0.333 rg
+51.0236220472441033 185.952992125984224 Td
+(The Strategy Agent computes position sizing using ATR \(Average True Range\) stop-loss positioning and a 2:1) Tj
+T* (reward-to-risk ratio. The proposal enters the Queue with status PENDING_APPROVAL and an agent confidence) Tj
+T* (score \(e.g., 88%\).) Tj
+ET
+BT
+/F2 10.5 Tf
+12.0749999999999993 TL
+0.118 0.161 0.231 rg
+51.0236220472441033 136.6301574803148924 Td
+(Step 3: Approval Gate & Clearance Enforcement) Tj
+ET
+BT
+/F1 9.5 Tf
+10.9249999999999989 TL
+0.2 0.255 0.333 rg
+51.0236220472441033 122.4569291338582389 Td
+(The system verifies operator clearance and active decision mode. In MANUAL mode, trades require Commander or) Tj
+T* (Trader approval. In AUTO_WITHIN_LIMITS, the Commander agent cross-references the proposal against recent) Tj
+T* (memory lessons and executes automatically if no veto conditions are triggered.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 6 0 R
+>>
+endobj
+6 0 obj
+<<
+/Length 8062
+>>
+stream
+2.8346456692913389 w
+0.06 0.73 0.51 RG
+BT
+/F1 8 Tf
+9.1999999999999993 TL
+0.549 g
+51.0236220472441033 813.5435433070865656 Td
+(NEXUS DESK · SYSTEM ARCHITECTURE & LEARNING SPECIFICATION) Tj
+ET
+BT
+/F1 8 Tf
+9.1999999999999993 TL
+0.549 g
+519.1319685039370597 813.5435433070865656 Td
+(Page 2) Tj
+ET
+0.86 G
+0.5669291338582678 w
+51.0236220472441033 807.8742519685039269 m
+544.2519685039370643 807.8742519685039269 l
+S
+51.0236220472441033 34.0159842519683977 m
+544.2519685039370643 34.0159842519683977 l
+S
+BT
+/F1 8 Tf
+9.1999999999999993 TL
+0.549 g
+51.0236220472441033 22.6774015748030706 Td
+(CONFIDENTIAL · INSTITUTIONAL RISK & QUANT ARCHITECTURE) Tj
+ET
+BT
+/F1 8 Tf
+9.1999999999999993 TL
+0.549 g
+449.7719685039370461 22.6774015748030706 Td
+(GENERATED: 2026-09-14) Tj
+ET
+BT
+/F2 10.5 Tf
+12.0749999999999993 TL
+0.118 0.161 0.231 rg
+51.0236220472441033 790.8663779527558972 Td
+(Step 4: Active Book Monitoring & Order Execution) Tj
+ET
+BT
+/F1 9.5 Tf
+10.9249999999999989 TL
+0.2 0.255 0.333 rg
+51.0236220472441033 776.69314960629913 Td
+(Approved orders enter the active Book. The execution loop recomputes unrealized PnL every 2 seconds. Automated) Tj
+T* (stop-losses protect downside capital, take-profit limits capture returns at targets, and operators can trigger immediate) Tj
+T* (manual market exits.) Tj
+ET
+BT
+/F2 13 Tf
+14.9499999999999993 TL
+0.059 0.09 0.165 rg
+51.0236220472441033 716.0317322834645211 Td
+(4. Current Training & Learning Methodology) Tj
+ET
+0.06 0.73 0.51 RG
+2.8346456692913389 w
+51.0236220472441033 710.3624409448818824 m
+130.393700787401599 710.3624409448818824 l
+S
+BT
+/F1 9.5 Tf
+10.9249999999999989 TL
+0.2 0.255 0.333 rg
+51.0236220472441033 693.3545669291338527 Td
+(In live quant trading, neural network weights are not continuously fine-tuned directly on noisy financial price ticks to) Tj
+T* (prevent catastrophic forgetting and overfitting. Nexus Desk utilizes a sophisticated hybrid approach combining) Tj
+T* (Mathematical Walk-Forward Optimization with LLM In-Context Memory Reflexion:) Tj
+ET
+BT
+/F2 10.5 Tf
+12.0749999999999993 TL
+0.118 0.161 0.231 rg
+51.0236220472441033 644.0317322834645211 Td
+(A. Reflexion & Memory Bank \(The Post-Mortem Loop\)) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 629.8585039370078675 Td
+(• Trigger Event:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+126.8475590551181114 629.8585039370078675 Td
+(Every closed position triggers an automated autopsy function.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 612.8506299212598378 Td
+(• Diagnostic Extraction:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+162.7575590551181222 612.8506299212598378 Td
+(The system identifies entry conditions, market regime \(trending, consolidating, choppy\), and the) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 600.0947244094487587 Td
+(primary reason for success or stop-out.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 583.086850393700729 Td
+(• Distilled Heuristic:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+146.4675590551181301 583.086850393700729 Td
+(The post-mortem translates the loss into an explicit heuristic \(e.g., 'Do not long SOL when BTC 15m) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 570.3309448818897636 Td
+(correlation is divergent and volume is declining'\).) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 553.3230708661417339 Td
+(• Prompt Pre-Conditioning:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+177.4275590551180812 553.3230708661417339 Td
+(Future candidate proposals are matched against active memory heuristics. If a candidate) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 540.5671653543306547 Td
+(matches a prior failure condition, confidence is degraded or auto-vetoed.) Tj
+ET
+BT
+/F2 10.5 Tf
+12.0749999999999993 TL
+0.118 0.161 0.231 rg
+51.0236220472441033 523.559291338582625 Td
+(B. Walk-Forward Lab \(Quantitative Model Selection\)) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 509.3860629921259715 Td
+(• Train / Test Slices:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+144.3975590551181369 509.3860629921259715 Td
+(The Lab tests model configurations across rolling historical windows \(e.g., 30-day in-sample training,) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 496.6301574803148924 Td
+(7-day out-of-sample testing\).) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 479.6222834645668627 Td
+(• Champion vs. Challenger:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+178.4175590551181187 479.6222834645668627 Td
+(The active 'Champion' model is benchmarked against candidate models on Sharpe Ratio,) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 466.8663779527558404 Td
+(Max Drawdown, Profit Factor, and Win Rate.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 449.8585039370078107 Td
+(• Promotion Gate:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+138.0075590551181222 449.8585039370078107 Td
+(A challenger model can only be promoted to active production trading if it statistically outperforms the) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 437.1025984251967884 Td
+(Champion across out-of-sample test splits.) Tj
+ET
+BT
+/F2 13 Tf
+14.9499999999999993 TL
+0.059 0.09 0.165 rg
+51.0236220472441033 408.7561417322833677 Td
+(5. Security, RBAC & Immutable Audit Ledger) Tj
+ET
+0.06 0.73 0.51 RG
+2.8346456692913389 w
+51.0236220472441033 403.0868503937006722 m
+130.393700787401599 403.0868503937006722 l
+S
+BT
+/F1 9.5 Tf
+10.9249999999999989 TL
+0.2 0.255 0.333 rg
+51.0236220472441033 386.0789763779526425 Td
+(Nexus Desk integrates Firebase Authentication and Firestore Security Rules to enforce strict operational clearance:) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 363.9687401574801697 Td
+(• Commander Clearance:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+168.3375590551181631 363.9687401574801697 Td
+(Full operational authority. Can toggle the emergency Kill Switch, activate Autonomous) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 351.2128346456691474 Td
+(Self-Approval, and promote models in the Lab.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 334.2049606299211177 Td
+(• Desk Trader Clearance:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+166.0875590551181347 334.2049606299211177 Td
+(Execution authority. Can approve or veto queued tickets and execute manual position exits.) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 321.4490551181100955 Td
+(Prohibited from enabling Autonomous mode.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 304.4411811023620658 Td
+(• Auditor Clearance:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+147.9075590551181278 304.4411811023620658 Td
+(Read-only compliance authority. Can observe the trading floor, review active book positions, and) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 291.6852755905511003 Td
+(inspect real-time audit trails without trade execution permissions.) Tj
+ET
+BT
+/F2 9 Tf
+10.3499999999999996 TL
+0.059 0.09 0.165 rg
+59.5275590551181182 274.6774015748029569 Td
+(• Immutable Audit Ledger:) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+173.4675590551181017 274.6774015748029569 Td
+(All critical actions \(sign-in, role changes, kill switch toggles, order approvals, manual exits\)) Tj
+ET
+BT
+/F1 9 Tf
+10.3499999999999996 TL
+0.2 0.255 0.333 rg
+73.7007874015748143 261.9214960629919915 Td
+(are permanently written to Cloud Firestore under strict security rules forbidding updates or deletions.) Tj
+ET
+endstream
+endobj
+1 0 obj
+<</Type /Pages
+/Kids [3 0 R 5 0 R ]
+/Count 2
+>>
+endobj
+7 0 obj
+<<
+/Type /Font
+/BaseFont /Helvetica
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+8 0 obj
+<<
+/Type /Font
+/BaseFont /Helvetica-Bold
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+9 0 obj
+<<
+/Type /Font
+/BaseFont /Helvetica-Oblique
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+10 0 obj
+<<
+/Type /Font
+/BaseFont /Helvetica-BoldOblique
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+11 0 obj
+<<
+/Type /Font
+/BaseFont /Courier
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+12 0 obj
+<<
+/Type /Font
+/BaseFont /Courier-Bold
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+13 0 obj
+<<
+/Type /Font
+/BaseFont /Courier-Oblique
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+14 0 obj
+<<
+/Type /Font
+/BaseFont /Courier-BoldOblique
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+15 0 obj
+<<
+/Type /Font
+/BaseFont /Times-Roman
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+16 0 obj
+<<
+/Type /Font
+/BaseFont /Times-Bold
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+17 0 obj
+<<
+/Type /Font
+/BaseFont /Times-Italic
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+18 0 obj
+<<
+/Type /Font
+/BaseFont /Times-BoldItalic
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+19 0 obj
+<<
+/Type /Font
+/BaseFont /ZapfDingbats
+/Subtype /Type1
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+20 0 obj
+<<
+/Type /Font
+/BaseFont /Symbol
+/Subtype /Type1
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+2 0 obj
+<<
+/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]
+/Font <<
+/F1 7 0 R
+/F2 8 0 R
+/F3 9 0 R
+/F4 10 0 R
+/F5 11 0 R
+/F6 12 0 R
+/F7 13 0 R
+/F8 14 0 R
+/F9 15 0 R
+/F10 16 0 R
+/F11 17 0 R
+/F12 18 0 R
+/F13 19 0 R
+/F14 20 0 R
+>>
+/XObject <<
+>>
+>>
+endobj
+21 0 obj
+<<
+/Producer (jsPDF 4.2.1)
+/CreationDate (D:20260914090650-00'00')
+>>
+endobj
+22 0 obj
+<<
+/Type /Catalog
+/Pages 1 0 R
+/OpenAction [3 0 R /FitH null]
+/PageLayout /OneColumn
+>>
+endobj
+xref
+0 23
+0000000000 65535 f 
+0000016797 00000 n 
+0000018622 00000 n 
+0000000015 00000 n 
+0000000152 00000 n 
+0000008546 00000 n 
+0000008683 00000 n 
+0000016860 00000 n 
+0000016985 00000 n 
+0000017115 00000 n 
+0000017248 00000 n 
+0000017386 00000 n 
+0000017510 00000 n 
+0000017639 00000 n 
+0000017771 00000 n 
+0000017907 00000 n 
+0000018035 00000 n 
+0000018162 00000 n 
+0000018291 00000 n 
+0000018424 00000 n 
+0000018526 00000 n 
+0000018872 00000 n 
+0000018958 00000 n 
+trailer
+<<
+/Size 23
+/Root 22 0 R
+/Info 21 0 R
+/ID [ <B44C550C05BDDCA8716D72437644904F> <B44C550C05BDDCA8716D72437644904F> ]
+>>
+startxref
+19062
+%%EOF
