@@ -1,29 +1,93 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Nexus Trading Terminal Blueprint",
-  "description": "Schema definitions for Firebase Firestore collections supporting the autonomous trading terminal and authentication",
-  "collections": {
-    "users": {
+  "entities": {
+    "User": {
+      "title": "User Profile",
       "description": "Trader profiles and RBAC role assignments",
-      "fields": {
+      "type": "object",
+      "properties": {
         "uid": { "type": "string" },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
         "role": { "type": "string", "enum": ["commander", "trader", "auditor"] },
         "createdAt": { "type": "string" },
-        "lastLoginAt": { "type": "string" }
-      }
+        "lastLoginAt": { "type": "string" },
+        "equity": { "type": "number" },
+        "cash": { "type": "number" },
+        "dailyRealizedPnl": { "type": "number" },
+        "selfApprovedCount": { "type": "number" },
+        "selfApprovedWins": { "type": "number" },
+        "selfApprovedLosses": { "type": "number" },
+        "lastUpdated": { "type": "string" },
+        "accuracyPct": { "type": "number" }
+      },
+      "required": ["uid"]
     },
-    "auditLogs": {
+    "AuditLog": {
+      "title": "Audit Log",
       "description": "Security and trade execution audit ledger",
-      "fields": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\\\-]+$" },
         "userEmail": { "type": "string" },
         "action": { "type": "string" },
         "details": { "type": "string" },
         "timestamp": { "type": "string" }
       }
+    },
+    "ExperienceVector": {
+      "title": "Experience Vector",
+      "description": "Historical experience vector for the neural net",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\\\-]+$" },
+        "timestamp": { "type": "string" },
+        "ticker": { "type": "string", "maxLength": 50 },
+        "pattern": { "type": "string", "maxLength": 100 },
+        "regime": { "type": "string", "maxLength": 100 },
+        "outcome": { "type": "string", "maxLength": 50 },
+        "features": { "type": "object" }
+      }
+    },
+    "HistoricalTrade": {
+      "title": "Historical Trade",
+      "description": "Record of a closed trade",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\\\-]+$" },
+        "symbol": { "type": "string", "maxLength": 50 },
+        "direction": { "type": "string", "maxLength": 50 },
+        "entryPrice": { "type": "number" },
+        "exitPrice": { "type": "number" },
+        "quantity": { "type": "number" },
+        "moneyPlaced": { "type": "number" },
+        "realizedPnl": { "type": "number" },
+        "isWin": { "type": "boolean" },
+        "exitReason": { "type": "string", "maxLength": 50 },
+        "openedAt": { "type": "string" },
+        "closedAt": { "type": "string" },
+        "autopsy": { "type": "object" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles and global state"
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Global audit logs"
+    },
+    "/users/{userId}/experiences/{experienceId}": {
+      "schema": { "$ref": "#/entities/ExperienceVector" },
+      "description": "Experience vectors per user"
+    },
+    "/users/{userId}/closedTrades/{tradeId}": {
+      "schema": { "$ref": "#/entities/HistoricalTrade" },
+      "description": "Closed trades per user"
     }
   }
 }

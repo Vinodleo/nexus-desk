@@ -1,9 +1,15 @@
 import express, { Request, Response } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+
+import { WebSocketServer } from 'ws';
+import WebSocket from 'ws';
+
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
-import { WebSocketServer, WebSocket as NodeWebSocket } from "ws";
+
+import { KiteConnect, KiteTicker } from 'kiteconnect';
+
 
 dotenv.config();
 
@@ -11,6 +17,139 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+
+// ==========================================
+// ZERODHA KITE CONNECT INTEGRATION ROUTES
+// ==========================================
+
+// Global state for demonstration (In production, store per-user in Firebase)
+let kiteInstance: any = null;
+let kiteTickerInstance: any = null;
+let globalWss: WebSocketServer | null = null;
+let zerodhaAccessToken: string | null = null;
+
+app.post("/api/zerodha/init", (req: Request, res: Response) => {
+  const { apiKey } = req.body;
+  if (!apiKey) return res.status(400).json({ error: "Missing API Key" });
+  
+  // Initialize the SDK
+  kiteInstance = new KiteConnect({
+    api_key: apiKey
+  });
+
+  const loginUrl = kiteInstance.getLoginURL();
+  return res.json({ loginUrl });
+});
+
+app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
+  const { requestToken, apiSecret } = req.body;
+  
+  if (!kiteInstance) {
+    return res.status(400).json({ error: "Kite instance not initialized" });
+  }
+
+  try {
+    const response = await kiteInstance.generateSession(requestToken, apiSecret);
+    zerodhaAccessToken = response.access_token;
+    
+    
+    // Set the access token in the instance for future API calls (orders, positions)
+    kiteInstance.setAccessToken(zerodhaAccessToken);
+
+    // Initialize Kite Ticker for live Indian Equity data
+    if (kiteTickerInstance) {
+      kiteTickerInstance.disconnect();
+    }
+    
+    // Use the api_key and newly minted access_token
+    kiteTickerInstance = new KiteTicker({
+      api_key: kiteInstance.api_key,
+      access_token: zerodhaAccessToken
+    });
+
+    // Hardcode some known NSE Instrument Tokens for the MVP symbols
+    const instrumentMap: Record<number, string> = {
+      341249: "HDFCBANK",
+      738561: "RELIANCE",
+      2953217: "TCS",
+      779521: "SBIN"
+    };
+
+    kiteTickerInstance.on("ticks", (ticks: any[]) => {
+      if (!globalWss) return;
+      const updates: Record<string, number> = {};
+      
+      ticks.forEach(tick => {
+        const symbol = instrumentMap[tick.instrument_token];
+        if (symbol && tick.last_price) {
+          updates[symbol] = tick.last_price;
+        }
+      });
+      
+      if (Object.keys(updates).length > 0) {
+        // Broadcast to all connected clients
+        globalWss.clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: "TICK", data: updates }));
+          }
+        });
+      }
+    });
+
+    kiteTickerInstance.on("connect", () => {
+      console.log("Connected to Zerodha Kite Ticker Stream");
+      const tokens = Object.keys(instrumentMap).map(Number);
+      kiteTickerInstance.subscribe(tokens);
+      kiteTickerInstance.setMode(kiteTickerInstance.modeFull, tokens);
+    });
+
+    kiteTickerInstance.on("error", (e: any) => console.error("Kite Ticker Error:", e));
+    kiteTickerInstance.on("close", () => console.log("Kite Ticker Closed"));
+    
+    kiteTickerInstance.connect();
+
+
+    return res.json({ 
+      success: true, 
+      access_token: zerodhaAccessToken,
+      public_token: response.public_token 
+    });
+  } catch (err: any) {
+    console.error("Zerodha session error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Mock order placement route
+app.post("/api/zerodha/order", async (req: Request, res: Response) => {
+  const { symbol, quantity, transaction_type, order_type, price } = req.body;
+  
+  if (!kiteInstance || !zerodhaAccessToken) {
+    return res.status(401).json({ error: "Unauthorized. Please login to Zerodha first." });
+  }
+
+  try {
+    // In production:
+    // const orderId = await kiteInstance.placeOrder("regular", {
+    //   exchange: "NSE",
+    //   tradingsymbol: symbol,
+    //   transaction_type: transaction_type,
+    //   quantity: quantity,
+    //   order_type: order_type,
+    //   product: "MIS",
+    //   price: price
+    // });
+    
+    // Mocking the success for safety right now
+    const orderId = "ZRD-" + Math.random().toString(36).substr(2, 9).toUpperCase();
+    
+    return res.json({ success: true, order_id: orderId });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 
 // Server-Sent Events proxy for Binance to bypass WS blockages
 app.get("/api/stream/binance", (req, res) => {
@@ -30,7 +169,7 @@ app.get("/api/stream/binance", (req, res) => {
   }, 30000);
 
   const binanceUrl = `wss://data-stream.binance.vision/stream?streams=${streams}`;
-  const binanceWs = new NodeWebSocket(binanceUrl);
+  const binanceWs = new WebSocket(binanceUrl);
 
   binanceWs.on('open', () => {
     console.log('Connected to Binance SSE proxy:', binanceUrl);
@@ -488,9 +627,53 @@ async function startServer() {
     });
   }
 
+  
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Self-Learning Trading Bot v2.0 Server running on port ${PORT}`);
   });
+
+  // Attach WebSocket server for live Binance Ticker data
+  const wss = new WebSocketServer({ server });
+  globalWss = wss;
+  
+  // Cache the latest prices
+  const latestPrices: Record<string, number> = {};
+
+  // Connect to Binance live ticker stream
+  const binanceWs = new WebSocket('wss://stream.binance.com:9443/ws/!miniTicker@arr');
+  
+  binanceWs.on('message', (data: WebSocket.RawData) => {
+    try {
+      const parsed = JSON.parse(data.toString());
+      parsed.forEach((tick: any) => {
+        // e.g. "BTCUSDT" -> 64000.5
+        latestPrices[tick.s] = parseFloat(tick.c);
+      });
+      
+      // Broadcast to our connected clients
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          // Send a curated list of top pairs to keep client parsing light
+          client.send(JSON.stringify({
+            type: 'TICK',
+            data: {
+              'BTC/USDT': latestPrices['BTCUSDT'],
+              'ETH/USDT': latestPrices['ETHUSDT'],
+              'SOL/USDT': latestPrices['SOLUSDT'],
+              'AVAX/USDT': latestPrices['AVAXUSDT']
+            }
+          }));
+        }
+      });
+    } catch (e) {
+      console.error("Error parsing binance ws", e);
+    }
+  });
+
+  binanceWs.on('error', (err: any) => {
+    console.error('Binance WS Error:', err);
+  });
+
 
   }
 

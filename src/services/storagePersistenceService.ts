@@ -358,3 +358,178 @@ export function saveStoredClosedTrades(trades: HistoricalTrade[]): void {
   }
 }
 
+
+import { auth, db } from "./firebase";
+import { doc, getDoc, setDoc, collection, getDocs, writeBatch } from "firebase/firestore";
+
+export async function syncToFirebase(userId: string) {
+  try {
+    const userRef = doc(db, "users", userId);
+    
+    const stats = loadStoredStats();
+    const capital = loadStoredCapital();
+    const accuracy = loadStoredModelAccuracy();
+    const promotedModel = loadStoredPromotedLabModel();
+    const dailyTelemetry = loadDailySampleTelemetry();
+
+    await setDoc(userRef, {
+      uid: userId,
+      email: auth.currentUser?.email || "",
+      createdAt: new Date().toISOString(),
+      ...stats,
+      ...capital,
+      accuracyPct: accuracy.accuracyPct || 0,
+      promotedLabModel: promotedModel || null,
+      dailyTelemetry: dailyTelemetry || null
+    }, { merge: true });
+
+    const experiences = loadStoredExperiences();
+    if (experiences.length > 0) {
+      const expBatch = writeBatch(db);
+      experiences.slice(0, 450).forEach(exp => {
+        const expRef = doc(db, "users", userId, "experiences", exp.id);
+        expBatch.set(expRef, { ...exp, userId });
+      });
+      await expBatch.commit();
+    }
+
+    const trades = loadStoredClosedTrades();
+    if (trades.length > 0) {
+      const tradesBatch = writeBatch(db);
+      trades.slice(0, 450).forEach(trade => {
+        const tradeRef = doc(db, "users", userId, "closedTrades", trade.id);
+        tradesBatch.set(tradeRef, { ...trade, userId });
+      });
+      await tradesBatch.commit();
+    }
+    
+    console.log("Successfully synced to Firebase cloud.");
+  } catch (err) {
+    console.error("Firebase sync error", err);
+  }
+}
+
+export async function syncFromFirebase(userId: string): Promise<boolean> {
+  try {
+    const userRef = doc(db, "users", userId);
+    const userSnap = await getDoc(userRef);
+    
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      
+      saveStoredStats({
+        selfApprovedCount: data.selfApprovedCount || 0,
+        selfApprovedWins: data.selfApprovedWins || 0,
+        selfApprovedLosses: data.selfApprovedLosses || 0,
+        lastUpdated: data.lastUpdated || new Date().toISOString()
+      });
+      
+      saveStoredCapital({
+        equity: data.equity || 100000,
+        cash: data.cash || 100000,
+        dailyRealizedPnl: data.dailyRealizedPnl || 0
+      });
+      
+      if (data.accuracyPct) {
+        saveStoredModelAccuracy({
+          accuracyPct: data.accuracyPct,
+          datasetName: "Cloud Synced",
+          winRatePct: 0,
+          sharpeRatio: 0,
+          totalCandlesEvaluated: 0,
+          lastUpdated: data.lastUpdated
+        });
+      }
+      
+      if (data.promotedLabModel) {
+        saveStoredPromotedLabModel(data.promotedLabModel);
+      }
+      
+      if (data.dailyTelemetry) {
+        saveDailySampleTelemetry(data.dailyTelemetry);
+      }
+    }
+
+    const expSnap = await getDocs(collection(db, "users", userId, "experiences"));
+    if (!expSnap.empty) {
+      const exps = expSnap.docs.map(d => d.data() as ExperienceVector);
+      saveStoredExperiences(exps);
+    }
+
+    const tradesSnap = await getDocs(collection(db, "users", userId, "closedTrades"));
+    if (!tradesSnap.empty) {
+      const trades = tradesSnap.docs.map(d => d.data() as HistoricalTrade);
+      saveStoredClosedTrades(trades);
+    }
+    
+    return true;
+  } catch (err) {
+    console.error("Firebase load error", err);
+    return false;
+  }
+}
+
+export async function fetchLeaderboard() {
+  try {
+    const usersRef = collection(db, "users");
+    const snapshot = await getDocs(usersRef);
+    const leaderboard: any[] = [];
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      // Mask email for anonymity
+      const maskedEmail = data.email 
+        ? data.email.split('@')[0].slice(0, 3) + "***@" + data.email.split('@')[1] 
+        : "Anonymous";
+      
+      leaderboard.push({
+        uid: data.uid,
+        maskedEmail: maskedEmail,
+        displayName: data.displayName || "Operator-" + data.uid.substring(0, 4),
+        accuracyPct: data.accuracyPct || 0,
+        equity: data.equity || 100000,
+        dailyRealizedPnl: data.dailyRealizedPnl || 0,
+        selfApprovedWins: data.selfApprovedWins || 0,
+        selfApprovedLosses: data.selfApprovedLosses || 0,
+      });
+    });
+    
+    // Sort by equity descending
+    return leaderboard.sort((a, b) => b.equity - a.equity);
+  } catch (error) {
+    console.error("Failed to fetch leaderboard", error);
+    return [];
+  }
+}
+
+
+export async function saveExchangeKeys(userId: string, exchangeId: string, apiKey: string, apiSecret: string) {
+  try {
+    const keysRef = doc(db, "users", userId, "credentials", "exchangeKeys");
+    const updatePayload = {
+      [exchangeId]: {
+        apiKey,
+        apiSecret,
+        updatedAt: new Date().toISOString()
+      }
+    };
+    await setDoc(keysRef, updatePayload, { merge: true });
+    return true;
+  } catch (err) {
+    console.error("Failed to save exchange keys to Firebase:", err);
+    return false;
+  }
+}
+
+export async function loadExchangeKeys(userId: string) {
+  try {
+    const keysRef = doc(db, "users", userId, "credentials", "exchangeKeys");
+    const snap = await getDoc(keysRef);
+    if (snap.exists()) {
+      return snap.data();
+    }
+    return null;
+  } catch (err) {
+    console.error("Failed to load exchange keys from Firebase:", err);
+    return null;
+  }
+}

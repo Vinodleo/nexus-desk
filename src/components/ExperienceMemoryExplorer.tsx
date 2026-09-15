@@ -203,7 +203,7 @@ export const ExperienceMemoryExplorer: React.FC<ExperienceMemoryExplorerProps> =
                         exp.outcome === "WIN" ? "text-emerald-600" : "text-rose-600"
                       }`}
                     >
-                      {exp.outcome} (${exp.pnl})
+                      {exp.outcome} (₹{exp.pnl})
                     </span>
                   </td>
                   <td className="p-3">

@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { GalaxyConstellation } from "./GalaxyConstellation";
 import {
   Filter,
   CheckCircle2,
@@ -47,6 +46,7 @@ interface FloorTabProps {
   selectedCount?: number;
   rejectedCount?: number;
   rejectionBreakdown?: RejectionBreakdown;
+  dailyRealizedPnl?: number;
 }
 
 export const FloorTab: React.FC<FloorTabProps> = ({
@@ -64,6 +64,7 @@ export const FloorTab: React.FC<FloorTabProps> = ({
     regimeFilter: 0,
     supervisorVeto: 0,
   },
+  dailyRealizedPnl = 0,
 }) => {
   const [showFunnelDetails, setShowFunnelDetails] = useState<boolean>(true);
   const [selectedSkipId, setSelectedSkipId] = useState<string | null>(null);
@@ -334,13 +335,15 @@ export const FloorTab: React.FC<FloorTabProps> = ({
         )}
       </div>
 
-      {/* 2. Interactive Swarm Constellation (Screenshots 5, 7) */}
-      <GalaxyConstellation
-        onWakeCommander={onWakeCommander}
-        onSelectSpecialist={(id) => {
-          console.log("Selected specialist:", id);
-        }}
-      />
+      {/* 2. 24h Profit Summary */}
+      <div className="rounded-xl bg-gradient-to-r from-[#0d0d10] to-[#121217] border border-[#1b1b22] p-5 shadow-sm flex flex-col justify-center">
+        <h2 className="text-[10px] font-mono tracking-[0.2em] text-stone-500 uppercase mb-1">
+          24h Profit (12AM - 11:59PM)
+        </h2>
+        <div className={`text-2xl sm:text-3xl font-mono tracking-tight font-medium ${dailyRealizedPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+          {dailyRealizedPnl >= 0 ? "+" : "-"}₹{Math.abs(dailyRealizedPnl).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </div>
+      </div>
 
       {/* 3. Specialists Section (Screenshots 4, 7) */}
       <div className="space-y-2.5">

@@ -515,7 +515,7 @@ export const LabTab: React.FC<LabTabProps> = ({
                       Win Rate: {realDataLearningResult.learnedMetrics.winRate}% · Sharpe: {realDataLearningResult.learnedMetrics.sharpeRatio}
                     </div>
                     <div className="text-[10px] font-mono text-emerald-400">
-                      Out-of-Sample PnL: +${realDataLearningResult.learnedMetrics.netPnlDollars.toLocaleString()} ({realDataLearningResult.totalCandles || realDataLearningResult.candlesCount} bars)
+                      Out-of-Sample PnL: +₹{realDataLearningResult.learnedMetrics.netPnlDollars.toLocaleString()} ({realDataLearningResult.totalCandles || realDataLearningResult.candlesCount} bars)
                     </div>
                   </div>
                 </div>

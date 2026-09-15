@@ -50,6 +50,7 @@ import { scanAllMarkets } from "./services/marketScannerService";
 import { liveMarketStream } from "./services/liveMarketStreamService";
 import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
 
+import { LoginScreen } from './components/LoginScreen';
 import { NexusHeader } from "./components/NexusHeader";
 import { BottomNavBar, TabType } from "./components/BottomNavBar";
 import { FloorTab } from "./components/FloorTab";
@@ -79,7 +80,7 @@ export interface ExecutionToast {
 }
 
 export default function App() {
-  const { userRole, logSecurityAudit, openAuthModal } = useAuth();
+  const { userRole, logSecurityAudit, openAuthModal, currentUser, loading } = useAuth();
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
 
   // Navigation: Floor, Queue, Book, Lab, Learning
@@ -137,7 +138,9 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [executionToast]);
 
+  
   // Core Market State
+
   const [currentSymbol, setCurrentSymbol] = useState<string>("BTC/USDT");
   const [bars, setBars] = useState<MarketBar[]>([]);
   const [orderBook, setOrderBook] = useState<OrderBook>(() =>
@@ -227,6 +230,77 @@ export default function App() {
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
     loadStoredClosedTrades()
   );
+
+
+  
+  // Live WebSocket Engine for Real Binance Data
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  
+  useEffect(() => {
+    // Determine the WS protocol and host based on current window location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}`;
+    
+    const ws = new WebSocket(wsUrl);
+    
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'TICK') {
+          const newPrices = msg.data;
+          setLivePrices(newPrices);
+          
+          // Update active positions based on REAL LIVE PRICES
+          setActivePositions((prev) => {
+            if (prev.length === 0) return prev;
+            let changed = false;
+            
+            const nextPositions = prev.map((pos) => {
+              // 1. Try direct matching for Indian Equities (from Zerodha Ticker)
+              let realINRPrice = newPrices[pos.symbol];
+              
+              // 2. Fallback to Binance Crypto stream translation
+              if (!realINRPrice) {
+                const baseAsset = pos.symbol.split('/')[0];
+                const binanceSymbol = `${baseAsset}/USDT`;
+                const liveCrypto = newPrices[binanceSymbol];
+                if (liveCrypto) {
+                  realINRPrice = liveCrypto * 83.5; // USD/INR conversion
+                }
+              }
+              
+              if (!realINRPrice) return pos; // No tick data yet 
+              
+              const isLong = pos.direction === "LONG";
+              const pnl = (realINRPrice - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
+              const pnlPercent = (pnl / pos.moneyPlaced) * 100;
+              
+              // To avoid infinite react loops, only update if the price actually moved
+              if (Math.abs(realINRPrice - pos.currentPrice) > 0.0001) {
+                changed = true;
+              }
+              
+              return {
+                ...pos,
+                currentPrice: realINRPrice,
+                unrealizedPnl: pnl,
+                unrealizedPnlPercent: pnlPercent,
+              };
+            });
+            
+            return changed ? nextPositions : prev;
+          });
+        }
+      } catch (err) {
+        console.error("WS parse error", err);
+      }
+    };
+    
+    return () => {
+      ws.close();
+    };
+  }, []);
+
 
   // Persist closed trades to LocalStorage
   useEffect(() => {
@@ -550,7 +624,7 @@ export default function App() {
       }
       logSecurityAudit(
         "POSITION_MANUAL_CLOSE",
-        `Manual exit triggered for ${pos.symbol} ${pos.direction} (${pos.quantity} units @ $${pos.currentPrice})`
+        `Manual exit triggered for ${pos.symbol} ${pos.direction} (${pos.quantity} units @ ₹${pos.currentPrice})`
       );
       closePositionWithAutopsy(pos, pos.currentPrice, "MANUAL");
     },
@@ -700,7 +774,7 @@ export default function App() {
             ).toFixed(2)}R EV. Executed into paper book.`
           : `${proposal.setup.direction} ${units} units of ${
               proposal.symbol
-            } @ $${proposal.setup.entryPrice.toFixed(
+            } @ ₹${proposal.setup.entryPrice.toFixed(
               2
             )}. Stop Loss & Take Profit limits active.`,
         type: "SUCCESS",
@@ -1186,6 +1260,7 @@ export default function App() {
             selectedCount={sampleTelemetry.selectedCount}
             rejectedCount={sampleTelemetry.rejectedCount}
             rejectionBreakdown={sampleTelemetry.rejectionBreakdown}
+            dailyRealizedPnl={dailyRealizedPnl}
           />
         )}
 
@@ -1230,6 +1305,11 @@ export default function App() {
             closedTrades={closedTrades}
             maxPositions={5}
             onClosePosition={handleClosePosition}
+            onUpdateTrade={(updatedTrade) => {
+              setClosedTrades((prev) =>
+                prev.map((t) => (t.id === updatedTrade.id ? updatedTrade : t))
+              );
+            }}
             onResetTradesToBaseline={() => {
               const freshTrades = getBaselineClosedTrades();
               setClosedTrades(freshTrades);
@@ -1264,25 +1344,7 @@ export default function App() {
                 timestamp: new Date().toLocaleTimeString(),
               });
             }}
-            onResetMemoryToBaseline={() => {
-              const baseline = resetStoredExperiencesToBaseline();
-              setExperiences(baseline);
-              setClosedTrades(getBaselineClosedTrades());
-              setSelfApprovedCount(18);
-              setSelfApprovedWins(12);
-              setSelfApprovedLosses(6);
-              setEquity(100000);
-              setCash(100000);
-              setDailyRealizedPnl(0);
-              setLearnedAccuracy(loadStoredModelAccuracy());
-              setExecutionToast({
-                id: `toast-${Date.now()}`,
-                title: "Memory Reset to Baseline",
-                message: "Experience vector bank reset to initial 420-vector benchmark baseline.",
-                type: "INFO",
-                timestamp: new Date().toLocaleTimeString(),
-              });
-            }}
+            
           />
         )}
 

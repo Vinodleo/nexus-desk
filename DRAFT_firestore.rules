@@ -13,15 +13,14 @@ service cloud.firestore {
     function isSignedIn() { return request.auth != null; }
     
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+      return data.keys().hasAll(['uid']) &&
              data.uid == request.auth.uid;
     }
     
     match /users/{userId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && request.auth.uid == userId;
       allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUser(incoming());
-      allow update: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && 
-                    incoming().diff(existing()).affectedKeys().hasAny(['equity', 'cash', 'dailyRealizedPnl', 'selfApprovedCount', 'selfApprovedWins', 'selfApprovedLosses', 'lastUpdated', 'accuracyPct', 'promotedLabModel', 'dailyTelemetry', 'lastLoginAt']);
+      allow update: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
       
       match /experiences/{experienceId} {
         allow read: if isSignedIn() && request.auth.uid == userId;
@@ -31,13 +30,6 @@ service cloud.firestore {
         allow delete: if isSignedIn() && request.auth.uid == userId;
       }
       
-      
-      match /credentials/{credentialId} {
-        allow read: if isSignedIn() && request.auth.uid == userId;
-        allow create: if isSignedIn() && request.auth.uid == userId && isValidId(credentialId);
-        allow update: if isSignedIn() && request.auth.uid == userId && isValidId(credentialId);
-        allow delete: if isSignedIn() && request.auth.uid == userId;
-      }
       match /closedTrades/{tradeId} {
         allow read: if isSignedIn() && request.auth.uid == userId;
         allow create: if isSignedIn() && request.auth.uid == userId && isValidId(tradeId) &&

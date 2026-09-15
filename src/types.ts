@@ -213,6 +213,7 @@ export interface HistoricalTrade {
   closedAt: string;
   holdingDurationMinutes?: number;
   isSelfApproved?: boolean;
+  autopsy?: TradeAutopsy;
 }
 
 export interface TradeAutopsy {

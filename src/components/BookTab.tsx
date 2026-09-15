@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { Position, HistoricalTrade } from "../types";
+
+import { TradeAutopsyCard } from "./TradeAutopsyCard";
 import {
   ArrowUpRight,
   ArrowDownRight,
@@ -24,6 +26,7 @@ interface BookTabProps {
   onClosePosition: (position: Position) => void;
   onSelectPosition?: (symbol: string) => void;
   onResetTradesToBaseline?: () => void;
+  onUpdateTrade?: (trade: HistoricalTrade) => void;
 }
 
 export const BookTab: React.FC<BookTabProps> = ({
@@ -33,6 +36,7 @@ export const BookTab: React.FC<BookTabProps> = ({
   onClosePosition,
   onSelectPosition,
   onResetTradesToBaseline,
+  onUpdateTrade,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<"all" | "open" | "closed">("all");
   const [closedFilter, setClosedFilter] = useState<"ALL" | "WINS" | "LOSSES">("ALL");
@@ -161,16 +165,6 @@ export const BookTab: React.FC<BookTabProps> = ({
             <span>Latest Trades ({totalClosedTrades})</span>
           </button>
         </div>
-
-        {activeSubTab !== "open" && onResetTradesToBaseline && (
-          <button
-            onClick={onResetTradesToBaseline}
-            className="text-[11px] font-mono text-stone-400 hover:text-stone-200 px-2 py-1 rounded hover:bg-[#1a1a24] transition-colors cursor-pointer mr-1"
-            title="Reload baseline benchmark trades"
-          >
-            Reset Trades
-          </button>
-        )}
       </div>
 
       {/* 1. OPEN POSITIONS SECTION */}
@@ -665,6 +659,7 @@ export const BookTab: React.FC<BookTabProps> = ({
                         </div>
                       </div>
                     </div>
+                    <TradeAutopsyCard trade={trade} onUpdateTrade={onUpdateTrade} />
                   </div>
                 );
               })}

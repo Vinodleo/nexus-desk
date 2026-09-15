@@ -162,16 +162,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (user) {
         await syncProfileForUser(user);
       } else {
-        // Set default sandbox Commander operator if not signed in yet
-        const defaultProfile: UserProfile = {
-          uid: "demo-commander-nexus",
-          email: "commander@nexus.terminal",
-          displayName: "Nexus Commander",
-          role: "commander",
-          provider: "demo",
-          lastLoginAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        };
-        setUserProfile(defaultProfile);
+        setUserProfile(null);
       }
       setLoading(false);
     });

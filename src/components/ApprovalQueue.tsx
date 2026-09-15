@@ -378,15 +378,15 @@ export const ApprovalQueue: React.FC<ApprovalQueueProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5 my-3 p-3 bg-stone-50 rounded-lg border border-stone-200 text-xs font-mono">
                   <div>
                     <div className="text-[10px] text-stone-500 font-sans">Limit Entry</div>
-                    <div className="font-bold text-stone-900">${proposal.setup.entryPrice.toFixed(2)}</div>
+                    <div className="font-bold text-stone-900">₹{proposal.setup.entryPrice.toFixed(2)}</div>
                   </div>
                   <div>
                     <div className="text-[10px] text-stone-500 font-sans">Stop Loss</div>
-                    <div className="font-bold text-rose-600">${proposal.setup.stopLoss.toFixed(2)}</div>
+                    <div className="font-bold text-rose-600">₹{proposal.setup.stopLoss.toFixed(2)}</div>
                   </div>
                   <div>
                     <div className="text-[10px] text-stone-500 font-sans">Take Profit</div>
-                    <div className="font-bold text-emerald-600">${proposal.setup.takeProfit.toFixed(2)}</div>
+                    <div className="font-bold text-emerald-600">₹{proposal.setup.takeProfit.toFixed(2)}</div>
                   </div>
                   <div>
                     <div className="text-[10px] text-stone-500 font-sans">Risk / Reward</div>
@@ -400,12 +400,12 @@ export const ApprovalQueue: React.FC<ApprovalQueueProps> = ({
                   </div>
                   <div>
                     <div className="text-[10px] text-stone-500 font-sans">Dollar Risk</div>
-                    <div className="font-bold text-amber-700">${proposal.riskCalc.riskDollars.toFixed(2)}</div>
+                    <div className="font-bold text-amber-700">₹{proposal.riskCalc.riskDollars.toFixed(2)}</div>
                   </div>
                   <div>
                     <div className="text-[10px] text-stone-500 font-sans">Net EV Edge</div>
                     <div className="font-bold text-emerald-700">
-                      +${proposal.evAssessment.expectedNetValue.toFixed(2)}
+                      +₹{proposal.evAssessment.expectedNetValue.toFixed(2)}
                     </div>
                   </div>
                 </div>

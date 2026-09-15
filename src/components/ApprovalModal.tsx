@@ -108,15 +108,15 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
             <div className="grid grid-cols-3 gap-2 font-mono text-center pt-1 border-t border-stone-200">
               <div className="p-1.5 bg-white rounded border border-stone-200">
                 <span className="text-[10px] text-stone-400 block">Limit Entry</span>
-                <span className="font-bold text-stone-800">${proposal.setup.entryPrice.toFixed(2)}</span>
+                <span className="font-bold text-stone-800">₹{proposal.setup.entryPrice.toFixed(2)}</span>
               </div>
               <div className="p-1.5 bg-white rounded border border-stone-200">
                 <span className="text-[10px] text-rose-500 block">Stop Loss</span>
-                <span className="font-bold text-rose-700">${proposal.setup.stopLoss.toFixed(2)}</span>
+                <span className="font-bold text-rose-700">₹{proposal.setup.stopLoss.toFixed(2)}</span>
               </div>
               <div className="p-1.5 bg-white rounded border border-stone-200">
                 <span className="text-[10px] text-emerald-500 block">Take Profit</span>
-                <span className="font-bold text-emerald-700">${proposal.setup.takeProfit.toFixed(2)}</span>
+                <span className="font-bold text-emerald-700">₹{proposal.setup.takeProfit.toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -126,13 +126,13 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
             <div className="p-2.5 bg-stone-50 rounded-lg border border-stone-200">
               <span className="text-stone-500 text-[10px] block">Quarter-Kelly Position:</span>
               <span className="font-bold text-stone-900 text-xs">
-                {proposal.riskCalc.recommendedPositionSizeUnits} units (${proposal.riskCalc.recommendedDollarExposure})
+                {proposal.riskCalc.recommendedPositionSizeUnits} units (₹{proposal.riskCalc.recommendedDollarExposure})
               </span>
             </div>
             <div className="p-2.5 bg-stone-50 rounded-lg border border-stone-200">
               <span className="text-stone-500 text-[10px] block">Capped Max Dollar Risk:</span>
               <span className="font-bold text-emerald-700 text-xs">
-                ${proposal.riskCalc.riskDollars} (1.0% equity)
+                ₹{proposal.riskCalc.riskDollars} (1.0% equity)
               </span>
             </div>
             <div className="p-2.5 bg-stone-50 rounded-lg border border-stone-200">
@@ -144,7 +144,7 @@ export const ApprovalModal: React.FC<ApprovalModalProps> = ({
             <div className="p-2.5 bg-stone-50 rounded-lg border border-stone-200">
               <span className="text-stone-500 text-[10px] block">Expected Net Value:</span>
               <span className="font-bold text-emerald-700 text-xs">
-                +${proposal.evAssessment.expectedNetValue}
+                +₹{proposal.evAssessment.expectedNetValue}
               </span>
             </div>
           </div>

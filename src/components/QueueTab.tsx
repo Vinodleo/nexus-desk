@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { TradeProposal } from "../types";
 import {
   Check,
@@ -29,6 +29,7 @@ interface QueueTabProps {
 }
 
 export const QueueTab: React.FC<QueueTabProps> = ({
+  
   proposals,
   onApproveProposal,
   onRejectProposal,
@@ -43,6 +44,16 @@ export const QueueTab: React.FC<QueueTabProps> = ({
   activePositionsCount = 0,
   onSwitchToBook,
 }) => {
+  const [approvingIds, setApprovingIds] = useState<string[]>([]);
+
+  const handleApprove = (proposal: TradeProposal) => {
+    setApprovingIds(prev => [...prev, proposal.id]);
+    setTimeout(() => {
+      onApproveProposal(proposal);
+      setApprovingIds(prev => prev.filter(id => id !== proposal.id));
+    }, 400);
+  };
+
   // Sort pending proposals strictly by Calibrated Win Probability P(Win) descending,
   // so the one with the highest probability of winning is ranked #1 and appears at the top.
   const pending = proposals
@@ -265,7 +276,7 @@ export const QueueTab: React.FC<QueueTabProps> = ({
                         P(Win)
                       </span>
                       <span className="text-[10px] text-stone-500">
-                        @ ${p.setup.entryPrice.toFixed(2)}
+                        @ ₹{p.setup.entryPrice.toFixed(2)}
                       </span>
                     </div>
                   </div>
@@ -362,7 +373,7 @@ export const QueueTab: React.FC<QueueTabProps> = ({
                       Size
                     </div>
                     <div className="text-sm font-mono font-medium text-stone-100 mt-0.5">
-                      ${Math.round(sizeDollars).toLocaleString()}
+                      ₹{Math.round(sizeDollars).toLocaleString()}
                     </div>
                     <div className="text-[10px] font-mono text-stone-500">
                       {proposal.riskCalc.recommendedPositionSizeUnits} units
@@ -377,7 +388,7 @@ export const QueueTab: React.FC<QueueTabProps> = ({
                       {Number(stopPct) > 0 ? `-${stopPct}` : stopPct}%
                     </div>
                     <div className="text-[10px] font-mono text-stone-500">
-                      ${proposal.setup.stopLoss.toFixed(2)}
+                      ₹{proposal.setup.stopLoss.toFixed(2)}
                     </div>
                   </div>
 
@@ -392,7 +403,7 @@ export const QueueTab: React.FC<QueueTabProps> = ({
                       %
                     </div>
                     <div className="text-[10px] font-mono text-stone-500">
-                      ${proposal.setup.takeProfit.toFixed(2)}
+                      ₹{proposal.setup.takeProfit.toFixed(2)}
                     </div>
                   </div>
                 </div>
@@ -485,14 +496,21 @@ export const QueueTab: React.FC<QueueTabProps> = ({
                   </button>
 
                   <button
-                    onClick={() => onApproveProposal(proposal)}
-                    className={`flex-1 py-2.5 rounded-xl font-semibold text-xs font-mono tracking-wider shadow-sm transition-all cursor-pointer text-center ${
+                    onClick={() => handleApprove(proposal)}
+                    className={`flex-1 py-2.5 rounded-xl font-semibold text-xs font-mono tracking-wider shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 ${approvingIds.includes(proposal.id) ? "scale-95 opacity-80" : "scale-100 hover:-translate-y-0.5"} ${
                       isRankOne
                         ? "bg-emerald-400 hover:bg-emerald-300 text-emerald-950 font-bold"
                         : "bg-stone-100 hover:bg-white text-stone-900"
                     }`}
                   >
-                    {isRankOne ? "Approve #1 Ticket" : "Approve Ticket"}
+                    {approvingIds.includes(proposal.id) ? (
+                      <>
+                        <Zap className="w-3.5 h-3.5 animate-bounce" />
+                        Executing...
+                      </>
+                    ) : (
+                      isRankOne ? "Approve #1 Ticket" : "Approve Ticket"
+                    )}
                   </button>
                 </div>
               </div>

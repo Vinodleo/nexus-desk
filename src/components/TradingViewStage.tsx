@@ -151,16 +151,16 @@ export const TradingViewStage: React.FC<TradingViewStageProps> = ({
                   Agent Live Trade Running
                 </span>
                 <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-800 border border-emerald-600 text-emerald-100">
-                  {symbolPosition.direction} {symbolPosition.quantity} units @ ${symbolPosition.entryPrice.toFixed(2)}
+                  {symbolPosition.direction} {symbolPosition.quantity} units @ ₹{symbolPosition.entryPrice.toFixed(2)}
                 </span>
                 <span className="text-emerald-300/80 text-[11px] font-mono hidden sm:inline">
                   Setup: {symbolPosition.setupName}
                 </span>
               </div>
               <div className="text-[11px] text-emerald-200 mt-1 flex items-center gap-3 font-mono">
-                <span>SL: <strong className="text-rose-300">${symbolPosition.stopLoss.toFixed(2)}</strong></span>
-                <span>TP: <strong className="text-emerald-300">${symbolPosition.takeProfit.toFixed(2)}</strong></span>
-                <span>Current: <strong>${currentBar.close.toFixed(2)}</strong></span>
+                <span>SL: <strong className="text-rose-300">₹{symbolPosition.stopLoss.toFixed(2)}</strong></span>
+                <span>TP: <strong className="text-emerald-300">₹{symbolPosition.takeProfit.toFixed(2)}</strong></span>
+                <span>Current: <strong>₹{currentBar.close.toFixed(2)}</strong></span>
               </div>
             </div>
           </div>
@@ -175,7 +175,7 @@ export const TradingViewStage: React.FC<TradingViewStageProps> = ({
                   symbolPosition.unrealizedPnl >= 0 ? "text-emerald-300" : "text-rose-300"
                 }`}
               >
-                {symbolPosition.unrealizedPnl >= 0 ? "+" : ""}${symbolPosition.unrealizedPnl.toFixed(2)} (
+                {symbolPosition.unrealizedPnl >= 0 ? "+" : ""}₹{symbolPosition.unrealizedPnl.toFixed(2)} (
                 {symbolPosition.unrealizedPnlPercent >= 0 ? "+" : ""}
                 {symbolPosition.unrealizedPnlPercent.toFixed(2)}%)
               </span>

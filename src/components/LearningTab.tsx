@@ -236,20 +236,7 @@ export const LearningTab: React.FC<LearningTabProps> = ({
               <span>STORAGE: BROWSER PERSISTENT</span>
             </div>
 
-            {onResetMemoryToBaseline && (
-              <button
-                onClick={() => {
-                  if (confirm("Reset experience memory back to default baseline (420 vectors)?")) {
-                    onResetMemoryToBaseline();
-                  }
-                }}
-                className="px-2.5 py-1.5 rounded-xl text-xs font-mono text-stone-400 hover:text-rose-400 bg-[#141418] hover:bg-[#201818] border border-[#262632] hover:border-rose-900/50 transition-all flex items-center gap-1.5 cursor-pointer"
-                title="Reset memory bank back to initial 420 vector baseline"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset Memory</span>
-              </button>
-            )}
+            
 
             <button
               onClick={() =>
@@ -573,7 +560,7 @@ export const LearningTab: React.FC<LearningTabProps> = ({
               />
             </div>
             <p className="text-[10px] font-mono text-stone-500">
-              Systematic veto of high-volatility traps preserved an estimated $16,420 in trading capital.
+              Systematic veto of high-volatility traps preserved an estimated ₹16,420 in trading capital.
             </p>
           </div>
         </div>
