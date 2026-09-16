@@ -1,4 +1,7 @@
+const fs = require('fs');
+let content = fs.readFileSync('src/hooks/useLiveTickers.ts', 'utf-8');
 
+const newHook = `
 import { useState, useEffect, useRef } from "react";
 import { liveMarketStream } from "../services/liveMarketStreamService";
 
@@ -23,7 +26,7 @@ export function useLiveTickers() {
         const last = bars[bars.length - 1];
         // Compare with first bar of the day or just the first in our 120 window
         const first = bars[0];
-        const changePercent = liveMarketStream.dailyChanges.get(sym) || (((last.close - first.open) / first.open) * 100);
+        const changePercent = ((last.close - first.open) / first.open) * 100;
         
         const currentPrice = last.close;
         const previousPrice = prevPrices.current[sym] || currentPrice;
@@ -52,3 +55,7 @@ export function useLiveTickers() {
 
   return tickers;
 }
+`;
+
+fs.writeFileSync('src/hooks/useLiveTickers.ts', newHook);
+console.log("Patched hook");

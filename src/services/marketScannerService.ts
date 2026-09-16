@@ -174,7 +174,7 @@ export async function scanSingleMarket(
     );
 
     // Must pass edge criteria, risk constraints, and dynamic confidence hurdle
-    const requiredConfidence = promotedModel?.optimizedParameters?.minConfidence ?? 0.45;
+    const requiredConfidence = promotedModel?.optimizedParameters?.minConfidence ?? 0.58;
     
     if (evAssessment.isPositiveEdge && riskCalc.passedAllChecks && riskCalc.recommendedPositionSizeUnits > 0 && metaScore.confidence >= requiredConfidence) {
       const sanitizedId = symbolConfig.symbol.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();

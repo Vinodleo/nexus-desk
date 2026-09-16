@@ -92,7 +92,7 @@ export type HistoricalSource = "BINANCE" | "COINBASE";
  * If Coinbase is chosen or if Binance is throttled, it seamlessly queries the public endpoint.
  */
 export async function fetchRealHistoricalCandles(
-  symbol: string = "BTCUSDT",
+  symbol: string = "BTC/INR",
   interval: "1m" | "15m" | "1h" | "4h" = "1h",
   limit: number = 500,
   source: HistoricalSource = "BINANCE"
@@ -157,8 +157,8 @@ async function fetchFromCoinbase(
   limit: number = 500
 ): Promise<HistoricalCandle[] | null> {
   try {
-    // Map symbol to Coinbase product ID (e.g. BTCUSDT -> BTC-USD, SOLUSDT -> SOL-USD)
-    const base = symbol.replace(/USDT|USD|BUSD/g, "");
+    // Map symbol to Coinbase product ID (e.g. BTC/INR -> BTC-USD, SOLUSDT -> SOL-USD)
+    const base = symbol.replace(/USDT|USD|BUSD|INR/g, "");
     const productId = `${base}-USD`;
 
     // Coinbase Exchange API supported granularities (in seconds):
@@ -422,7 +422,7 @@ export async function runGlobalMarketTraining(
 
 export async function runRealDataWalkForward(
   candles: HistoricalCandle[],
-  symbol: string = "BTCUSDT"
+  symbol: string = "BTC/INR"
 ): Promise<RealDataLearningResult> {
   const n = candles.length;
   const splitIndex = Math.floor(n * 0.7); // 70% In-Sample Train, 30% Out-of-Sample Test
@@ -910,7 +910,9 @@ function computeWalkForwardFolds(candles: HistoricalCandle[], customParams?: { s
 
 function generateDeterministicHistoricalBars(symbol: string, count: number): HistoricalCandle[] {
   const bars: HistoricalCandle[] = [];
-  let price = symbol.includes("BTC") ? 64000 : symbol.includes("ETH") ? 2500 : symbol.includes("SOL") ? 145 : 1.0;
+  const isINR = symbol.includes("INR");
+  const fx = isINR ? 85.5 : 1;
+  let price = (symbol.includes("BTC") ? 64000 : symbol.includes("ETH") ? 2500 : symbol.includes("SOL") ? 145 : 1.0) * fx;
   const now = Date.now();
 
   // Pseudo-random deterministic seed based on symbol string

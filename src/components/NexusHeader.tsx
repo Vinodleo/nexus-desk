@@ -13,11 +13,13 @@ export interface TickerTapeItem {
   price: string;
   change: string;
   isPositive: boolean;
+  direction?: "up" | "down" | "none";
 }
 
 interface NexusHeaderProps {
   equity: number;
   dailyPnl: number;
+  netPnl?: number;
   cash: number;
   openCount: number;
   maxPositions: number;
@@ -38,9 +40,33 @@ interface NexusHeaderProps {
   onOpenBackgroundModal?: () => void;
 }
 
+
+const PriceTick = ({ price, direction }: { price: string, direction?: "up" | "down" | "none" }) => {
+  const [flash, setFlash] = React.useState<"up" | "down" | "none">("none");
+  
+  React.useEffect(() => {
+    if (direction && direction !== "none") {
+      setFlash(direction);
+      const t = setTimeout(() => setFlash("none"), 300);
+      return () => clearTimeout(t);
+    }
+  }, [price, direction]);
+
+  return (
+    <span className={`transition-colors duration-300 rounded px-0.5 ${
+      flash === "up" ? "bg-emerald-500/30 text-emerald-300" :
+      flash === "down" ? "bg-rose-500/30 text-rose-300" :
+      "text-stone-200"
+    }`}>
+      {price}
+    </span>
+  );
+};
+
 export const NexusHeader: React.FC<NexusHeaderProps> = ({
   equity,
   dailyPnl,
+  netPnl = 0,
   cash,
   openCount,
   maxPositions = 5,
@@ -67,20 +93,16 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
   const liveCrypto = useLiveTickers();
 
   // Realistic Indian equities, macro and combine with live crypto
-  const staticItems: TickerTapeItem[] = [
-    { symbol: "NIFTY 50", price: "24,350.00", change: "+0.64%", isPositive: true },
-    { symbol: "BANKNIFTY", price: "51,200.00", change: "+0.82%", isPositive: true },
-    { symbol: "RELIANCE", price: "2,980.00", change: "+1.15%", isPositive: true },
-    { symbol: "TCS", price: "4,250.00", change: "+0.45%", isPositive: true },
-    { symbol: "USD/INR", price: "85.35", change: "+0.04%", isPositive: true },
-    { symbol: "GOLD (10g)", price: "74,250.00", change: "+0.55%", isPositive: true },
-  ];
+  // We removed the hardcoded Indian Equities to keep this a dedicated Crypto dashboard.
+  // We will build a completely separate Zerodha/Indian Equities dashboard later.
+  const staticItems: TickerTapeItem[] = [];
 
   const liveItems: TickerTapeItem[] = liveCrypto.map(tc => ({
     symbol: tc.symbol,
     price: tc.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
     change: `${tc.changePercent > 0 ? '+' : ''}${tc.changePercent.toFixed(2)}%`,
-    isPositive: tc.changePercent >= 0
+    isPositive: tc.changePercent >= 0,
+    direction: tc.direction
   }));
 
   const tickerItems = [...staticItems, ...liveItems];
@@ -95,7 +117,21 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
             <span className="font-sans text-sm sm:text-base font-semibold tracking-wide text-white truncate">
               Nexus Desk
             </span>
-            <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 shrink-0 ml-1">
+            
+            {/* Market Segment Toggle */}
+            <div className="flex items-center gap-1 ml-2 sm:ml-4 bg-[#0a0a0c] p-0.5 rounded-lg border border-[#1f1f24] overflow-x-auto hide-scrollbar">
+              <button className="whitespace-nowrap px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-semibold rounded-md bg-[#1f1f24] text-emerald-400 shadow-sm border border-[#2a2a30]">
+                Crypto (CoinDCX)
+              </button>
+              <button 
+                className="whitespace-nowrap px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-semibold rounded-md text-stone-500 hover:text-stone-300 transition-colors"
+                onClick={() => alert("Zerodha Indian Equities dashboard module will be built here next!")}
+              >
+                Indian Equities 🔒
+              </button>
+            </div>
+
+            <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 shrink-0 ml-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>RADAR LIVE</span>
             </span>
@@ -154,7 +190,7 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
         </div>
 
         {/* Key Metrics Row */}
-        <div className="grid grid-cols-4 gap-1.5 sm:gap-2 my-2.5 sm:my-3 pt-1 text-left">
+        <div className="grid grid-cols-5 gap-1.5 sm:gap-2 my-2.5 sm:my-3 pt-1 text-left">
           <div className="min-w-0">
             <div className="text-[9px] sm:text-[10px] font-mono tracking-wider text-stone-400 uppercase">
               Equity
@@ -185,6 +221,22 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
             </div>
           </div>
 
+          <div className="min-w-0">
+            <div className="text-[9px] sm:text-[10px] font-mono tracking-wider text-stone-400 uppercase">
+              All-Time
+            </div>
+            <div
+              className={`text-xs sm:text-base font-mono font-medium mt-0.5 truncate ${
+                netPnl === 0
+                  ? "text-stone-300"
+                  : netPnl > 0
+                  ? "text-emerald-400"
+                  : "text-rose-400"
+              }`}
+            >
+              {netPnl === 0 ? "" : netPnl > 0 ? "+" : "-"}₹{Math.abs(netPnl).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
           <div className="min-w-0">
             <div className="text-[9px] sm:text-[10px] font-mono tracking-wider text-stone-400 uppercase">
               Cash
@@ -296,7 +348,7 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
           {[...tickerItems, ...tickerItems].map((item, idx) => (
             <div key={idx} className="inline-flex items-center gap-1.5">
               <span className="text-stone-400">{item.symbol}</span>
-              <span className="text-stone-200">{item.price}</span>
+              <PriceTick price={item.price} direction={item.direction} />
               <span
                 className={
                   item.isPositive ? "text-emerald-400" : "text-rose-400"

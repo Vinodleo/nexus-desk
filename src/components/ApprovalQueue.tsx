@@ -161,7 +161,7 @@ export const ApprovalQueue: React.FC<ApprovalQueueProps> = ({
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-emerald-600 animate-spin" />
             <span>
-              Multi-Agent Scanner active: Scanning NIFTY 50, BTC/USDT, SPY, ETH/USDT... Computing indicators, meta-labeling, EV & Kelly risk bounds...
+              Multi-Agent Scanner active: Scanning NIFTY 50, BTC/INR, SPY, ETH/INR... Computing indicators, meta-labeling, EV & Kelly risk bounds...
             </span>
           </div>
           <span className="text-[11px] font-sans text-emerald-700 font-semibold">Live Analysis</span>

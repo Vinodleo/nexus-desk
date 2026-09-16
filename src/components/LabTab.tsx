@@ -58,7 +58,7 @@ export const LabTab: React.FC<LabTabProps> = ({
 
   // Real Historical Data State
   const [exchangeSource, setExchangeSource] = useState<HistoricalSource>("BINANCE");
-  const [selectedAsset, setSelectedAsset] = useState<string>("BTCUSDT");
+  const [selectedAsset, setSelectedAsset] = useState<string>("BTCINR");
   const [selectedTimeframe, setSelectedTimeframe] = useState<"15m" | "1h" | "4h">("1h");
   const [candleCountLimit, setCandleCountLimit] = useState<number>(500);
   const [isLoadingRealData, setIsLoadingRealData] = useState<boolean>(false);
@@ -344,9 +344,9 @@ export const LabTab: React.FC<LabTabProps> = ({
                   onChange={(e) => setSelectedAsset(e.target.value)}
                   className="w-full bg-[#141418] border border-[#262630] rounded-lg px-2.5 py-1.5 text-stone-100 focus:border-emerald-500 focus:outline-none"
                 >
-                  <option value="BTCUSDT">BTC / USDT</option>
-                  <option value="ETHUSDT">ETH / USDT</option>
-                  <option value="SOLUSDT">SOL / USDT</option>
+                  <option value="BTCINR">BTC / INR</option>
+                  <option value="ETHINR">ETH / INR</option>
+                  <option value="SOLINR">SOL / INR</option>
                   <option value="BNBUSDT">BNB / USDT</option>
                   <option value="XRPUSDT">XRP / USDT</option>
                   <option value="AVAXUSDT">AVAX / USDT</option>

@@ -5,7 +5,7 @@ export function generateInitialExperienceDatabase(): ExperienceVector[] {
   const experiences: ExperienceVector[] = [];
   const families = ["trend_following", "breakout_confirmation", "mean_reversion"] as const;
   const regimes: RegimeType[] = ["trending_bullish", "trending_bearish", "ranging_tight", "ranging_wide", "high_volatility_choppy"];
-  const symbols = ["NIFTY", "BTC/USDT", "SPY", "ETH/USDT"];
+  const symbols = ["NIFTY", "BTC/INR", "SPY", "ETH/INR"];
 
   for (let i = 0; i < 420; i++) {
     const family = families[i % families.length];

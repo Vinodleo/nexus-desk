@@ -92,6 +92,8 @@ export interface AgentCapitalState {
   equity: number;
   cash: number;
   dailyRealizedPnl: number;
+  allTimeRealizedPnl: number;
+  istDateString?: string;
 }
 
 /**
@@ -170,20 +172,28 @@ export function saveStoredStats(stats: AgentLearningStats): void {
  * Load capital & realized PnL state from LocalStorage.
  */
 export function loadStoredCapital(): AgentCapitalState {
+  const todayIST = getCurrentISTDateString();
   const fallback: AgentCapitalState = {
     equity: 100000,
     cash: 100000,
     dailyRealizedPnl: 0,
+    allTimeRealizedPnl: 0,
+    istDateString: todayIST,
   };
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CAPITAL);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const savedDate = parsed.istDateString;
+      
       return {
         equity: Number(parsed.equity) || fallback.equity,
         cash: Number(parsed.cash) || fallback.cash,
-        dailyRealizedPnl: Number(parsed.dailyRealizedPnl) || 0,
+        // Reset daily PNL to 0 if it's a new day
+        dailyRealizedPnl: savedDate === todayIST ? (Number(parsed.dailyRealizedPnl) || 0) : 0,
+        allTimeRealizedPnl: parsed.allTimeRealizedPnl !== undefined ? Number(parsed.allTimeRealizedPnl) : (Number(parsed.equity) ? Number(parsed.equity) - 100000 : 0),
+        istDateString: todayIST,
       };
     }
   } catch (err) {
@@ -197,7 +207,8 @@ export function loadStoredCapital(): AgentCapitalState {
  */
 export function saveStoredCapital(capital: AgentCapitalState): void {
   try {
-    localStorage.setItem(STORAGE_KEY_CAPITAL, JSON.stringify(capital));
+    const toSave = { ...capital, istDateString: getCurrentISTDateString() };
+    localStorage.setItem(STORAGE_KEY_CAPITAL, JSON.stringify(toSave));
   } catch (err) {
     console.warn("Failed to save capital to LocalStorage:", err);
   }

@@ -88,7 +88,7 @@ export default function App() {
   const [decisionMode, setDecisionMode] =
     useState<DecisionMode>("AUTO_WITHIN_LIMITS");
   const [tapeMode, setTapeMode] = useState<"SIMULATED TAPE" | "LIVE TAPE">(
-    "SIMULATED TAPE"
+    "LIVE TAPE"
   );
   const [executionToast, setExecutionToast] = useState<ExecutionToast | null>(
     null
@@ -108,6 +108,7 @@ export default function App() {
   // Capital & Portfolio State (Initialized from LocalStorage)
   const [equity, setEquity] = useState<number>(() => loadStoredCapital().equity);
   const [dailyRealizedPnl, setDailyRealizedPnl] = useState<number>(() => loadStoredCapital().dailyRealizedPnl);
+  const [allTimeRealizedPnl, setAllTimeRealizedPnl] = useState<number>(() => loadStoredCapital().allTimeRealizedPnl || 0);
   const [cash, setCash] = useState<number>(() => loadStoredCapital().cash);
   const [killSwitchActive, setKillSwitchActive] = useState<boolean>(false);
 
@@ -126,8 +127,9 @@ export default function App() {
       equity,
       cash,
       dailyRealizedPnl,
+      allTimeRealizedPnl,
     });
-  }, [equity, cash, dailyRealizedPnl]);
+  }, [equity, cash, dailyRealizedPnl, allTimeRealizedPnl]);
 
   // Auto-dismiss execution toast after 7s
   useEffect(() => {
@@ -141,7 +143,7 @@ export default function App() {
   
   // Core Market State
 
-  const [currentSymbol, setCurrentSymbol] = useState<string>("BTC/USDT");
+  const [currentSymbol, setCurrentSymbol] = useState<string>("BTC/INR");
   const [bars, setBars] = useState<MarketBar[]>([]);
   const [orderBook, setOrderBook] = useState<OrderBook>(() =>
     generateOrderBook(77344.98)
@@ -227,6 +229,8 @@ export default function App() {
 
   // Positions (initialized to empty flat state per Screenshot 2)
   const [activePositions, setActivePositions] = useState<Position[]>([]);
+  const activePositionsRef = React.useRef<Position[]>([]);
+  React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
     loadStoredClosedTrades()
   );
@@ -255,38 +259,61 @@ export default function App() {
             if (prev.length === 0) return prev;
             let changed = false;
             
-            const nextPositions = prev.map((pos) => {
-              // 1. Try direct matching for Indian Equities (from Zerodha Ticker)
+            const nextPositions: Position[] = [];
+            
+            for (const pos of prev) {
               let realINRPrice = newPrices[pos.symbol];
               
-              // 2. Fallback to Binance Crypto stream translation
               if (!realINRPrice) {
                 const baseAsset = pos.symbol.split('/')[0];
                 const binanceSymbol = `${baseAsset}/USDT`;
                 const liveCrypto = newPrices[binanceSymbol];
                 if (liveCrypto) {
-                  realINRPrice = liveCrypto * 83.5; // USD/INR conversion
+                  realINRPrice = liveCrypto * 83.5;
                 }
               }
               
-              if (!realINRPrice) return pos; // No tick data yet 
+              if (!realINRPrice) {
+                 nextPositions.push(pos);
+                 continue;
+              }
               
               const isLong = pos.direction === "LONG";
+              
+              // Evaluate Stop Loss and Take Profit against LIVE tick
+              let hitExit = false;
+              let exitReason: "STOP_LOSS" | "TAKE_PROFIT" | null = null;
+              
+              if (isLong) {
+                 if (realINRPrice <= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
+                 else if (realINRPrice >= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
+              } else {
+                 if (realINRPrice >= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
+                 else if (realINRPrice <= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
+              }
+              
+              if (hitExit && exitReason) {
+                 setTimeout(() => {
+                    closePositionWithAutopsy(pos, realINRPrice, exitReason!);
+                 }, 10);
+                 changed = true;
+                 continue; // Don't push to nextPositions, it will be removed by closePositionWithAutopsy anyway, or we just drop it here
+              }
+              
               const pnl = (realINRPrice - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
               const pnlPercent = (pnl / pos.moneyPlaced) * 100;
               
-              // To avoid infinite react loops, only update if the price actually moved
               if (Math.abs(realINRPrice - pos.currentPrice) > 0.0001) {
                 changed = true;
               }
               
-              return {
+              nextPositions.push({
                 ...pos,
                 currentPrice: realINRPrice,
                 unrealizedPnl: pnl,
                 unrealizedPnlPercent: pnlPercent,
-              };
-            });
+              });
+            }
             
             return changed ? nextPositions : prev;
           });
@@ -418,6 +445,10 @@ export default function App() {
         if (prev.istDateString !== currentIST) {
           const resetData = getInitialDailyTelemetry(currentIST);
           saveDailySampleTelemetry(resetData);
+          
+          // CRITICAL FIX: Reset Daily P&L to 0 when the 24-hour cycle resets (Midnight IST)
+          setDailyRealizedPnl(0);
+          
           return resetData;
         }
         return prev;
@@ -448,6 +479,7 @@ export default function App() {
       // Remove from active positions & update capital
       setActivePositions((prev) => prev.filter((p) => p.id !== pos.id));
       setDailyRealizedPnl((prev) => Number((prev + finalPnl).toFixed(2)));
+      setAllTimeRealizedPnl((prev) => Number((prev + finalPnl).toFixed(2)));
       setEquity((prev) => Number((prev + finalPnl).toFixed(2)));
       setCash((prev) => Number((prev + finalPnl).toFixed(2)));
 
@@ -455,13 +487,13 @@ export default function App() {
       if (reason === "TAKE_PROFIT" || isWin) {
         playProfitTargetSound();
         sendAlertNotification(`🎯 [Nexus Desk] Target Hit: ${pos.symbol}`, {
-          body: `${pos.direction} closed with +$${finalPnl.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent}%). Capital added to portfolio.`,
+          body: `${pos.direction} closed with +₹${finalPnl.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent}%). Capital added to portfolio.`,
         });
       } else {
         playStopLossSound();
         if (reason === "STOP_LOSS") {
           sendAlertNotification(`🛡️ [Nexus Desk] Stop-Loss Hit: ${pos.symbol}`, {
-            body: `${pos.direction} stopped at $${exitPrice.toFixed(2)} (-$${Math.abs(finalPnl).toFixed(2)}). Capital safeguarded.`,
+            body: `${pos.direction} stopped at ₹${exitPrice.toFixed(2)} (-₹${Math.abs(finalPnl).toFixed(2)}). Capital safeguarded.`,
           });
         }
       }
@@ -471,14 +503,14 @@ export default function App() {
         id: `toast-${Date.now()}`,
         title:
           reason === "TAKE_PROFIT"
-            ? `Target Hit: ${pos.symbol} (+$${finalPnl.toFixed(2)})`
+            ? `Target Hit: ${pos.symbol} (+₹${finalPnl.toFixed(2)})`
             : reason === "STOP_LOSS"
-            ? `Stop-Loss Executed: ${pos.symbol} (-$${Math.abs(finalPnl).toFixed(
+            ? `Stop-Loss Executed: ${pos.symbol} (-₹${Math.abs(finalPnl).toFixed(
                 2
               )})`
             : `Trade Exited: ${pos.symbol} (${
                 finalPnl >= 0 ? "+" : ""
-              }$${finalPnl.toFixed(2)})`,
+              }₹${finalPnl.toFixed(2)})`,
         message: !isWin
           ? `Loss logged to Experience Memory. Base strategy rules remain frozen to prevent curve-fitting. Future similar setups in this regime will be automatically vetoed by the Meta-Labeler.`
           : `Profit captured. Outcome signature added to experience memory. Base rules preserved.`,
@@ -631,66 +663,7 @@ export default function App() {
     [closePositionWithAutopsy, userRole, logSecurityAudit]
   );
 
-  // Automated price tick & position exit tracking
-  const currentBar = bars[bars.length - 1];
-  useEffect(() => {
-    if (!currentBar) return;
-
-    setActivePositions((prev) => {
-      const remaining: Position[] = [];
-
-      for (const pos of prev) {
-        const isLong = pos.direction === "LONG";
-        let hitExit = false;
-        let exitPrice = currentBar.close;
-        let exitReason: "STOP_LOSS" | "TAKE_PROFIT" | null = null;
-
-        if (isLong) {
-          if (currentBar.low <= pos.stopLoss) {
-            hitExit = true;
-            exitPrice = pos.stopLoss;
-            exitReason = "STOP_LOSS";
-          } else if (currentBar.high >= pos.takeProfit) {
-            hitExit = true;
-            exitPrice = pos.takeProfit;
-            exitReason = "TAKE_PROFIT";
-          }
-        } else {
-          if (currentBar.high >= pos.stopLoss) {
-            hitExit = true;
-            exitPrice = pos.stopLoss;
-            exitReason = "STOP_LOSS";
-          } else if (currentBar.low <= pos.takeProfit) {
-            hitExit = true;
-            exitPrice = pos.takeProfit;
-            exitReason = "TAKE_PROFIT";
-          }
-        }
-
-        if (hitExit && exitReason) {
-          setTimeout(() => {
-            closePositionWithAutopsy(pos, exitPrice, exitReason!);
-          }, 10);
-        } else {
-          const diff = isLong
-            ? currentBar.close - pos.entryPrice
-            : pos.entryPrice - currentBar.close;
-          const unrealizedPnl = Number((diff * pos.quantity).toFixed(2));
-          const unrealizedPnlPercent = Number(
-            ((diff / pos.entryPrice) * 100).toFixed(2)
-          );
-          remaining.push({
-            ...pos,
-            currentPrice: currentBar.close,
-            unrealizedPnl,
-            unrealizedPnlPercent,
-          });
-        }
-      }
-
-      return remaining;
-    });
-  }, [currentBar, closePositionWithAutopsy]);
+  
 
   // Execute Limit Order & Start Trade Upon Approval (Manual or Autonomous Self-Approval)
   const handleApproveProposal = useCallback(
@@ -783,12 +756,12 @@ export default function App() {
 
       logSecurityAudit(
         "ORDER_APPROVED",
-        `${isAutonomousSelfApproved ? "[AI SELF-APPROVED]" : "Operator Approved"} ${proposal.setup.direction} ${proposal.symbol} @ $${proposal.setup.entryPrice}`
+        `${isAutonomousSelfApproved ? "[AI SELF-APPROVED]" : "Operator Approved"} ${proposal.setup.direction} ${proposal.symbol} @ ₹${proposal.setup.entryPrice}`
       );
 
       if (isAutonomousSelfApproved) {
         sendAlertNotification(`⚡ [Nexus Desk] Autonomous Trade: ${proposal.symbol}`, {
-          body: `${proposal.setup.direction} @ $${proposal.setup.entryPrice} (${Math.round(proposal.metaScore.calibratedWinProbability * 100)}% Win Probability).`,
+          body: `${proposal.setup.direction} @ ₹${proposal.setup.entryPrice} (${Math.round(proposal.metaScore.calibratedWinProbability * 100)}% Win Probability).`,
         });
       }
 
@@ -938,11 +911,21 @@ export default function App() {
     setIsScanningMarkets(true);
     try {
       await new Promise((resolve) => setTimeout(resolve, 800));
+      let barsMap;
+      if (tapeMode === "LIVE TAPE") {
+        barsMap = {};
+        const activeLive = liveMarketStream.getActiveSymbols();
+        activeLive.forEach(sym => {
+          const bars = liveMarketStream.getBars(sym);
+          if (bars) barsMap[sym] = bars;
+        });
+      }
       const scanResult = await scanAllMarkets({
         activePositions,
         dailyRealizedPnl,
         failureState,
         experiences,
+        barsMap,
       });
 
       // Update Live Sample Telemetry: What agents analysed, selected, and rejected
@@ -1010,7 +993,7 @@ export default function App() {
     const continuousInterval = setInterval(async () => {
       try {
         const scanResult = await scanAllMarkets({
-          activePositions,
+          activePositions: activePositionsRef.current,
           dailyRealizedPnl,
           failureState,
           experiences,
@@ -1040,11 +1023,14 @@ export default function App() {
 
         if (scanResult.newProposals.length > 0) {
           setProposalQueue((prev) => {
-            const existingKeys = new Set(
-              prev.map((p) => `${p.symbol}-${p.setup.name}`)
+            const activeKeys = new Set(
+              activePositionsRef.current.map((p) => `${p.symbol}-${p.setupName}`)
+            );
+            const pendingKeys = new Set(
+              prev.filter((p) => p.status === "PENDING_APPROVAL").map((p) => `${p.symbol}-${p.setup.name}`)
             );
             const fresh = scanResult.newProposals.filter(
-              (p) => !existingKeys.has(`${p.symbol}-${p.setup.name}`)
+              (p) => !activeKeys.has(`${p.symbol}-${p.setup.name}`) && !pendingKeys.has(`${p.symbol}-${p.setup.name}`)
             );
 
             if (fresh.length === 0) return prev;
@@ -1062,14 +1048,14 @@ export default function App() {
           });
         }
       } catch {
-        // Continuous scan error catch
+        console.error("Scanner Error:", err);
       }
-    }, 8500);
+    }, 3500);
 
     return () => clearInterval(continuousInterval);
   }, [
     isContinuousScanActive,
-    activePositions,
+    // activePositions removed to prevent interval reset loop
     dailyRealizedPnl,
     failureState,
     experiences,
@@ -1084,7 +1070,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          symbol: "BTC/USDT",
+          symbol: "BTC/INR",
           indicators: {
             adx: 24.5,
             rsi: 48.0,
@@ -1177,6 +1163,7 @@ export default function App() {
       <NexusHeader
         equity={equity}
         dailyPnl={dailyRealizedPnl}
+        netPnl={allTimeRealizedPnl}
         cash={cash}
         openCount={activePositions.length}
         maxPositions={5}

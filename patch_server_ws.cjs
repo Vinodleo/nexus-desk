@@ -1,66 +1,62 @@
 const fs = require('fs');
-let code = fs.readFileSync('server.ts', 'utf-8');
+let serverContent = fs.readFileSync('server.ts', 'utf-8');
 
-const wsImport = `
-import { WebSocketServer } from 'ws';
-import WebSocket from 'ws';
-`;
+// Replace the polling block
+const oldPollRegex = /\/\/ High-Frequency CoinDCX Polling[\s\S]*?\}, 1000\);/m;
 
-code = code.replace(
-  'import { createServer as createViteServer } from "vite";',
-  'import { createServer as createViteServer } from "vite";\n' + wsImport
-);
+const newWsRelay = `
+  // High-Frequency CoinDCX Socket.io Relay
+  const io = require("socket.io-client");
+  const dcxSocket = io("wss://stream.coindcx.com", {
+    transports: ["websocket"],
+    reconnection: true
+  });
+  
+  const currentPrices = {};
 
-const startServerReplacement = `
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(\`Self-Learning Trading Bot v2.0 Server running on port \${PORT}\`);
+  dcxSocket.on("connect", () => {
+    dcxSocket.emit("join", { channelName: "coindcx" });
+    ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR'].forEach(sym => {
+      dcxSocket.emit("join", { channelName: \`I-\${sym}_INR\` });
+    });
   });
 
-  // Attach WebSocket server for live Binance Ticker data
-  const wss = new WebSocketServer({ server });
-  
-  // Cache the latest prices
-  const latestPrices: Record<string, number> = {};
-
-  // Connect to Binance live ticker stream
-  const binanceWs = new WebSocket('wss://stream.binance.com:9443/ws/!miniTicker@arr');
-  
-  binanceWs.on('message', (data: WebSocket.RawData) => {
+  dcxSocket.on("ticker", (data) => {
     try {
-      const parsed = JSON.parse(data.toString());
-      parsed.forEach((tick: any) => {
-        // e.g. "BTCUSDT" -> 64000.5
-        latestPrices[tick.s] = parseFloat(tick.c);
-      });
-      
-      // Broadcast to our connected clients
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          // Send a curated list of top pairs to keep client parsing light
-          client.send(JSON.stringify({
-            type: 'TICK',
-            data: {
-              'BTC/USDT': latestPrices['BTCUSDT'],
-              'ETH/USDT': latestPrices['ETHUSDT'],
-              'SOL/USDT': latestPrices['SOLUSDT'],
-              'AVAX/USDT': latestPrices['AVAXUSDT']
+      const payload = typeof data === 'string' ? JSON.parse(data) : data;
+      if (payload && payload.s && payload.c) {
+        if (['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR'].includes(payload.s)) {
+          const sym = payload.s.replace('INR', '/INR');
+          currentPrices[sym] = parseFloat(payload.c);
+          
+          wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify({ type: 'TICK', data: { [sym]: currentPrices[sym] }, is24h: true }));
             }
-          }));
+          });
         }
-      });
-    } catch (e) {
-      console.error("Error parsing binance ws", e);
-    }
+      }
+    } catch(e) {}
   });
 
-  binanceWs.on('error', (err: any) => {
-    console.error('Binance WS Error:', err);
+  dcxSocket.on("new-trade", (data) => {
+    try {
+      const payload = typeof data === 'string' ? JSON.parse(data) : data;
+      const innerData = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
+      if (innerData && innerData.s && innerData.p) {
+        const sym = innerData.s.replace('INR', '/INR');
+        currentPrices[sym] = parseFloat(innerData.p);
+        
+        wss.clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'TICK', data: { [sym]: currentPrices[sym] } }));
+          }
+        });
+      }
+    } catch(e) {}
   });
 `;
 
-code = code.replace(
-  /const server = app\.listen[\s\S]*\}\);/m,
-  startServerReplacement
-);
-
-fs.writeFileSync('server.ts', code);
+serverContent = serverContent.replace(oldPollRegex, newWsRelay);
+fs.writeFileSync('server.ts', serverContent);
+console.log("Patched server with relay");
