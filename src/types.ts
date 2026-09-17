@@ -159,6 +159,11 @@ export interface TradeProposal {
   aiRecommendation?: "TRADE_FAVORED" | "CAUTION" | "AVOID";
   modelUsed?: string;
   failureConditionRisk?: string;
+  /** Trader-panel fields — weighted share of personas backing this direction, and who was on each side. */
+  ensembleAgreement?: number;
+  supportingPersonas?: string[];
+  dissentingPersonas?: string[];
+  personaVotesCast?: number;
 }
 
 export interface Order {

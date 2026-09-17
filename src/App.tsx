@@ -47,6 +47,7 @@ import {
 } from "./services/storagePersistenceService";
 import { getBaselineModels } from "./services/backtestingEngine";
 import { scanAllMarkets } from "./services/marketScannerService";
+import { DEFAULT_RISK_POLICY } from "./services/riskEngine";
 import { liveMarketStream } from "./services/liveMarketStreamService";
 import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
 
@@ -140,9 +141,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [executionToast]);
 
-  
   // Core Market State
-
   const [currentSymbol, setCurrentSymbol] = useState<string>("BTC/INR");
   const [bars, setBars] = useState<MarketBar[]>([]);
   const [orderBook, setOrderBook] = useState<OrderBook>(() =>
@@ -199,7 +198,7 @@ export default function App() {
 
       setExecutionToast({
         id: `toast-reconcile-${Date.now()}`,
-        title: "⚡ Background Resynced",
+        title: "■ Background Resynced",
         message: `Device was locked for ${Math.round(
           elapsedMs / 1000
         )}s. Live market feeds re-established.`,
@@ -235,18 +234,16 @@ export default function App() {
     loadStoredClosedTrades()
   );
 
-
-  
   // Live WebSocket Engine for Real Binance Data
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
-  
+
   useEffect(() => {
     // Determine the WS protocol and host based on current window location
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
-    
+
     const ws = new WebSocket(wsUrl);
-    
+
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
@@ -254,17 +251,17 @@ export default function App() {
           // console.log("TICK received", msg.data);
           const newPrices = msg.data;
           setLivePrices(newPrices);
-          
+
           // Update active positions based on REAL LIVE PRICES
           setActivePositions((prev) => {
             if (prev.length === 0) return prev;
             let changed = false;
-            
+
             const nextPositions: Position[] = [];
-            
+
             for (const pos of prev) {
               let realINRPrice = newPrices[pos.symbol];
-              
+
               if (!realINRPrice) {
                 const baseAsset = pos.symbol.split('/')[0];
                 const binanceSymbol = `${baseAsset}/USDT`;
@@ -273,82 +270,82 @@ export default function App() {
                   realINRPrice = liveCrypto * 83.5;
                 }
               }
-              
+
               if (!realINRPrice) {
-                 nextPositions.push(pos);
-                 continue;
+                nextPositions.push(pos);
+                continue;
               }
-              
+
               const isLong = pos.direction === "LONG";
-              
+
               // Evaluate Stop Loss and Take Profit against LIVE tick
               let hitExit = false;
               let exitReason: "STOP_LOSS" | "TAKE_PROFIT" | null = null;
-              
+
               const atr = pos.atrAtEntry || (pos.entryPrice * 0.005);
-              
+
               if (isLong) {
-                 // Trailing Stop Logic (Long)
-                 pos.highestPrice = Math.max(pos.highestPrice || pos.entryPrice, realINRPrice);
-                 
-                 // Activate trail after 1.0 ATR of profit
-                 if (!pos.trailActive && realINRPrice > pos.entryPrice + (atr * 1.0)) {
-                     pos.trailActive = true;
-                 }
-                 
-                 // Update trailing stop (trail distance = 1.5 ATR)
-                 if (pos.trailActive) {
-                     const dynamicStop = pos.highestPrice - (atr * 1.5);
-                     if (dynamicStop > pos.stopLoss) {
-                         pos.stopLoss = dynamicStop;
-                         // Push take profit further out so we don't cap the runner
-                         pos.takeProfit = Math.max(pos.takeProfit, realINRPrice + (atr * 5));
-                         changed = true;
-                     }
-                 }
-              
-                 if (realINRPrice <= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
-                 else if (realINRPrice >= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
+                // Trailing Stop Logic (Long)
+                pos.highestPrice = Math.max(pos.highestPrice || pos.entryPrice, realINRPrice);
+
+                // Activate trail after 1.0 ATR of profit
+                if (!pos.trailActive && realINRPrice > pos.entryPrice + (atr * 1.0)) {
+                  pos.trailActive = true;
+                }
+
+                // Update trailing stop (trail distance = 1.5 ATR)
+                if (pos.trailActive) {
+                  const dynamicStop = pos.highestPrice - (atr * 1.5);
+                  if (dynamicStop > pos.stopLoss) {
+                    pos.stopLoss = dynamicStop;
+                    // Push take profit further out so we don't cap the runner
+                    pos.takeProfit = Math.max(pos.takeProfit, realINRPrice + (atr * 5));
+                    changed = true;
+                  }
+                }
+
+                if (realINRPrice <= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
+                else if (realINRPrice >= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
               } else {
-                 // Trailing Stop Logic (Short)
-                 pos.lowestPrice = Math.min(pos.lowestPrice || pos.entryPrice, realINRPrice);
-                 
-                 // Activate trail after 1.0 ATR of profit
-                 if (!pos.trailActive && realINRPrice < pos.entryPrice - (atr * 1.0)) {
-                     pos.trailActive = true;
-                 }
-                 
-                 // Update trailing stop (trail distance = 1.5 ATR)
-                 if (pos.trailActive) {
-                     const dynamicStop = pos.lowestPrice + (atr * 1.5);
-                     if (dynamicStop < pos.stopLoss) {
-                         pos.stopLoss = dynamicStop;
-                         // Push take profit further out so we don't cap the runner
-                         pos.takeProfit = Math.min(pos.takeProfit, realINRPrice - (atr * 5));
-                         changed = true;
-                     }
-                 }
-              
-                 if (realINRPrice >= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
-                 else if (realINRPrice <= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
+                // Trailing Stop Logic (Short)
+                pos.lowestPrice = Math.min(pos.lowestPrice || pos.entryPrice, realINRPrice);
+
+                // Activate trail after 1.0 ATR of profit
+                if (!pos.trailActive && realINRPrice < pos.entryPrice - (atr * 1.0)) {
+                  pos.trailActive = true;
+                }
+
+                // Update trailing stop (trail distance = 1.5 ATR)
+                if (pos.trailActive) {
+                  const dynamicStop = pos.lowestPrice + (atr * 1.5);
+                  if (dynamicStop < pos.stopLoss) {
+                    pos.stopLoss = dynamicStop;
+                    // Push take profit further out so we don't cap the runner
+                    pos.takeProfit = Math.min(pos.takeProfit, realINRPrice - (atr * 5));
+                    changed = true;
+                  }
+                }
+
+                if (realINRPrice >= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
+                else if (realINRPrice <= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
               }
-              
+
               if (hitExit && exitReason) {
-                 setTimeout(() => {
-                    closePositionWithAutopsy(pos, realINRPrice, exitReason!);
-                 }, 10);
-                 changed = true;
-                 continue; // Don't push to nextPositions, it will be removed by closePositionWithAutopsy anyway, or we just drop it here
+                setTimeout(() => {
+                  closePositionWithAutopsy(pos, realINRPrice, exitReason!);
+                }, 10);
+                changed = true;
+                continue; // Don't push to nextPositions, it will be removed by closePositionWithAutopsy anyway, or we just drop it here
               }
-              
+
               const pnl = (realINRPrice - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
               const moneyPlaced = pos.entryPrice * pos.quantity;
               const pnlPercent = (pnl / moneyPlaced) * 100;
-              
+
               if (Math.abs(realINRPrice - pos.currentPrice) > 0.0001) {
                 changed = true;
               }
-              
+
               nextPositions.push({
                 ...pos,
                 currentPrice: realINRPrice,
@@ -356,7 +353,7 @@ export default function App() {
                 unrealizedPnlPercent: pnlPercent,
               });
             }
-            
+
             return changed ? nextPositions : prev;
           });
         }
@@ -364,12 +361,11 @@ export default function App() {
         console.error("WS parse error", err);
       }
     };
-    
+
     return () => {
       ws.close();
     };
   }, []);
-
 
   // Persist closed trades to LocalStorage
   useEffect(() => {
@@ -399,7 +395,6 @@ export default function App() {
       saveStoredPromotedLabModel(promotedLabModel);
     }
   }, [promotedLabModel]);
-
 
   const handleUpdateModelAccuracy = (updated: LearnedModelAccuracy) => {
     setLearnedAccuracy(updated);
@@ -436,6 +431,7 @@ export default function App() {
   useEffect(() => {
     saveStoredExperiences(experiences);
   }, [experiences]);
+
   // Continuous Online Learning Background Worker
   useEffect(() => {
     // Check every hour if a day has passed since last training
@@ -487,10 +483,10 @@ export default function App() {
         if (prev.istDateString !== currentIST) {
           const resetData = getInitialDailyTelemetry(currentIST);
           saveDailySampleTelemetry(resetData);
-          
+
           // CRITICAL FIX: Reset Daily P&L to 0 when the 24-hour cycle resets (Midnight IST)
           setDailyRealizedPnl(0);
-          
+
           return resetData;
         }
         return prev;
@@ -528,13 +524,13 @@ export default function App() {
       // Audio notification
       if (reason === "TAKE_PROFIT" || isWin) {
         playProfitTargetSound();
-        sendAlertNotification(`🎯 [Nexus Desk] Target Hit: ${pos.symbol}`, {
+        sendAlertNotification(`■ [Nexus Desk] Target Hit: ${pos.symbol}`, {
           body: `${pos.direction} closed with +₹${finalPnl.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent}%). Capital added to portfolio.`,
         });
       } else {
         playStopLossSound();
         if (reason === "STOP_LOSS") {
-          sendAlertNotification(`🛡️ [Nexus Desk] Stop-Loss Hit: ${pos.symbol}`, {
+          sendAlertNotification(`■ [Nexus Desk] Stop-Loss Hit: ${pos.symbol}`, {
             body: `${pos.direction} stopped at ₹${exitPrice.toFixed(2)} (-₹${Math.abs(finalPnl).toFixed(2)}). Capital safeguarded.`,
           });
         }
@@ -705,8 +701,6 @@ export default function App() {
     [closePositionWithAutopsy, userRole, logSecurityAudit]
   );
 
-  
-
   // Execute Limit Order & Start Trade Upon Approval (Manual or Autonomous Self-Approval)
   const handleApproveProposal = useCallback(
     (proposal: TradeProposal, isAutonomousSelfApproved: boolean = false) => {
@@ -738,7 +732,7 @@ export default function App() {
 
       const bars = liveMarketStream.getBars(proposal.symbol);
       const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
-      
+
       const newPosition: Position = {
         id: `pos-${Date.now().toString().slice(-6)}`,
         symbol: proposal.symbol,
@@ -786,7 +780,7 @@ export default function App() {
       setExecutionToast({
         id: `toast-${Date.now()}`,
         title: isAutonomousSelfApproved
-          ? `⚡ [AI SELF-APPROVED] ${proposal.symbol} ${proposal.setup.direction}`
+          ? `■ [AI SELF-APPROVED] ${proposal.symbol} ${proposal.setup.direction}`
           : `Limit Order Filled: ${proposal.symbol}`,
         message: isAutonomousSelfApproved
           ? `Agent Swarm self-approved ${proposal.symbol} with ${Math.round(
@@ -809,7 +803,7 @@ export default function App() {
       );
 
       if (isAutonomousSelfApproved) {
-        sendAlertNotification(`⚡ [Nexus Desk] Autonomous Trade: ${proposal.symbol}`, {
+        sendAlertNotification(`■ [Nexus Desk] Autonomous Trade: ${proposal.symbol}`, {
           body: `${proposal.setup.direction} @ ₹${proposal.setup.entryPrice} (${Math.round(proposal.metaScore.calibratedWinProbability * 100)}% Win Probability).`,
         });
       }
@@ -822,46 +816,118 @@ export default function App() {
   );
 
   // Batch Auto-Approval Engine:
-  // When Self-Approve is ON, ALL trades in the queue get auto-approved into the active book
+  // When Self-Approve is ON, trades in the queue are auto-approved ONLY while doing so keeps
+  // the book within the same live limits a human approver would be bound by: max simultaneous
+  // positions, max portfolio exposure, no duplicate-symbol stacking, a rolling-hour cap on
+  // autonomous approvals, and trader-panel consensus. Anything that would breach a limit is
+  // left PENDING_APPROVAL for a human to review manually, rather than being silently approved
+  // or silently dropped.
   const handleBatchApproveAllProposals = useCallback(
     (proposalsToApprove: TradeProposal[]) => {
       if (killSwitchActive || proposalsToApprove.length === 0) return;
 
-      const newPositions: Position[] = proposalsToApprove.map(
-        (proposal, index) => {
-          const units = proposal.riskCalc.recommendedPositionSizeUnits > 0 ? proposal.riskCalc.recommendedPositionSizeUnits : 0.01;
+      const policy = DEFAULT_RISK_POLICY;
+      const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
 
-          const bars = liveMarketStream.getBars(proposal.symbol);
-          const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
-          return {
-            id: `pos-${Date.now().toString().slice(-6)}-${index}`,
-            symbol: proposal.symbol,
-            direction: proposal.setup.direction,
-            setupName: proposal.setup.name,
-            entryPrice: proposal.setup.entryPrice,
-            currentPrice: proposal.setup.entryPrice,
-            quantity: units,
-            stopLoss: proposal.setup.stopLoss,
-            takeProfit: proposal.setup.takeProfit,
-            unrealizedPnl: 0,
-            unrealizedPnlPercent: 0,
-            openTime: new Date().toISOString(),
-            expectedHoldingTimeMinutes: 30,
-            metaConfidence: proposal.metaScore.confidence,
-            isSelfApproved: true,
-            highestPrice: proposal.setup.entryPrice,
-            lowestPrice: proposal.setup.entryPrice,
-            trailActive: false,
-            atrAtEntry: currentAtr,
-          };
-        }
+      // Seed running counters from the CURRENT live book, not the scan-time snapshot each
+      // proposal was individually checked against — several proposals from the same scan
+      // cycle could otherwise all "pass" independently and then collectively blow through
+      // maxSimultaneousPositions / maxAllowedExposureFraction when approved together.
+      let runningPositionCount = activePositions.length;
+      let runningExposure = activePositions.reduce(
+        (acc, p) => acc + p.quantity * p.currentPrice,
+        0
       );
+      let runningHourlyAutopilotCount = activePositions.filter(
+        (p) => p.isSelfApproved && new Date(p.openTime).getTime() >= oneHourAgoMs
+      ).length;
+      const heldSymbols = new Set(activePositions.map((p) => p.symbol));
 
-      // Add all to active positions
+      const accepted: TradeProposal[] = [];
+      const deferred: TradeProposal[] = [];
+
+      for (const proposal of proposalsToApprove) {
+        const units =
+          proposal.riskCalc.recommendedPositionSizeUnits > 0
+            ? proposal.riskCalc.recommendedPositionSizeUnits
+            : 0.01;
+        const addedExposure = units * proposal.setup.entryPrice;
+        const exposureFractionIfAdded = (runningExposure + addedExposure) / equity;
+
+        const wouldExceedPositions =
+          runningPositionCount + 1 > policy.maxSimultaneousPositions;
+        const wouldExceedExposure =
+          exposureFractionIfAdded > policy.maxAllowedExposureFraction;
+        const alreadyHeld = heldSymbols.has(proposal.symbol);
+        const wouldExceedHourlyCap =
+          runningHourlyAutopilotCount + 1 > policy.autopilotMaxApprovalsPerHour;
+
+        // Trader-panel consensus gate: autopilot only fast-tracks a proposal
+        // the desk broadly agrees on. A contested/low-conviction call still
+        // clears risk/EV but is left for a human — a real desk escalates
+        // disagreement rather than auto-firing on a split vote.
+        const agreement = proposal.ensembleAgreement ?? 1;
+        const votes = proposal.personaVotesCast ?? 1;
+        const lacksConsensus =
+          agreement < policy.autopilotMinConsensus || votes < policy.autopilotMinPersonaVotes;
+
+        if (wouldExceedPositions || wouldExceedExposure || alreadyHeld || wouldExceedHourlyCap || lacksConsensus) {
+          deferred.push(proposal);
+          continue;
+        }
+
+        accepted.push(proposal);
+        runningPositionCount += 1;
+        runningExposure += addedExposure;
+        runningHourlyAutopilotCount += 1;
+        heldSymbols.add(proposal.symbol);
+      }
+
+      if (deferred.length > 0) {
+        logSecurityAudit(
+          "AUTOPILOT_DEFERRED",
+          `Self-Approve held back ${deferred.length} proposal(s) pending manual review (position/exposure/hourly-cap/panel-consensus limit): ${deferred
+            .map((p) => p.symbol)
+            .join(", ")}`
+        );
+      }
+
+      if (accepted.length === 0) return;
+
+      const newPositions: Position[] = accepted.map((proposal, index) => {
+        const units = proposal.riskCalc.recommendedPositionSizeUnits > 0 ? proposal.riskCalc.recommendedPositionSizeUnits : 0.01;
+
+        const bars = liveMarketStream.getBars(proposal.symbol);
+        const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
+
+        return {
+          id: `pos-${Date.now().toString().slice(-6)}-${index}`,
+          symbol: proposal.symbol,
+          direction: proposal.setup.direction,
+          setupName: proposal.setup.name,
+          entryPrice: proposal.setup.entryPrice,
+          currentPrice: proposal.setup.entryPrice,
+          quantity: units,
+          stopLoss: proposal.setup.stopLoss,
+          takeProfit: proposal.setup.takeProfit,
+          unrealizedPnl: 0,
+          unrealizedPnlPercent: 0,
+          openTime: new Date().toISOString(),
+          expectedHoldingTimeMinutes: 30,
+          metaConfidence: proposal.metaScore.confidence,
+          isSelfApproved: true,
+          highestPrice: proposal.setup.entryPrice,
+          lowestPrice: proposal.setup.entryPrice,
+          trailActive: false,
+          atrAtEntry: currentAtr,
+        };
+      });
+
+      // Add only the accepted subset to active positions
       setActivePositions((prev) => [...newPositions, ...prev]);
 
-      // Mark all specified proposals as APPROVED
-      const approvedIds = new Set(proposalsToApprove.map((p) => p.id));
+      // Mark accepted proposals as APPROVED; deferred ones stay PENDING_APPROVAL
+      const approvedIds = new Set(accepted.map((p) => p.id));
       setProposalQueue((prev) =>
         prev.map((p) =>
           approvedIds.has(p.id) ? { ...p, status: "APPROVED" } : p
@@ -871,25 +937,28 @@ export default function App() {
       // Update telemetry
       setSampleTelemetry((prev) => ({
         ...prev,
-        selectedCount: prev.selectedCount + proposalsToApprove.length,
+        selectedCount: prev.selectedCount + accepted.length,
       }));
 
-      setSelfApprovedCount((prev) => prev + proposalsToApprove.length);
+      setSelfApprovedCount((prev) => prev + accepted.length);
 
       playTradeExecutionSound();
 
-      const symbolsList = proposalsToApprove.map((p) => p.symbol).join(", ");
+      const symbolsList = accepted.map((p) => p.symbol).join(", ");
       setExecutionToast({
         id: `toast-${Date.now()}`,
-        title: `⚡ [SELF-APPROVE] ${proposalsToApprove.length} Trade${
-          proposalsToApprove.length > 1 ? "s" : ""
+        title: `■ [SELF-APPROVE] ${accepted.length} Trade${
+          accepted.length > 1 ? "s" : ""
         } Auto-Approved`,
-        message: `Self-Approve mode active: All trades in queue (${symbolsList}) auto-approved and executed into active book.`,
+        message:
+          deferred.length > 0
+            ? `Self-Approve mode active: ${symbolsList} auto-approved. ${deferred.length} held back — exceeded a limit or lacked panel consensus, awaiting manual review.`
+            : `Self-Approve mode active: All trades in queue (${symbolsList}) auto-approved and executed into active book.`,
         type: "SUCCESS",
         timestamp: new Date().toLocaleTimeString(),
       });
     },
-    [killSwitchActive]
+    [killSwitchActive, activePositions, equity, logSecurityAudit]
   );
 
   // Autonomous Self-Approval Engine:
@@ -966,16 +1035,16 @@ export default function App() {
     setIsScanningMarkets(true);
     try {
       await new Promise((resolve) => setTimeout(resolve, 800));
-      let barsMap;
+      let barsMap: Record<string, MarketBar[]> | undefined;
       if (tapeMode === "LIVE TAPE") {
         barsMap = {};
         const activeLive = liveMarketStream.getActiveSymbols();
         activeLive.forEach(sym => {
           const bars = liveMarketStream.getBars(sym);
-          if (bars) barsMap[sym] = bars;
+          if (bars) barsMap![sym] = bars;
         });
       }
-      
+
       // Prioritize Crypto Markets
       const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR"];
       const isCryptoFocus = Math.random() < 0.8;
@@ -983,7 +1052,6 @@ export default function App() {
       const scanResult = await scanAllMarkets({
         symbols: isCryptoFocus ? cryptoSymbols : undefined,
         activePositions,
-
         dailyRealizedPnl,
         failureState,
         experiences,
@@ -1026,7 +1094,7 @@ export default function App() {
           combined.sort(
             (a, b) =>
               b.metaScore.calibratedWinProbability -
-                a.metaScore.calibratedWinProbability ||
+              a.metaScore.calibratedWinProbability ||
               b.evAssessment.expectedNetValue - a.evAssessment.expectedNetValue
           );
           return combined.slice(0, 10);
@@ -1054,7 +1122,6 @@ export default function App() {
 
     const continuousInterval = setInterval(async () => {
       try {
-        
         // Prioritize Crypto Markets (80% of scans)
         const isCryptoFocus = Math.random() < 0.8;
         const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR"];
@@ -1062,7 +1129,6 @@ export default function App() {
         const scanResult = await scanAllMarkets({
           symbols: isCryptoFocus ? cryptoSymbols : undefined,
           activePositions: activePositionsRef.current,
-
           dailyRealizedPnl,
           failureState,
           experiences,
@@ -1109,7 +1175,7 @@ export default function App() {
             combined.sort(
               (a, b) =>
                 b.metaScore.calibratedWinProbability -
-                  a.metaScore.calibratedWinProbability ||
+                a.metaScore.calibratedWinProbability ||
                 b.evAssessment.expectedNetValue - a.evAssessment.expectedNetValue
             );
 
@@ -1400,7 +1466,6 @@ export default function App() {
                 timestamp: new Date().toLocaleTimeString(),
               });
             }}
-            
           />
         )}
 
@@ -1427,7 +1492,7 @@ export default function App() {
                 hasTrainedModel: result.distilledLessons.some(l => l.action.includes('TensorFlow.js')),
               };
               setPromotedLabModel(promoted);
-                            handleUpdateModelAccuracy({
+              handleUpdateModelAccuracy({
                 accuracyPct: result.learnedMetrics.accuracyPercent,
                 winRatePct: result.learnedMetrics.winRate,
                 sharpeRatio: result.learnedMetrics.sharpeRatio,

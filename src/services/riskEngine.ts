@@ -18,6 +18,9 @@ export interface RiskPolicyConfig {
   minLiquidityScore: number; // 30 minimum order book depth
   maxSpreadTolerancePercent: number; // 0.08% max spread
   fixedBrokerageFeeDollars: number; // ₹20 flat brokerage per order
+  autopilotMaxApprovalsPerHour: number; // hard cap on trades opened via Autonomous Self-Approval per rolling hour
+  autopilotMinConsensus: number; // 0..1 — min weighted trader-panel agreement required for self-approval
+  autopilotMinPersonaVotes: number; // min number of personas that must have voted for self-approval to fire
 }
 
 export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
@@ -31,6 +34,9 @@ export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
   minLiquidityScore: 35,
   maxSpreadTolerancePercent: 0.10,
   fixedBrokerageFeeDollars: 20.0,
+  autopilotMaxApprovalsPerHour: 3,
+  autopilotMinConsensus: 0.7,
+  autopilotMinPersonaVotes: 3,
 };
 
 // 1. Calculate Expected Net Value after conservative costs (Section 7)
@@ -61,7 +67,10 @@ export function evaluateExpectedValue(
   const estimatedLatencyTax = 5.0; // buffer for micro-delays
 
   const totalCost = Number(
-    (estimatedSpreadCost + estimatedBrokerageFee + estimatedSlippageCost + estimatedLatencyTax).toFixed(2)
+    (estimatedSpreadCost +
+      estimatedBrokerageFee +
+      estimatedSlippageCost +
+      estimatedLatencyTax).toFixed(2)
   );
 
   const rawGrossEdge = pWin * avgWinDollars - pLoss * avgLossDollars;
@@ -154,7 +163,6 @@ export function evaluateRiskEngine(
   // Current total exposure
   const currentExposure = activePositions.reduce((acc, p) => acc + p.quantity * p.currentPrice, 0);
   const currentExposureFraction = currentExposure / equity;
-
   if (passed && currentExposureFraction >= maxAllowedExposureFraction) {
     passed = false;
     rejectionReason = `REJECTED BY RISK: Portfolio exposure (${(currentExposureFraction * 100).toFixed(1)}%) exceeds limit (${(maxAllowedExposureFraction * 100).toFixed(1)}%).`;
@@ -171,7 +179,6 @@ export function evaluateRiskEngine(
   // Bounded above by fixed per-trade risk fraction:
   // "confidence-scaled sizing should only reduce risk relative to that ceiling, never increase it"
   const effectiveRiskFraction = Math.min(maxRiskFraction, quarterKelly);
-
   const riskDollars = Number((equity * effectiveRiskFraction).toFixed(2));
   const stopDistance = Math.abs(setup.entryPrice - setup.stopLoss);
   const rawUnits = stopDistance > 0 ? riskDollars / stopDistance : 0;

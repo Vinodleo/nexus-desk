@@ -3,15 +3,11 @@ import crypto from "crypto";
 import express, { Request, Response } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
-
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
-
 import { KiteConnect, KiteTicker } from 'kiteconnect';
-
 
 dotenv.config();
 
@@ -19,7 +15,6 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
-
 
 // ==========================================
 // ZERODHA KITE CONNECT INTEGRATION ROUTES
@@ -54,7 +49,6 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
   try {
     const response = await kiteInstance.generateSession(requestToken, apiSecret);
     zerodhaAccessToken = response.access_token;
-    
     
     // Set the access token in the instance for future API calls (orders, positions)
     kiteInstance.setAccessToken(zerodhaAccessToken);
@@ -111,7 +105,6 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
     
     kiteTickerInstance.connect();
 
-
     return res.json({ 
       success: true, 
       access_token: zerodhaAccessToken,
@@ -152,7 +145,6 @@ app.post("/api/zerodha/order", async (req: Request, res: Response) => {
   }
 });
 
-
 // CoinDCX Polling Proxy (CoinDCX doesn't have public K-line WebSockets, so we poll their public REST API)
 app.get("/api/stream/coindcx", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -165,10 +157,10 @@ app.get("/api/stream/coindcx", (req, res) => {
   const pollInterval = setInterval(async () => {
     try {
       const response = await fetch('https://public.coindcx.com/exchange/ticker');
-      const data = await response.json();
+      const data: any = await response.json();
       
-      const updates = {};
-      data.forEach(ticker => {
+      const updates: Record<string, any> = {};
+      data.forEach((ticker: any) => {
         if (activeMarkets.includes(ticker.market)) {
           // Format the symbol back to UI expectations (e.g. BTCINR -> BTC/INR)
           const formattedSym = ticker.market.replace('USDT', '/USDT');
@@ -183,7 +175,7 @@ app.get("/api/stream/coindcx", (req, res) => {
       });
       
       res.write(`data: ${JSON.stringify(updates)}\n\n`);
-    } catch (e) {
+    } catch (e: any) {
       console.error("CoinDCX Poll Error:", e.message);
     }
   }, 2000); // Poll every 2 seconds
@@ -193,7 +185,6 @@ app.get("/api/stream/coindcx", (req, res) => {
     res.end();
   });
 });
-
 
 // Sanitize external untrusted text (Section 4 & 17: Input sanitization for external text)
 function sanitizeExternalText(text: string): string {
@@ -303,7 +294,6 @@ async function executeResilientAiGeneration(params: {
         }),
         params.timeoutMs || 4500
       );
-
       const text = response?.text;
       if (text) {
         const parsed = JSON.parse(text);
@@ -324,21 +314,19 @@ async function executeResilientAiGeneration(params: {
 
 // 1. Health endpoint
 
-
 app.get("/api/coindcx/balances", async (req, res) => {
   try {
     const apiKey = process.env.COINDCX_API_KEY;
     const apiSecret = process.env.COINDCX_API_SECRET;
-
     if (!apiKey || !apiSecret) {
       return res.status(401).json({ success: false, error: "Missing CoinDCX API Keys" });
     }
-
     const timestamp = Math.floor(Date.now());
     const body = { timestamp };
-    const payload = Buffer.from(JSON.stringify(body)).toString('base64');
+    // Same fix as /api/execute-trade: CoinDCX signs the raw JSON string,
+    // not a base64 encoding of it.
+    const payload = JSON.stringify(body);
     const signature = crypto.createHmac('sha256', apiSecret).update(payload).digest('hex');
-
     const response = await fetch('https://api.coindcx.com/exchange/v1/users/balances', {
       method: 'POST',
       headers: {
@@ -348,12 +336,10 @@ app.get("/api/coindcx/balances", async (req, res) => {
       },
       body: JSON.stringify(body)
     });
-
-    const data = await response.json();
+    const data: any = await response.json();
     if (!response.ok) {
        return res.status(response.status).json({ success: false, error: data.message || "Failed to fetch balances", data });
     }
-
     res.json({ success: true, balances: data });
   } catch (error) {
     res.status(500).json({ success: false, error: "Network error" });
@@ -370,22 +356,24 @@ app.get("/api/coindcx/ticker", async (req, res) => {
   }
 });
 
-
 // CoinDCX Authenticated Trade Execution Route
 app.post("/api/execute-trade", async (req, res) => {
-  const { symbol, side, quantity, price, orderType, isPaperTrade } = req.body;
-  
+  const { symbol, side, quantity, price, orderType, isPaperTrade, confirmLiveOrder } = req.body;
   const apiKey = process.env.COINDCX_API_KEY;
   const apiSecret = process.env.COINDCX_API_SECRET;
-
   if (!apiKey || !apiSecret) {
     return res.status(401).json({ 
       success: false, 
       error: "Missing CoinDCX API Keys in Settings." 
     });
   }
-
-  if (isPaperTrade) {
+  // Fail-safe default: a request only goes live if isPaperTrade is exactly
+  // `false` AND confirmLiveOrder is exactly `true`. Anything else — missing,
+  // undefined, malformed — stays paper. Ambiguous input should never resolve
+  // to "spend real money," same fail-closed principle used elsewhere in this
+  // app (stale-data checks, agent timeouts).
+  const wantsLiveOrder = isPaperTrade === false && confirmLiveOrder === true;
+  if (!wantsLiveOrder) {
     return res.json({
       success: true,
       message: "PAPER TRADE: Execution simulated locally.",
@@ -393,7 +381,6 @@ app.post("/api/execute-trade", async (req, res) => {
       executedPrice: price
     });
   }
-
   try {
     const timestamp = Math.floor(Date.now());
     const body: Record<string, any> = {
@@ -404,19 +391,40 @@ app.post("/api/execute-trade", async (req, res) => {
       timestamp: timestamp,
     };
     if (orderType !== "MARKET") body.price_per_unit = price;
-
-    const payload = Buffer.from(JSON.stringify(body)).toString('base64');
+    // CoinDCX signs the raw JSON body directly, NOT a base64 encoding of it.
+    // (The previous version signed base64(JSON) here, which never matches
+    // what CoinDCX's server computes — same bug /api/coindcx/balances above
+    // also had.)
+    const payload = JSON.stringify(body);
     const signature = crypto.createHmac('sha256', apiSecret).update(payload).digest('hex');
-
-    await new Promise(r => setTimeout(r, 500));
+    const cdcxResponse = await fetch('https://api.coindcx.com/exchange/v1/orders/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-AUTH-APIKEY': apiKey,
+        'X-AUTH-SIGNATURE': signature
+      },
+      body: payload
+    });
+    const data: any = await cdcxResponse.json();
+    if (!cdcxResponse.ok) {
+      return res.status(cdcxResponse.status).json({
+        success: false,
+        error: data?.message || "CoinDCX rejected the order.",
+        cdcxResponse: data
+      });
+    }
+    // NOTE: order-id field name is a best guess (data?.orders?.[0]?.id /
+    // data?.id) — verify against CoinDCX's actual response on your first
+    // real test order and adjust if the shape differs.
     return res.json({
       success: true,
-      message: "LIVE TRADE: Order cryptographically signed and executed via CoinDCX.",
-      signatureGenerated: signature.substring(0, 10) + "...",
-      orderId: "cdcx_" + Date.now(),
+      message: "LIVE TRADE: Order submitted to CoinDCX.",
+      orderId: data?.orders?.[0]?.id || data?.id || ("cdcx_" + Date.now()),
+      cdcxResponse: data,
       executedPrice: price
     });
-  } catch (e) {
+  } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
@@ -433,7 +441,6 @@ app.get("/api/health", (_req: Request, res: Response) => {
 // 2. Market Analysis Agent endpoint
 app.post("/api/agent/market-analysis", async (req: Request, res: Response) => {
   const { symbol, timeframe, price, indicators, simulateTimeout } = req.body;
-
   if (simulateTimeout) {
     // Failure injection simulation for Section 8 & 17
     setTimeout(() => {
@@ -453,12 +460,10 @@ app.post("/api/agent/market-analysis", async (req: Request, res: Response) => {
     }, 1200);
     return;
   }
-
   const prompt = `You are the Market Analysis Agent for a statistical trading bot (v2.0).
 Analyze the following market conditions for ${symbol || "NIFTY"} (${timeframe || "5m"}):
 - Current Price: ${price}
 - Indicators: ${JSON.stringify(indicators)}
-
 Provide a strict technical and regime assessment in JSON format:
 {
   "regime": "trending_bullish" | "trending_bearish" | "ranging_tight" | "ranging_wide" | "high_volatility_choppy",
@@ -469,7 +474,6 @@ Provide a strict technical and regime assessment in JSON format:
   "regimeSummary": "concise 1-2 sentence description",
   "tradingRecommendation": "TRADE_FAVORED" | "CAUTION" | "AVOID"
 }`;
-
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -483,14 +487,12 @@ Provide a strict technical and regime assessment in JSON format:
     },
     required: ["regime", "trendStrength", "volatilityState", "keySupport", "keyResistance", "regimeSummary", "tradingRecommendation"],
   };
-
   try {
     const result = await executeResilientAiGeneration({
       contents: prompt,
       responseSchema,
       timeoutMs: 4500,
     });
-
     return res.json({
       ...result.data,
       modelUsed: result.modelUsed,
@@ -503,13 +505,11 @@ Provide a strict technical and regime assessment in JSON format:
     if (!isQuota) {
       console.info(`[Market Analysis Agent] Deterministic fallback: ${cleanMsg}`);
     }
-
     // Section 4 & 8 Deterministic Fail-Closed Rule
     const rsi = indicators?.rsi || 50;
     const adx = indicators?.adx || 20;
     const regime = adx > 25 ? (rsi > 50 ? "trending_bullish" : "trending_bearish") : "ranging_wide";
     const currentPrice = Number(price) || 100;
-
     return res.status(200).json({
       regime,
       trendStrength: Math.round(adx),
@@ -529,7 +529,6 @@ Provide a strict technical and regime assessment in JSON format:
 // 3. Supervisor Agent endpoint (Synthesizes setup, similarity, and risk into trade proposal)
 app.post("/api/agent/supervisor-propose", async (req: Request, res: Response) => {
   const { symbol, setup, marketAnalysis, similarExperiences, rawExternalNews, simulateTimeout } = req.body;
-
   if (simulateTimeout) {
     // Failure injection: timeout defaults to NO TRADE
     return res.status(200).json({
@@ -546,9 +545,7 @@ app.post("/api/agent/supervisor-propose", async (req: Request, res: Response) =>
       isAiGenerated: false,
     });
   }
-
   const sanitizedNews = sanitizeExternalText(rawExternalNews || "");
-
   const prompt = `You are the Supervisor Agent in a v2.0 Trading Bot.
 You synthesize technical setup candidate, regime context, and historical experiences into a formal proposal.
 IMPORTANT: You CANNOT override deterministic risk rules.
@@ -556,10 +553,12 @@ Candidate Setup:
 - Symbol: ${symbol}
 - Strategy: ${setup?.name} (Direction: ${setup?.direction})
 - Entry Price: ${setup?.entryPrice}, Stop Loss: ${setup?.stopLoss}, Take Profit: ${setup?.takeProfit}
-- Market Context: ${JSON.stringify(marketAnalysis)}
-- Historical Similarity (${similarExperiences?.length || 0} setups): ${JSON.stringify(similarExperiences)}
-- Sanitized External Context: "${sanitizedNews}"
-
+- Market Context:
+${JSON.stringify(marketAnalysis)}
+- Historical Similarity (${similarExperiences?.length || 0} setups):
+${JSON.stringify(similarExperiences)}
+- Sanitized External Context:
+"${sanitizedNews}"
 Evaluate whether this setup should be submitted as a Trade Proposal or NO_TRADE.
 Return JSON format:
 {
@@ -570,7 +569,6 @@ Return JSON format:
   "expectedHoldingTimeMinutes": number,
   "executiveSummary": "Concise 2-sentence rationale"
 }`;
-
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -583,14 +581,12 @@ Return JSON format:
     },
     required: ["decision", "metaConfidenceScore", "confidenceRationale", "failureConditionRisk", "expectedHoldingTimeMinutes", "executiveSummary"],
   };
-
   try {
     const result = await executeResilientAiGeneration({
       contents: prompt,
       responseSchema,
       timeoutMs: 4500,
     });
-
     return res.json({
       ...result.data,
       modelUsed: result.modelUsed,
@@ -603,11 +599,9 @@ Return JSON format:
     if (!isQuota) {
       console.info(`[Supervisor Agent] Deterministic fallback: ${cleanMsg}`);
     }
-
     // Strict Fail-Closed default
     const winRate = setup?.historicalWinRate || 0.55;
     const qualifies = setup?.qualifies && winRate >= 0.54;
-
     return res.status(200).json({
       decision: qualifies ? "TRADE" : "NO_TRADE",
       metaConfidenceScore: qualifies ? Number(winRate.toFixed(2)) : 0,
@@ -628,18 +622,15 @@ Return JSON format:
 // 4. Trade Autopsy Agent endpoint (Section 10: Post-trade autopsy & learning dataset)
 app.post("/api/agent/trade-autopsy", async (req: Request, res: Response) => {
   const { trade } = req.body;
-
   const prompt = `You are the Trade Autopsy Agent in a v2.0 Trading Bot.
 Perform a structured post-mortem for the following completed trade:
 ${JSON.stringify(trade, null, 2)}
-
 Provide post-trade classification and learning feedback.
 Classification MUST be one of:
 - "good_decision_good_outcome" (Process sound, outcome profitable)
 - "good_decision_bad_outcome" (Process sound, took normal loss within edge)
 - "bad_decision_good_outcome" (Flawed entry/rules broken, saved by luck)
 - "bad_decision_bad_outcome" (Flawed entry/rules broken, lost money)
-
 Return JSON:
 {
   "classification": "good_decision_good_outcome" | "good_decision_bad_outcome" | "bad_decision_good_outcome" | "bad_decision_bad_outcome",
@@ -649,7 +640,6 @@ Return JSON:
   "metaModelCalibrationDelta": number between -0.2 and 0.2 (adjustment to future confidence under these conditions),
   "autopsySummary": "1-2 sentence crisp takeaway"
 }`;
-
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -668,14 +658,12 @@ Return JSON:
     },
     required: ["classification", "rootCause", "recurringConditions", "learningTags", "metaModelCalibrationDelta", "autopsySummary"],
   };
-
   try {
     const result = await executeResilientAiGeneration({
       contents: prompt,
       responseSchema,
       timeoutMs: 4500,
     });
-
     return res.json({
       ...result.data,
       modelUsed: result.modelUsed,
@@ -686,11 +674,9 @@ Return JSON:
       const cleanMsg = cleanErrorMessage(err?.message || "");
       console.info(`[Trade Autopsy Agent] Deterministic fallback: ${cleanMsg}`);
     }
-
     const isWin = (trade?.realizedPnl || trade?.pnl || 0) > 0;
     const classification = isWin ? "good_decision_good_outcome" : "good_decision_bad_outcome";
     const pnlVal = Number(trade?.realizedPnl || trade?.pnl || 0);
-
     return res.json({
       classification,
       rootCause: isWin
@@ -721,49 +707,41 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
-
   
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Self-Learning Trading Bot v2.0 Server running on port ${PORT}`);
   });
-
   // Attach WebSocket server for live Binance Ticker data
   const wss = new WebSocketServer({ server });
   globalWss = wss;
   
   // Cache the latest prices
   const latestPrices: Record<string, number> = {};
-
   // Connect to Binance live ticker stream
   
   // We use the same CoinDCX Polling logic for the top ticker tape
-
-  
   
   // High-Frequency CoinDCX Socket.io Relay
   
   const dcxSocket = io("wss://stream.coindcx.com", {
     transports: ["websocket"],
-    reconnection: true
+    reconnection: true 
   });
   
-  
-function normalizeCoinDCXSymbol(s) {
-  let sym = s.replace('INR', '/INR');
-  if (sym.startsWith('I-') || sym.startsWith('B-')) sym = sym.substring(2);
-  sym = sym.replace('_', '');
-  return sym;
-}
+  function normalizeCoinDCXSymbol(s: string) {
+    let sym = s.replace('INR', '/INR');
+    if (sym.startsWith('I-') || sym.startsWith('B-')) sym = sym.substring(2);
+    sym = sym.replace('_', '');
+    return sym;
+  }
 
-  const currentPrices = {};
-
+  const currentPrices: Record<string, number> = {};
   dcxSocket.on("connect", () => {
     dcxSocket.emit("join", { channelName: "coindcx" });
     ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR'].forEach(sym => {
       dcxSocket.emit("join", { channelName: `I-${sym}_INR` });
     });
   });
-
   dcxSocket.on("ticker", (data) => {
     try {
       const payload = typeof data === 'string' ? JSON.parse(data) : data;
@@ -781,7 +759,6 @@ function normalizeCoinDCXSymbol(s) {
       }
     } catch(e) {}
   });
-
   dcxSocket.on("new-trade", (data) => {
     try {
       const payload = typeof data === 'string' ? JSON.parse(data) : data;
@@ -791,21 +768,15 @@ function normalizeCoinDCXSymbol(s) {
         currentPrices[sym] = parseFloat(innerData.p);
         
         wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
+          if (client.readyState === WebSocket.OPEN) { 
             client.send(JSON.stringify({ type: 'TICK', data: { [sym]: currentPrices[sym] } }));
           }
         });
       }
     } catch(e) {}
   });
-
-
-
-
-
-
   
-  const syntheticSymbols = {
+  const syntheticSymbols: Record<string, number> = {
     "NIFTY": 24350.0,
     "BANKNIFTY": 51200.0,
     "RELIANCE": 2980.0,
@@ -822,7 +793,7 @@ function normalizeCoinDCXSymbol(s) {
   };
   
   setInterval(() => {
-    const updates = {};
+    const updates: Record<string, number> = {};
     Object.keys(syntheticSymbols).forEach(sym => {
        if (!currentPrices[sym]) {
           const drift = (Math.random() - 0.49) * 0.001 * syntheticSymbols[sym];
@@ -839,9 +810,6 @@ function normalizeCoinDCXSymbol(s) {
       });
     }
   }, 2000);
-
 }
-
-
 
 startServer();
