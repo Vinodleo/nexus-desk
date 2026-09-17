@@ -1,11 +1,7 @@
 const fs = require('fs');
 let content = fs.readFileSync('server.ts', 'utf-8');
 
-// First, remove the bad block
-content = content.replace(/  const syntheticSymbols = \{[\s\S]*?\}, 2000\);\n/g, '');
-
-// Then inject it inside the function, right before the closing brace for startServer (which is '  }\n\nstartServer();')
-const injection = `
+const injectionCode = `
   const syntheticSymbols = {
     "NIFTY": 24350.0,
     "BANKNIFTY": 51200.0,
@@ -32,8 +28,8 @@ const injection = `
        }
     });
     
-    if (Object.keys(updates).length > 0 && wss) {
-      wss.clients.forEach((client) => {
+    if (Object.keys(updates).length > 0 && globalWss) {
+      globalWss.clients.forEach((client) => {
         if (client.readyState === 1) { // WebSocket.OPEN
           client.send(JSON.stringify({ type: 'TICK', data: updates }));
         }
@@ -42,7 +38,5 @@ const injection = `
   }, 2000);
 `;
 
-content = content.replace('  }\n\nstartServer();', injection + '\n  }\n\nstartServer();');
-content = content.replace('  }\nstartServer();', injection + '\n  }\n\nstartServer();');
-
+content = content.replace('startServer();', injectionCode + '\nstartServer();');
 fs.writeFileSync('server.ts', content);

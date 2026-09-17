@@ -193,6 +193,10 @@ export interface Position {
   expectedHoldingTimeMinutes: number;
   metaConfidence: number;
   isSelfApproved?: boolean;
+  highestPrice?: number;
+  lowestPrice?: number;
+  trailActive?: boolean;
+  atrAtEntry?: number;
 }
 
 export interface HistoricalTrade {
@@ -213,6 +217,10 @@ export interface HistoricalTrade {
   closedAt: string;
   holdingDurationMinutes?: number;
   isSelfApproved?: boolean;
+  highestPrice?: number;
+  lowestPrice?: number;
+  trailActive?: boolean;
+  atrAtEntry?: number;
   autopsy?: TradeAutopsy;
 }
 

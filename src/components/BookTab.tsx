@@ -315,8 +315,13 @@ export const BookTab: React.FC<BookTabProps> = ({
                     <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#1a1a22] text-xs font-mono text-stone-400">
                       <div>
                         <span className="text-[10px] text-stone-400 uppercase">Stop Loss: </span>
-                        <span className="text-rose-400 font-medium">
+                        <span className="text-rose-400 font-medium flex items-center gap-2">
                           ₹{pos.stopLoss.toFixed(2)}
+                          {pos.trailActive && (
+                            <span className="bg-emerald-500/20 text-emerald-400 text-[9px] px-1 py-0.5 rounded uppercase tracking-widest border border-emerald-500/30">
+                              Trailing
+                            </span>
+                          )}
                         </span>
                       </div>
                       <div>

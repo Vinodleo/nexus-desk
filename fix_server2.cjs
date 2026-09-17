@@ -1,10 +1,6 @@
 const fs = require('fs');
 let content = fs.readFileSync('server.ts', 'utf-8');
 
-// First, remove the bad block
-content = content.replace(/  const syntheticSymbols = \{[\s\S]*?\}, 2000\);\n/g, '');
-
-// Then inject it inside the function, right before the closing brace for startServer (which is '  }\n\nstartServer();')
 const injection = `
   const syntheticSymbols = {
     "NIFTY": 24350.0,
@@ -42,7 +38,9 @@ const injection = `
   }, 2000);
 `;
 
-content = content.replace('  }\n\nstartServer();', injection + '\n  }\n\nstartServer();');
-content = content.replace('  }\nstartServer();', injection + '\n  }\n\nstartServer();');
+const lastBraceIndex = content.lastIndexOf('}');
+if (lastBraceIndex !== -1) {
+    content = content.slice(0, lastBraceIndex) + injection + '\n' + content.slice(lastBraceIndex);
+}
 
 fs.writeFileSync('server.ts', content);

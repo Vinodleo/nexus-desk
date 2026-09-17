@@ -396,7 +396,7 @@ app.post("/api/execute-trade", async (req, res) => {
 
   try {
     const timestamp = Math.floor(Date.now());
-    const body = {
+    const body: Record<string, any> = {
       side: side === "LONG" ? "buy" : "sell",
       order_type: orderType === "MARKET" ? "market_order" : "limit_order",
       market: symbol.replace("/", ""),
@@ -747,6 +747,14 @@ async function startServer() {
     reconnection: true
   });
   
+  
+function normalizeCoinDCXSymbol(s) {
+  let sym = s.replace('INR', '/INR');
+  if (sym.startsWith('I-') || sym.startsWith('B-')) sym = sym.substring(2);
+  sym = sym.replace('_', '');
+  return sym;
+}
+
   const currentPrices = {};
 
   dcxSocket.on("connect", () => {
@@ -761,7 +769,7 @@ async function startServer() {
       const payload = typeof data === 'string' ? JSON.parse(data) : data;
       if (payload && payload.s && payload.c) {
         if (['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR'].includes(payload.s)) {
-          const sym = payload.s.replace('INR', '/INR');
+          const sym = normalizeCoinDCXSymbol(payload.s);
           currentPrices[sym] = parseFloat(payload.c);
           
           wss.clients.forEach((client) => {
@@ -779,7 +787,7 @@ async function startServer() {
       const payload = typeof data === 'string' ? JSON.parse(data) : data;
       const innerData = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
       if (innerData && innerData.s && innerData.p) {
-        const sym = innerData.s.replace('INR', '/INR');
+        const sym = normalizeCoinDCXSymbol(innerData.s);
         currentPrices[sym] = parseFloat(innerData.p);
         
         wss.clients.forEach((client) => {
@@ -796,6 +804,44 @@ async function startServer() {
 
 
 
-  }
+  
+  const syntheticSymbols = {
+    "NIFTY": 24350.0,
+    "BANKNIFTY": 51200.0,
+    "RELIANCE": 2980.0,
+    "TCS": 4250.0,
+    "HDFCBANK": 1640.0,
+    "GOLD/INR": 74250.0,
+    "USD/INR": 85.35,
+    "JUP/INR": 71.48,
+    "AVAX/INR": 2652.0,
+    "NEAR/INR": 459.0,
+    "JUP": 71.48,
+    "AVAX": 2652.0,
+    "NEAR": 459.0
+  };
+  
+  setInterval(() => {
+    const updates = {};
+    Object.keys(syntheticSymbols).forEach(sym => {
+       if (!currentPrices[sym]) {
+          const drift = (Math.random() - 0.49) * 0.001 * syntheticSymbols[sym];
+          syntheticSymbols[sym] = Number((syntheticSymbols[sym] + drift).toFixed(4));
+          updates[sym] = syntheticSymbols[sym];
+       }
+    });
+    
+    if (Object.keys(updates).length > 0 && wss) {
+      wss.clients.forEach((client) => {
+        if (client.readyState === 1) { // WebSocket.OPEN
+          client.send(JSON.stringify({ type: 'TICK', data: updates }));
+        }
+      });
+    }
+  }, 2000);
+
+}
+
+
 
 startServer();

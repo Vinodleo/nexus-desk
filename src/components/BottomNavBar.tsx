@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutGrid, ListFilter, BookOpen, FlaskConical, BrainCircuit } from "lucide-react";
+import {  LayoutGrid, ListFilter, BookOpen, FlaskConical, BrainCircuit } from "lucide-react";
 
 export type TabType = "floor" | "queue" | "book" | "learning" | "lab";
 

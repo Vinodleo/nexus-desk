@@ -250,7 +250,8 @@ export default function App() {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'TICK') {
+        if (msg.type === "TICK") {
+          // console.log("TICK received", msg.data);
           const newPrices = msg.data;
           setLivePrices(newPrices);
           
@@ -284,10 +285,50 @@ export default function App() {
               let hitExit = false;
               let exitReason: "STOP_LOSS" | "TAKE_PROFIT" | null = null;
               
+              const atr = pos.atrAtEntry || (pos.entryPrice * 0.005);
+              
               if (isLong) {
+                 // Trailing Stop Logic (Long)
+                 pos.highestPrice = Math.max(pos.highestPrice || pos.entryPrice, realINRPrice);
+                 
+                 // Activate trail after 1.0 ATR of profit
+                 if (!pos.trailActive && realINRPrice > pos.entryPrice + (atr * 1.0)) {
+                     pos.trailActive = true;
+                 }
+                 
+                 // Update trailing stop (trail distance = 1.5 ATR)
+                 if (pos.trailActive) {
+                     const dynamicStop = pos.highestPrice - (atr * 1.5);
+                     if (dynamicStop > pos.stopLoss) {
+                         pos.stopLoss = dynamicStop;
+                         // Push take profit further out so we don't cap the runner
+                         pos.takeProfit = Math.max(pos.takeProfit, realINRPrice + (atr * 5));
+                         changed = true;
+                     }
+                 }
+              
                  if (realINRPrice <= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
                  else if (realINRPrice >= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
               } else {
+                 // Trailing Stop Logic (Short)
+                 pos.lowestPrice = Math.min(pos.lowestPrice || pos.entryPrice, realINRPrice);
+                 
+                 // Activate trail after 1.0 ATR of profit
+                 if (!pos.trailActive && realINRPrice < pos.entryPrice - (atr * 1.0)) {
+                     pos.trailActive = true;
+                 }
+                 
+                 // Update trailing stop (trail distance = 1.5 ATR)
+                 if (pos.trailActive) {
+                     const dynamicStop = pos.lowestPrice + (atr * 1.5);
+                     if (dynamicStop < pos.stopLoss) {
+                         pos.stopLoss = dynamicStop;
+                         // Push take profit further out so we don't cap the runner
+                         pos.takeProfit = Math.min(pos.takeProfit, realINRPrice - (atr * 5));
+                         changed = true;
+                     }
+                 }
+              
                  if (realINRPrice >= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
                  else if (realINRPrice <= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
               }
@@ -301,7 +342,8 @@ export default function App() {
               }
               
               const pnl = (realINRPrice - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
-              const pnlPercent = (pnl / pos.moneyPlaced) * 100;
+              const moneyPlaced = pos.entryPrice * pos.quantity;
+              const pnlPercent = (pnl / moneyPlaced) * 100;
               
               if (Math.abs(realINRPrice - pos.currentPrice) > 0.0001) {
                 changed = true;
@@ -694,6 +736,9 @@ export default function App() {
 
       const units = proposal.riskCalc.recommendedPositionSizeUnits > 0 ? proposal.riskCalc.recommendedPositionSizeUnits : 0.01;
 
+      const bars = liveMarketStream.getBars(proposal.symbol);
+      const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
+      
       const newPosition: Position = {
         id: `pos-${Date.now().toString().slice(-6)}`,
         symbol: proposal.symbol,
@@ -710,6 +755,10 @@ export default function App() {
         expectedHoldingTimeMinutes: 30,
         metaConfidence: proposal.metaScore.confidence,
         isSelfApproved: isAutonomousSelfApproved,
+        highestPrice: proposal.setup.entryPrice,
+        lowestPrice: proposal.setup.entryPrice,
+        trailActive: false,
+        atrAtEntry: currentAtr,
       };
 
       // Add to active positions
@@ -782,6 +831,8 @@ export default function App() {
         (proposal, index) => {
           const units = proposal.riskCalc.recommendedPositionSizeUnits > 0 ? proposal.riskCalc.recommendedPositionSizeUnits : 0.01;
 
+          const bars = liveMarketStream.getBars(proposal.symbol);
+          const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
           return {
             id: `pos-${Date.now().toString().slice(-6)}-${index}`,
             symbol: proposal.symbol,
@@ -798,6 +849,10 @@ export default function App() {
             expectedHoldingTimeMinutes: 30,
             metaConfidence: proposal.metaScore.confidence,
             isSelfApproved: true,
+            highestPrice: proposal.setup.entryPrice,
+            lowestPrice: proposal.setup.entryPrice,
+            trailActive: false,
+            atrAtEntry: currentAtr,
           };
         }
       );
@@ -920,8 +975,15 @@ export default function App() {
           if (bars) barsMap[sym] = bars;
         });
       }
+      
+      // Prioritize Crypto Markets
+      const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR"];
+      const isCryptoFocus = Math.random() < 0.8;
+
       const scanResult = await scanAllMarkets({
+        symbols: isCryptoFocus ? cryptoSymbols : undefined,
         activePositions,
+
         dailyRealizedPnl,
         failureState,
         experiences,
@@ -992,8 +1054,15 @@ export default function App() {
 
     const continuousInterval = setInterval(async () => {
       try {
+        
+        // Prioritize Crypto Markets (80% of scans)
+        const isCryptoFocus = Math.random() < 0.8;
+        const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR"];
+
         const scanResult = await scanAllMarkets({
+          symbols: isCryptoFocus ? cryptoSymbols : undefined,
           activePositions: activePositionsRef.current,
+
           dailyRealizedPnl,
           failureState,
           experiences,
@@ -1047,10 +1116,10 @@ export default function App() {
             return combined.slice(0, 10);
           });
         }
-      } catch {
+      } catch (err) {
         console.error("Scanner Error:", err);
       }
-    }, 3500);
+    }, 1500);
 
     return () => clearInterval(continuousInterval);
   }, [
@@ -1358,7 +1427,7 @@ export default function App() {
                 hasTrainedModel: result.distilledLessons.some(l => l.action.includes('TensorFlow.js')),
               };
               setPromotedLabModel(promoted);
-              handleUpdateModelAccuracy({
+                            handleUpdateModelAccuracy({
                 accuracyPct: result.learnedMetrics.accuracyPercent,
                 winRatePct: result.learnedMetrics.winRate,
                 sharpeRatio: result.learnedMetrics.sharpeRatio,
@@ -1376,8 +1445,7 @@ export default function App() {
                 setExecutionToast({
                   id: `toast-${Date.now()}`,
                   title: "Walk-Forward Validation Complete",
-                  message:
-                    "5/5 embargoed folds passed. Deflated Sharpe ratio 1.48 with 72h purge window.",
+                  message: "5/5 embargoed folds passed. Deflated Sharpe ratio 1.48 with 72h purge window.",
                   type: "SUCCESS",
                   timestamp: new Date().toLocaleTimeString(),
                 });

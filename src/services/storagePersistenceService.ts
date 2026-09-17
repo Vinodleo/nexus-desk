@@ -342,7 +342,7 @@ export function loadStoredClosedTrades(): HistoricalTrade[] {
     const raw = localStorage.getItem(STORAGE_KEY_CLOSED_TRADES);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
+      if (parsed && Array.isArray(parsed)) {
         // Filter out old dummy placeholders that might be stuck in the user's local storage
         const filtered = parsed.filter(t => !t.id.startsWith("trade-hist-"));
         if (filtered.length > 0) {
@@ -438,7 +438,8 @@ export async function syncFromFirebase(userId: string): Promise<boolean> {
       saveStoredCapital({
         equity: data.equity || 100000,
         cash: data.cash || 100000,
-        dailyRealizedPnl: data.dailyRealizedPnl || 0
+        dailyRealizedPnl: data.dailyRealizedPnl || 0,
+        allTimeRealizedPnl: data.allTimeRealizedPnl || 0
       });
       
       if (data.accuracyPct) {

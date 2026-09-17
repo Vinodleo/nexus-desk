@@ -30,9 +30,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
   { symbol: "USD/INR", name: "US Dollar / Indian Rupee", basePrice: 85.35, tickSize: 0.0025, lotSize: 1000, volatility: 0.08, correlatedGroup: "FOREX" },
 
   // 4. Aliases mapped to INR
-  { symbol: "BTC/INR", name: "Bitcoin / INR", basePrice: 5427250.0, tickSize: 50.0, lotSize: 0.01, volatility: 0.45, correlatedGroup: "CRYPTO_MAJOR" },
-  { symbol: "ETH/INR", name: "Ethereum / INR", basePrice: 210800.0, tickSize: 10.0, lotSize: 0.1, volatility: 0.52, correlatedGroup: "CRYPTO_MAJOR" },
-  { symbol: "SOL/INR", name: "Solana / INR", basePrice: 13107.0, tickSize: 1.0, lotSize: 1, volatility: 0.65, correlatedGroup: "CRYPTO_ALT" },
   { symbol: "JUP", name: "Jupiter / INR", basePrice: 71.48, tickSize: 0.01, lotSize: 100, volatility: 0.72, correlatedGroup: "CRYPTO_ALT" },
   { symbol: "AVAX", name: "Avalanche / INR", basePrice: 2652.0, tickSize: 0.5, lotSize: 10, volatility: 0.68, correlatedGroup: "CRYPTO_ALT" },
   { symbol: "NEAR", name: "Near Protocol / INR", basePrice: 459.0, tickSize: 0.1, lotSize: 50, volatility: 0.68, correlatedGroup: "CRYPTO_ALT" },

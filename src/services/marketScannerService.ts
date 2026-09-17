@@ -78,7 +78,7 @@ export async function scanSingleMarket(
   tfjsModel?: tf.LayersModel
 ): Promise<MarketScanResult> {
   const policy = options.riskPolicy || DEFAULT_RISK_POLICY;
-  const currentBar = bars[bars.length - 1];
+  const currentBar = (bars && bars.length > 0) ? bars[bars.length - 1] : undefined;
   const price = currentBar ? currentBar.close : symbolConfig.basePrice;
   const orderBook = generateOrderBook(
     price,
