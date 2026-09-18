@@ -6,6 +6,7 @@ import {
   Position,
   FailureInjectionState,
 } from "../types";
+import { SUPPORTED_SYMBOLS } from "./marketDataService";
 
 export interface RiskPolicyConfig {
   equity: number;
@@ -36,7 +37,7 @@ export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
   fixedBrokerageFeeDollars: 20.0,
   autopilotMaxApprovalsPerHour: 3,
   autopilotMinConsensus: 0.7,
-  autopilotMinPersonaVotes: 3,
+  autopilotMinPersonaVotes: 2,
 };
 
 // 1. Calculate Expected Net Value after conservative costs (Section 7)
@@ -186,7 +187,20 @@ export function evaluateRiskEngine(
   // Max order value cap (10k INR)
   const maxOrderValue = 10000;
   const maxUnitsByValue = maxOrderValue / setup.entryPrice;
-  const recommendedUnits = Number(Math.min(rawUnits, maxUnitsByValue).toFixed(2));
+  
+  let recommendedUnits = Math.min(rawUnits, maxUnitsByValue);
+  
+  // Snap to exchange lot size
+  const symConfig = SUPPORTED_SYMBOLS.find(s => s.symbol === setup.symbol);
+  const lotSize = symConfig?.lotSize || 1;
+  const lots = Math.floor(recommendedUnits / lotSize);
+  recommendedUnits = Number((lots * lotSize).toFixed(6));
+
+  if (recommendedUnits === 0 && passed) {
+    passed = false;
+    rejectionReason = `Calculated risk position size is smaller than the exchange minimum lot size (${lotSize}) for ${setup.symbol}.`;
+  }
+
   const recommendedDollarExposure = Number((recommendedUnits * setup.entryPrice).toFixed(2));
 
   return {

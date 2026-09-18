@@ -2,6 +2,7 @@ import { StrategySetup, TradeDirection, StrategyFamily, MetaLabelScore } from ".
 import {
   CandidateEvaluationContext,
   buildTrendSetup,
+  buildMacroTrendSetup,
   buildBreakoutSetup,
   buildMeanReversionSetup,
   buildVolatilitySuppressor,
@@ -79,6 +80,24 @@ export const TRADER_PERSONAS: TraderPersona[] = [
         stopPriceFloorPct: 0.005,
         targetMult: 2.6,
         baseProbability: 0.60,
+      }),
+  },
+  {
+    id: "warren-macro",
+    name: "Warren — Macro Trend Follower",
+    family: "trend_following",
+    riskPosture: "conservative",
+    bio: "Ignores intraday noise. Operates on 50/200 EMA structure. Takes very wide stop-losses (3.5x ATR) and aims for massive targets (5x risk) over longer durations.",
+    weight: 1.0,
+    evaluate: (ctx) =>
+      buildMacroTrendSetup(ctx, {
+        idSuffix: "macro-warren",
+        name: "Warren Macro Trend",
+        minAdx: 20,
+        stopAtrMult: 3.5,
+        stopPriceFloorPct: 0.015,
+        targetMult: 5.0,
+        baseProbability: 0.45,
       }),
   },
   {

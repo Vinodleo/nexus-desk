@@ -19,7 +19,7 @@ export class LiveMarketStreamService {
   constructor() {}
 
   async initialize() {
-    const activeSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "AVAX/INR", "NEAR/INR"];
+    const activeSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "AVAX/INR", "NEAR/INR", "JUP/INR"];
     
     console.log("Fetching initial live data for streaming...");
     try {
@@ -37,7 +37,9 @@ export class LiveMarketStreamService {
       });
 
       for (const sym of activeSymbols) {
-        const currentLivePrice = priceMap.get(sym) || 7500000;
+        // Fall back to the hardcoded config basePrice if CoinDCX fetch fails for this symbol
+        const configBasePrice = SUPPORTED_SYMBOLS.find(s => s.symbol === sym)?.basePrice || 100;
+        const currentLivePrice = priceMap.get(sym) || configBasePrice;
         
         // 2. Generate a realistic recent 120m history leading up to the exact live price
         const rawBars: MarketBar[] = [];

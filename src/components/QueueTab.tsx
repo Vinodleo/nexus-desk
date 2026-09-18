@@ -57,7 +57,7 @@ export const QueueTab: React.FC<QueueTabProps> = ({
   // Sort pending proposals strictly by Calibrated Win Probability P(Win) descending,
   // so the one with the highest probability of winning is ranked #1 and appears at the top.
   const pending = proposals
-    .filter((p) => p.status === "PENDING_APPROVAL")
+    .filter((p) => p.status === "PENDING_APPROVAL" || p.status === "DEFERRED")
     .sort(
       (a, b) =>
         b.metaScore.calibratedWinProbability -

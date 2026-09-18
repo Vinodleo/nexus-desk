@@ -27,6 +27,7 @@ export interface MarketBar {
   ema9?: number;
   ema21?: number;
   ema50?: number;
+  ema200?: number;
   adx?: number;
   rsi?: number;
   atr?: number;
@@ -149,7 +150,7 @@ export interface TradeProposal {
   metaScore: MetaLabelScore;
   evAssessment: ExpectedValueAssessment;
   riskCalc: RiskCalculation;
-  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "EXPIRED" | "AUTO_EXECUTED" | "REJECTED_BY_RISK";
+  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "EXPIRED" | "AUTO_EXECUTED" | "REJECTED_BY_RISK" | "DEFERRED";
   approvalExpiryMs: number;
   approvalToken?: string;
   supervisorNotes: string;

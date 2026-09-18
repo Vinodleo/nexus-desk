@@ -152,7 +152,7 @@ app.get("/api/stream/coindcx", (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
-  const activeMarkets = ['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR'];
+  const activeMarkets = ['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR', 'JUPINR'];
 
   const pollInterval = setInterval(async () => {
     try {
@@ -738,7 +738,7 @@ async function startServer() {
   const currentPrices: Record<string, number> = {};
   dcxSocket.on("connect", () => {
     dcxSocket.emit("join", { channelName: "coindcx" });
-    ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR'].forEach(sym => {
+    ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'JUP'].forEach(sym => {
       dcxSocket.emit("join", { channelName: `I-${sym}_INR` });
     });
   });
@@ -746,7 +746,7 @@ async function startServer() {
     try {
       const payload = typeof data === 'string' ? JSON.parse(data) : data;
       if (payload && payload.s && payload.c) {
-        if (['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR'].includes(payload.s)) {
+        if (['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR', 'JUPINR'].includes(payload.s)) {
           const sym = normalizeCoinDCXSymbol(payload.s);
           currentPrices[sym] = parseFloat(payload.c);
           
@@ -775,41 +775,6 @@ async function startServer() {
       }
     } catch(e) {}
   });
-  
-  const syntheticSymbols: Record<string, number> = {
-    "NIFTY": 24350.0,
-    "BANKNIFTY": 51200.0,
-    "RELIANCE": 2980.0,
-    "TCS": 4250.0,
-    "HDFCBANK": 1640.0,
-    "GOLD/INR": 74250.0,
-    "USD/INR": 85.35,
-    "JUP/INR": 71.48,
-    "AVAX/INR": 2652.0,
-    "NEAR/INR": 459.0,
-    "JUP": 71.48,
-    "AVAX": 2652.0,
-    "NEAR": 459.0
-  };
-  
-  setInterval(() => {
-    const updates: Record<string, number> = {};
-    Object.keys(syntheticSymbols).forEach(sym => {
-       if (!currentPrices[sym]) {
-          const drift = (Math.random() - 0.49) * 0.001 * syntheticSymbols[sym];
-          syntheticSymbols[sym] = Number((syntheticSymbols[sym] + drift).toFixed(4));
-          updates[sym] = syntheticSymbols[sym];
-       }
-    });
-    
-    if (Object.keys(updates).length > 0 && wss) {
-      wss.clients.forEach((client) => {
-        if (client.readyState === 1) { // WebSocket.OPEN
-          client.send(JSON.stringify({ type: 'TICK', data: updates }));
-        }
-      });
-    }
-  }, 2000);
 }
 
 startServer();

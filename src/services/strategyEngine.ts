@@ -18,6 +18,7 @@ interface IndicatorSnapshot {
   ema9: number;
   ema21: number;
   ema50: number;
+  ema200: number;
   vwap: number;
   rsi: number;
   adx: number;
@@ -37,6 +38,7 @@ function deriveSnapshot(bars: MarketBar[]): IndicatorSnapshot | null {
   const ema9 = current.ema9 || price;
   const ema21 = current.ema21 || price;
   const ema50 = current.ema50 || price;
+  const ema200 = current.ema200 || price;
   const vwap = current.vwap || price;
   const rsi = current.rsi || 50;
   const adx = current.adx || 20;
@@ -48,7 +50,7 @@ function deriveSnapshot(bars: MarketBar[]): IndicatorSnapshot | null {
   const vwapDistPercent = Number((((price - vwap) / vwap) * 100).toFixed(2));
   const recentHigh = Math.max(...bars.slice(-15, -1).map((b) => b.high));
   const recentLow = Math.min(...bars.slice(-15, -1).map((b) => b.low));
-  return { price, ema9, ema21, ema50, vwap, rsi, adx, atr, bbUpper, bbLower, volumeSurgeRatio, vwapDistPercent, recentHigh, recentLow };
+  return { price, ema9, ema21, ema50, ema200, vwap, rsi, adx, atr, bbUpper, bbLower, volumeSurgeRatio, vwapDistPercent, recentHigh, recentLow };
 }
 
 function baseFeatures(s: IndicatorSnapshot, emaAlignment: boolean) {
@@ -59,6 +61,65 @@ function baseFeatures(s: IndicatorSnapshot, emaAlignment: boolean) {
     adx: s.adx,
     rsi: s.rsi,
     atr: s.atr,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Setup: Macro Trend Following (Long-term)
+// ---------------------------------------------------------------------------
+
+export interface MacroTrendTuning {
+  idSuffix: string;
+  name: string;
+  minAdx: number;
+  stopAtrMult: number; // very wide stop
+  stopPriceFloorPct: number;
+  targetMult: number; // massive target
+  baseProbability: number; // typically lower win rate, high R:R
+}
+
+export function buildMacroTrendSetup(ctx: CandidateEvaluationContext, tuning: MacroTrendTuning): StrategySetup | null {
+  const { symbol, timeframe, bars, regime, eventWindowActive } = ctx;
+  const s = deriveSnapshot(bars);
+  if (!s) return null;
+
+  // Macro looks at the 50 and 200 EMAs instead of the fast ones
+  const isBullTrend = s.price > s.ema50 && s.ema50 > s.ema200 && s.adx >= tuning.minAdx;
+  const isBearTrend = s.price < s.ema50 && s.ema50 < s.ema200 && s.adx >= tuning.minAdx;
+
+  const direction: TradeDirection = isBullTrend ? "LONG" : "SHORT";
+  const qualifies = (isBullTrend || isBearTrend) && regime !== "high_volatility_choppy" && !eventWindowActive;
+
+  const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
+  const targetDistance = stopDistance * tuning.targetMult;
+
+  const entryPrice = s.price;
+  const stopLoss = Number((direction === "LONG" ? s.price - stopDistance : s.price + stopDistance).toFixed(2));
+  const takeProfit = Number((direction === "LONG" ? s.price + targetDistance : s.price - targetDistance).toFixed(2));
+
+  let disqualificationReason: string | undefined;
+  if (regime === "high_volatility_choppy")
+    disqualificationReason = "Regime filter: choppy volatility invalidates macro trend";
+  else if (eventWindowActive)
+    disqualificationReason = "News filter: approaching major macro binary event";
+  else if (!isBullTrend && !isBearTrend)
+    disqualificationReason = `Macro trend alignment failed: Price vs 50/200 EMA structure unclear or ADX < ${tuning.minAdx}.`;
+
+  return {
+    id: `setup-${tuning.idSuffix}-${symbol}`,
+    name: tuning.name,
+    family: "trend_following",
+    direction,
+    symbol,
+    timeframe,
+    entryPrice,
+    stopLoss,
+    takeProfit,
+    riskRewardRatio: tuning.targetMult,
+    baseProbability: tuning.baseProbability,
+    qualifies,
+    disqualificationReason,
+    features: baseFeatures(s, isBullTrend || isBearTrend),
   };
 }
 

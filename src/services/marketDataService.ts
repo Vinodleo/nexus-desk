@@ -11,28 +11,13 @@ export interface SymbolConfig {
 }
 
 export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
-  // 1. Major Indian Indices & Equities (INR)
-  { symbol: "NIFTY", name: "NIFTY 50 Index (INR)", basePrice: 24350.0, tickSize: 0.05, lotSize: 25, volatility: 0.14, correlatedGroup: "INDIAN_EQUITIES" },
-  { symbol: "BANKNIFTY", name: "Bank Nifty Index (INR)", basePrice: 51200.0, tickSize: 0.05, lotSize: 15, volatility: 0.18, correlatedGroup: "INDIAN_EQUITIES" },
-  { symbol: "RELIANCE", name: "Reliance Industries (INR)", basePrice: 2980.0, tickSize: 0.05, lotSize: 25, volatility: 0.16, correlatedGroup: "INDIAN_EQUITIES" },
-  { symbol: "TCS", name: "Tata Consultancy Services (INR)", basePrice: 4250.0, tickSize: 0.05, lotSize: 10, volatility: 0.15, correlatedGroup: "INDIAN_EQUITIES" },
-  { symbol: "HDFCBANK", name: "HDFC Bank (INR)", basePrice: 1640.0, tickSize: 0.05, lotSize: 25, volatility: 0.17, correlatedGroup: "INDIAN_EQUITIES" },
-
-  // 2. INR Crypto Markets
+  // 1. INR Crypto Markets
   { symbol: "BTC/INR", name: "Bitcoin / INR", basePrice: 5427250.0, tickSize: 50.0, lotSize: 0.01, volatility: 0.45, correlatedGroup: "CRYPTO_MAJOR" },
   { symbol: "ETH/INR", name: "Ethereum / INR", basePrice: 210800.0, tickSize: 10.0, lotSize: 0.1, volatility: 0.52, correlatedGroup: "CRYPTO_MAJOR" },
   { symbol: "SOL/INR", name: "Solana / INR", basePrice: 13107.0, tickSize: 1.0, lotSize: 1, volatility: 0.65, correlatedGroup: "CRYPTO_ALT" },
-  { symbol: "JUP/INR", name: "Jupiter / INR", basePrice: 71.48, tickSize: 0.01, lotSize: 100, volatility: 0.72, correlatedGroup: "CRYPTO_ALT" },
+  { symbol: "JUP/INR", name: "Jupiter / INR", basePrice: 23.55, tickSize: 0.01, lotSize: 100, volatility: 0.72, correlatedGroup: "CRYPTO_ALT" },
   { symbol: "AVAX/INR", name: "Avalanche / INR", basePrice: 2652.0, tickSize: 0.5, lotSize: 10, volatility: 0.68, correlatedGroup: "CRYPTO_ALT" },
-
-  // 3. Commodities & FX in INR
-  { symbol: "GOLD/INR", name: "Gold Spot (10g / INR)", basePrice: 74250.0, tickSize: 5.0, lotSize: 1, volatility: 0.14, correlatedGroup: "COMMODITIES" },
-  { symbol: "USD/INR", name: "US Dollar / Indian Rupee", basePrice: 85.35, tickSize: 0.0025, lotSize: 1000, volatility: 0.08, correlatedGroup: "FOREX" },
-
-  // 4. Aliases mapped to INR
-  { symbol: "JUP", name: "Jupiter / INR", basePrice: 71.48, tickSize: 0.01, lotSize: 100, volatility: 0.72, correlatedGroup: "CRYPTO_ALT" },
-  { symbol: "AVAX", name: "Avalanche / INR", basePrice: 2652.0, tickSize: 0.5, lotSize: 10, volatility: 0.68, correlatedGroup: "CRYPTO_ALT" },
-  { symbol: "NEAR", name: "Near Protocol / INR", basePrice: 459.0, tickSize: 0.1, lotSize: 50, volatility: 0.68, correlatedGroup: "CRYPTO_ALT" },
+  { symbol: "NEAR/INR", name: "Near Protocol / INR", basePrice: 459.0, tickSize: 0.1, lotSize: 50, volatility: 0.68, correlatedGroup: "CRYPTO_ALT" },
 ];
 
 // Helper: Calculate EMA array
@@ -83,7 +68,7 @@ function calculateRSI(closes: number[], period = 14): number[] {
 }
 
 // Generate realistic synthetic initial history
-export function generateInitialBars(symbolOrCfg: SymbolConfig | string, count = 60): MarketBar[] {
+export function generateInitialBars(symbolOrCfg: SymbolConfig | string, count = 300): MarketBar[] {
   const symbolCfg =
     typeof symbolOrCfg === "string"
       ? SUPPORTED_SYMBOLS.find((s) => s.symbol === symbolOrCfg) || SUPPORTED_SYMBOLS[0]
@@ -131,6 +116,7 @@ export function generateInitialBars(symbolOrCfg: SymbolConfig | string, count = 
   const ema9 = calculateEMA(closes, 9);
   const ema21 = calculateEMA(closes, 21);
   const ema50 = calculateEMA(closes, 50);
+  const ema200 = calculateEMA(closes, 200);
   const rsi = calculateRSI(closes, 14);
 
   return bars.map((bar, idx) => {
@@ -142,6 +128,7 @@ export function generateInitialBars(symbolOrCfg: SymbolConfig | string, count = 
       ema9: Number(ema9[idx].toFixed(2)),
       ema21: Number(ema21[idx].toFixed(2)),
       ema50: Number(ema50[idx].toFixed(2)),
+      ema200: Number(ema200[idx].toFixed(2)),
       rsi: Number(rsi[idx].toFixed(1)),
       atr: Math.max(atr, Number((c * 0.003).toFixed(2))),
       adx: Number((22 + Math.sin(idx * 0.3) * 12 + Math.random() * 4).toFixed(1)),
@@ -176,13 +163,16 @@ export function generateNextBar(bars: MarketBar[], symbolOrCfg: SymbolConfig | s
   const prevEma9 = prev?.ema9 || close;
   const prevEma21 = prev?.ema21 || close;
   const prevEma50 = prev?.ema50 || close;
+  const prevEma200 = prev?.ema200 || close;
   const k9 = 2 / 10;
   const k21 = 2 / 22;
   const k50 = 2 / 51;
+  const k200 = 2 / 201;
 
   const ema9 = Number((close * k9 + prevEma9 * (1 - k9)).toFixed(2));
   const ema21 = Number((close * k21 + prevEma21 * (1 - k21)).toFixed(2));
   const ema50 = Number((close * k50 + prevEma50 * (1 - k50)).toFixed(2));
+  const ema200 = Number((close * k200 + prevEma200 * (1 - k200)).toFixed(2));
 
   const prevRsi = prev?.rsi || 50;
   const change = close - open;
@@ -204,6 +194,7 @@ export function generateNextBar(bars: MarketBar[], symbolOrCfg: SymbolConfig | s
     ema9,
     ema21,
     ema50,
+    ema200,
     rsi,
     adx: Number(Math.min(65, Math.max(12, (prev?.adx || 22) + (Math.random() - 0.48) * 1.5)).toFixed(1)),
     atr,
@@ -280,6 +271,7 @@ export function decorateBarsWithIndicators(bars: MarketBar[]): MarketBar[] {
   const ema9 = calculateEMA(closes, 9);
   const ema21 = calculateEMA(closes, 21);
   const ema50 = calculateEMA(closes, 50);
+  const ema200 = calculateEMA(closes, 200);
   const rsi = calculateRSI(closes, 14);
 
   let cumulativeVolumeWeight = 0;
@@ -301,6 +293,7 @@ export function decorateBarsWithIndicators(bars: MarketBar[]): MarketBar[] {
       ema9: Number(ema9[idx].toFixed(2)),
       ema21: Number(ema21[idx].toFixed(2)),
       ema50: Number(ema50[idx].toFixed(2)),
+      ema200: Number(ema200[idx].toFixed(2)),
       rsi: Number(rsi[idx].toFixed(1)),
       atr: Math.max(atr, Number((c * 0.003).toFixed(2))),
       adx: Number((22 + Math.sin(idx * 0.3) * 12 + Math.random() * 4).toFixed(1)),

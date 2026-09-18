@@ -248,9 +248,9 @@ export default function App() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "TICK") {
-          // console.log("TICK received", msg.data);
+          console.log("TICK received", msg.data);
           const newPrices = msg.data;
-          setLivePrices(newPrices);
+          setLivePrices((prev) => ({ ...prev, ...newPrices }));
 
           // Update active positions based on REAL LIVE PRICES
           setActivePositions((prev) => {
@@ -272,6 +272,27 @@ export default function App() {
               }
 
               if (!realINRPrice) {
+                nextPositions.push(pos);
+                continue;
+              }
+
+              // Price sanity guard: reject a single tick that implies an
+              // implausible move (e.g. a stale/synthetic fallback price
+              // getting mixed in with a real feed) rather than trusting it
+              // blindly. A real market — even a volatile crypto pair —
+              // essentially never moves >20% between consecutive ticks;
+              // seeing that is a strong sign the tick is bad data, not a
+              // real move, and acting on it risks stopping a position out
+              // against a number that was never actually true.
+              const referencePrice = pos.currentPrice || pos.entryPrice;
+              const tickDeviation =
+                referencePrice > 0
+                  ? Math.abs(realINRPrice - referencePrice) / referencePrice
+                  : 0;
+              if (tickDeviation > 0.80) {
+                console.warn(
+                  `[PriceGuard] Rejected implausible tick for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (${(tickDeviation * 100).toFixed(0)}% single-tick move). Position left unchanged.`
+                );
                 nextPositions.push(pos);
                 continue;
               }
@@ -728,7 +749,11 @@ export default function App() {
         return;
       }
 
-      const units = proposal.riskCalc.recommendedPositionSizeUnits > 0 ? proposal.riskCalc.recommendedPositionSizeUnits : 0.01;
+      const units = proposal.riskCalc.recommendedPositionSizeUnits;
+      if (units <= 0) {
+        console.error("Attempted to approve proposal with 0 units.", proposal);
+        return;
+      }
 
       const bars = liveMarketStream.getBars(proposal.symbol);
       const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
@@ -847,10 +872,11 @@ export default function App() {
       const deferred: TradeProposal[] = [];
 
       for (const proposal of proposalsToApprove) {
-        const units =
-          proposal.riskCalc.recommendedPositionSizeUnits > 0
-            ? proposal.riskCalc.recommendedPositionSizeUnits
-            : 0.01;
+        const units = proposal.riskCalc.recommendedPositionSizeUnits;
+        if (units <= 0) {
+           deferred.push(proposal);
+           continue;
+        }
         const addedExposure = units * proposal.setup.entryPrice;
         const exposureFractionIfAdded = (runningExposure + addedExposure) / equity;
 
@@ -895,7 +921,7 @@ export default function App() {
       if (accepted.length === 0) return;
 
       const newPositions: Position[] = accepted.map((proposal, index) => {
-        const units = proposal.riskCalc.recommendedPositionSizeUnits > 0 ? proposal.riskCalc.recommendedPositionSizeUnits : 0.01;
+        const units = proposal.riskCalc.recommendedPositionSizeUnits;
 
         const bars = liveMarketStream.getBars(proposal.symbol);
         const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
@@ -926,11 +952,16 @@ export default function App() {
       // Add only the accepted subset to active positions
       setActivePositions((prev) => [...newPositions, ...prev]);
 
-      // Mark accepted proposals as APPROVED; deferred ones stay PENDING_APPROVAL
+      // Mark accepted proposals as APPROVED; deferred ones change to DEFERRED
       const approvedIds = new Set(accepted.map((p) => p.id));
+      const deferredIds = new Set(deferred.map((p) => p.id));
       setProposalQueue((prev) =>
         prev.map((p) =>
-          approvedIds.has(p.id) ? { ...p, status: "APPROVED" } : p
+          approvedIds.has(p.id) 
+            ? { ...p, status: "APPROVED" } 
+            : deferredIds.has(p.id) 
+              ? { ...p, status: "DEFERRED" } 
+              : p
         )
       );
 
@@ -1059,7 +1090,7 @@ export default function App() {
       });
 
       // Update Live Sample Telemetry: What agents analysed, selected, and rejected
-      const evaluatedCount = 28; // 14 instruments * 2 setups
+      const evaluatedCount = 12; // 6 instruments * 2 setups
       const newlySelected = scanResult.newProposals.length;
       const newlyRejected = evaluatedCount - newlySelected;
 
@@ -1116,7 +1147,7 @@ export default function App() {
   };
 
   // Autonomous Continuous Live Market Scanner:
-  // Scans live markets continuously across all 18 multi-asset universe pairs and surfaces highest probability setups
+  // Scans live crypto markets continuously and surfaces highest probability setups
   useEffect(() => {
     if (!isContinuousScanActive) return;
 
@@ -1134,7 +1165,7 @@ export default function App() {
           experiences,
         });
 
-        const evaluatedCount = scanResult.totalSetupsEvaluated || 36;
+        const evaluatedCount = scanResult.totalSetupsEvaluated || 12;
         const newlySelected = scanResult.newProposals.length;
         const newlyRejected = Math.max(0, evaluatedCount - newlySelected);
 
