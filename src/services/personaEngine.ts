@@ -241,7 +241,6 @@ function blendSetups(
   const baseProbability =
     ballots.reduce((acc, b) => acc + b.setup.baseProbability * b.weight, 0) /
     totalWeight;
-
   return {
     ...rep,
     id: `setup-panel-${direction}-${rep.symbol}`,
@@ -280,7 +279,8 @@ function blendSetups(
  */
 export function runPersonaPanel(
   ctx: CandidateEvaluationContext,
-  scoreForArbitration: (setup: StrategySetup) => MetaLabelScore
+  scoreForArbitration: (setup: StrategySetup) => MetaLabelScore,
+  horizon: "intraday" | "swing" = "intraday"
 ): PanelResult {
   for (const suppressor of SUPPRESSOR_PERSONAS) {
     const verdict = suppressor.evaluate(ctx);
@@ -302,10 +302,16 @@ export function runPersonaPanel(
     }
   }
 
+  // Swing (long-horizon) and intraday personas are never pooled into the
+  // same consensus vote — averaging a multi-day macro thesis's stop/target
+  // together with an intraday scalp's produces numbers that serve neither.
+  // Each horizon gets its own independent panel; callers that want both
+  // run this twice.
   const ballots: PersonaBallot[] = [];
   for (const persona of TRADER_PERSONAS) {
     const setup = persona.evaluate(ctx);
-    if (setup?.qualifies) {
+    const setupHorizon = setup?.horizon || "intraday";
+    if (setup?.qualifies && setupHorizon === horizon) {
       ballots.push({
         personaName: persona.name,
         direction: setup.direction,

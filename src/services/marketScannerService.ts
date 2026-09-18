@@ -105,44 +105,71 @@ export async function scanSingleMarket(
         sampleCount: retrieval.sampleCount,
         similarityScore: retrieval.similarityScore,
       });
-    }
+    },
+    "intraday"
   );
 
-  const qualifiedSetups = panel.setup ? [panel.setup] : [];
+  // Swing/long-horizon personas (e.g. macro trend followers) run as a
+  // completely separate panel — their votes never pool with intraday
+  // personas' (see runPersonaPanel), and a symbol can legitimately carry
+  // both an intraday setup and a swing setup at once.
+  const swingPanel = runPersonaPanel(
+    { symbol: symbolConfig.symbol, timeframe: "5m", bars, regime, eventWindowActive: false, promotedModel },
+    (setup) => {
+      const retrieval = retrieveSimilarExperiences(setup, regime, experiences, 15);
+      return computeMetaLabelScore({
+        setup,
+        regime,
+        empiricalWinRate: retrieval.empiricalWinRate,
+        sampleCount: retrieval.sampleCount,
+        similarityScore: retrieval.similarityScore,
+      });
+    },
+    "swing"
+  );
+
+  const candidates: { setup: StrategySetup; panel: typeof panel }[] = [];
+  if (panel.setup) candidates.push({ setup: panel.setup, panel });
+  if (swingPanel.setup) candidates.push({ setup: swingPanel.setup, panel: swingPanel });
+
+  const qualifiedSetups = candidates.map((c) => c.setup);
 
   // Batch Prediction Preparation
   const candidateFeatures: number[][] = [];
 
   if (tfjsModel) {
-     for (const setup of qualifiedSetups) {
-        // Build the same 6 features for TFJS Model (ATR, VolSurge, RSI, VWAP_Dist, TimeOfDay, Slope)
-        // Note: we can use setup.features values
-        const atrScaled = setup.features.atr / price;
-        const volSurgeScaled = Math.min(setup.features.volumeSurgeRatio / 5, 1);
-        const rsiScaled = setup.features.rsi / 100;
-        const vwapDist = setup.features.vwapDistancePercent / 100;
+    for (const setup of qualifiedSetups) {
+      // Build the same 6 features for TFJS Model (ATR, VolSurge, RSI, VWAP_Dist, TimeOfDay, Slope)
+      // Note: we can use setup.features values
+      const atrScaled = setup.features.atr / price;
+      const volSurgeScaled = Math.min(setup.features.volumeSurgeRatio / 5, 1);
+      const rsiScaled = setup.features.rsi / 100;
+      const vwapDist = setup.features.vwapDistancePercent / 100;
 
-        const date = new Date();
-        const timeOfDay = date.getUTCHours() / 24;
+      const date = new Date();
+      const timeOfDay = date.getUTCHours() / 24;
 
-        // estimate slope from regime
-        let slope = 0;
-        if (regime === "trending_bullish") slope = 0.05;
-        else if (regime === "trending_bearish") slope = -0.05;
+      // estimate slope from regime
+      let slope = 0;
+      if (regime === "trending_bullish") slope = 0.05;
+      else if (regime === "trending_bearish") slope = -0.05;
 
-        candidateFeatures.push([atrScaled, volSurgeScaled, rsiScaled, vwapDist, timeOfDay, slope]);
-     }
+      candidateFeatures.push([atrScaled, volSurgeScaled, rsiScaled, vwapDist, timeOfDay, slope]);
+    }
   }
 
   let predictions: number[] = [];
   if (tfjsModel && candidateFeatures.length > 0) {
-     predictions = predictConfidenceBatch(tfjsModel, candidateFeatures);
+    predictions = predictConfidenceBatch(tfjsModel, candidateFeatures);
   }
 
   for (let i = 0; i < qualifiedSetups.length; i++) {
     const setup = qualifiedSetups[i];
+    const sourcePanel = candidates[i].panel;
+
     // 1. Experience Retrieval
     const retrieval = retrieveSimilarExperiences(setup, regime, experiences, 15);
+
     // 2. Meta-Label Scoring
     const metaScore: MetaLabelScore = computeMetaLabelScore({
       setup,
@@ -182,7 +209,12 @@ export async function scanSingleMarket(
     // Must pass edge criteria, risk constraints, and dynamic confidence hurdle
     const requiredConfidence = promotedModel?.optimizedParameters?.minConfidence ?? 0.58;
 
-    if (evAssessment.isPositiveEdge && riskCalc.passedAllChecks && riskCalc.recommendedPositionSizeUnits > 0 && metaScore.confidence >= requiredConfidence) {
+    if (
+      evAssessment.isPositiveEdge &&
+      riskCalc.passedAllChecks &&
+      riskCalc.recommendedPositionSizeUnits > 0 &&
+      metaScore.confidence >= requiredConfidence
+    ) {
       const sanitizedId = symbolConfig.symbol.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
       const uniqueSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
       const now = Date.now();
@@ -201,15 +233,15 @@ export async function scanSingleMarket(
         approvalExpiryMs: expiryMs,
         expiresAt: now + expiryMs,
         approvalToken: `AUTH-${uniqueSuffix}-${Math.floor(1000 + Math.random() * 9000)}`,
-        supervisorNotes: `Trader panel (${panel.supportingPersonas.length}/${panel.totalVotesCast} personas, ${(panel.agreementScore * 100).toFixed(0)}% weighted agreement) detected ${setup.name} in ${regime.replace(/_/g, " ")}. Meta-confidence ${(metaScore.confidence * 100).toFixed(0)}%, net EV +₹${evAssessment.expectedNetValue.toFixed(2)}. Allocated ${riskCalc.recommendedPositionSizeUnits} units (₹${riskCalc.riskDollars.toFixed(0)} risk). Placed in Queue for human authorization.`,
+        supervisorNotes: `Trader panel (${sourcePanel.supportingPersonas.length}/${sourcePanel.totalVotesCast} personas, ${(sourcePanel.agreementScore * 100).toFixed(0)}% weighted agreement) detected ${setup.name} in ${regime.replace(/_/g, " ")}. Meta-confidence ${(metaScore.confidence * 100).toFixed(0)}%, net EV +₹${evAssessment.expectedNetValue.toFixed(2)}. Allocated ${riskCalc.recommendedPositionSizeUnits} units (₹${riskCalc.riskDollars.toFixed(0)} risk). Placed in Queue for human authorization.`,
         marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. Spread is ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}% with depth score ${orderBook.depthScore}/100.`,
         aiRecommendation: metaScore.confidence >= 0.60 ? "TRADE_FAVORED" : "CAUTION",
         modelUsed: "Multi-Agent Trader Panel v3.0",
         failureConditionRisk: `Adverse move against ${setup.direction} invalidating level @ ₹${setup.stopLoss.toFixed(2)}.`,
-        ensembleAgreement: panel.agreementScore,
-        supportingPersonas: panel.supportingPersonas,
-        dissentingPersonas: panel.dissentingPersonas,
-        personaVotesCast: panel.totalVotesCast,
+        ensembleAgreement: sourcePanel.agreementScore,
+        supportingPersonas: sourcePanel.supportingPersonas,
+        dissentingPersonas: sourcePanel.dissentingPersonas,
+        personaVotesCast: sourcePanel.totalVotesCast,
       };
 
       proposals.push(proposal);
@@ -221,14 +253,14 @@ export async function scanSingleMarket(
     symbolName: symbolConfig.name,
     price,
     regime,
-    evaluatedSetupsCount: panel.totalVotesCast,
+    evaluatedSetupsCount: panel.totalVotesCast + swingPanel.totalVotesCast,
     qualifiedSetupsCount: qualifiedSetups.length,
     orderBook,
     proposals,
     summaryNote: panel.vetoed
       ? `Trader panel vetoed this symbol: ${panel.vetoReason}`
       : proposals.length > 0
-      ? `Trader panel reached ${(panel.agreementScore * 100).toFixed(0)}% consensus (${panel.supportingPersonas.length}/${panel.totalVotesCast} personas) meeting positive EV and Kelly risk criteria.`
+      ? `Trader panel reached ${(panel.agreementScore * 100).toFixed(0)}% consensus (${panel.supportingPersonas.length}/${panel.totalVotesCast} personas) meeting positive EV and Kelly risk criteria.${swingPanel.setup ? " Swing panel also qualified a long-horizon setup." : ""}`
       : qualifiedSetups.length > 0
       ? `Panel setup qualified but filtered out by negative net EV or strict risk engine constraints.`
       : `No panel consensus met qualifying criteria in current ${regime.replace(/_/g, " ")} market.`,
@@ -260,8 +292,8 @@ export async function scanAllMarkets(options: ScanMarketOptions): Promise<FullSc
 
   for (const symbolConfig of targetSymbols) {
     let bars = options.barsMap && options.barsMap[symbolConfig.symbol]
-        ? options.barsMap[symbolConfig.symbol]
-        : liveMarketStream.getBars(symbolConfig.symbol);
+      ? options.barsMap[symbolConfig.symbol]
+      : liveMarketStream.getBars(symbolConfig.symbol);
 
     if (!bars || bars.length === 0) {
       bars = generateInitialBars(symbolConfig, 75);

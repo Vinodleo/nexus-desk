@@ -86,13 +86,11 @@ export function buildMacroTrendSetup(ctx: CandidateEvaluationContext, tuning: Ma
   // Macro looks at the 50 and 200 EMAs instead of the fast ones
   const isBullTrend = s.price > s.ema50 && s.ema50 > s.ema200 && s.adx >= tuning.minAdx;
   const isBearTrend = s.price < s.ema50 && s.ema50 < s.ema200 && s.adx >= tuning.minAdx;
-
   const direction: TradeDirection = isBullTrend ? "LONG" : "SHORT";
   const qualifies = (isBullTrend || isBearTrend) && regime !== "high_volatility_choppy" && !eventWindowActive;
 
   const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
   const targetDistance = stopDistance * tuning.targetMult;
-
   const entryPrice = s.price;
   const stopLoss = Number((direction === "LONG" ? s.price - stopDistance : s.price + stopDistance).toFixed(2));
   const takeProfit = Number((direction === "LONG" ? s.price + targetDistance : s.price - targetDistance).toFixed(2));
@@ -154,7 +152,6 @@ export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTu
 
   const isBullTrend = s.ema9 > s.ema21 && s.ema21 > s.ema50 && s.price > s.vwap && s.adx >= tuning.minAdx;
   const isBearTrend = s.ema9 < s.ema21 && s.ema21 < s.ema50 && s.price < s.vwap && s.adx >= tuning.minAdx;
-
   const direction: TradeDirection = isBullTrend ? "LONG" : "SHORT";
   const qualifies = (isBullTrend || isBearTrend) && regime !== "high_volatility_choppy" && !eventWindowActive;
 
@@ -188,6 +185,7 @@ export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTu
     baseProbability: tuning.baseProbability,
     qualifies,
     disqualificationReason,
+    horizon: "swing",
     features: baseFeatures(s, isBullTrend || isBearTrend),
   };
 }

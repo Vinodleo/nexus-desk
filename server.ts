@@ -1,4 +1,4 @@
-import { io } from "socket.io-client";
+import io from "socket.io-client";
 import crypto from "crypto";
 import express, { Request, Response } from "express";
 import path from "path";

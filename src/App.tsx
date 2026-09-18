@@ -228,6 +228,14 @@ export default function App() {
 
   // Positions (initialized to empty flat state per Screenshot 2)
   const [activePositions, setActivePositions] = useState<Position[]>([]);
+  // Price-guard recovery state: when a tick is rejected as an implausible
+  // single-move (see the guard below), we remember it here per position. If
+  // the *next* tick for that position lands close to this remembered value,
+  // two independent ticks have now agreed — strong evidence the feed
+  // genuinely moved (e.g. it just recovered from an outage) rather than one
+  // bad print — so we accept it immediately instead of staying stuck
+  // comparing forever against an increasingly stale reference price.
+  const pendingSuspectPrices = useRef<Map<string, number>>(new Map());
   const activePositionsRef = React.useRef<Position[]>([]);
   React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
@@ -280,7 +288,7 @@ export default function App() {
               // implausible move (e.g. a stale/synthetic fallback price
               // getting mixed in with a real feed) rather than trusting it
               // blindly. A real market — even a volatile crypto pair —
-              // essentially never moves >20% between consecutive ticks;
+              // essentially never moves >25% between consecutive ticks;
               // seeing that is a strong sign the tick is bad data, not a
               // real move, and acting on it risks stopping a position out
               // against a number that was never actually true.
@@ -289,12 +297,34 @@ export default function App() {
                 referencePrice > 0
                   ? Math.abs(realINRPrice - referencePrice) / referencePrice
                   : 0;
-              if (tickDeviation > 0.80) {
-                console.warn(
-                  `[PriceGuard] Rejected implausible tick for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (${(tickDeviation * 100).toFixed(0)}% single-tick move). Position left unchanged.`
-                );
-                nextPositions.push(pos);
-                continue;
+
+              if (tickDeviation > 0.25) {
+                const pending = pendingSuspectPrices.current.get(pos.id);
+                const confirmsPending =
+                  pending !== undefined &&
+                  Math.abs(realINRPrice - pending) / pending < 0.03;
+
+                if (confirmsPending) {
+                  // A second, independent tick landed close to the first
+                  // "suspect" one — that's real agreement, not a fluke.
+                  // Accept it: jump straight to the confirmed price rather
+                  // than slowly re-testing the 25% gate bar by bar.
+                  console.log(
+                    `[PriceGuard] Confirmed recovery for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (two consecutive ticks agreed). Accepting.`
+                  );
+                  pendingSuspectPrices.current.delete(pos.id);
+                } else {
+                  console.warn(
+                    `[PriceGuard] Rejected implausible tick for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (${(tickDeviation * 100).toFixed(0)}% single-tick move). Awaiting confirmation. Position left unchanged.`
+                  );
+                  pendingSuspectPrices.current.set(pos.id, realINRPrice);
+                  nextPositions.push(pos);
+                  continue;
+                }
+              } else if (pendingSuspectPrices.current.has(pos.id)) {
+                // Tick came back within normal range on its own — drop
+                // whatever we were waiting to confirm.
+                pendingSuspectPrices.current.delete(pos.id);
               }
 
               const isLong = pos.direction === "LONG";
@@ -771,7 +801,7 @@ export default function App() {
         unrealizedPnl: 0,
         unrealizedPnlPercent: 0,
         openTime: new Date().toISOString(),
-        expectedHoldingTimeMinutes: 30,
+        expectedHoldingTimeMinutes: proposal.setup.horizon === "swing" ? 4320 : 30,
         metaConfidence: proposal.metaScore.confidence,
         isSelfApproved: isAutonomousSelfApproved,
         highestPrice: proposal.setup.entryPrice,
@@ -869,14 +899,25 @@ export default function App() {
       const heldSymbols = new Set(activePositions.map((p) => p.symbol));
 
       const accepted: TradeProposal[] = [];
-      const deferred: TradeProposal[] = [];
+      const deferred: { proposal: TradeProposal; reason: string }[] = [];
 
       for (const proposal of proposalsToApprove) {
         const units = proposal.riskCalc.recommendedPositionSizeUnits;
         if (units <= 0) {
-           deferred.push(proposal);
+           deferred.push({ proposal, reason: "Position size rounded to 0 after exchange lot-size snapping." });
            continue;
         }
+
+        // Swing/long-horizon setups (e.g. the macro trend-following persona)
+        // always go to manual review, regardless of consensus. These commit
+        // capital for days-to-weeks with much wider stops — a call that size
+        // and duration should get a human's eyes, not a quick-consensus vote
+        // tuned for intraday setups.
+        if (proposal.setup.horizon === "swing") {
+          deferred.push({ proposal, reason: "Swing/long-horizon setup — always requires manual approval, regardless of consensus." });
+          continue;
+        }
+
         const addedExposure = units * proposal.setup.entryPrice;
         const exposureFractionIfAdded = (runningExposure + addedExposure) / equity;
 
@@ -898,7 +939,13 @@ export default function App() {
           agreement < policy.autopilotMinConsensus || votes < policy.autopilotMinPersonaVotes;
 
         if (wouldExceedPositions || wouldExceedExposure || alreadyHeld || wouldExceedHourlyCap || lacksConsensus) {
-          deferred.push(proposal);
+          const reasons: string[] = [];
+          if (wouldExceedPositions) reasons.push(`would exceed max ${policy.maxSimultaneousPositions} simultaneous positions`);
+          if (wouldExceedExposure) reasons.push(`would exceed max ${(policy.maxAllowedExposureFraction * 100).toFixed(0)}% portfolio exposure`);
+          if (alreadyHeld) reasons.push(`already holding a ${proposal.symbol} position`);
+          if (wouldExceedHourlyCap) reasons.push(`would exceed ${policy.autopilotMaxApprovalsPerHour} autonomous approvals/hour`);
+          if (lacksConsensus) reasons.push(`panel consensus ${(agreement * 100).toFixed(0)}% with ${votes} vote(s) — needs ${(policy.autopilotMinConsensus * 100).toFixed(0)}%/${policy.autopilotMinPersonaVotes}`);
+          deferred.push({ proposal, reason: reasons.join("; ") });
           continue;
         }
 
@@ -912,9 +959,9 @@ export default function App() {
       if (deferred.length > 0) {
         logSecurityAudit(
           "AUTOPILOT_DEFERRED",
-          `Self-Approve held back ${deferred.length} proposal(s) pending manual review (position/exposure/hourly-cap/panel-consensus limit): ${deferred
-            .map((p) => p.symbol)
-            .join(", ")}`
+          `Self-Approve held back ${deferred.length} proposal(s) pending manual review: ${deferred
+            .map((d) => `${d.proposal.symbol} (${d.reason})`)
+            .join("; ")}`
         );
       }
 
@@ -939,7 +986,7 @@ export default function App() {
           unrealizedPnl: 0,
           unrealizedPnlPercent: 0,
           openTime: new Date().toISOString(),
-          expectedHoldingTimeMinutes: 30,
+          expectedHoldingTimeMinutes: proposal.setup.horizon === "swing" ? 4320 : 30,
           metaConfidence: proposal.metaScore.confidence,
           isSelfApproved: true,
           highestPrice: proposal.setup.entryPrice,
@@ -952,15 +999,15 @@ export default function App() {
       // Add only the accepted subset to active positions
       setActivePositions((prev) => [...newPositions, ...prev]);
 
-      // Mark accepted proposals as APPROVED; deferred ones change to DEFERRED
+      // Mark accepted proposals as APPROVED; deferred ones change to DEFERRED, carrying why
       const approvedIds = new Set(accepted.map((p) => p.id));
-      const deferredIds = new Set(deferred.map((p) => p.id));
+      const deferredReasonById = new Map(deferred.map((d) => [d.proposal.id, d.reason]));
       setProposalQueue((prev) =>
         prev.map((p) =>
           approvedIds.has(p.id) 
             ? { ...p, status: "APPROVED" } 
-            : deferredIds.has(p.id) 
-              ? { ...p, status: "DEFERRED" } 
+            : deferredReasonById.has(p.id)
+              ? { ...p, status: "DEFERRED", deferralReason: deferredReasonById.get(p.id) } 
               : p
         )
       );

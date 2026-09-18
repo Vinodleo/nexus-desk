@@ -366,6 +366,12 @@ export const QueueTab: React.FC<QueueTabProps> = ({
                   net after 14 bps round-trip friction.
                 </div>
 
+                {proposal.status === "DEFERRED" && proposal.deferralReason && (
+                  <div className="text-[10px] font-mono text-amber-300 bg-amber-950/30 border border-amber-800/40 rounded-lg px-2.5 py-1.5">
+                    ⏸ Held by autopilot: {proposal.deferralReason}
+                  </div>
+                )}
+
                 {/* Key Execution Numbers: SIZE, STOP, TARGET */}
                 <div className="grid grid-cols-3 gap-2 py-2 border-y border-[#1c1c24]">
                   <div>

@@ -17,7 +17,8 @@ export type TradeDirection = "LONG" | "SHORT";
 export type DecisionMode = "MANUAL" | "SEMI_AUTO" | "AUTO_WITHIN_LIMITS";
 
 export interface MarketBar {
-  time: string; timestampMs?: number;
+  time: string;
+  timestampMs?: number;
   open: number;
   high: number;
   low: number;
@@ -63,6 +64,8 @@ export interface StrategySetup {
   baseProbability: number;
   qualifies: boolean;
   disqualificationReason?: string;
+  /** Intraday (minutes-to-hours) vs swing (days-to-weeks) — defaults to intraday when omitted. Drives holding-time estimates, consensus pooling, and autopilot eligibility. */
+  horizon?: "intraday" | "swing";
   features: {
     emaAlignment: boolean;
     volumeSurgeRatio: number;
@@ -165,6 +168,8 @@ export interface TradeProposal {
   supportingPersonas?: string[];
   dissentingPersonas?: string[];
   personaVotesCast?: number;
+  /** Why autopilot passed this one to manual review instead of self-approving it. Unset means it hasn't been evaluated by autopilot yet, or it was approved. */
+  deferralReason?: string;
 }
 
 export interface Order {
