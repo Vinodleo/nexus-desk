@@ -85,7 +85,6 @@ export async function scanSingleMarket(
     options.failureState.simulateOrderBookThinLiquidity
   );
   const regime: RegimeType = classifyRegime(bars);
-
   const promotedModel = loadStoredPromotedLabModel();
   const experiences = options.experiences || generateInitialExperienceDatabase();
   const proposals: TradeProposal[] = [];
@@ -131,12 +130,10 @@ export async function scanSingleMarket(
   const candidates: { setup: StrategySetup; panel: typeof panel }[] = [];
   if (panel.setup) candidates.push({ setup: panel.setup, panel });
   if (swingPanel.setup) candidates.push({ setup: swingPanel.setup, panel: swingPanel });
-
   const qualifiedSetups = candidates.map((c) => c.setup);
 
   // Batch Prediction Preparation
   const candidateFeatures: number[][] = [];
-
   if (tfjsModel) {
     for (const setup of qualifiedSetups) {
       // Build the same 6 features for TFJS Model (ATR, VolSurge, RSI, VWAP_Dist, TimeOfDay, Slope)
@@ -145,7 +142,6 @@ export async function scanSingleMarket(
       const volSurgeScaled = Math.min(setup.features.volumeSurgeRatio / 5, 1);
       const rsiScaled = setup.features.rsi / 100;
       const vwapDist = setup.features.vwapDistancePercent / 100;
-
       const date = new Date();
       const timeOfDay = date.getUTCHours() / 24;
 
@@ -189,7 +185,8 @@ export async function scanSingleMarket(
       setup,
       metaScore,
       orderBook.spread,
-      orderBook.depthScore
+      orderBook.depthScore,
+      policy
     );
 
     // 4. Deterministic Risk Engine & Bounded Kelly Sizing
@@ -209,12 +206,7 @@ export async function scanSingleMarket(
     // Must pass edge criteria, risk constraints, and dynamic confidence hurdle
     const requiredConfidence = promotedModel?.optimizedParameters?.minConfidence ?? 0.58;
 
-    if (
-      evAssessment.isPositiveEdge &&
-      riskCalc.passedAllChecks &&
-      riskCalc.recommendedPositionSizeUnits > 0 &&
-      metaScore.confidence >= requiredConfidence
-    ) {
+    if (evAssessment.isPositiveEdge && riskCalc.passedAllChecks && riskCalc.recommendedPositionSizeUnits > 0 && metaScore.confidence >= requiredConfidence) {
       const sanitizedId = symbolConfig.symbol.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
       const uniqueSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
       const now = Date.now();
@@ -243,7 +235,6 @@ export async function scanSingleMarket(
         dissentingPersonas: sourcePanel.dissentingPersonas,
         personaVotesCast: sourcePanel.totalVotesCast,
       };
-
       proposals.push(proposal);
     }
   }
@@ -253,7 +244,8 @@ export async function scanSingleMarket(
     symbolName: symbolConfig.name,
     price,
     regime,
-    evaluatedSetupsCount: panel.totalVotesCast + swingPanel.totalVotesCast,
+    evaluatedSetupsCount:
+      panel.totalVotesCast + swingPanel.totalVotesCast,
     qualifiedSetupsCount: qualifiedSetups.length,
     orderBook,
     proposals,
@@ -273,7 +265,10 @@ export async function scanSingleMarket(
  */
 export async function scanAllMarkets(options: ScanMarketOptions): Promise<FullScanReport> {
   const targetSymbols = options.symbols
-    ? SUPPORTED_SYMBOLS.filter((s) => options.symbols!.includes(s.symbol))
+    ? SUPPORTED_SYMBOLS.filter((s) => 
+        options.symbols!.includes(s.symbol) || 
+        (options.symbols!.includes("XPR/INR") && s.symbol === "XRP/INR")
+      )
     : SUPPORTED_SYMBOLS;
 
   const resultsBySymbol: MarketScanResult[] = [];

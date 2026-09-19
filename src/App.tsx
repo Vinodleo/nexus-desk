@@ -235,7 +235,7 @@ export default function App() {
   // genuinely moved (e.g. it just recovered from an outage) rather than one
   // bad print — so we accept it immediately instead of staying stuck
   // comparing forever against an increasingly stale reference price.
-  const pendingSuspectPrices = useRef<Map<string, number>>(new Map());
+  const pendingSusPrices = useRef<Map<string, number>>(new Map());
   const activePositionsRef = React.useRef<Position[]>([]);
   React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
@@ -299,7 +299,7 @@ export default function App() {
                   : 0;
 
               if (tickDeviation > 0.25) {
-                const pending = pendingSuspectPrices.current.get(pos.id);
+                const pending = pendingSusPrices.current.get(pos.id);
                 const confirmsPending =
                   pending !== undefined &&
                   Math.abs(realINRPrice - pending) / pending < 0.03;
@@ -312,19 +312,19 @@ export default function App() {
                   console.log(
                     `[PriceGuard] Confirmed recovery for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (two consecutive ticks agreed). Accepting.`
                   );
-                  pendingSuspectPrices.current.delete(pos.id);
+                  pendingSusPrices.current.delete(pos.id);
                 } else {
                   console.warn(
                     `[PriceGuard] Rejected implausible tick for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (${(tickDeviation * 100).toFixed(0)}% single-tick move). Awaiting confirmation. Position left unchanged.`
                   );
-                  pendingSuspectPrices.current.set(pos.id, realINRPrice);
+                  pendingSusPrices.current.set(pos.id, realINRPrice);
                   nextPositions.push(pos);
                   continue;
                 }
-              } else if (pendingSuspectPrices.current.has(pos.id)) {
+              } else if (pendingSusPrices.current.has(pos.id)) {
                 // Tick came back within normal range on its own — drop
                 // whatever we were waiting to confirm.
-                pendingSuspectPrices.current.delete(pos.id);
+                pendingSusPrices.current.delete(pos.id);
               }
 
               const isLong = pos.direction === "LONG";
@@ -1144,7 +1144,7 @@ export default function App() {
       }
 
       // Prioritize Crypto Markets
-      const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR"];
+      const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR", "XRP/INR"];
       const isCryptoFocus = Math.random() < 0.8;
 
       const scanResult = await scanAllMarkets({
@@ -1222,7 +1222,7 @@ export default function App() {
       try {
         // Prioritize Crypto Markets (80% of scans)
         const isCryptoFocus = Math.random() < 0.8;
-        const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR"];
+        const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR", "XRP/INR"];
 
         const scanResult = await scanAllMarkets({
           symbols: isCryptoFocus ? cryptoSymbols : undefined,

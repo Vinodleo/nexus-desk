@@ -18,7 +18,19 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
   { symbol: "JUP/INR", name: "Jupiter / INR", basePrice: 23.55, tickSize: 0.01, lotSize: 100, volatility: 0.72, correlatedGroup: "CRYPTO_ALT" },
   { symbol: "AVAX/INR", name: "Avalanche / INR", basePrice: 2652.0, tickSize: 0.5, lotSize: 10, volatility: 0.68, correlatedGroup: "CRYPTO_ALT" },
   { symbol: "NEAR/INR", name: "Near Protocol / INR", basePrice: 459.0, tickSize: 0.1, lotSize: 50, volatility: 0.68, correlatedGroup: "CRYPTO_ALT" },
+  // XRP/INR is consistently one of CoinDCX's top-5 pairs by volume (alongside
+  // BTC/ETH/SOL) — a liquid, real INR market.
+  { symbol: "XRP/INR", name: "XRP / INR", basePrice: 139.9, tickSize: 0.05, lotSize: 20, volatility: 0.55, correlatedGroup: "CRYPTO_MAJOR" },
 ];
+
+export function getSymbolConfig(symbolOrCfg: SymbolConfig | string): SymbolConfig {
+  if (typeof symbolOrCfg !== "string") return symbolOrCfg;
+  const normalized = symbolOrCfg === "XPR/INR" ? "XRP/INR" : symbolOrCfg;
+  return (
+    SUPPORTED_SYMBOLS.find((s) => s.symbol === normalized) ||
+    SUPPORTED_SYMBOLS[0]
+  );
+}
 
 // Helper: Calculate EMA array
 function calculateEMA(values: number[], period: number): number[] {
@@ -40,7 +52,6 @@ function calculateRSI(closes: number[], period = 14): number[] {
   const rsi: number[] = [];
   let gains = 0;
   let losses = 0;
-
   for (let i = 1; i <= period && i < closes.length; i++) {
     const diff = closes[i] - closes[i - 1];
     if (diff >= 0) gains += diff;
@@ -49,7 +60,6 @@ function calculateRSI(closes: number[], period = 14): number[] {
   let avgGain = gains / period;
   let avgLoss = losses / period;
   rsi.push(100 - 100 / (1 + (avgLoss === 0 ? 100 : avgGain / avgLoss)));
-
   for (let i = period + 1; i < closes.length; i++) {
     const diff = closes[i] - closes[i - 1];
     const gain = diff > 0 ? diff : 0;
@@ -59,7 +69,6 @@ function calculateRSI(closes: number[], period = 14): number[] {
     const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
     rsi.push(100 - 100 / (1 + rs));
   }
-
   // Prepend padding
   while (rsi.length < closes.length) {
     rsi.unshift(50);
@@ -69,17 +78,12 @@ function calculateRSI(closes: number[], period = 14): number[] {
 
 // Generate realistic synthetic initial history
 export function generateInitialBars(symbolOrCfg: SymbolConfig | string, count = 300): MarketBar[] {
-  const symbolCfg =
-    typeof symbolOrCfg === "string"
-      ? SUPPORTED_SYMBOLS.find((s) => s.symbol === symbolOrCfg) || SUPPORTED_SYMBOLS[0]
-      : symbolOrCfg;
-
+  const symbolCfg = getSymbolConfig(symbolOrCfg);
   const bars: MarketBar[] = [];
   let currentPrice = symbolCfg.basePrice;
   const now = Date.now();
   const stepMs = 5 * 60 * 1000; // 5-minute bars
   const startMs = now - count * stepMs;
-
   let cumulativeVolumeWeight = 0;
   let cumulativeVolume = 0;
 
@@ -93,12 +97,10 @@ export function generateInitialBars(symbolOrCfg: SymbolConfig | string, count = 
     const low = Number((Math.min(open, open + drift) - deltaL).toFixed(2));
     const close = Number((open + drift).toFixed(2));
     const volume = Math.floor(500 + Math.random() * 2500);
-
     const typicalPrice = (high + low + close) / 3;
     cumulativeVolumeWeight += typicalPrice * volume;
     cumulativeVolume += volume;
     const vwap = Number((cumulativeVolumeWeight / cumulativeVolume).toFixed(2));
-
     bars.push({
       time: barTime,
       open,
@@ -140,11 +142,7 @@ export function generateInitialBars(symbolOrCfg: SymbolConfig | string, count = 
 
 // Generate the next single bar given prior history
 export function generateNextBar(bars: MarketBar[], symbolOrCfg: SymbolConfig | string): MarketBar {
-  const symbolCfg =
-    typeof symbolOrCfg === "string"
-      ? SUPPORTED_SYMBOLS.find((s) => s.symbol === symbolOrCfg) || SUPPORTED_SYMBOLS[0]
-      : symbolOrCfg;
-
+  const symbolCfg = getSymbolConfig(symbolOrCfg);
   const prev = bars[bars.length - 1];
   const prevClose = prev ? prev.close : symbolCfg.basePrice;
   const drift = (Math.random() - 0.48) * 0.0035 * prevClose;
@@ -155,7 +153,6 @@ export function generateNextBar(bars: MarketBar[], symbolOrCfg: SymbolConfig | s
   const low = Number((Math.min(open, open + drift) - deltaL).toFixed(2));
   const close = Number((open + drift).toFixed(2));
   const volume = Math.floor(600 + Math.random() * 2400);
-
   const prevVwap = prev?.vwap || close;
   const vwap = Number(((prevVwap * 0.95) + (close * 0.05)).toFixed(2));
 
@@ -179,7 +176,6 @@ export function generateNextBar(bars: MarketBar[], symbolOrCfg: SymbolConfig | s
   const rsi = Number(Math.min(85, Math.max(15, prevRsi + (change > 0 ? 1.8 : -1.8) + (Math.random() - 0.5))).toFixed(1));
   const atr = Number(Math.max(high - low, close * 0.0035).toFixed(2));
   const dev = ema21 * 0.012;
-
   const now = new Date();
   const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -208,28 +204,21 @@ export function generateOrderBook(currentPrice: number, tickSize = 0.05, thinLiq
   const spreadMultiplier = thinLiquidity ? 4 : 1;
   const spread = Number((tickSize * (2 * spreadMultiplier)).toFixed(2));
   const halfSpread = spread / 2;
-
   const bids = [];
   const asks = [];
-
   let cumBid = 0;
   let cumAsk = 0;
-
   for (let i = 1; i <= 6; i++) {
     const bidPrice = Number((currentPrice - halfSpread - (i - 1) * tickSize * 2).toFixed(2));
     const askPrice = Number((currentPrice + halfSpread + (i - 1) * tickSize * 2).toFixed(2));
-
     const sizeBase = thinLiquidity ? 0.2 : 2.5;
     const bidSize = Number((sizeBase * (1 + Math.random() * 3) * i).toFixed(2));
     const askSize = Number((sizeBase * (1 + Math.random() * 3) * i).toFixed(2));
-
     cumBid += bidSize;
     cumAsk += askSize;
-
     bids.push({ price: bidPrice, size: bidSize, total: Number(cumBid.toFixed(2)) });
     asks.push({ price: askPrice, size: askSize, total: Number(cumAsk.toFixed(2)) });
   }
-
   const depthScore = thinLiquidity ? 22 : 88;
 
   return {
@@ -245,7 +234,6 @@ export function generateOrderBook(currentPrice: number, tickSize = 0.05, thinLiq
 export function classifyRegime(barOrBars: MarketBar | MarketBar[]): RegimeType {
   const bar = Array.isArray(barOrBars) ? barOrBars[barOrBars.length - 1] : barOrBars;
   if (!bar) return "ranging_wide";
-
   const adx = bar.adx || 20;
   const atr = bar.atr || 1;
   const atrPercent = (atr / bar.close) * 100;
@@ -266,22 +254,18 @@ export function classifyRegime(barOrBars: MarketBar | MarketBar[]): RegimeType {
 
 export function decorateBarsWithIndicators(bars: MarketBar[]): MarketBar[] {
   if (bars.length === 0) return [];
-
   const closes = bars.map((b) => b.close);
   const ema9 = calculateEMA(closes, 9);
   const ema21 = calculateEMA(closes, 21);
   const ema50 = calculateEMA(closes, 50);
   const ema200 = calculateEMA(closes, 200);
   const rsi = calculateRSI(closes, 14);
-
   let cumulativeVolumeWeight = 0;
   let cumulativeVolume = 0;
-
   return bars.map((bar, idx) => {
     const c = bar.close;
     const atr = Number((bar.high - bar.low).toFixed(2));
     const dev = (ema21[idx] || c) * 0.012;
-
     const typicalPrice = (bar.high + bar.low + bar.close) / 3;
     cumulativeVolumeWeight += typicalPrice * bar.volume;
     cumulativeVolume += bar.volume;

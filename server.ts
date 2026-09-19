@@ -152,7 +152,7 @@ app.get("/api/stream/coindcx", (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
-  const activeMarkets = ['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR', 'JUPINR'];
+  const activeMarkets = ['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR', 'JUPINR', 'XRPINR'];
 
   const pollInterval = setInterval(async () => {
     try {
@@ -163,7 +163,9 @@ app.get("/api/stream/coindcx", (req, res) => {
       data.forEach((ticker: any) => {
         if (activeMarkets.includes(ticker.market)) {
           // Format the symbol back to UI expectations (e.g. BTCINR -> BTC/INR)
-          const formattedSym = ticker.market.replace('USDT', '/USDT');
+          const formattedSym = ticker.market.endsWith('INR')
+            ? ticker.market.replace('INR', '/INR')
+            : ticker.market.replace('USDT', '/USDT');
           updates[formattedSym] = {
             c: parseFloat(ticker.last_price),
             h: parseFloat(ticker.high),
@@ -246,7 +248,6 @@ function cleanErrorMessage(rawMsg: string): string {
 
 // Circuit breaker for Quota / Rate Limits to prevent repeated failures
 let quotaCooldownUntil = 0;
-
 function isQuotaExhaustedError(err: any): boolean {
   const msg = (err?.message || "").toLowerCase();
   const status = err?.status || err?.statusCode || err?.code;
@@ -270,16 +271,13 @@ async function executeResilientAiGeneration(params: {
   if (!ai) {
     throw new Error("GEMINI_API_KEY is not configured");
   }
-
   // If quota is currently in cooldown, skip API call and trigger deterministic fallback immediately
   if (Date.now() < quotaCooldownUntil) {
     throw new Error("QUOTA_COOLDOWN_ACTIVE");
   }
-
   // Model cascade: try primary first, fallback to lightweight model
   const modelsToTry = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
   let lastError: any = null;
-
   for (const model of modelsToTry) {
     try {
       const response = await withTimeout(
@@ -307,7 +305,6 @@ async function executeResilientAiGeneration(params: {
       }
     }
   }
-
   throw lastError || new Error("All AI models currently busy or unreachable");
 }
 
@@ -335,7 +332,6 @@ app.get("/api/coindcx/balances", async (req, res) => {
       body: JSON.stringify(body)
     });
     const data: any = await response.json();
-
     if (!response.ok) {
       return res.status(response.status).json({ success: false, error: data.message || "Failed to fetch balances", data });
     }
@@ -361,9 +357,9 @@ app.post("/api/execute-trade", async (req, res) => {
   const apiKey = process.env.COINDCX_API_KEY;
   const apiSecret = process.env.COINDCX_API_SECRET;
   if (!apiKey || !apiSecret) {
-    return res.status(401).json({ 
-      success: false, 
-      error: "Missing CoinDCX API Keys in Settings." 
+    return res.status(401).json({
+      success: false,
+      error: "Missing CoinDCX API Keys in Settings."
     });
   }
   // Fail-safe default: a request only goes live if isPaperTrade is exactly
@@ -468,6 +464,7 @@ app.post("/api/agent/market-analysis", async (req: Request, res: Response) => {
   const swingContext = hasSwingData
     ? `- Recent swing high (structure resistance): ${recentSwingHigh}\n- Recent swing low (structure support): ${recentSwingLow}`
     : `- No recent swing-price history was provided; do not assert specific support/resistance levels with confidence.`;
+
   const prompt = `You are the Market Analysis Agent for a statistical trading bot (v2.0).
 Analyze the following market conditions for ${symbol || "NIFTY"} (${timeframe || "5m"}):
 - Current Price: ${price}
@@ -484,6 +481,7 @@ Provide a strict technical and regime assessment in JSON format:
   "regimeSummary": "concise 1-2 sentence description",
   "tradingRecommendation": "TRADE_FAVORED" | "CAUTION" | "AVOID"
 }`;
+
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -497,6 +495,7 @@ Provide a strict technical and regime assessment in JSON format:
     },
     required: ["regime", "trendStrength", "volatilityState", "keySupport", "keyResistance", "regimeSummary", "tradingRecommendation"],
   };
+
   try {
     const result = await executeResilientAiGeneration({
       contents: prompt,
@@ -583,6 +582,7 @@ Return JSON format:
   "expectedHoldingTimeMinutes": number,
   "executiveSummary": "Concise 2-sentence rationale"
 }`;
+
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -595,6 +595,7 @@ Return JSON format:
     },
     required: ["decision", "metaConfidenceScore", "confidenceRationale", "failureConditionRisk", "expectedHoldingTimeMinutes", "executiveSummary"],
   };
+
   try {
     const result = await executeResilientAiGeneration({
       contents: prompt,
@@ -654,6 +655,7 @@ Return JSON:
   "metaModelCalibrationDelta": number between -0.2 and 0.2 (adjustment to future confidence under these conditions),
   "autopsySummary": "1-2 sentence crisp takeaway"
 }`;
+
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -672,6 +674,7 @@ Return JSON:
     },
     required: ["classification", "rootCause", "recurringConditions", "learningTags", "metaModelCalibrationDelta", "autopsySummary"],
   };
+
   try {
     const result = await executeResilientAiGeneration({
       contents: prompt,
@@ -725,6 +728,7 @@ async function startServer() {
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Self-Learning Trading Bot v2.0 Server running on port ${PORT}`);
   });
+
   // Attach WebSocket server for live Binance Ticker data
   const wss = new WebSocketServer({ server });
   globalWss = wss;
@@ -757,7 +761,7 @@ async function startServer() {
     return sym;
   }
 
-  const TRACKED_COINS = ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'JUP'];
+  const TRACKED_COINS = ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'JUP', 'XRP'];
   const currentPrices: Record<string, number> = {};
   // Symbols we've had to fall back away from real data for — surfaced here
   // so it's obvious in the server log which pairs, if any, aren't actually
@@ -771,7 +775,6 @@ async function startServer() {
       dcxSocket.emit("join", { channelName: `${pair}@prices` });
       dcxSocket.emit("join", { channelName: `${pair}@trades` });
     });
-
     // Log once, 10s after connecting, which tracked symbols never received
     // a single real tick — the concrete symptom the "fix the currencies
     // that aren't live" ask was about.
@@ -791,7 +794,6 @@ async function startServer() {
   function broadcastRealTick(rawSymbol: string, rawPrice: any, source: string) {
     const price = parseFloat(rawPrice);
     if (!rawSymbol || Number.isNaN(price)) return;
-
     const sym = normalizeCoinDCXSymbol(rawSymbol);
     if (!TRACKED_COINS.some(c => sym.startsWith(c))) return; // ignore pairs we don't trade
 
@@ -799,7 +801,6 @@ async function startServer() {
       console.log(`[CoinDCX WS] First real tick for ${sym} via ${source}: ${price}`);
       staleSymbols.delete(sym);
     }
-
     currentPrices[sym] = price;
 
     wss.clients.forEach((client) => {

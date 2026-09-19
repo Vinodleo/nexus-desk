@@ -19,9 +19,9 @@ export class LiveMarketStreamService {
   constructor() {}
 
   async initialize() {
-    const activeSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "AVAX/INR", "NEAR/INR", "JUP/INR"];
+    const activeSymbols = SUPPORTED_SYMBOLS.map((s) => s.symbol);
     
-    console.log("Fetching initial live data for streaming...");
+    console.log("Fetching initial live data for streaming...", activeSymbols);
     try {
       // 1. Fetch current CoinDCX prices to base our initial chart
       const res = await fetch('/api/coindcx/ticker');
@@ -156,7 +156,8 @@ export class LiveMarketStreamService {
 
 
   getBars(symbol: string): MarketBar[] | null {
-    return this.marketData.get(symbol) || null;
+    const normalized = symbol === "XPR/INR" ? "XRP/INR" : symbol;
+    return this.marketData.get(normalized) || null;
   }
   
   getActiveSymbols(): string[] {
