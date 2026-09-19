@@ -29,7 +29,7 @@ let zerodhaAccessToken: string | null = null;
 app.post("/api/zerodha/init", (req: Request, res: Response) => {
   const { apiKey } = req.body;
   if (!apiKey) return res.status(400).json({ error: "Missing API Key" });
-  
+
   // Initialize the SDK
   kiteInstance = new KiteConnect({
     api_key: apiKey
@@ -41,7 +41,7 @@ app.post("/api/zerodha/init", (req: Request, res: Response) => {
 
 app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
   const { requestToken, apiSecret } = req.body;
-  
+
   if (!kiteInstance) {
     return res.status(400).json({ error: "Kite instance not initialized" });
   }
@@ -49,7 +49,7 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
   try {
     const response = await kiteInstance.generateSession(requestToken, apiSecret);
     zerodhaAccessToken = response.access_token;
-    
+
     // Set the access token in the instance for future API calls (orders, positions)
     kiteInstance.setAccessToken(zerodhaAccessToken);
 
@@ -57,7 +57,7 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
     if (kiteTickerInstance) {
       kiteTickerInstance.disconnect();
     }
-    
+
     // Use the api_key and newly minted access_token
     kiteTickerInstance = new KiteTicker({
       api_key: kiteInstance.api_key,
@@ -75,14 +75,14 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
     kiteTickerInstance.on("ticks", (ticks: any[]) => {
       if (!globalWss) return;
       const updates: Record<string, number> = {};
-      
+
       ticks.forEach(tick => {
         const symbol = instrumentMap[tick.instrument_token];
         if (symbol && tick.last_price) {
           updates[symbol] = tick.last_price;
         }
       });
-      
+
       if (Object.keys(updates).length > 0) {
         // Broadcast to all connected clients
         globalWss.clients.forEach(client => {
@@ -102,13 +102,13 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
 
     kiteTickerInstance.on("error", (e: any) => console.error("Kite Ticker Error:", e));
     kiteTickerInstance.on("close", () => console.log("Kite Ticker Closed"));
-    
+
     kiteTickerInstance.connect();
 
-    return res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       access_token: zerodhaAccessToken,
-      public_token: response.public_token 
+      public_token: response.public_token
     });
   } catch (err: any) {
     console.error("Zerodha session error:", err.message);
@@ -119,7 +119,7 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
 // Mock order placement route
 app.post("/api/zerodha/order", async (req: Request, res: Response) => {
   const { symbol, quantity, transaction_type, order_type, price } = req.body;
-  
+
   if (!kiteInstance || !zerodhaAccessToken) {
     return res.status(401).json({ error: "Unauthorized. Please login to Zerodha first." });
   }
@@ -135,10 +135,10 @@ app.post("/api/zerodha/order", async (req: Request, res: Response) => {
     //   product: "MIS",
     //   price: price
     // });
-    
+
     // Mocking the success for safety right now
     const orderId = "ZRD-" + Math.random().toString(36).substr(2, 9).toUpperCase();
-    
+
     return res.json({ success: true, order_id: orderId });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -158,7 +158,7 @@ app.get("/api/stream/coindcx", (req, res) => {
     try {
       const response = await fetch('https://public.coindcx.com/exchange/ticker');
       const data: any = await response.json();
-      
+
       const updates: Record<string, any> = {};
       data.forEach((ticker: any) => {
         if (activeMarkets.includes(ticker.market)) {
@@ -173,7 +173,7 @@ app.get("/api/stream/coindcx", (req, res) => {
           };
         }
       });
-      
+
       res.write(`data: ${JSON.stringify(updates)}\n\n`);
     } catch (e: any) {
       console.error("CoinDCX Poll Error:", e.message);
@@ -223,7 +223,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
       reject(new Error(`AI Agent request timed out after ${timeoutMs}ms (Fail-Closed triggered)`));
     }, timeoutMs);
   });
-
   return Promise.race([promise, timeoutPromise]).finally(() => {
     clearTimeout(timer);
   });
@@ -313,7 +312,6 @@ async function executeResilientAiGeneration(params: {
 }
 
 // 1. Health endpoint
-
 app.get("/api/coindcx/balances", async (req, res) => {
   try {
     const apiKey = process.env.COINDCX_API_KEY;
@@ -337,8 +335,9 @@ app.get("/api/coindcx/balances", async (req, res) => {
       body: JSON.stringify(body)
     });
     const data: any = await response.json();
+
     if (!response.ok) {
-       return res.status(response.status).json({ success: false, error: data.message || "Failed to fetch balances", data });
+      return res.status(response.status).json({ success: false, error: data.message || "Failed to fetch balances", data });
     }
     res.json({ success: true, balances: data });
   } catch (error) {
@@ -440,7 +439,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
 
 // 2. Market Analysis Agent endpoint
 app.post("/api/agent/market-analysis", async (req: Request, res: Response) => {
-  const { symbol, timeframe, price, indicators, simulateTimeout } = req.body;
+  const { symbol, timeframe, price, indicators, simulateTimeout, recentSwingHigh, recentSwingLow } = req.body;
   if (simulateTimeout) {
     // Failure injection simulation for Section 8 & 17
     setTimeout(() => {
@@ -460,10 +459,21 @@ app.post("/api/agent/market-analysis", async (req: Request, res: Response) => {
     }, 1200);
     return;
   }
+  // Real recent swing high/low, when the caller has them (computed from
+  // actual bars) — grounds support/resistance in real market structure
+  // instead of asking the model to invent levels from a bare price number.
+  // These are also used to OVERRIDE whatever numeric levels come back
+  // below, so accuracy doesn't depend on the model reading them correctly.
+  const hasSwingData = typeof recentSwingHigh === "number" && typeof recentSwingLow === "number";
+  const swingContext = hasSwingData
+    ? `- Recent swing high (structure resistance): ${recentSwingHigh}\n- Recent swing low (structure support): ${recentSwingLow}`
+    : `- No recent swing-price history was provided; do not assert specific support/resistance levels with confidence.`;
   const prompt = `You are the Market Analysis Agent for a statistical trading bot (v2.0).
 Analyze the following market conditions for ${symbol || "NIFTY"} (${timeframe || "5m"}):
 - Current Price: ${price}
 - Indicators: ${JSON.stringify(indicators)}
+${swingContext}
+Base keySupport/keyResistance on the recent swing high/low above when provided, not a generic percentage band.
 Provide a strict technical and regime assessment in JSON format:
 {
   "regime": "trending_bullish" | "trending_bearish" | "ranging_tight" | "ranging_wide" | "high_volatility_choppy",
@@ -495,6 +505,8 @@ Provide a strict technical and regime assessment in JSON format:
     });
     return res.json({
       ...result.data,
+      // Real structure overrides the model's numeric guess whenever we have it.
+      ...(hasSwingData ? { keySupport: recentSwingLow, keyResistance: recentSwingHigh } : {}),
       modelUsed: result.modelUsed,
       isAiGenerated: true,
       failClosed: false,
@@ -514,8 +526,10 @@ Provide a strict technical and regime assessment in JSON format:
       regime,
       trendStrength: Math.round(adx),
       volatilityState: indicators?.atrPercent > 1.5 ? "elevated" : "moderate",
-      keySupport: Number((currentPrice * 0.985).toFixed(2)),
-      keyResistance: Number((currentPrice * 1.015).toFixed(2)),
+      // Real swing structure when available; otherwise the old percentage-band
+      // guess, clearly a fallback rather than passed off as precise.
+      keySupport: hasSwingData ? recentSwingLow : Number((currentPrice * 0.985).toFixed(2)),
+      keyResistance: hasSwingData ? recentSwingHigh : Number((currentPrice * 1.015).toFixed(2)),
       regimeSummary: `Fail-Closed Deterministic Protection: Technical assessment indicates ${regime} with ADX at ${Math.round(adx)} and RSI at ${Math.round(rsi)}. Guardrails enforced.`,
       tradingRecommendation: adx > 25 ? "CAUTION" : "AVOID",
       failClosed: true,
@@ -707,71 +721,114 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
-  
+
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Self-Learning Trading Bot v2.0 Server running on port ${PORT}`);
   });
   // Attach WebSocket server for live Binance Ticker data
   const wss = new WebSocketServer({ server });
   globalWss = wss;
-  
+
   // Cache the latest prices
   const latestPrices: Record<string, number> = {};
   // Connect to Binance live ticker stream
-  
+
   // We use the same CoinDCX Polling logic for the top ticker tape
-  
+
   // High-Frequency CoinDCX Socket.io Relay
-  
+
+  // CoinDCX's streaming server (per its published AsyncAPI spec) only
+  // speaks the Socket.IO v2 wire protocol — package.json now pins
+  // socket.io-client to 2.4.0 to match. Public market channels must be of
+  // the form <EXCHANGE>-<BASE>_<QUOTE>@<topic> (e.g. I-BTC_INR@prices);
+  // a bare "I-BTC_INR" with no @topic matches nothing server-side.
   const dcxSocket = io("wss://stream.coindcx.com", {
     transports: ["websocket"],
-    reconnection: true 
+    reconnection: true
   });
-  
+
   function normalizeCoinDCXSymbol(s: string) {
-    let sym = s.replace('INR', '/INR');
-    if (sym.startsWith('I-') || sym.startsWith('B-')) sym = sym.substring(2);
-    sym = sym.replace('_', '');
+    let sym = s.replace(/^[A-Za-z]+-/, ''); // strip exchange prefix: I-, B-, HB-, KC-
+    if (sym.includes('_')) {
+      sym = sym.replace('_INR', '/INR').replace('_USDT', '/USDT').replace('_', '/');
+    } else {
+      sym = sym.replace('INR', '/INR').replace('USDT', '/USDT');
+    }
     return sym;
   }
 
+  const TRACKED_COINS = ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'JUP'];
   const currentPrices: Record<string, number> = {};
+  // Symbols we've had to fall back away from real data for — surfaced here
+  // so it's obvious in the server log which pairs, if any, aren't actually
+  // getting live CoinDCX data rather than failing silently.
+  const staleSymbols = new Set<string>(TRACKED_COINS.map(c => `${c}/INR`));
+
   dcxSocket.on("connect", () => {
-    dcxSocket.emit("join", { channelName: "coindcx" });
-    ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'JUP'].forEach(sym => {
-      dcxSocket.emit("join", { channelName: `I-${sym}_INR` });
+    console.log("[CoinDCX WS] connected — joining channels");
+    TRACKED_COINS.forEach(sym => {
+      const pair = `I-${sym}_INR`;
+      dcxSocket.emit("join", { channelName: `${pair}@prices` });
+      dcxSocket.emit("join", { channelName: `${pair}@trades` });
     });
+
+    // Log once, 10s after connecting, which tracked symbols never received
+    // a single real tick — the concrete symptom the "fix the currencies
+    // that aren't live" ask was about.
+    setTimeout(() => {
+      if (staleSymbols.size > 0) {
+        console.warn(`[CoinDCX WS] No real ticks received yet for: ${Array.from(staleSymbols).join(", ")}`);
+      } else {
+        console.log("[CoinDCX WS] Real ticks confirmed for all tracked symbols.");
+      }
+    }, 10000);
   });
-  dcxSocket.on("ticker", (data) => {
+
+  dcxSocket.on("connect_error", (err: any) => {
+    console.error("[CoinDCX WS] connect_error:", err?.message || err);
+  });
+
+  function broadcastRealTick(rawSymbol: string, rawPrice: any, source: string) {
+    const price = parseFloat(rawPrice);
+    if (!rawSymbol || Number.isNaN(price)) return;
+
+    const sym = normalizeCoinDCXSymbol(rawSymbol);
+    if (!TRACKED_COINS.some(c => sym.startsWith(c))) return; // ignore pairs we don't trade
+
+    if (staleSymbols.has(sym)) {
+      console.log(`[CoinDCX WS] First real tick for ${sym} via ${source}: ${price}`);
+      staleSymbols.delete(sym);
+    }
+
+    currentPrices[sym] = price;
+
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({ type: 'TICK', data: { [sym]: price }, is24h: source === 'price-change' }));
+      }
+    });
+  }
+
+  dcxSocket.on("price-change", (data: any) => {
     try {
       const payload = typeof data === 'string' ? JSON.parse(data) : data;
-      if (payload && payload.s && payload.c) {
-        if (['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR', 'JUPINR'].includes(payload.s)) {
-          const sym = normalizeCoinDCXSymbol(payload.s);
-          currentPrices[sym] = parseFloat(payload.c);
-          
-          wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-              client.send(JSON.stringify({ type: 'TICK', data: { [sym]: currentPrices[sym] }, is24h: true }));
-            }
-          });
-        }
+      const inner = typeof payload.data === 'string' ? JSON.parse(payload.data) : (payload.data || payload);
+      const rawSym = inner?.s || inner?.symbol || inner?.market;
+      const rawPrice = inner?.p ?? inner?.c ?? inner?.price;
+      if (rawSym && rawPrice !== undefined) {
+        broadcastRealTick(rawSym, rawPrice, 'price-change');
+      } else {
+        console.warn('[CoinDCX WS] price-change payload shape unrecognized:', JSON.stringify(inner).slice(0, 200));
       }
-    } catch(e) {}
+    } catch (e) { console.warn('[CoinDCX WS] price-change parse error', e); }
   });
-  dcxSocket.on("new-trade", (data) => {
+
+  dcxSocket.on("new-trade", (data: any) => {
     try {
       const payload = typeof data === 'string' ? JSON.parse(data) : data;
       const innerData = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
       if (innerData && innerData.s && innerData.p) {
-        const sym = normalizeCoinDCXSymbol(innerData.s);
-        currentPrices[sym] = parseFloat(innerData.p);
-        
-        wss.clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) { 
-            client.send(JSON.stringify({ type: 'TICK', data: { [sym]: currentPrices[sym] } }));
-          }
-        });
+        broadcastRealTick(innerData.s, innerData.p, 'new-trade');
       }
     } catch(e) {}
   });

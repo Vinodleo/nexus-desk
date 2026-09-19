@@ -338,15 +338,29 @@ export default function App() {
               if (isLong) {
                 // Trailing Stop Logic (Long)
                 pos.highestPrice = Math.max(pos.highestPrice || pos.entryPrice, realINRPrice);
+                const profitInATR = atr > 0 ? (pos.highestPrice - pos.entryPrice) / atr : 0;
 
                 // Activate trail after 1.0 ATR of profit
-                if (!pos.trailActive && realINRPrice > pos.entryPrice + (atr * 1.0)) {
+                if (!pos.trailActive && profitInATR >= 1.0) {
                   pos.trailActive = true;
                 }
 
-                // Update trailing stop (trail distance = 1.5 ATR)
                 if (pos.trailActive) {
-                  const dynamicStop = pos.highestPrice - (atr * 1.5);
+                  // Stage 1 — the moment the trail activates, the stop must
+                  // guarantee at least a small locked-in profit (breakeven +
+                  // a buffer for round-trip costs). Without this floor, a
+                  // 1.5 ATR trail measured from a peak only 1.0-1.5 ATR
+                  // above entry can sit BELOW entry — "trailing" a winner
+                  // that can still close as a loss, which is exactly the
+                  // "give the profit back" failure mode this is meant to
+                  // prevent.
+                  const breakevenFloor = pos.entryPrice * 1.001;
+                  // Stage 2 — once a big winner has developed, tighten the
+                  // trail distance so more of the accrued gain is protected
+                  // rather than trailing at a constant distance forever.
+                  const trailDistanceATR = profitInATR >= 2.5 ? 1.0 : 1.5;
+                  const dynamicStop = Math.max(breakevenFloor, pos.highestPrice - (atr * trailDistanceATR));
+
                   if (dynamicStop > pos.stopLoss) {
                     pos.stopLoss = dynamicStop;
                     // Push take profit further out so we don't cap the runner
@@ -360,15 +374,21 @@ export default function App() {
               } else {
                 // Trailing Stop Logic (Short)
                 pos.lowestPrice = Math.min(pos.lowestPrice || pos.entryPrice, realINRPrice);
+                const profitInATR = atr > 0 ? (pos.entryPrice - pos.lowestPrice) / atr : 0;
 
                 // Activate trail after 1.0 ATR of profit
-                if (!pos.trailActive && realINRPrice < pos.entryPrice - (atr * 1.0)) {
+                if (!pos.trailActive && profitInATR >= 1.0) {
                   pos.trailActive = true;
                 }
 
-                // Update trailing stop (trail distance = 1.5 ATR)
                 if (pos.trailActive) {
-                  const dynamicStop = pos.lowestPrice + (atr * 1.5);
+                  // Same two-stage logic mirrored for shorts: guarantee a
+                  // locked-in profit floor immediately on activation, then
+                  // tighten the trail further once a big winner develops.
+                  const breakevenCeiling = pos.entryPrice * 0.999;
+                  const trailDistanceATR = profitInATR >= 2.5 ? 1.0 : 1.5;
+                  const dynamicStop = Math.min(breakevenCeiling, pos.lowestPrice + (atr * trailDistanceATR));
+
                   if (dynamicStop < pos.stopLoss) {
                     pos.stopLoss = dynamicStop;
                     // Push take profit further out so we don't cap the runner
@@ -1279,16 +1299,34 @@ export default function App() {
     setIsCommanderModalOpen(true);
     setCommanderLoading(true);
     try {
+      // Use the symbol actually on screen, with its real current indicators
+      // and real recent swing high/low — not a hardcoded placeholder
+      // unrelated to whatever the market is actually doing right now.
+      const bars = liveMarketStream.getBars(currentSymbol);
+      const latestBar = bars && bars.length > 0 ? bars[bars.length - 1] : null;
+      const recentBars = bars ? bars.slice(-50) : [];
+      const recentSwingHigh = recentBars.length > 0 ? Math.max(...recentBars.map((b) => b.high)) : undefined;
+      const recentSwingLow = recentBars.length > 0 ? Math.min(...recentBars.map((b) => b.low)) : undefined;
+
       const res = await fetch("/api/agent/market-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          symbol: "BTC/INR",
-          indicators: {
-            adx: 24.5,
-            rsi: 48.0,
-            regime: "ranging_tight",
-          },
+          symbol: currentSymbol,
+          price: latestBar?.close,
+          indicators: latestBar
+            ? {
+                adx: latestBar.adx,
+                rsi: latestBar.rsi,
+                atrPercent: latestBar.atr && latestBar.close ? (latestBar.atr / latestBar.close) * 100 : undefined,
+                ema9: latestBar.ema9,
+                ema21: latestBar.ema21,
+                ema50: latestBar.ema50,
+                vwap: latestBar.vwap,
+              }
+            : {},
+          recentSwingHigh,
+          recentSwingLow,
         }),
       });
       if (res.ok) {
