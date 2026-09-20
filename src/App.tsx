@@ -30,6 +30,8 @@ import {
   saveStoredStats,
   loadStoredCapital,
   saveStoredCapital,
+  loadStoredPositions,
+  saveStoredPositions,
   resetStoredExperiencesToBaseline,
   loadDailySampleTelemetry,
   saveDailySampleTelemetry,
@@ -132,15 +134,6 @@ export default function App() {
     });
   }, [equity, cash, dailyRealizedPnl, allTimeRealizedPnl]);
 
-  // Auto-dismiss execution toast after 7s
-  useEffect(() => {
-    if (!executionToast) return;
-    const timer = setTimeout(() => {
-      setExecutionToast(null);
-    }, 7000);
-    return () => clearTimeout(timer);
-  }, [executionToast]);
-
   // Core Market State
   const [currentSymbol, setCurrentSymbol] = useState<string>("BTC/INR");
   const [bars, setBars] = useState<MarketBar[]>([]);
@@ -182,13 +175,9 @@ export default function App() {
   // Background Trading Loop & Web Worker Heartbeat Reference
   const lastStepTimeRef = useRef<number>(Date.now());
 
-  // Market Bar Step Generator (drives chart, technicals, and position exits)
-  // Replaced by real-time WebSocket feeds
-
   // Background Web Worker Heartbeat listener (continues unthrottled when screen locked or minimized)
   const handleBackgroundTick = useCallback(() => {
     if (!isPlaying) return;
-    // Ticks naturally from WS when open.
   }, [isPlaying]);
 
   // Fast-Forward Reconcile missed ticks when device screen is unlocked
@@ -224,10 +213,25 @@ export default function App() {
     onReconcileMissedTicks: handleReconcileMissedTicks,
   });
 
-  // WebSocket streams drive foreground updates now
-
   // Positions (initialized to empty flat state per Screenshot 2)
-  const [activePositions, setActivePositions] = useState<Position[]>([]);
+  const [activePositions, setActivePositions] = useState<Position[]>(() => loadStoredPositions());
+
+  // Persist open positions on every change — unrealized P&L and open
+  // trades need to survive a reload, not just realized P&L (which
+  // saveStoredCapital above already covers).
+  useEffect(() => {
+    saveStoredPositions(activePositions);
+  }, [activePositions]);
+
+  // Auto-dismiss execution toast after 7s
+  useEffect(() => {
+    if (!executionToast) return;
+    const timer = setTimeout(() => {
+      setExecutionToast(null);
+    }, 7000);
+    return () => clearTimeout(timer);
+  }, [executionToast]);
+
   // Price-guard recovery state: when a tick is rejected as an implausible
   // single-move (see the guard below), we remember it here per position. If
   // the *next* tick for that position lands close to this remembered value,
@@ -235,7 +239,16 @@ export default function App() {
   // genuinely moved (e.g. it just recovered from an outage) rather than one
   // bad print — so we accept it immediately instead of staying stuck
   // comparing forever against an increasingly stale reference price.
-  const pendingSusPrices = useRef<Map<string, number>>(new Map());
+  const pendingSuspectPrices = useRef<Map<string, number>>(new Map());
+  // Guards against the same proposal being turned into two positions when a
+  // manual approval (handleApproveProposal) and an autopilot approval
+  // (handleBatchApproveAllProposals) race each other — both read
+  // proposalQueue/activePositions from a snapshot that can be stale for a
+  // moment after the other one writes, since React state updates aren't
+  // synchronous. A ref is: mutating it is immediate and synchronous, so
+  // "claiming" a proposal ID here closes the race regardless of state-update
+  // timing.
+  const inFlightProposalIds = useRef<Set<string>>(new Set());
   const activePositionsRef = React.useRef<Position[]>([]);
   React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
@@ -299,7 +312,7 @@ export default function App() {
                   : 0;
 
               if (tickDeviation > 0.25) {
-                const pending = pendingSusPrices.current.get(pos.id);
+                const pending = pendingSuspectPrices.current.get(pos.id);
                 const confirmsPending =
                   pending !== undefined &&
                   Math.abs(realINRPrice - pending) / pending < 0.03;
@@ -312,19 +325,19 @@ export default function App() {
                   console.log(
                     `[PriceGuard] Confirmed recovery for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (two consecutive ticks agreed). Accepting.`
                   );
-                  pendingSusPrices.current.delete(pos.id);
+                  pendingSuspectPrices.current.delete(pos.id);
                 } else {
                   console.warn(
                     `[PriceGuard] Rejected implausible tick for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (${(tickDeviation * 100).toFixed(0)}% single-tick move). Awaiting confirmation. Position left unchanged.`
                   );
-                  pendingSusPrices.current.set(pos.id, realINRPrice);
+                  pendingSuspectPrices.current.set(pos.id, realINRPrice);
                   nextPositions.push(pos);
                   continue;
                 }
-              } else if (pendingSusPrices.current.has(pos.id)) {
+              } else if (pendingSuspectPrices.current.has(pos.id)) {
                 // Tick came back within normal range on its own — drop
                 // whatever we were waiting to confirm.
-                pendingSusPrices.current.delete(pos.id);
+                pendingSuspectPrices.current.delete(pos.id);
               }
 
               const isLong = pos.direction === "LONG";
@@ -433,8 +446,67 @@ export default function App() {
       }
     };
 
+    // REST polling backstop: some symbols' real-time WebSocket channels
+    // have proven unreliable (a position can sit frozen at its exact entry
+    // price indefinitely if its channel never delivers a tick — this is
+    // what caused the frozen 0.00% seen on a JUP/INR position). This polls
+    // CoinDCX's public ticker — the same one used for the initial seed —
+    // every 6s and feeds it through the exact same handler as a real WS
+    // message, so P&L keeps moving with the real market even for a symbol
+    // whose live stream isn't cooperating, just at coarser granularity.
+    const pollRestPrices = async () => {
+      try {
+        const res = await fetch('/api/coindcx/ticker');
+        const tickers = await res.json();
+        const priceMap: Record<string, number> = {};
+        tickers.forEach((t: any) => {
+          const sym = t.market.endsWith("USDT")
+            ? t.market.replace("USDT", "/USDT")
+            : t.market.replace("INR", "/INR");
+          priceMap[sym] = parseFloat(t.last_price);
+        });
+        if (Object.keys(priceMap).length > 0 && ws.onmessage) {
+          (ws.onmessage as (ev: MessageEvent) => void)(
+            new MessageEvent("message", {
+              data: JSON.stringify({ type: "TICK", data: priceMap }),
+            })
+          );
+        }
+      } catch (err) {
+        console.warn("[RESTPriceBackstop] poll failed", err);
+      }
+    };
+    const restPollInterval = setInterval(pollRestPrices, 6000);
+
+    // Enforce the max-holding-time limit shown in the UI as "Hard Limit
+    // Protected" — this was previously only a label with nothing behind
+    // it: expectedHoldingTimeMinutes was set on every position but never
+    // actually checked anywhere, so a position could sit open indefinitely
+    // regardless of what the UI promised. This closes that gap: every 30s,
+    // any position past its holding-time limit gets force-closed at the
+    // best currently-known price rather than left open with a safety net
+    // that doesn't exist.
+    const checkHoldingTimeExpiry = () => {
+      setActivePositions((prev) => {
+        const now = Date.now();
+        for (const pos of prev) {
+          const openedMs = pos.openTime ? new Date(pos.openTime).getTime() : now;
+          const elapsedMinutes = (now - openedMs) / 60000;
+          if (elapsedMinutes >= (pos.expectedHoldingTimeMinutes || 30)) {
+            setTimeout(() => {
+              closePositionWithAutopsy(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
+            }, 10);
+          }
+        }
+        return prev; // closePositionWithAutopsy removes the expired ones itself
+      });
+    };
+    const expiryCheckInterval = setInterval(checkHoldingTimeExpiry, 30000);
+
     return () => {
       ws.close();
+      clearInterval(restPollInterval);
+      clearInterval(expiryCheckInterval);
     };
   }, []);
 
@@ -575,7 +647,7 @@ export default function App() {
     async (
       pos: Position,
       exitPrice: number,
-      reason: "MANUAL" | "STOP_LOSS" | "TAKE_PROFIT"
+      reason: "MANUAL" | "STOP_LOSS" | "TAKE_PROFIT" | "EXPIRY_TIME"
     ) => {
       const isLong = pos.direction === "LONG";
       const diff = isLong
@@ -604,6 +676,10 @@ export default function App() {
           sendAlertNotification(`■ [Nexus Desk] Stop-Loss Hit: ${pos.symbol}`, {
             body: `${pos.direction} stopped at ₹${exitPrice.toFixed(2)} (-₹${Math.abs(finalPnl).toFixed(2)}). Capital safeguarded.`,
           });
+        } else if (reason === "EXPIRY_TIME") {
+          sendAlertNotification(`■ [Nexus Desk] Holding-Time Limit Hit: ${pos.symbol}`, {
+            body: `${pos.direction} force-closed after exceeding its max holding time, at ₹${exitPrice.toFixed(2)} (-₹${Math.abs(finalPnl).toFixed(2)}).`,
+          });
         }
       }
 
@@ -617,6 +693,10 @@ export default function App() {
             ? `Stop-Loss Executed: ${pos.symbol} (-₹${Math.abs(finalPnl).toFixed(
                 2
               )})`
+            : reason === "EXPIRY_TIME"
+            ? `Holding Time Exceeded: ${pos.symbol} (${
+                finalPnl >= 0 ? "+" : ""
+              }₹${finalPnl.toFixed(2)})`
             : `Trade Exited: ${pos.symbol} (${
                 finalPnl >= 0 ? "+" : ""
               }₹${finalPnl.toFixed(2)})`,
@@ -799,9 +879,18 @@ export default function App() {
         return;
       }
 
+      // Claim this proposal before doing anything else. If autopilot's batch
+      // approval grabbed it in the same instant, it's already claimed and we
+      // back out here instead of opening a second, duplicate position.
+      if (inFlightProposalIds.current.has(proposal.id)) {
+        return;
+      }
+      inFlightProposalIds.current.add(proposal.id);
+
       const units = proposal.riskCalc.recommendedPositionSizeUnits;
       if (units <= 0) {
         console.error("Attempted to approve proposal with 0 units.", proposal);
+        inFlightProposalIds.current.delete(proposal.id);
         return;
       }
 
@@ -901,6 +990,17 @@ export default function App() {
     (proposalsToApprove: TradeProposal[]) => {
       if (killSwitchActive || proposalsToApprove.length === 0) return;
 
+      // Drop anything already claimed by a manual approval (or a previous,
+      // still-in-flight autopilot batch) before doing any of the position/
+      // exposure/consensus math below — closes the same race described on
+      // inFlightProposalIds above, from the autopilot side this time.
+      const claimable = proposalsToApprove.filter(
+        (p) => !inFlightProposalIds.current.has(p.id)
+      );
+      if (claimable.length === 0) return;
+      claimable.forEach((p) => inFlightProposalIds.current.add(p.id));
+      proposalsToApprove = claimable;
+
       const policy = DEFAULT_RISK_POLICY;
       const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
 
@@ -975,6 +1075,10 @@ export default function App() {
         runningHourlyAutopilotCount += 1;
         heldSymbols.add(proposal.symbol);
       }
+
+      // Deferred means "revisit later," not "claimed forever" — release
+      // these back so the next scan cycle or a human can still act on them.
+      deferred.forEach((d) => inFlightProposalIds.current.delete(d.proposal.id));
 
       if (deferred.length > 0) {
         logSecurityAudit(

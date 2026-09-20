@@ -139,7 +139,6 @@ export function loadStoredStats(): AgentLearningStats {
     selfApprovedLosses: 6,
     lastUpdated: new Date().toISOString(),
   };
-
   try {
     const raw = localStorage.getItem(STORAGE_KEY_STATS);
     if (raw) {
@@ -180,19 +179,23 @@ export function loadStoredCapital(): AgentCapitalState {
     allTimeRealizedPnl: 0,
     istDateString: todayIST,
   };
-
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CAPITAL);
     if (raw) {
       const parsed = JSON.parse(raw);
       const savedDate = parsed.istDateString;
-      
+
       return {
         equity: Number(parsed.equity) || fallback.equity,
         cash: Number(parsed.cash) || fallback.cash,
         // Reset daily PNL to 0 if it's a new day
         dailyRealizedPnl: savedDate === todayIST ? (Number(parsed.dailyRealizedPnl) || 0) : 0,
-        allTimeRealizedPnl: parsed.allTimeRealizedPnl !== undefined ? Number(parsed.allTimeRealizedPnl) : (Number(parsed.equity) ? Number(parsed.equity) - 100000 : 0),
+        allTimeRealizedPnl:
+          parsed.allTimeRealizedPnl !== undefined
+            ? Number(parsed.allTimeRealizedPnl)
+            : Number(parsed.equity)
+            ? Number(parsed.equity) - 100000
+            : 0,
         istDateString: todayIST,
       };
     }
@@ -309,7 +312,6 @@ export function loadDailySampleTelemetry(): DailySampleTelemetry {
   } catch (err) {
     console.warn("Failed to load daily telemetry from LocalStorage:", err);
   }
-
   // New day or first load: reset to 0 for today
   const fresh = getInitialDailyTelemetry(todayIST);
   saveDailySampleTelemetry(fresh);
@@ -328,15 +330,45 @@ export function saveDailySampleTelemetry(data: DailySampleTelemetry): void {
 }
 
 /**
-  * Baseline recent closed trades for the Book tab demonstration and record
-  */
+ * Baseline recent closed trades for the Book tab demonstration and record
+ */
 export function getBaselineClosedTrades(): HistoricalTrade[] {
   return [];
 }
 
 /**
- * Load closed trades history from LocalStorage or return baseline.
+ * Load open positions from LocalStorage, so unrealized P&L and open trades
+ * survive a page reload/refresh instead of vanishing with in-memory state.
  */
+export function loadStoredPositions(): Position[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_POSITIONS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to load positions from LocalStorage:", err);
+  }
+  return [];
+}
+
+/**
+ * Persist open positions to LocalStorage.
+ * Called on every change so a refresh — intentional or the browser
+ * reclaiming a backgrounded tab — never silently drops a position
+ * the app still thinks is open.
+ */
+export function saveStoredPositions(positions: Position[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_POSITIONS, JSON.stringify(positions));
+  } catch (err) {
+    console.warn("Failed to save positions to LocalStorage:", err);
+  }
+}
+
 export function loadStoredClosedTrades(): HistoricalTrade[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CLOSED_TRADES);
@@ -369,14 +401,13 @@ export function saveStoredClosedTrades(trades: HistoricalTrade[]): void {
   }
 }
 
-
 import { auth, db } from "./firebase";
 import { doc, getDoc, setDoc, collection, getDocs, writeBatch } from "firebase/firestore";
 
 export async function syncToFirebase(userId: string) {
   try {
     const userRef = doc(db, "users", userId);
-    
+
     const stats = loadStoredStats();
     const capital = loadStoredCapital();
     const accuracy = loadStoredModelAccuracy();
@@ -413,7 +444,7 @@ export async function syncToFirebase(userId: string) {
       });
       await tradesBatch.commit();
     }
-    
+
     console.log("Successfully synced to Firebase cloud.");
   } catch (err) {
     console.error("Firebase sync error", err);
@@ -424,24 +455,24 @@ export async function syncFromFirebase(userId: string): Promise<boolean> {
   try {
     const userRef = doc(db, "users", userId);
     const userSnap = await getDoc(userRef);
-    
+
     if (userSnap.exists()) {
       const data = userSnap.data();
-      
+
       saveStoredStats({
         selfApprovedCount: data.selfApprovedCount || 0,
         selfApprovedWins: data.selfApprovedWins || 0,
         selfApprovedLosses: data.selfApprovedLosses || 0,
         lastUpdated: data.lastUpdated || new Date().toISOString()
       });
-      
+
       saveStoredCapital({
         equity: data.equity || 100000,
         cash: data.cash || 100000,
         dailyRealizedPnl: data.dailyRealizedPnl || 0,
         allTimeRealizedPnl: data.allTimeRealizedPnl || 0
       });
-      
+
       if (data.accuracyPct) {
         saveStoredModelAccuracy({
           accuracyPct: data.accuracyPct,
@@ -452,11 +483,11 @@ export async function syncFromFirebase(userId: string): Promise<boolean> {
           lastUpdated: data.lastUpdated
         });
       }
-      
+
       if (data.promotedLabModel) {
         saveStoredPromotedLabModel(data.promotedLabModel);
       }
-      
+
       if (data.dailyTelemetry) {
         saveDailySampleTelemetry(data.dailyTelemetry);
       }
@@ -473,7 +504,7 @@ export async function syncFromFirebase(userId: string): Promise<boolean> {
       const trades = tradesSnap.docs.map(d => d.data() as HistoricalTrade);
       saveStoredClosedTrades(trades);
     }
-    
+
     return true;
   } catch (err) {
     console.error("Firebase load error", err);
@@ -488,11 +519,12 @@ export async function fetchLeaderboard() {
     const leaderboard: any[] = [];
     snapshot.forEach(doc => {
       const data = doc.data();
+
       // Mask email for anonymity
       const maskedEmail = data.email 
         ? data.email.split('@')[0].slice(0, 3) + "***@" + data.email.split('@')[1] 
         : "Anonymous";
-      
+
       leaderboard.push({
         uid: data.uid,
         maskedEmail: maskedEmail,
@@ -504,7 +536,7 @@ export async function fetchLeaderboard() {
         selfApprovedLosses: data.selfApprovedLosses || 0,
       });
     });
-    
+
     // Sort by equity descending
     return leaderboard.sort((a, b) => b.equity - a.equity);
   } catch (error) {
@@ -512,7 +544,6 @@ export async function fetchLeaderboard() {
     return [];
   }
 }
-
 
 export async function saveExchangeKeys(userId: string, exchangeId: string, apiKey: string, apiSecret: string) {
   try {
