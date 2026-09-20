@@ -1261,7 +1261,7 @@ export default function App() {
       });
 
       // Update Live Sample Telemetry: What agents analysed, selected, and rejected
-      const evaluatedCount = 12; // 6 instruments * 2 setups
+      const evaluatedCount = scanResult.totalSetupsEvaluated || 12;
       const newlySelected = scanResult.newProposals.length;
       const newlyRejected = evaluatedCount - newlySelected;
 

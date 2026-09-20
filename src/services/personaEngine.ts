@@ -213,7 +213,8 @@ export interface PanelResult {
   setup: StrategySetup | null; // blended representative setup for the winning direction
   supportingPersonas: string[];
   dissentingPersonas: string[];
-  totalVotesCast: number;
+  totalVotesCast: number; // personas that QUALIFIED (voted) — most scans, this is 0
+  totalPersonasRun: number; // personas actually EVALUATED this cycle, qualified or not — the real "analysed" count
 }
 
 function blendSetups(
@@ -241,6 +242,7 @@ function blendSetups(
   const baseProbability =
     ballots.reduce((acc, b) => acc + b.setup.baseProbability * b.weight, 0) /
     totalWeight;
+
   return {
     ...rep,
     id: `setup-panel-${direction}-${rep.symbol}`,
@@ -298,6 +300,7 @@ export function runPersonaPanel(
         supportingPersonas: [],
         dissentingPersonas: [],
         totalVotesCast: 0,
+        totalPersonasRun: SUPPRESSOR_PERSONAS.length,
       };
     }
   }
@@ -330,6 +333,8 @@ export function runPersonaPanel(
       supportingPersonas: [],
       dissentingPersonas: [],
       totalVotesCast: 0,
+      totalPersonasRun:
+        SUPPRESSOR_PERSONAS.length + TRADER_PERSONAS.length,
     };
   }
 
@@ -361,7 +366,10 @@ export function runPersonaPanel(
   }
 
   const winningWeight = winningSide.reduce((a, b) => a + b.weight, 0);
-  const agreementScore = totalWeight > 0 ? Number((winningWeight / totalWeight).toFixed(3)) : 0;
+  const agreementScore =
+    totalWeight > 0
+      ? Number((winningWeight / totalWeight).toFixed(3))
+      : 0;
 
   return {
     vetoed: false,
@@ -371,5 +379,7 @@ export function runPersonaPanel(
     supportingPersonas: winningSide.map((b) => b.personaName),
     dissentingPersonas: losingSide.map((b) => b.personaName),
     totalVotesCast: ballots.length,
+    totalPersonasRun:
+      SUPPRESSOR_PERSONAS.length + TRADER_PERSONAS.length,
   };
 }

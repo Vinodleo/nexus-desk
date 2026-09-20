@@ -130,6 +130,7 @@ export async function scanSingleMarket(
   const candidates: { setup: StrategySetup; panel: typeof panel }[] = [];
   if (panel.setup) candidates.push({ setup: panel.setup, panel });
   if (swingPanel.setup) candidates.push({ setup: swingPanel.setup, panel: swingPanel });
+
   const qualifiedSetups = candidates.map((c) => c.setup);
 
   // Batch Prediction Preparation
@@ -206,7 +207,12 @@ export async function scanSingleMarket(
     // Must pass edge criteria, risk constraints, and dynamic confidence hurdle
     const requiredConfidence = promotedModel?.optimizedParameters?.minConfidence ?? 0.58;
 
-    if (evAssessment.isPositiveEdge && riskCalc.passedAllChecks && riskCalc.recommendedPositionSizeUnits > 0 && metaScore.confidence >= requiredConfidence) {
+    if (
+      evAssessment.isPositiveEdge &&
+      riskCalc.passedAllChecks &&
+      riskCalc.recommendedPositionSizeUnits > 0 &&
+      metaScore.confidence >= requiredConfidence
+    ) {
       const sanitizedId = symbolConfig.symbol.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
       const uniqueSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
       const now = Date.now();
@@ -244,8 +250,7 @@ export async function scanSingleMarket(
     symbolName: symbolConfig.name,
     price,
     regime,
-    evaluatedSetupsCount:
-      panel.totalVotesCast + swingPanel.totalVotesCast,
+    evaluatedSetupsCount: panel.totalPersonasRun + swingPanel.totalPersonasRun,
     qualifiedSetupsCount: qualifiedSetups.length,
     orderBook,
     proposals,
@@ -265,8 +270,8 @@ export async function scanSingleMarket(
  */
 export async function scanAllMarkets(options: ScanMarketOptions): Promise<FullScanReport> {
   const targetSymbols = options.symbols
-    ? SUPPORTED_SYMBOLS.filter((s) => 
-        options.symbols!.includes(s.symbol) || 
+    ? SUPPORTED_SYMBOLS.filter((s) =>
+        options.symbols!.includes(s.symbol) ||
         (options.symbols!.includes("XPR/INR") && s.symbol === "XRP/INR")
       )
     : SUPPORTED_SYMBOLS;
@@ -305,9 +310,7 @@ export async function scanAllMarkets(options: ScanMarketOptions): Promise<FullSc
 
   // Rank proposals strictly by highest Calibrated Win Probability P(Win), then highest Net EV
   newProposals.sort((a, b) => {
-    const probDiff =
-      b.metaScore.calibratedWinProbability -
-      a.metaScore.calibratedWinProbability;
+    const probDiff = b.metaScore.calibratedWinProbability - a.metaScore.calibratedWinProbability;
     if (Math.abs(probDiff) > 0.001) return probDiff;
     return b.evAssessment.expectedNetValue - a.evAssessment.expectedNetValue;
   });
