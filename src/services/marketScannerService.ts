@@ -94,7 +94,15 @@ export async function scanSingleMarket(
   // and genuine disagreement between personas is arbitrated by meta-labeled
   // confidence rather than silently generating contradictory proposals.
   const panel = runPersonaPanel(
-    { symbol: symbolConfig.symbol, timeframe: "5m", bars, regime, eventWindowActive: false, promotedModel },
+    {
+      symbol: symbolConfig.symbol,
+      timeframe: "5m",
+      bars,
+      regime,
+      eventWindowActive: false,
+      promotedModel,
+      macroRegime: liveMarketStream.getMacroRegime(symbolConfig.symbol),
+    },
     (setup) => {
       const retrieval = retrieveSimilarExperiences(setup, regime, experiences, 15);
       return computeMetaLabelScore({
@@ -113,7 +121,15 @@ export async function scanSingleMarket(
   // personas' (see runPersonaPanel), and a symbol can legitimately carry
   // both an intraday setup and a swing setup at once.
   const swingPanel = runPersonaPanel(
-    { symbol: symbolConfig.symbol, timeframe: "5m", bars, regime, eventWindowActive: false, promotedModel },
+    {
+      symbol: symbolConfig.symbol,
+      timeframe: "5m",
+      bars,
+      regime,
+      eventWindowActive: false,
+      promotedModel,
+      macroRegime: liveMarketStream.getMacroRegime(symbolConfig.symbol),
+    },
     (setup) => {
       const retrieval = retrieveSimilarExperiences(setup, regime, experiences, 15);
       return computeMetaLabelScore({
@@ -310,7 +326,9 @@ export async function scanAllMarkets(options: ScanMarketOptions): Promise<FullSc
 
   // Rank proposals strictly by highest Calibrated Win Probability P(Win), then highest Net EV
   newProposals.sort((a, b) => {
-    const probDiff = b.metaScore.calibratedWinProbability - a.metaScore.calibratedWinProbability;
+    const probDiff =
+      b.metaScore.calibratedWinProbability -
+      a.metaScore.calibratedWinProbability;
     if (Math.abs(probDiff) > 0.001) return probDiff;
     return b.evAssessment.expectedNetValue - a.evAssessment.expectedNetValue;
   });

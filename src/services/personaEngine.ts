@@ -314,14 +314,27 @@ export function runPersonaPanel(
   for (const persona of TRADER_PERSONAS) {
     const setup = persona.evaluate(ctx);
     const setupHorizon = setup?.horizon || "intraday";
-    if (setup?.qualifies && setupHorizon === horizon) {
-      ballots.push({
-        personaName: persona.name,
-        direction: setup.direction,
-        setup,
-        weight: persona.weight,
-      });
+    if (!setup?.qualifies || setupHorizon !== horizon) continue;
+
+    // Multi-timeframe confluence: a setup that qualifies on the 5m view but
+    // directly fights a CLEAR 1h trend gets filtered here, before it ever
+    // becomes a ballot. A neutral/ranging/choppy higher timeframe — or no
+    // higher-timeframe data yet — expresses no opinion and never blocks a
+    // trade; this only filters genuine conflict, not absence of agreement.
+    const macro = ctx.macroRegime || "neutral";
+    const fightsHigherTimeframe =
+      (macro === "trending_bullish" && setup.direction === "SHORT") ||
+      (macro === "trending_bearish" && setup.direction === "LONG");
+    if (fightsHigherTimeframe) {
+      continue;
     }
+
+    ballots.push({
+      personaName: persona.name,
+      direction: setup.direction,
+      setup,
+      weight: persona.weight,
+    });
   }
 
   if (ballots.length === 0) {
@@ -343,7 +356,8 @@ export function runPersonaPanel(
   const longWeight = longBallots.reduce((a, b) => a + b.weight, 0);
   const shortWeight = shortBallots.reduce((a, b) => a + b.weight, 0);
   const totalWeight = longWeight + shortWeight;
-  const genuineConflict = longBallots.length > 0 && shortBallots.length > 0;
+  const genuineConflict =
+    longBallots.length > 0 && shortBallots.length > 0;
 
   let winningDirection: TradeDirection;
   let winningSide: PersonaBallot[];

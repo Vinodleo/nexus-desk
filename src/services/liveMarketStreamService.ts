@@ -1,7 +1,6 @@
-import { MarketBar } from "../types";
+import { MarketBar, RegimeType } from "../types";
 import { SUPPORTED_SYMBOLS } from "./marketDataService";
-import { fetchRealHistoricalCandles } from "./realDataBacktestService";
-import { decorateBarsWithIndicators } from "./marketDataService";
+import { decorateBarsWithIndicators, classifyRegime } from "./marketDataService";
 
 export class LiveMarketStreamService {
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -9,6 +8,14 @@ export class LiveMarketStreamService {
   // Store the last 120 decorated bars per symbol
   private marketData: Map<string, MarketBar[]> = new Map();
   public dailyChanges = new Map<string, number>();
+
+  // Higher-timeframe (1h) bars and the regime derived from them, used for
+  // the multi-timeframe confluence check — sourced from CoinDCX's own real
+  // candles API, refreshed periodically rather than on every tick since 1h
+  // structure doesn't meaningfully change second to second.
+  private higherTimeframeData: Map<string, MarketBar[]> = new Map();
+  public macroRegimes: Map<string, RegimeType> = new Map();
+
   // Listeners for UI updates
   private globalListeners: Set<() => void> = new Set();
 
@@ -55,7 +62,6 @@ export class LiveMarketStreamService {
           const tMs = now - (i * 60000);
           const volatility = currentLivePrice * 0.001;
           const shift = (Math.random() - 0.45) * volatility;
-
           if (i === 0) runningPrice = currentLivePrice; // force last bar to equal exactly live price
           else runningPrice += shift;
 
@@ -78,10 +84,68 @@ export class LiveMarketStreamService {
     this.isReady = true;
     this.notifyListeners();
     this.connectWs(activeSymbols);
+
+    // Higher-timeframe data isn't tick-driven — fetch it once now, then on
+    // a slow interval. 1h candles don't need refreshing every few seconds.
+    this.refreshHigherTimeframeData(activeSymbols);
+    setInterval(() => this.refreshHigherTimeframeData(activeSymbols), 5 * 60 * 1000);
+  }
+
+  /**
+   * Fetches real 1h candles from CoinDCX (via the server proxy) for each
+   * symbol, decorates them with the same indicators used elsewhere, and
+   * derives a regime from them with the same classifyRegime() used for the
+   * intraday view. This is what personaEngine's multi-timeframe alignment
+   * check reads — grounded in CoinDCX's own real historical data, not the
+   * synthetic backfill the 5m bars start from.
+   */
+  private async refreshHigherTimeframeData(symbols: string[]) {
+    for (const sym of symbols) {
+      try {
+        const base = sym.split("/")[0];
+        const res = await fetch(`/api/coindcx/candles?symbol=${base}&interval=1h&limit=100`);
+        if (!res.ok) {
+          console.warn(`[HigherTimeframe] ${sym}: candles fetch failed (${res.status})`);
+          continue;
+        }
+        const raw = await res.json();
+        if (!Array.isArray(raw) || raw.length === 0) {
+          console.warn(`[HigherTimeframe] ${sym}: empty/invalid candle response`);
+          continue;
+        }
+        // CoinDCX returns candles newest-first; indicator math needs oldest-first.
+        const ascending = [...raw].reverse();
+        const bars: MarketBar[] = ascending.map((c: any) => ({
+          time: new Date(c.time).toISOString(),
+          timestampMs: c.time,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume,
+        }));
+        const decorated = decorateBarsWithIndicators(bars);
+        this.higherTimeframeData.set(sym, decorated);
+        this.macroRegimes.set(sym, classifyRegime(decorated));
+      } catch (err) {
+        console.warn(`[HigherTimeframe] ${sym}: fetch error`, err);
+      }
+    }
+    this.notifyListeners();
+  }
+
+  getHigherTimeframeBars(symbol: string): MarketBar[] | null {
+    return this.higherTimeframeData.get(symbol) || null;
+  }
+
+  /** Neutral when no higher-timeframe data is available yet — the alignment
+   * check treats "neutral" as "no opinion", never blocking a trade for lack
+   * of data rather than failing closed on a slow/failed fetch. */
+  getMacroRegime(symbol: string): RegimeType | "neutral" {
+    return this.macroRegimes.get(symbol) || "neutral";
   }
 
   private ws: WebSocket | null = null;
-
   private connectWs(symbols: string[]) {
     if (this.ws) {
       this.ws.close();
@@ -90,8 +154,8 @@ export class LiveMarketStreamService {
     // Connect to our Node.js backend relay which has an unfiltered, high-frequency connection to CoinDCX
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
-
     this.ws = new WebSocket(wsUrl);
+
     this.ws.onopen = () => {
       console.log("Connected to Backend Ticker Relay");
     };
@@ -102,20 +166,16 @@ export class LiveMarketStreamService {
         if (msg.type === 'TICK' && msg.data) {
           Object.keys(msg.data).forEach(symbolInternal => {
             const price = parseFloat(msg.data[symbolInternal]);
-
             if (msg.is24h) {
               // Update 24h map if this is a ticker event
               this.dailyChanges.set(symbolInternal, price);
             } else {
               // This is a trade event, update the bars
               if (!this.marketData.has(symbolInternal)) return;
-
               const bars = this.marketData.get(symbolInternal)!;
               if (bars.length === 0) return;
-
               const lastBar = bars[bars.length - 1];
               const tradeTime = Date.now();
-
               const isNewMinute = (tradeTime - lastBar.timestampMs) > 60000;
 
               if (isNewMinute) {
@@ -140,7 +200,6 @@ export class LiveMarketStreamService {
               this.marketData.set(symbolInternal, decorateBarsWithIndicators(bars));
             }
           });
-
           this.notifyListeners();
         }
       } catch (err) {}

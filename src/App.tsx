@@ -249,6 +249,17 @@ export default function App() {
   // "claiming" a proposal ID here closes the race regardless of state-update
   // timing.
   const inFlightProposalIds = useRef<Set<string>>(new Set());
+  // Same race as inFlightProposalIds, but on the closing side: a stop-loss/
+  // take-profit hit gets detected inside setActivePositions' functional
+  // updater, but the actual close (P&L credit + history record) is
+  // deferred via setTimeout. If two price-update passes (e.g. a real WS
+  // tick and the REST-poll backstop) both read the position as still open
+  // before the first pass's removal has landed, both independently detect
+  // the same stop/target hit and each schedules its own close — crediting
+  // the P&L twice and writing two history entries for one real trade. This
+  // claims a position the instant a close is first triggered, so a second,
+  // near-simultaneous trigger for the same position is a no-op.
+  const closingPositionIds = useRef<Set<string>>(new Set());
   const activePositionsRef = React.useRef<Position[]>([]);
   React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
@@ -649,6 +660,15 @@ export default function App() {
       exitPrice: number,
       reason: "MANUAL" | "STOP_LOSS" | "TAKE_PROFIT" | "EXPIRY_TIME"
     ) => {
+      // Claim this position before doing anything else. If another
+      // near-simultaneous trigger already claimed it, back out — this is
+      // what was producing two closed-trade entries (and double-crediting
+      // P&L) for a single real close.
+      if (closingPositionIds.current.has(pos.id)) {
+        return;
+      }
+      closingPositionIds.current.add(pos.id);
+
       const isLong = pos.direction === "LONG";
       const diff = isLong
         ? exitPrice - pos.entryPrice
