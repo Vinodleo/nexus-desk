@@ -104,6 +104,11 @@ export function evaluateExpectedValue(
   };
 }
 
+export interface RiskEngineEvaluationOptions {
+  quarantinedUntilMs?: number;
+  spread?: number;
+}
+
 // 2. Deterministic Risk Engine evaluation & Kelly sizing (Section 8)
 export function evaluateRiskEngine(
   setup: StrategySetup,
@@ -115,7 +120,8 @@ export function evaluateRiskEngine(
   recentHourlyTradeCount: number,
   policy: RiskPolicyConfig,
   failureState: FailureInjectionState,
-  isDataStale: boolean
+  isDataStale: boolean,
+  options?: RiskEngineEvaluationOptions
 ): RiskCalculation {
   const {
     equity,
@@ -133,6 +139,24 @@ export function evaluateRiskEngine(
     passed = false;
     rejectionReason =
       "REJECTED BY RISK: Global Kill Switch is ACTIVE. All trading halted.";
+  }
+
+  // Check Symbol Quarantine (Embargo after consecutive losses)
+  if (passed && options?.quarantinedUntilMs && options.quarantinedUntilMs > Date.now()) {
+    const remainingMins = Math.ceil((options.quarantinedUntilMs - Date.now()) / 60000);
+    passed = false;
+    rejectionReason = `REJECTED BY RISK: ${setup.symbol} is under embargo (${remainingMins}m remaining) due to consecutive loss protection.`;
+  }
+
+  // Check Spread-to-Stop Ratio (Reject if spread is too wide compared to stop loss distance)
+  const spreadStopDistance = Math.abs(setup.entryPrice - setup.stopLoss);
+  if (passed && options?.spread !== undefined && spreadStopDistance > 0) {
+    const spreadFractionOfStop = options.spread / spreadStopDistance;
+    // If the spread eats more than 25% of the stop loss, the trade is practically unviable
+    if (spreadFractionOfStop > 0.25) {
+      passed = false;
+      rejectionReason = `REJECTED BY RISK: Bid-ask spread (₹${options.spread.toFixed(2)}) is ${(spreadFractionOfStop * 100).toFixed(0)}% of stop distance (₹${spreadStopDistance.toFixed(2)}). Max allowed is 25%.`;
+    }
   }
 
   // Check Stale Data

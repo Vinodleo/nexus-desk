@@ -8,6 +8,49 @@ const STORAGE_KEY_CAPITAL = "nexus_agent_capital_inr_v4";
 const STORAGE_KEY_CLOSED_TRADES = "nexus_agent_closed_trades_inr_v4";
 const STORAGE_KEY_MODEL_ACCURACY = "nexus_agent_model_accuracy_inr_v4";
 const STORAGE_KEY_PROMOTED_LAB_MODEL = "nexus_agent_promoted_lab_model_inr_v4";
+const STORAGE_KEY_QUARANTINES = "nexus_agent_quarantines_inr_v1";
+
+export interface SymbolQuarantineRecord {
+  symbol: string;
+  quarantinedUntilMs: number;
+  reason: string;
+  consecutiveLosses: number;
+}
+
+export function loadStoredQuarantines(): Record<string, SymbolQuarantineRecord> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_QUARANTINES);
+    if (raw) {
+      const parsed: Record<string, SymbolQuarantineRecord> = JSON.parse(raw);
+      const now = Date.now();
+      const valid: Record<string, SymbolQuarantineRecord> = {};
+      for (const [sym, rec] of Object.entries(parsed)) {
+        if (rec && rec.quarantinedUntilMs > now) {
+          valid[sym] = rec;
+        }
+      }
+      return valid;
+    }
+  } catch (err) {
+    console.warn("Failed to load quarantines from LocalStorage:", err);
+  }
+  return {};
+}
+
+export function saveStoredQuarantines(quarantines: Record<string, SymbolQuarantineRecord>): void {
+  try {
+    const now = Date.now();
+    const clean: Record<string, SymbolQuarantineRecord> = {};
+    for (const [sym, rec] of Object.entries(quarantines)) {
+      if (rec && rec.quarantinedUntilMs > now) {
+        clean[sym] = rec;
+      }
+    }
+    localStorage.setItem(STORAGE_KEY_QUARANTINES, JSON.stringify(clean));
+  } catch (err) {
+    console.warn("Failed to save quarantines to LocalStorage:", err);
+  }
+}
 
 export function loadStoredPromotedLabModel(): PromotedLabModel | null {
   try {

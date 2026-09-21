@@ -42,6 +42,7 @@ export interface ScanMarketOptions {
   failureState: FailureInjectionState;
   riskPolicy?: RiskPolicyConfig;
   experiences?: any[];
+  quarantines?: Record<string, { quarantinedUntilMs: number }>;
 }
 
 export interface MarketScanResult {
@@ -207,6 +208,7 @@ export async function scanSingleMarket(
     );
 
     // 4. Deterministic Risk Engine & Bounded Kelly Sizing
+    const symbolQuarantine = options.quarantines?.[symbolConfig.symbol];
     const riskCalc: RiskCalculation = evaluateRiskEngine(
       setup,
       metaScore,
@@ -217,7 +219,11 @@ export async function scanSingleMarket(
       2,
       policy,
       options.failureState,
-      false
+      false,
+      {
+        quarantinedUntilMs: symbolQuarantine?.quarantinedUntilMs,
+        spread: orderBook.spread,
+      }
     );
 
     // Must pass edge criteria, risk constraints, and dynamic confidence hurdle

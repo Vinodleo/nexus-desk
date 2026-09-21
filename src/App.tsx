@@ -46,6 +46,9 @@ import {
   LearnedModelAccuracy,
   loadStoredPromotedLabModel,
   saveStoredPromotedLabModel,
+  loadStoredQuarantines,
+  saveStoredQuarantines,
+  SymbolQuarantineRecord,
 } from "./services/storagePersistenceService";
 import { getBaselineModels } from "./services/backtestingEngine";
 import { scanAllMarkets } from "./services/marketScannerService";
@@ -265,6 +268,18 @@ export default function App() {
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
     loadStoredClosedTrades()
   );
+  const closedTradesRef = React.useRef<HistoricalTrade[]>([]);
+  React.useEffect(() => { closedTradesRef.current = closedTrades; }, [closedTrades]);
+
+  // Per-Symbol Quarantine (Embargo): prevents re-approving a symbol after consecutive losses
+  const [symbolQuarantines, setSymbolQuarantines] = useState<Record<string, SymbolQuarantineRecord>>(() =>
+    loadStoredQuarantines()
+  );
+  const symbolQuarantinesRef = React.useRef<Record<string, SymbolQuarantineRecord>>({});
+  React.useEffect(() => {
+    symbolQuarantinesRef.current = symbolQuarantines;
+    saveStoredQuarantines(symbolQuarantines);
+  }, [symbolQuarantines]);
 
   // Live WebSocket Engine for Real Binance Data
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
@@ -353,84 +368,239 @@ export default function App() {
 
               const isLong = pos.direction === "LONG";
 
-              // Evaluate Stop Loss and Take Profit against LIVE tick
+              // Evaluate Stop Loss, Trailing Profit Lock, and Take Profit against LIVE tick
               let hitExit = false;
-              let exitReason: "STOP_LOSS" | "TAKE_PROFIT" | null = null;
+              let exitReason: "STOP_LOSS" | "TAKE_PROFIT" | "TRAILING_STOP" | null = null;
+              let exitFillPrice = realINRPrice;
 
               const atr = pos.atrAtEntry || (pos.entryPrice * 0.005);
+              const isTrendRunner =
+                pos.trailMode === "TREND_RUNNER" ||
+                pos.family === "trend_following" ||
+                pos.family === "breakout_confirmation" ||
+                (pos.expectedHoldingTimeMinutes || 30) > 60;
 
               if (isLong) {
-                // Trailing Stop Logic (Long)
+                // Track peak high price
                 pos.highestPrice = Math.max(pos.highestPrice || pos.entryPrice, realINRPrice);
-                const profitInATR = atr > 0 ? (pos.highestPrice - pos.entryPrice) / atr : 0;
+                const peakGain = Math.max(0, pos.highestPrice - pos.entryPrice);
+                const profitInATR = atr > 0 ? peakGain / atr : 0;
+                const profitPct = (peakGain / pos.entryPrice) * 100;
+                const initialTP = pos.initialTakeProfit || pos.takeProfit;
+                const targetDist = Math.max(0.001, initialTP - pos.entryPrice);
+                const targetProgress = peakGain / targetDist;
 
-                // Activate trail after 1.0 ATR of profit
-                if (!pos.trailActive && profitInATR >= 1.0) {
-                  pos.trailActive = true;
-                }
+                if (isTrendRunner) {
+                  // --- TREND RUNNER MODE: Breathing room for pullbacks + Fixed Target Lock + Extended Profit Margin ---
+                  // Activate once firmly established (>=0.40% gain, 0.7 ATR, or 40% to target)
+                  if (!pos.trailActive && (profitPct >= 0.40 || profitInATR >= 0.7 || targetProgress >= 0.40)) {
+                    pos.trailActive = true;
+                  }
 
-                if (pos.trailActive) {
-                  // Stage 1 — the moment the trail activates, the stop must
-                  // guarantee at least a small locked-in profit (breakeven +
-                  // a buffer for round-trip costs). Without this floor, a
-                  // 1.5 ATR trail measured from a peak only 1.0-1.5 ATR
-                  // above entry can sit BELOW entry — "trailing" a winner
-                  // that can still close as a loss, which is exactly the
-                  // "give the profit back" failure mode this is meant to
-                  // prevent.
-                  const breakevenFloor = pos.entryPrice * 1.001;
-                  // Stage 2 — once a big winner has developed, tighten the
-                  // trail distance so more of the accrued gain is protected
-                  // rather than trailing at a constant distance forever.
-                  const trailDistanceATR = profitInATR >= 2.5 ? 1.0 : 1.5;
-                  const dynamicStop = Math.max(breakevenFloor, pos.highestPrice - (atr * trailDistanceATR));
+                  if (pos.trailActive) {
+                    // When price reaches or exceeds the initial target:
+                    if (realINRPrice >= initialTP) {
+                      // 1. FIXED PROFIT GUARANTEE: Lock in the full initial target price as the unbreakable stop floor!
+                      const targetLockPrice = initialTP;
+                      if (targetLockPrice > pos.stopLoss) {
+                        pos.stopLoss = targetLockPrice;
+                        changed = true;
+                      }
 
-                  if (dynamicStop > pos.stopLoss) {
-                    pos.stopLoss = dynamicStop;
-                    // Push take profit further out so we don't cap the runner
-                    pos.takeProfit = Math.max(pos.takeProfit, realINRPrice + (atr * 5));
-                    changed = true;
+                      // 2. EXTENDED PROFIT MARGIN: Expand target to runner stage (e.g. +1.5x target distance)
+                      const extendedTarget = initialTP + targetDist * 1.5;
+                      if (pos.takeProfit < extendedTarget) {
+                        pos.takeProfit = extendedTarget;
+                        changed = true;
+                      }
+
+                      // 3. Trail behind highest peak at 1.2 ATR distance, never falling below targetLockPrice
+                      const runnerTrailStop = Math.max(targetLockPrice, pos.highestPrice - (atr * 1.2));
+                      if (runnerTrailStop > pos.stopLoss) {
+                        pos.stopLoss = runnerTrailStop;
+                        changed = true;
+                      }
+                    } else {
+                      // Pre-target phase: Give breathing room through structural pullback distance (1.4 ATR)
+                      // with guaranteed break-even floor once trail is active
+                      const breakevenFloor = pos.entryPrice * 1.002;
+                      const structuralTrail = pos.highestPrice - (atr * 1.4);
+                      const dynamicStop = Math.max(breakevenFloor, structuralTrail);
+
+                      if (dynamicStop > pos.stopLoss) {
+                        pos.stopLoss = dynamicStop;
+                        changed = true;
+                      }
+                    }
+                  }
+
+                  // Exit Evaluation for Trend Runner
+                  if (realINRPrice >= pos.takeProfit) {
+                    hitExit = true;
+                    exitReason = "TAKE_PROFIT";
+                    exitFillPrice = Math.max(realINRPrice, pos.takeProfit);
+                  } else if (realINRPrice <= pos.stopLoss) {
+                    hitExit = true;
+                    if (pos.trailActive || pos.stopLoss >= pos.entryPrice) {
+                      exitReason = "TRAILING_STOP";
+                      exitFillPrice = Math.max(realINRPrice, pos.stopLoss, pos.entryPrice * 1.001);
+                    } else {
+                      exitReason = "STOP_LOSS";
+                      exitFillPrice = realINRPrice;
+                    }
+                  }
+                } else {
+                  // --- SCALP TIGHT MODE: Quick fixed profit / tight high-watermark lock for mean reversion ---
+                  if (!pos.trailActive && (profitPct >= 0.25 || profitInATR >= 0.5 || targetProgress >= 0.35)) {
+                    pos.trailActive = true;
+                  }
+
+                  if (pos.trailActive) {
+                    const breakevenFloor = pos.entryPrice * 1.002;
+                    let ratchetGain = pos.entryPrice * 0.002;
+                    if (profitInATR >= 1.5 || targetProgress >= 0.70) {
+                      ratchetGain = Math.max(ratchetGain, peakGain * 0.75);
+                    } else if (profitInATR >= 0.8 || targetProgress >= 0.45) {
+                      ratchetGain = Math.max(ratchetGain, peakGain * 0.60);
+                    }
+
+                    const dynamicStop = Math.max(breakevenFloor, pos.entryPrice + ratchetGain);
+                    if (dynamicStop > pos.stopLoss) {
+                      pos.stopLoss = dynamicStop;
+                      changed = true;
+                    }
+                  }
+
+                  // Strict Target Exit for Scalpers
+                  if (realINRPrice >= pos.takeProfit) {
+                    hitExit = true;
+                    exitReason = "TAKE_PROFIT";
+                    exitFillPrice = Math.max(realINRPrice, pos.takeProfit);
+                  } else if (realINRPrice <= pos.stopLoss) {
+                    hitExit = true;
+                    if (pos.trailActive || pos.stopLoss >= pos.entryPrice) {
+                      exitReason = "TRAILING_STOP";
+                      exitFillPrice = Math.max(realINRPrice, pos.stopLoss, pos.entryPrice * 1.001);
+                    } else {
+                      exitReason = "STOP_LOSS";
+                      exitFillPrice = realINRPrice;
+                    }
                   }
                 }
-
-                if (realINRPrice <= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
-                else if (realINRPrice >= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
               } else {
-                // Trailing Stop Logic (Short)
+                // Short Trailing Stop & Profit Lock Logic
                 pos.lowestPrice = Math.min(pos.lowestPrice || pos.entryPrice, realINRPrice);
-                const profitInATR = atr > 0 ? (pos.entryPrice - pos.lowestPrice) / atr : 0;
+                const peakGain = Math.max(0, pos.entryPrice - pos.lowestPrice);
+                const profitInATR = atr > 0 ? peakGain / atr : 0;
+                const profitPct = (peakGain / pos.entryPrice) * 100;
+                const initialTP = pos.initialTakeProfit || pos.takeProfit;
+                const targetDist = Math.max(0.001, pos.entryPrice - initialTP);
+                const targetProgress = peakGain / targetDist;
 
-                // Activate trail after 1.0 ATR of profit
-                if (!pos.trailActive && profitInATR >= 1.0) {
-                  pos.trailActive = true;
-                }
+                if (isTrendRunner) {
+                  // --- TREND RUNNER MODE (SHORT) ---
+                  if (!pos.trailActive && (profitPct >= 0.40 || profitInATR >= 0.7 || targetProgress >= 0.40)) {
+                    pos.trailActive = true;
+                  }
 
-                if (pos.trailActive) {
-                  // Same two-stage logic mirrored for shorts: guarantee a
-                  // locked-in profit floor immediately on activation, then
-                  // tighten the trail further once a big winner develops.
-                  const breakevenCeiling = pos.entryPrice * 0.999;
-                  const trailDistanceATR = profitInATR >= 2.5 ? 1.0 : 1.5;
-                  const dynamicStop = Math.min(breakevenCeiling, pos.lowestPrice + (atr * trailDistanceATR));
+                  if (pos.trailActive) {
+                    if (realINRPrice <= initialTP) {
+                      // 1. FIXED PROFIT GUARANTEE: Lock in full target price as unbreakable stop ceiling
+                      const targetLockPrice = initialTP;
+                      if (targetLockPrice < pos.stopLoss) {
+                        pos.stopLoss = targetLockPrice;
+                        changed = true;
+                      }
 
-                  if (dynamicStop < pos.stopLoss) {
-                    pos.stopLoss = dynamicStop;
-                    // Push take profit further out so we don't cap the runner
-                    pos.takeProfit = Math.min(pos.takeProfit, realINRPrice - (atr * 5));
-                    changed = true;
+                      // 2. EXTENDED PROFIT MARGIN: Expand target to runner stage
+                      const extendedTarget = initialTP - targetDist * 1.5;
+                      if (pos.takeProfit > extendedTarget) {
+                        pos.takeProfit = extendedTarget;
+                        changed = true;
+                      }
+
+                      // 3. Trail behind lowest trough at 1.2 ATR distance, never rising above targetLockPrice
+                      const runnerTrailStop = Math.min(targetLockPrice, pos.lowestPrice + (atr * 1.2));
+                      if (runnerTrailStop < pos.stopLoss) {
+                        pos.stopLoss = runnerTrailStop;
+                        changed = true;
+                      }
+                    } else {
+                      // Pre-target phase: Breathing room for structural trend pullbacks
+                      const breakevenCeiling = pos.entryPrice * 0.998;
+                      const structuralTrail = pos.lowestPrice + (atr * 1.4);
+                      const dynamicStop = Math.min(breakevenCeiling, structuralTrail);
+
+                      if (dynamicStop < pos.stopLoss) {
+                        pos.stopLoss = dynamicStop;
+                        changed = true;
+                      }
+                    }
+                  }
+
+                  // Exit Evaluation for Short Trend Runner
+                  if (realINRPrice <= pos.takeProfit) {
+                    hitExit = true;
+                    exitReason = "TAKE_PROFIT";
+                    exitFillPrice = Math.min(realINRPrice, pos.takeProfit);
+                  } else if (realINRPrice >= pos.stopLoss) {
+                    hitExit = true;
+                    if (pos.trailActive || pos.stopLoss <= pos.entryPrice) {
+                      exitReason = "TRAILING_STOP";
+                      exitFillPrice = Math.min(realINRPrice, pos.stopLoss, pos.entryPrice * 0.999);
+                    } else {
+                      exitReason = "STOP_LOSS";
+                      exitFillPrice = realINRPrice;
+                    }
+                  }
+                } else {
+                  // --- SCALP TIGHT MODE (SHORT) ---
+                  if (!pos.trailActive && (profitPct >= 0.25 || profitInATR >= 0.5 || targetProgress >= 0.35)) {
+                    pos.trailActive = true;
+                  }
+
+                  if (pos.trailActive) {
+                    const breakevenCeiling = pos.entryPrice * 0.998;
+                    let ratchetGain = pos.entryPrice * 0.002;
+                    if (profitInATR >= 1.5 || targetProgress >= 0.70) {
+                      ratchetGain = Math.max(ratchetGain, peakGain * 0.75);
+                    } else if (profitInATR >= 0.8 || targetProgress >= 0.45) {
+                      ratchetGain = Math.max(ratchetGain, peakGain * 0.60);
+                    }
+
+                    const dynamicStop = Math.min(breakevenCeiling, pos.entryPrice - ratchetGain);
+                    if (dynamicStop < pos.stopLoss) {
+                      pos.stopLoss = dynamicStop;
+                      changed = true;
+                    }
+                  }
+
+                  // Strict Target Exit for Short Scalpers
+                  if (realINRPrice <= pos.takeProfit) {
+                    hitExit = true;
+                    exitReason = "TAKE_PROFIT";
+                    exitFillPrice = Math.min(realINRPrice, pos.takeProfit);
+                  } else if (realINRPrice >= pos.stopLoss) {
+                    hitExit = true;
+                    if (pos.trailActive || pos.stopLoss <= pos.entryPrice) {
+                      exitReason = "TRAILING_STOP";
+                      exitFillPrice = Math.min(realINRPrice, pos.stopLoss, pos.entryPrice * 0.999);
+                    } else {
+                      exitReason = "STOP_LOSS";
+                      exitFillPrice = realINRPrice;
+                    }
                   }
                 }
-
-                if (realINRPrice >= pos.stopLoss) { hitExit = true; exitReason = "STOP_LOSS"; }
-                else if (realINRPrice <= pos.takeProfit) { hitExit = true; exitReason = "TAKE_PROFIT"; }
               }
 
               if (hitExit && exitReason) {
+                const finalExitPrice = exitFillPrice;
+                const finalExitReason = exitReason;
                 setTimeout(() => {
-                  closePositionWithAutopsy(pos, realINRPrice, exitReason!);
+                  closePositionWithAutopsy(pos, finalExitPrice, finalExitReason);
                 }, 10);
                 changed = true;
-                continue; // Don't push to nextPositions, it will be removed by closePositionWithAutopsy anyway, or we just drop it here
+                continue; // Position is being closed
               }
 
               const pnl = (realINRPrice - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
@@ -658,7 +828,7 @@ export default function App() {
     async (
       pos: Position,
       exitPrice: number,
-      reason: "MANUAL" | "STOP_LOSS" | "TAKE_PROFIT" | "EXPIRY_TIME"
+      reason: "MANUAL" | "STOP_LOSS" | "TRAILING_STOP" | "TAKE_PROFIT" | "EXPIRY_TIME"
     ) => {
       // Claim this position before doing anything else. If another
       // near-simultaneous trigger already claimed it, back out — this is
@@ -684,11 +854,17 @@ export default function App() {
       setEquity((prev) => Number((prev + finalPnl).toFixed(2)));
       setCash((prev) => Number((prev + finalPnl).toFixed(2)));
 
-      // Audio notification
-      if (reason === "TAKE_PROFIT" || isWin) {
+      // Audio & Alert notification
+      if (reason === "TAKE_PROFIT" || reason === "TRAILING_STOP" || isWin) {
         playProfitTargetSound();
-        sendAlertNotification(`■ [Nexus Desk] Target Hit: ${pos.symbol}`, {
-          body: `${pos.direction} closed with +₹${finalPnl.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent}%). Capital added to portfolio.`,
+        const alertTitle =
+          reason === "TRAILING_STOP"
+            ? `■ [Nexus Desk] Trailing Profit Captured: ${pos.symbol}`
+            : reason === "TAKE_PROFIT"
+            ? `■ [Nexus Desk] Target Hit: ${pos.symbol}`
+            : `■ [Nexus Desk] Trade Profit Captured: ${pos.symbol}`;
+        sendAlertNotification(alertTitle, {
+          body: `${pos.direction} closed with +₹${finalPnl.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent}%). Profit secured into portfolio.`,
         });
       } else {
         playStopLossSound();
@@ -709,17 +885,13 @@ export default function App() {
         title:
           reason === "TAKE_PROFIT"
             ? `Target Hit: ${pos.symbol} (+₹${finalPnl.toFixed(2)})`
+            : reason === "TRAILING_STOP"
+            ? `Trailing Profit Captured: ${pos.symbol} (+₹${finalPnl.toFixed(2)})`
             : reason === "STOP_LOSS"
-            ? `Stop-Loss Executed: ${pos.symbol} (-₹${Math.abs(finalPnl).toFixed(
-                2
-              )})`
+            ? `Stop-Loss Executed: ${pos.symbol} (-₹${Math.abs(finalPnl).toFixed(2)})`
             : reason === "EXPIRY_TIME"
-            ? `Holding Time Exceeded: ${pos.symbol} (${
-                finalPnl >= 0 ? "+" : ""
-              }₹${finalPnl.toFixed(2)})`
-            : `Trade Exited: ${pos.symbol} (${
-                finalPnl >= 0 ? "+" : ""
-              }₹${finalPnl.toFixed(2)})`,
+            ? `Holding Time Exceeded: ${pos.symbol} (${finalPnl >= 0 ? "+" : ""}₹${finalPnl.toFixed(2)})`
+            : `Trade Exited: ${pos.symbol} (${finalPnl >= 0 ? "+" : ""}₹${finalPnl.toFixed(2)})`,
         message: !isWin
           ? `Loss logged to Experience Memory. Base strategy rules remain frozen to prevent curve-fitting. Future similar setups in this regime will be automatically vetoed by the Meta-Labeler.`
           : `Profit captured. Outcome signature added to experience memory. Base rules preserved.`,
@@ -757,8 +929,9 @@ export default function App() {
         )
       );
 
+      const nowMs = Date.now();
       const newHistoricalTrade: HistoricalTrade = {
-        id: `trade-closed-${Date.now()}`,
+        id: `trade-closed-${nowMs}`,
         positionId: pos.id,
         symbol: pos.symbol,
         direction: pos.direction,
@@ -773,11 +946,66 @@ export default function App() {
         exitReason: reason,
         openedAt: openedAtFormatted,
         closedAt: closedAtFormatted,
+        openedAtMs: pos.openTime ? new Date(pos.openTime).getTime() : nowMs,
+        closedAtMs: nowMs,
         holdingDurationMinutes: durationMins,
         isSelfApproved: pos.isSelfApproved,
       };
 
       setClosedTrades((prev) => [newHistoricalTrade, ...prev]);
+
+      // Per-Symbol Quarantine Check:
+      // If a trade closes with a loss (or 3 consecutive losses for this symbol),
+      // quarantine the symbol for 2 hours (120 minutes) to prevent immediate churn and repeat losses.
+      if (!isWin) {
+        const symbolClosedTrades = [newHistoricalTrade, ...closedTradesRef.current.filter((t) => t.symbol === pos.symbol)];
+        const consecutiveSymbolLosses = symbolClosedTrades.slice(0, 3).filter((t) => !t.isWin).length;
+        if (consecutiveSymbolLosses >= 3 || !isWin) {
+          // Embargo the symbol for 2 hours (120 minutes)
+          const embargoDurationMs = 120 * 60 * 1000;
+          const quarantinedUntilMs = Date.now() + embargoDurationMs;
+          setSymbolQuarantines((prev) => ({
+            ...prev,
+            [pos.symbol]: {
+              symbol: pos.symbol,
+              quarantinedUntilMs,
+              quarantineReason: consecutiveSymbolLosses >= 3
+                ? `3 consecutive losses recorded on ${pos.symbol}`
+                : `Loss recorded on ${pos.symbol}`,
+              consecutiveLosses: consecutiveSymbolLosses,
+              lastLossTimestamp: new Date().toISOString(),
+            },
+          }));
+          logSecurityAudit(
+            "SYMBOL_QUARANTINED",
+            `Symbol ${pos.symbol} quarantined for 120 minutes following loss (exit: ₹${exitPrice}, PnL: ₹${finalPnl})`
+          );
+        }
+
+        // Auto-Trip on 3 Consecutive Losses:
+        // Check global consecutive closed trades. If 3 consecutive losses occur,
+        // automatically activate the Emergency Kill Switch and turn off Self-Approval / Autopilot.
+        const recentGlobalTrades = [newHistoricalTrade, ...closedTradesRef.current].slice(0, 3);
+        const globalConsecutiveLosses = recentGlobalTrades.length === 3 && recentGlobalTrades.every((t) => !t.isWin);
+        if (globalConsecutiveLosses) {
+          setKillSwitchActive(true);
+          setDecisionMode("MANUAL_ONLY");
+          setExecutionToast({
+            id: `toast-killswitch-${Date.now()}`,
+            title: "EMERGENCY SAFETY TRIP: 3 CONSECUTIVE LOSSES",
+            message: "Kill Switch activated. Self-approval autopilot turned OFF. Trading halted to preserve capital.",
+            type: "WARNING",
+            timestamp: new Date().toLocaleTimeString(),
+          });
+          logSecurityAudit(
+            "KILL_SWITCH_TRIGGERED",
+            "Emergency Kill Switch tripped automatically due to 3 consecutive losses across portfolio. Autopilot reverted to MANUAL_ONLY."
+          );
+          sendAlertNotification("■ [Nexus Desk] KILL SWITCH AUTO-TRIPPED", {
+            body: "3 consecutive losses detected. Autopilot self-approval disabled. Manual intervention required.",
+          });
+        }
+      }
 
       // Update self-approval learning statistics
       if (pos.isSelfApproved) {
@@ -847,7 +1075,7 @@ export default function App() {
         // Graceful fail-closed handling
       }
     },
-    []
+    [logSecurityAudit, sendAlertNotification]
   );
 
   const handleClosePosition = useCallback(
@@ -917,6 +1145,11 @@ export default function App() {
       const bars = liveMarketStream.getBars(proposal.symbol);
       const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
 
+      const isTrendOrSwing =
+        proposal.setup.family === "trend_following" ||
+        proposal.setup.family === "breakout_confirmation" ||
+        proposal.setup.horizon === "swing";
+
       const newPosition: Position = {
         id: `pos-${Date.now().toString().slice(-6)}`,
         symbol: proposal.symbol,
@@ -927,6 +1160,7 @@ export default function App() {
         quantity: units,
         stopLoss: proposal.setup.stopLoss,
         takeProfit: proposal.setup.takeProfit,
+        initialTakeProfit: proposal.setup.takeProfit,
         unrealizedPnl: 0,
         unrealizedPnlPercent: 0,
         openTime: new Date().toISOString(),
@@ -937,6 +1171,9 @@ export default function App() {
         lowestPrice: proposal.setup.entryPrice,
         trailActive: false,
         atrAtEntry: currentAtr,
+        family: proposal.setup.family,
+        horizon: proposal.setup.horizon,
+        trailMode: isTrendOrSwing ? "TREND_RUNNER" : "SCALP_TIGHT",
       };
 
       // Add to active positions
@@ -1033,9 +1270,19 @@ export default function App() {
         (acc, p) => acc + p.quantity * p.currentPrice,
         0
       );
-      let runningHourlyAutopilotCount = activePositions.filter(
+      // Fix 1-Hour Cap Bug: Count ALL trades opened by autopilot within the rolling hour,
+      // including active positions AND closed trades. Previously only activePositions were counted,
+      // so if a trade hit stop-loss quickly, active positions dropped to 0, resetting the counter
+      // and allowing an infinite loss-whipsaw loop.
+      const activeHourlyAutopilot = activePositions.filter(
         (p) => p.isSelfApproved && new Date(p.openTime).getTime() >= oneHourAgoMs
       ).length;
+      const closedHourlyAutopilot = closedTrades.filter((t) => {
+        if (!t.isSelfApproved) return false;
+        const timeMs = t.openedAt ? new Date(t.openedAt).getTime() : 0;
+        return !isNaN(timeMs) && timeMs >= oneHourAgoMs;
+      }).length;
+      let runningHourlyAutopilotCount = activeHourlyAutopilot + closedHourlyAutopilot;
       const heldSymbols = new Set(activePositions.map((p) => p.symbol));
 
       const accepted: TradeProposal[] = [];
@@ -1046,6 +1293,17 @@ export default function App() {
         if (units <= 0) {
            deferred.push({ proposal, reason: "Position size rounded to 0 after exchange lot-size snapping." });
            continue;
+        }
+
+        // Per-Symbol Quarantine Gate: Check if symbol is currently embargoed due to recent losses
+        const quarantineRec = symbolQuarantines[proposal.symbol];
+        if (quarantineRec && quarantineRec.quarantinedUntilMs > Date.now()) {
+          const remainingMins = Math.ceil((quarantineRec.quarantinedUntilMs - Date.now()) / 60000);
+          deferred.push({
+            proposal,
+            reason: `Symbol is quarantined (${remainingMins}m remaining) due to consecutive loss guard.`,
+          });
+          continue;
         }
 
         // Swing/long-horizon setups (e.g. the macro trend-following persona)
@@ -1117,6 +1375,11 @@ export default function App() {
         const bars = liveMarketStream.getBars(proposal.symbol);
         const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
 
+        const isTrendOrSwing =
+          proposal.setup.family === "trend_following" ||
+          proposal.setup.family === "breakout_confirmation" ||
+          proposal.setup.horizon === "swing";
+
         return {
           id: `pos-${Date.now().toString().slice(-6)}-${index}`,
           symbol: proposal.symbol,
@@ -1127,6 +1390,7 @@ export default function App() {
           quantity: units,
           stopLoss: proposal.setup.stopLoss,
           takeProfit: proposal.setup.takeProfit,
+          initialTakeProfit: proposal.setup.takeProfit,
           unrealizedPnl: 0,
           unrealizedPnlPercent: 0,
           openTime: new Date().toISOString(),
@@ -1137,6 +1401,9 @@ export default function App() {
           lowestPrice: proposal.setup.entryPrice,
           trailActive: false,
           atrAtEntry: currentAtr,
+          family: proposal.setup.family,
+          horizon: proposal.setup.horizon,
+          trailMode: isTrendOrSwing ? "TREND_RUNNER" : "SCALP_TIGHT",
         };
       });
 
@@ -1180,7 +1447,7 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString(),
       });
     },
-    [killSwitchActive, activePositions, equity, logSecurityAudit]
+    [killSwitchActive, activePositions, closedTrades, symbolQuarantines, equity, logSecurityAudit]
   );
 
   // Autonomous Self-Approval Engine:
@@ -1278,6 +1545,7 @@ export default function App() {
         failureState,
         experiences,
         barsMap,
+        quarantines: symbolQuarantinesRef.current,
       });
 
       // Update Live Sample Telemetry: What agents analysed, selected, and rejected
@@ -1354,6 +1622,7 @@ export default function App() {
           dailyRealizedPnl,
           failureState,
           experiences,
+          quarantines: symbolQuarantinesRef.current,
         });
 
         const evaluatedCount = scanResult.totalSetupsEvaluated || 12;

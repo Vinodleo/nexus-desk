@@ -314,18 +314,28 @@ export const BookTab: React.FC<BookTabProps> = ({
                     {/* Price & Target levels */}
                     <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#1a1a22] text-xs font-mono text-stone-400">
                       <div>
-                        <span className="text-[10px] text-stone-400 uppercase">Stop Loss: </span>
-                        <span className="text-rose-400 font-medium flex items-center gap-2">
+                        <span className="text-[10px] text-stone-400 uppercase">
+                          {pos.trailActive ? "Trailing Stop: " : "Stop Loss: "}
+                        </span>
+                        <span className={`${pos.trailActive ? "text-emerald-400 font-semibold" : "text-rose-400 font-medium"} flex items-center gap-1.5 flex-wrap`}>
                           ₹{pos.stopLoss.toFixed(2)}
                           {pos.trailActive && (
-                            <span className="bg-emerald-500/20 text-emerald-400 text-[9px] px-1 py-0.5 rounded uppercase tracking-widest border border-emerald-500/30">
-                              Trailing
+                            <span className="bg-emerald-500/20 text-emerald-300 text-[9px] px-1.5 py-0.5 rounded font-mono uppercase tracking-wider border border-emerald-500/40">
+                              {pos.initialTakeProfit && ((isLong && pos.stopLoss >= pos.initialTakeProfit) || (!isLong && pos.stopLoss <= pos.initialTakeProfit))
+                                ? "Target Locked + Runner"
+                                : pos.trailMode === "TREND_RUNNER"
+                                ? "Runner Trail"
+                                : "Profit Locked"}
                             </span>
                           )}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-stone-400 uppercase">Target (TP): </span>
+                        <span className="text-[10px] text-stone-400 uppercase">
+                          {pos.initialTakeProfit && ((isLong && pos.takeProfit > pos.initialTakeProfit) || (!isLong && pos.takeProfit < pos.initialTakeProfit))
+                            ? "Runner Target: "
+                            : "Target (TP): "}
+                        </span>
                         <span className="text-emerald-400 font-medium">
                           ₹{pos.takeProfit.toFixed(2)}
                         </span>
@@ -487,6 +497,8 @@ export const BookTab: React.FC<BookTabProps> = ({
                 const exitReasonLabel =
                   trade.exitReason === "TAKE_PROFIT"
                     ? "Target Hit"
+                    : trade.exitReason === "TRAILING_STOP"
+                    ? "Trailing Profit Locked"
                     : trade.exitReason === "STOP_LOSS"
                     ? "Stop-Loss Hit"
                     : trade.exitReason === "EXPIRY_TIME"

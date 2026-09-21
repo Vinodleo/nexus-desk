@@ -198,6 +198,7 @@ export interface Position {
   quantity: number;
   stopLoss: number;
   takeProfit: number;
+  initialTakeProfit?: number;
   unrealizedPnl: number;
   unrealizedPnlPercent: number;
   openTime: string;
@@ -208,6 +209,9 @@ export interface Position {
   lowestPrice?: number;
   trailActive?: boolean;
   atrAtEntry?: number;
+  family?: StrategyFamily;
+  horizon?: "intraday" | "swing";
+  trailMode?: "SCALP_TIGHT" | "TREND_RUNNER";
 }
 
 export interface HistoricalTrade {
@@ -223,9 +227,11 @@ export interface HistoricalTrade {
   realizedPnl: number; // Profit earned (positive) or money lost (negative)
   realizedPnlPercent: number;
   isWin: boolean;
-  exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "MANUAL" | "EXPIRY_TIME";
+  exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL" | "EXPIRY_TIME";
   openedAt: string;
   closedAt: string;
+  openedAtMs?: number;
+  closedAtMs?: number;
   holdingDurationMinutes?: number;
   isSelfApproved?: boolean;
   highestPrice?: number;
@@ -243,7 +249,7 @@ export interface TradeAutopsy {
   direction: TradeDirection;
   entryPrice: number;
   exitPrice: number;
-  exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "MANUAL_CLOSE" | "EXPIRY_TIME";
+  exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL_CLOSE" | "EXPIRY_TIME";
   realizedPnl: number;
   realizedPnlPercent: number;
   holdingDurationMinutes: number;
