@@ -2,54 +2,11 @@ import crypto from "crypto";
 import { Router, type Request, type Response } from "express";
 import { liveRiskSnapshot } from "../liveOrderGuard";
 import { currentPrices } from "../realtime";
+import { getCoinDcxTicker } from "../coindcxTicker";
 
 import { validate, cancelOrderBody, coinDcxCandlesQuery } from "../validation";
 
 export const router = Router();
-
-// CoinDCX Polling Proxy (CoinDCX doesn't have public K-line WebSockets, so we poll their public REST API)
-router.get("/api/stream/coindcx", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  const activeMarkets = ['BTCINR', 'ETHINR', 'SOLINR', 'AVAXINR', 'NEARINR', 'JUPINR', 'XRPINR'];
-
-  const pollInterval = setInterval(async () => {
-    try {
-      const response = await fetch('https://public.coindcx.com/exchange/ticker');
-      const data: any = await response.json();
-      const updates: Record<string, any> = {};
-
-      data.forEach((ticker: any) => {
-        if (activeMarkets.includes(ticker.market)) {
-          // Format the symbol back to UI expectations (e.g. BTCINR -> BTC/INR)
-          const formattedSym = ticker.market.endsWith('INR')
-            ? ticker.market.replace('INR', '/INR')
-            : ticker.market.replace('USDT', '/USDT');
-
-          updates[formattedSym] = {
-            c: parseFloat(ticker.last_price),
-            h: parseFloat(ticker.high),
-            l: parseFloat(ticker.low),
-            v: parseFloat(ticker.volume),
-            t: parseInt(ticker.timestamp) * 1000 // Convert seconds to MS
-          };
-        }
-      });
-
-      res.write(`data: ${JSON.stringify(updates)}\n\n`);
-    } catch (e: any) {
-      console.error("CoinDCX Poll Error:", e.message);
-    }
-  }, 2000); // Poll every 2 seconds
-
-  req.on('close', () => {
-    clearInterval(pollInterval);
-    res.end();
-  });
-});
 
 // CoinDCX credentials live only in the server environment. They are never
 // accepted from, or returned to, the browser.
@@ -81,9 +38,8 @@ export async function getReferencePrice(market: string): Promise<number | undefi
   const cached = currentPrices[market.replace(/INR$/, "/INR")];
   if (cached) return cached;
   try {
-    const response = await fetch("https://public.coindcx.com/exchange/ticker");
-    const data: any = await response.json();
-    const ticker = Array.isArray(data) ? data.find((t: any) => t.market === market) : undefined;
+    const data: any[] = await getCoinDcxTicker();
+    const ticker = data.find((t: any) => t.market === market);
     const price = ticker ? parseFloat(ticker.last_price) : NaN;
     return Number.isFinite(price) ? price : undefined;
   } catch {
@@ -212,9 +168,7 @@ router.post("/api/coindcx/orders/cancel", validate({ body: cancelOrderBody }), a
 
 router.get("/api/coindcx/ticker", async (req, res) => {
   try {
-    const response = await fetch('https://public.coindcx.com/exchange/ticker');
-    const data = await response.json();
-    res.json(data);
+    res.json(await getCoinDcxTicker());
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch from CoinDCX" });
   }

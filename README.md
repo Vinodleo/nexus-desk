@@ -105,7 +105,7 @@ See `.env.example` for the full list. At minimum you need:
 
 ### Firestore rules
 
-Deploy `firestore.rules` to your Firebase project (`firebase deploy --only firestore:rules`).
+Deploy `firestore.rules` with `npx firebase-tools deploy --only firestore:rules --project sustained-glyph-4lsxp`. `firebase.json` targets the app's named database (`ai-studio-selflearningtrad-…`), not `(default)`. You can also paste the file into the console: Firestore → that database → Security → Rules → Publish.
 - Profiles and everything under them can be read and written only by
   their owner.
 - `uid`, `email` and `createdAt` are fixed once a profile exists, and

@@ -1,7 +1,10 @@
 {
-  "firestore": {
-    "rules": "firestore.rules"
-  },
+  "firestore": [
+    {
+      "database": "ai-studio-selflearningtrad-dca5620c-de20-4870-858d-10ae4d3e46b0",
+      "rules": "firestore.rules"
+    }
+  ],
   "emulators": {
     "firestore": { "host": "127.0.0.1", "port": 8080 },
     "ui": { "enabled": false }
