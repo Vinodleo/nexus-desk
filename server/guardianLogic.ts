@@ -126,3 +126,37 @@ export function isPastHoldingTime(pos: GuardedPosition, nowMs: number = Date.now
   const elapsedMinutes = (nowMs - openedMs) / 60000;
   return elapsedMinutes >= (pos.expectedHoldingTimeMinutes || 30);
 }
+
+// Merge the browser's copy of a position into the guardian's on sync.
+//
+// Both sides trail stops independently (the browser also locks the stop at
+// the initial target for trend runners), so either may hold the tighter one.
+// Keep whichever stop is more protective — higher for a LONG, lower for a
+// SHORT — so the guardian honours the browser's tightening without ever
+// loosening its own. Price extremes and trailing state only ever widen too.
+export function mergeSyncedGuardState(
+  direction: "LONG" | "SHORT",
+  entryPrice: number,
+  existing: Pick<GuardedPosition, "stopLoss" | "highestPrice" | "lowestPrice" | "trailActive"> | undefined,
+  incoming: Pick<GuardedPosition, "stopLoss" | "highestPrice" | "lowestPrice" | "trailActive">
+): Pick<GuardedPosition, "stopLoss" | "highestPrice" | "lowestPrice" | "trailActive"> {
+  const incomingHigh = incoming.highestPrice || entryPrice;
+  const incomingLow = incoming.lowestPrice || entryPrice;
+  if (!existing) {
+    return {
+      stopLoss: incoming.stopLoss,
+      highestPrice: incomingHigh,
+      lowestPrice: incomingLow,
+      trailActive: incoming.trailActive ?? false,
+    };
+  }
+  const stops = [existing.stopLoss, incoming.stopLoss].filter((s) => Number.isFinite(s));
+  const stopLoss =
+    stops.length === 0 ? incoming.stopLoss : direction === "LONG" ? Math.max(...stops) : Math.min(...stops);
+  return {
+    stopLoss,
+    highestPrice: existing.highestPrice ? Math.max(existing.highestPrice, incomingHigh) : incomingHigh,
+    lowestPrice: existing.lowestPrice ? Math.min(existing.lowestPrice, incomingLow) : incomingLow,
+    trailActive: Boolean(existing.trailActive || incoming.trailActive),
+  };
+}

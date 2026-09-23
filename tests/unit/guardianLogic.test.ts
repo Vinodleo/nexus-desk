@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyGuardianTick, isPastHoldingTime, type GuardedPosition } from "../../server/guardianLogic";
+import { applyGuardianTick, isPastHoldingTime, mergeSyncedGuardState, type GuardedPosition } from "../../server/guardianLogic";
 
 const base = (over: Partial<GuardedPosition> = {}): GuardedPosition => ({
   direction: "LONG",
@@ -97,5 +97,34 @@ describe("isPastHoldingTime", () => {
   it("honours a custom holding time (swing = 3 days)", () => {
     expect(isPastHoldingTime(base({ openTime: opened(60), expectedHoldingTimeMinutes: 4320 }), now)).toBe(false);
     expect(isPastHoldingTime(base({ openTime: opened(4320), expectedHoldingTimeMinutes: 4320 }), now)).toBe(true);
+  });
+});
+
+describe("mergeSyncedGuardState", () => {
+  const server = { stopLoss: 1000, highestPrice: 1040, lowestPrice: 995, trailActive: true };
+
+  it("adopts the browser's tighter LONG stop", () => {
+    expect(mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 1020 }).stopLoss).toBe(1020);
+  });
+
+  it("never loosens the guardian's LONG stop", () => {
+    expect(mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 990 }).stopLoss).toBe(1000);
+  });
+
+  it("mirrors for SHORT: the lower stop is tighter", () => {
+    const shortServer = { stopLoss: 1010 };
+    expect(mergeSyncedGuardState("SHORT", 1000, shortServer, { stopLoss: 1002 }).stopLoss).toBe(1002);
+    expect(mergeSyncedGuardState("SHORT", 1000, shortServer, { stopLoss: 1030 }).stopLoss).toBe(1010);
+  });
+
+  it("only widens price extremes and never switches trailing off", () => {
+    const r = mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 1000, highestPrice: 1030, lowestPrice: 990, trailActive: false });
+    expect(r).toMatchObject({ highestPrice: 1040, lowestPrice: 990, trailActive: true });
+  });
+
+  it("takes the browser's values for a position the guardian hasn't seen", () => {
+    expect(mergeSyncedGuardState("LONG", 1000, undefined, { stopLoss: 985 })).toEqual({
+      stopLoss: 985, highestPrice: 1000, lowestPrice: 1000, trailActive: false,
+    });
   });
 });
