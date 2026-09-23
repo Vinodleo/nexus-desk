@@ -7,6 +7,7 @@ import { BackgroundExecutionBadge } from "./BackgroundExecutionBadge";
 import { PWAInstallButton } from "./PWAInstallButton";
 
 import { useLiveTickers } from "../hooks/useLiveTickers";
+import { apiFetch } from "../services/apiClient";
 
 export interface TickerTapeItem {
   symbol: string;
@@ -119,7 +120,7 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
     if (!requestToken) return;
 
     setZerodhaStatus("connecting");
-    fetch("/api/zerodha/callback", {
+    apiFetch("/api/zerodha/callback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ requestToken }),
@@ -149,7 +150,7 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
   const handleZerodhaConnect = async () => {
     try {
       setZerodhaStatus("connecting");
-      const res = await fetch("/api/zerodha/init", { method: "POST" });
+      const res = await apiFetch("/api/zerodha/init", { method: "POST" });
       const data = await res.json();
       if (data?.loginUrl) {
         // Full-page redirect to Zerodha's own login page — 2FA and

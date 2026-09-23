@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 
-import { syncToFirebase, syncFromFirebase, saveExchangeKeys, loadExchangeKeys } from "../services/storagePersistenceService";
+import { syncToFirebase, syncFromFirebase, hasLegacyExchangeKeys, deleteLegacyExchangeKeys } from "../services/storagePersistenceService";
+import { apiFetch } from "../services/apiClient";
+import type { CoinDcxServerStatus } from "../types";
 import { Cloud, UploadCloud, DownloadCloud } from "lucide-react";
 import { useAuth, UserRole } from "../context/AuthContext";
 import {
@@ -43,73 +45,33 @@ export const SecurityConsoleModal: React.FC<SecurityConsoleModalProps> = ({
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"overview" | "rbac" | "audit" | "api_keys" | "cloud">("overview");
-  type BrokerId = "zerodha" | "coindcx" | "ibkr" | "binance" | "alpaca";
-  const [exchangeType, setExchangeType] = useState<BrokerId>("zerodha");
-  const [apiKey, setApiKey] = useState("");
-  const [apiSecret, setApiSecret] = useState("");
-  const [isEncrypting, setIsEncrypting] = useState(false);
-  const [encryptSuccess, setEncryptSuccess] = useState(false);
-  
-  // Track which vaults have keys stored
-  const [activeVaults, setActiveVaults] = useState<Record<string, boolean>>({});
+  const [coinDcxStatus, setCoinDcxStatus] = useState<CoinDcxServerStatus | null>(null);
+  const [hasLegacyKeys, setHasLegacyKeys] = useState(false);
+  const [isDeletingLegacy, setIsDeletingLegacy] = useState(false);
 
   React.useEffect(() => {
-    if (activeTab === "api_keys" && currentUser) {
-      loadExchangeKeys(currentUser.uid).then(data => {
-        if (data) {
-          const vaults: Record<string, boolean> = {};
-          Object.keys(data).forEach(key => {
-            if (data[key]?.apiKey) vaults[key] = true;
-          });
-          setActiveVaults(vaults);
-        }
-      });
+    if (activeTab !== "api_keys") return;
+    apiFetch("/api/coindcx/status")
+      .then((res) => res.json())
+      .then((data) => data.success && setCoinDcxStatus(data))
+      .catch(() => setCoinDcxStatus(null));
+    if (currentUser) {
+      hasLegacyExchangeKeys(currentUser.uid).then(setHasLegacyKeys);
     }
   }, [activeTab, currentUser]);
-  
-  // When switching tabs, clear inputs
-  React.useEffect(() => {
-    setApiKey("");
-    setApiSecret("");
-    setEncryptSuccess(false);
-  }, [exchangeType]);
 
-  const handleSaveKeys = async () => {
-    if (!apiKey || !apiSecret) return;
-    if (!currentUser) {
-      alert("Please login via Firebase Auth first to securely store keys.");
-      return;
-    }
-
-    setIsEncrypting(true);
-    setEncryptSuccess(false);
-    
-    // Simulate generation of AES cipher (Mock delay)
-    await new Promise(res => setTimeout(res, 800));
-    
-    // Push encrypted payload to Firebase
-    const success = await saveExchangeKeys(currentUser.uid, exchangeType, apiKey, apiSecret);
-    
-    setIsEncrypting(false);
-    if (success) {
-      setEncryptSuccess(true);
-      setActiveVaults(prev => ({ ...prev, [exchangeType]: true }));
-      setApiKey("");
-      setApiSecret("");
-      setTimeout(() => setEncryptSuccess(false), 3000);
+  const handleDeleteLegacyKeys = async () => {
+    if (!currentUser) return;
+    setIsDeletingLegacy(true);
+    const ok = await deleteLegacyExchangeKeys(currentUser.uid);
+    setIsDeletingLegacy(false);
+    if (ok) {
+      setHasLegacyKeys(false);
+      logSecurityAudit("LEGACY_KEYS_DELETED", "Deleted plain-text exchange keys previously stored in Firestore");
     } else {
-      alert("Failed to securely store keys in Firestore.");
+      alert("Failed to delete the legacy key document from Firestore.");
     }
   };
-
-
-  const handleZerodhaLogin = () => {
-    // In production, this redirects to:
-    // https://kite.trade/connect/login?v=3&api_key=YOUR_API_KEY
-    alert("Redirecting to Kite Login OAuth... (Mocked for now)");
-    // After redirect, Zerodha sends back a ?request_token=... to our callback URL
-  };
-
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
@@ -459,134 +421,63 @@ export const SecurityConsoleModal: React.FC<SecurityConsoleModalProps> = ({
             </div>
           )}
 
-          {/* TAB 4: EXCHANGE API ENCRYPTION VAULT */}
+          {/* TAB 4: EXCHANGE API CREDENTIALS (server-held) */}
           {activeTab === "api_keys" && (
             <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
               <div className="rounded-xl bg-amber-950/20 border border-amber-900/30 p-4 space-y-2">
                 <h4 className="text-xs font-mono font-semibold text-amber-500 flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4" />
-                  <span>Multi-Broker Keychain (Smart Routing)</span>
+                  <span>Server-Held Exchange Credentials</span>
                 </h4>
                 <p className="text-[11px] font-sans text-stone-300 leading-relaxed">
-                  Store isolated credentials for multiple exchanges. The system's SOR (Smart Order Router) will automatically sign and dispatch trades to the correct broker based on the asset class proposed by the AI.
+                  Exchange API keys are configured only as environment variables on the server
+                  (<code>COINDCX_API_KEY</code>, <code>COINDCX_API_SECRET</code>, <code>ZERODHA_API_KEY</code>, <code>ZERODHA_API_SECRET</code>).
+                  They are never entered in, stored by, or sent to the browser. Create exchange keys with withdrawals disabled.
                 </p>
               </div>
-              
-              {/* Vault Badges */}
-              <div className="flex gap-2 flex-wrap mb-2">
-                {Object.entries({
-                  zerodha: "Zerodha (IN)",
-                  coindcx: "CoinDCX (Crypto)",
-                  ibkr: "IBKR (Global)"
-                }).map(([id, label]) => (
-                  <div key={id} className={`px-2 py-1 text-[10px] font-mono rounded flex items-center gap-1.5 ${activeVaults[id] ? "bg-emerald-900/40 text-emerald-400 border border-emerald-800/50" : "bg-stone-900 text-stone-500 border border-stone-800"}`}>
-                    <div className={`w-1.5 h-1.5 rounded-full ${activeVaults[id] ? "bg-emerald-500" : "bg-stone-600"}`} />
-                    {label}
-                  </div>
-                ))}
+
+              <div className="space-y-2 p-4 rounded-xl bg-[#12121a] border border-[#20202c] text-[11px] font-mono">
+                <div className="flex items-center justify-between">
+                  <span className="text-stone-400">CoinDCX keys</span>
+                  {coinDcxStatus?.configured ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Configured ({coinDcxStatus.keyMasked})
+                    </span>
+                  ) : (
+                    <span className="text-rose-400">Not configured</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-stone-400">Live trading</span>
+                  <span className={coinDcxStatus?.liveRisk.enabled ? "text-amber-300" : "text-stone-300"}>
+                    {coinDcxStatus?.liveRisk.enabled ? "ENABLED" : "DISABLED"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-stone-400">Zerodha</span>
+                  <span className="text-stone-300">Connect via the Kite login in the header</span>
+                </div>
               </div>
 
-              <div className="space-y-3 p-4 rounded-xl bg-[#12121a] border border-[#20202c]">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-mono text-stone-400 uppercase tracking-wider">Select Broker Slot</label>
-                  <select 
-                    value={exchangeType}
-                    onChange={(e) => setExchangeType(e.target.value as any)}
-                    className="w-full bg-[#0a0a0f] border border-[#262635] rounded-lg px-3 py-2 text-sm text-stone-200 font-mono outline-none focus:border-emerald-500/50"
+              {hasLegacyKeys && (
+                <div className="p-4 rounded-xl bg-rose-950/30 border border-rose-900/50 space-y-2">
+                  <div className="flex items-center gap-2 text-rose-300 text-xs font-mono font-semibold">
+                    <AlertTriangle className="w-4 h-4" />
+                    Legacy plain-text keys found in Firestore
+                  </div>
+                  <p className="text-[11px] text-stone-300 leading-relaxed">
+                    An earlier version saved exchange keys unencrypted to your Firestore profile. Delete that copy, and
+                    rotate those keys on the exchange since they may have been exposed.
+                  </p>
+                  <button
+                    onClick={handleDeleteLegacyKeys}
+                    disabled={isDeletingLegacy}
+                    className="w-full py-2 rounded-lg bg-rose-700 hover:bg-rose-600 text-white text-xs font-mono cursor-pointer disabled:opacity-50"
                   >
-                    <option value="zerodha">Zerodha (Kite Connect) - IN Equities</option>
-                    <option value="coindcx">CoinDCX - Global Crypto</option>
-                    <option value="ibkr">Interactive Brokers (Web API) - US Equities</option>
-                  </select>
+                    {isDeletingLegacy ? "Deleting..." : "Delete legacy keys from Firestore"}
+                  </button>
                 </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-mono text-stone-400 uppercase tracking-wider flex justify-between">
-                    <span>API Key (Public)</span>
-                    <span className="text-stone-500 text-[9px]">Requires Trading Perms</span>
-                  </label>
-                  <input 
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={activeVaults[exchangeType] ? "•••••••••••• (Key Active)" : "e.g. j7x...9Lp"}
-                    className="w-full bg-[#0a0a0f] border border-[#262635] rounded-lg px-3 py-2 text-sm text-stone-200 font-mono outline-none focus:border-emerald-500/50 placeholder:text-stone-600"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-mono text-stone-400 uppercase tracking-wider flex justify-between">
-                    <span>API Secret (Private)</span>
-                    <span className="text-rose-500/70 text-[9px]">Disable Withdrawals!</span>
-                  </label>
-                  <input 
-                    type="password"
-                    value={apiSecret}
-                    onChange={(e) => setApiSecret(e.target.value)}
-                    placeholder={activeVaults[exchangeType] ? "••••••••••••••••••••••••••••" : "****************************"}
-                    className="w-full bg-[#0a0a0f] border border-[#262635] rounded-lg px-3 py-2 text-sm text-stone-200 font-mono outline-none focus:border-emerald-500/50 placeholder:text-stone-600"
-                  />
-                </div>
-
-                {exchangeType === "zerodha" && activeVaults["zerodha"] ? (
-                  <div className="pt-4 mt-4 border-t border-[#262635] space-y-3">
-                    <div className="flex items-center gap-2 text-emerald-400 text-[11px] font-mono">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Zerodha keys securely stored in vault.</span>
-                    </div>
-                    <p className="text-[10px] text-stone-400 leading-snug">
-                      Zerodha requires a daily OAuth login to generate an Access Token. Click below to authorize this session via Kite.
-                    </p>
-                    <button 
-                      onClick={handleZerodhaLogin}
-                      className="w-full py-2.5 rounded-lg bg-[#ff5722] hover:bg-[#ff7043] text-white text-xs font-mono tracking-wide font-bold transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      Login to Kite Connect
-                    </button>
-                    <div className="pt-2">
-                       <button 
-                         onClick={handleSaveKeys}
-                         disabled={isEncrypting || (!apiKey && !apiSecret)}
-                         className="w-full text-[10px] text-stone-500 hover:text-stone-300 underline underline-offset-2"
-                       >
-                         Overwrite Keys
-                       </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="pt-2">
-                    <button 
-                      onClick={handleSaveKeys}
-                      disabled={isEncrypting || !apiKey || !apiSecret}
-                      className={`w-full py-2.5 rounded-lg text-xs font-mono tracking-wide flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        encryptSuccess 
-                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" 
-                          : isEncrypting 
-                            ? "bg-[#1a1a24] text-stone-500 border border-[#2a2a35]"
-                            : "bg-blue-600 hover:bg-blue-500 text-white border border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                      }`}
-                    >
-                      {encryptSuccess ? (
-                        <>
-                          <CheckCircle2 className="w-4 h-4" />
-                          Encrypted & Synced Securely
-                        </>
-                      ) : isEncrypting ? (
-                        <>
-                          <div className="w-3 h-3 border-2 border-stone-500 border-t-transparent rounded-full animate-spin" />
-                          Generating AES-256 Cipher...
-                        </>
-                      ) : (
-                        <>
-                          <Key className="w-4 h-4" />
-                          {activeVaults[exchangeType] ? "Update Keys" : "Encrypt & Save Keys"}
-                        </>
-                      )}
-                    </button>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           )}
         </div>

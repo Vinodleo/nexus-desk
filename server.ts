@@ -12,10 +12,42 @@ import { KiteConnect, KiteTicker } from 'kiteconnect';
 
 dotenv.config();
 
+import { requireAuth, verifyToken } from "./server/auth";
+import {
+  evaluateLiveOrder,
+  recordLiveOrder,
+  liveRiskSnapshot,
+  withLiveOrderLock,
+} from "./server/liveOrderGuard";
+
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
+
+// Every /api route except the health check requires a verified, allow-listed
+// Firebase user (see server/auth.ts).
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health") return next();
+  return requireAuth(req, res, next);
+});
+
+// Latest real CoinDCX price per symbol ("BTC/INR"), fed by the socket relay
+// below and used as the server-side reference price for live orders.
+const currentPrices: Record<string, number> = {};
+
+// Only send to WebSocket clients that have completed the AUTH handshake.
+function broadcast(message: unknown) {
+  if (!globalWss) return;
+  const payload = JSON.stringify(message);
+  globalWss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN && (client as AuthedSocket).isAuthed) {
+      client.send(payload);
+    }
+  });
+}
+
+type AuthedSocket = WebSocket & { isAuthed?: boolean };
 
 // ==========================================
 // ZERODHA KITE CONNECT INTEGRATION ROUTES
@@ -134,12 +166,7 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
       });
 
       if (Object.keys(updates).length > 0) {
-        // Broadcast to all connected clients
-        globalWss.clients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: "TICK", data: updates }));
-          }
-        });
+        broadcast({ type: "TICK", data: updates });
       }
     });
 
@@ -155,11 +182,9 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
 
     kiteTickerInstance.connect();
 
-    return res.json({
-      success: true,
-      access_token: zerodhaAccessToken,
-      public_token: response.public_token
-    });
+    // The access token stays on the server; the client only needs to know
+    // the session is live.
+    return res.json({ success: true });
   } catch (err: any) {
     console.error("Zerodha session error:", err.message);
     return res.status(500).json({ error: err.message });
@@ -402,18 +427,44 @@ async function executeResilientAiGeneration(params: {
   throw lastError || new Error("All AI models currently busy or unreachable");
 }
 
-// CoinDCX Credential Resolver: extracts API key and secret from headers, body, or server env
-function getCoinDcxCredentials(req: Request): { apiKey: string; apiSecret: string } {
-  const headerKey = (req.headers["x-coindcx-apikey"] || req.headers["x-auth-apikey"]) as string | undefined;
-  const headerSecret = (req.headers["x-coindcx-apisecret"] || req.headers["x-auth-apisecret"]) as string | undefined;
-  const bodyKey = (req.body?.apiKey) as string | undefined;
-  const bodySecret = (req.body?.apiSecret) as string | undefined;
-  const queryKey = (req.query?.apiKey) as string | undefined;
-  const querySecret = (req.query?.apiSecret) as string | undefined;
+// CoinDCX credentials live only in the server environment. They are never
+// accepted from, or returned to, the browser.
+function getCoinDcxCredentials(_req?: Request): { apiKey: string; apiSecret: string } {
+  return {
+    apiKey: (process.env.COINDCX_API_KEY || "").trim(),
+    apiSecret: (process.env.COINDCX_API_SECRET || "").trim(),
+  };
+}
 
-  const apiKey = (headerKey || bodyKey || queryKey || process.env.COINDCX_API_KEY || "").trim();
-  const apiSecret = (headerSecret || bodySecret || querySecret || process.env.COINDCX_API_SECRET || "").trim();
-  return { apiKey, apiSecret };
+function maskKey(apiKey: string): string {
+  return apiKey.length > 8 ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : "ACTIVE";
+}
+
+// Credential + live-risk status for the UI (no secrets).
+app.get("/api/coindcx/status", (_req: Request, res: Response) => {
+  const { apiKey, apiSecret } = getCoinDcxCredentials();
+  res.json({
+    success: true,
+    configured: Boolean(apiKey && apiSecret),
+    keyMasked: apiKey ? maskKey(apiKey) : null,
+    liveRisk: liveRiskSnapshot(),
+  });
+});
+
+// Server-observed reference price for a CoinDCX market (e.g. "BTCINR"):
+// the live socket cache first, then CoinDCX's public ticker.
+async function getReferencePrice(market: string): Promise<number | undefined> {
+  const cached = currentPrices[market.replace(/INR$/, "/INR")];
+  if (cached) return cached;
+  try {
+    const response = await fetch("https://public.coindcx.com/exchange/ticker");
+    const data: any = await response.json();
+    const ticker = Array.isArray(data) ? data.find((t: any) => t.market === market) : undefined;
+    const price = ticker ? parseFloat(ticker.last_price) : NaN;
+    return Number.isFinite(price) ? price : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // Reusable CoinDCX balance fetcher & validator
@@ -424,7 +475,7 @@ const handleCoinDcxBalances = async (req: Request, res: Response) => {
     if (!apiKey || !apiSecret) {
       return res.status(401).json({
         success: false,
-        error: "Missing CoinDCX API credentials. Please configure HMAC Key & Secret in the Risk & Safety Console.",
+        error: "CoinDCX API credentials are not configured on the server (COINDCX_API_KEY / COINDCX_API_SECRET).",
         code: "MISSING_KEYS"
       });
     }
@@ -479,7 +530,7 @@ const handleCoinDcxBalances = async (req: Request, res: Response) => {
       totalUsdt,
       availableUsdt,
       lockedUsdt,
-      keyMasked: apiKey.length > 8 ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : "ACTIVE",
+      keyMasked: maskKey(apiKey),
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
@@ -506,7 +557,7 @@ app.post("/api/coindcx/orders/cancel", async (req: Request, res: Response) => {
     }
 
     if (!apiKey || !apiSecret) {
-      return res.status(401).json({ success: false, error: "Missing CoinDCX API credentials" });
+      return res.status(401).json({ success: false, error: "CoinDCX API credentials are not configured on the server" });
     }
 
     const timestamp = Math.floor(Date.now());
@@ -557,7 +608,12 @@ app.get("/api/coindcx/candles", async (req, res) => {
     }
 
     const pair = `I-${symbol}_INR`;
-    const url = `https://public.coindcx.com/market_data/candles?pair=${pair}&interval=${interval || "1h"}&limit=${limit || 100}`;
+    const params = new URLSearchParams({
+      pair,
+      interval: typeof interval === "string" ? interval : "1h",
+      limit: String(Math.min(1000, Math.max(1, Number(limit) || 100))),
+    });
+    const url = `https://public.coindcx.com/market_data/candles?${params}`;
     const response = await fetch(url);
 
     if (!response.ok) {
@@ -608,18 +664,35 @@ app.post("/api/execute-trade", async (req, res) => {
   if (!apiKey || !apiSecret) {
     return res.status(401).json({
       success: false,
-      error: "Missing CoinDCX API Keys. Configure HMAC keys in Risk & Safety Console before live execution.",
+      error: "CoinDCX API credentials are not configured on the server (COINDCX_API_KEY / COINDCX_API_SECRET).",
       code: "MISSING_KEYS"
     });
+  }
+  if (typeof symbol !== "string" || !["LONG", "SHORT", "buy", "sell"].includes(side)) {
+    return res.status(400).json({ success: false, error: "symbol and side (LONG/SHORT/buy/sell) are required", code: "BAD_REQUEST" });
+  }
+
+  // Format market pair for CoinDCX: e.g. "BTC/INR" -> "BTCINR", "B-BTC_INR" -> "BTCINR"
+  const cleanMarket = symbol.replace(/^[A-Za-z]+-/, "").replace(/[\/_-]/g, "").toUpperCase();
+  // CoinDCX side is "buy" or "sell"
+  const orderSide: "buy" | "sell" = (side === "LONG" || side === "buy") ? "buy" : "sell";
+  const orderQty = Number(quantity);
+
+  return withLiveOrderLock(async () => {
+  const decision = evaluateLiveOrder({
+    market: cleanMarket,
+    side: orderSide,
+    quantity: orderQty,
+    clientPrice: price === undefined || price === null ? undefined : Number(price),
+    referencePrice: await getReferencePrice(cleanMarket),
+  });
+  if (decision.status === "rejected") {
+    console.warn(`[LiveOrderGuard] Rejected ${orderSide} ${orderQty} ${cleanMarket} (user ${(req as any).user?.email}): ${decision.reason}`);
+    return res.status(403).json({ success: false, error: decision.reason, code: decision.code });
   }
 
   try {
     const timestamp = Math.floor(Date.now());
-    // Format market pair for CoinDCX: e.g. "BTC/INR" -> "BTCINR", "B-BTC_INR" -> "BTCINR"
-    const cleanMarket = symbol.replace("/", "").replace(/-/g, "").replace(/_/g, "");
-    
-    // CoinDCX side is "buy" or "sell"
-    const orderSide = (side === "LONG" || side === "buy") ? "buy" : "sell";
     // CoinDCX order_type is "market_order" or "limit_order"
     const cdcxOrderType = (orderType === "MARKET" || !price) ? "market_order" : "limit_order";
 
@@ -627,7 +700,7 @@ app.post("/api/execute-trade", async (req, res) => {
       side: orderSide,
       order_type: cdcxOrderType,
       market: cleanMarket,
-      total_quantity: Number(quantity),
+      total_quantity: orderQty,
       timestamp: timestamp,
       client_order_id: `nx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
     };
@@ -661,6 +734,8 @@ app.post("/api/execute-trade", async (req, res) => {
 
     const exchangeOrderId = data?.orders?.[0]?.id || data?.id || ("cdcx_" + Date.now());
     const executedPrice = data?.orders?.[0]?.price_per_unit || price;
+    recordLiveOrder(cleanMarket, orderSide, orderQty, decision.notionalInr, decision.isReducing);
+    console.log(`[LiveOrder] ${orderSide} ${orderQty} ${cleanMarket} accepted (order ${exchangeOrderId}, user ${(req as any).user?.email})`);
 
     return res.json({
       success: true,
@@ -675,6 +750,7 @@ app.post("/api/execute-trade", async (req, res) => {
     console.error("[CoinDCX Order Dispatch] Error:", e);
     return res.status(500).json({ success: false, error: e.message || "Failed to dispatch order to CoinDCX" });
   }
+  });
 });
 
 // ==========================================
@@ -964,16 +1040,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
   console.log(`[Daemon Position Guardian] Auto-closed ${pos.symbol} (${pos.direction}) @ ${exitPrice} | Reason: ${reason} | PnL: ₹${finalPnl}`);
 
   // Broadcast exit immediately to any connected WebSocket clients
-  if (globalWss) {
-    globalWss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({
-          type: "DAEMON_POSITION_CLOSED",
-          data: closedRecord
-        }));
-      }
-    });
-  }
+  broadcast({ type: "DAEMON_POSITION_CLOSED", data: closedRecord });
 }
 
 // Evaluate all daemon positions against the latest price tick
@@ -1426,12 +1493,34 @@ async function startServer() {
     console.log(`Self-Learning Trading Bot v2.0 Server running on port ${PORT}`);
   });
 
-  // Attach WebSocket server for live Binance Ticker data
+  // Attach WebSocket server for live ticker data. A client must send
+  // {"type":"AUTH","token":"<Firebase ID token>"} as its first message
+  // within 10s; until then it receives nothing, and it is closed on failure.
   const wss = new WebSocketServer({ server });
   globalWss = wss;
 
-  // Cache the latest prices
-  const latestPrices: Record<string, number> = {};
+  wss.on("connection", (socket: AuthedSocket) => {
+    socket.isAuthed = false;
+    const authTimer = setTimeout(() => {
+      if (!socket.isAuthed) socket.close(4401, "Authentication timeout");
+    }, 10000);
+
+    socket.on("message", async (raw) => {
+      if (socket.isAuthed) return;
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg?.type !== "AUTH") throw new Error("Expected AUTH message");
+        await verifyToken(msg.token);
+        socket.isAuthed = true;
+        clearTimeout(authTimer);
+        socket.send(JSON.stringify({ type: "AUTH_OK" }));
+      } catch {
+        clearTimeout(authTimer);
+        socket.close(4403, "Unauthorized");
+      }
+    });
+    socket.on("close", () => clearTimeout(authTimer));
+  });
 
   // Connect to Binance live ticker stream
   // We use the same CoinDCX Polling logic for the top ticker tape
@@ -1458,7 +1547,6 @@ async function startServer() {
   }
 
   const TRACKED_COINS = ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'JUP', 'XRP'];
-  const currentPrices: Record<string, number> = {};
 
   // Symbols we've had to fall back away from real data for — surfaced here
   // so it's obvious in the server log which pairs, if any, aren't actually
@@ -1505,11 +1593,7 @@ async function startServer() {
     // Evaluate 24/7 server position guardian stops on every live tick
     evaluateDaemonPositions(sym, price);
 
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: 'TICK', data: { [sym]: price }, is24h: source === 'price-change' }));
-      }
-    });
+    broadcast({ type: 'TICK', data: { [sym]: price }, is24h: source === 'price-change' });
   }
 
   dcxSocket.on("price-change", (data: any) => {

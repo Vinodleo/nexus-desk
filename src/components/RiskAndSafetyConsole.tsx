@@ -17,12 +17,11 @@ import {
   Zap,
   Lock,
   Coins,
-  Eye,
-  EyeOff,
   HelpCircle,
 } from "lucide-react";
-import { FailureInjectionState, RiskCalculation, TradingExecutionMode, CoinDcxAccountBalance } from "../types";
+import { FailureInjectionState, RiskCalculation, TradingExecutionMode, CoinDcxAccountBalance, CoinDcxServerStatus } from "../types";
 import { DEFAULT_RISK_POLICY } from "../services/riskEngine";
+import { apiFetch } from "../services/apiClient";
 
 interface RiskAndSafetyConsoleProps {
   riskCalc: RiskCalculation;
@@ -33,8 +32,8 @@ interface RiskAndSafetyConsoleProps {
   tradingMode?: TradingExecutionMode;
   onToggleTradingMode?: (mode: TradingExecutionMode) => void;
   coinDcxBalance?: CoinDcxAccountBalance;
-  coinDcxKeys?: { apiKey: string; apiSecret: string };
-  onSaveCoinDcxKeys?: (keys: { apiKey: string; apiSecret: string }) => Promise<void>;
+  coinDcxStatus?: CoinDcxServerStatus | null;
+  onRefreshCoinDcxStatus?: () => Promise<void>;
   onRefreshBalance?: () => Promise<any>;
 }
 
@@ -47,65 +46,32 @@ export const RiskAndSafetyConsole: React.FC<RiskAndSafetyConsoleProps> = ({
   tradingMode = "PAPER",
   onToggleTradingMode,
   coinDcxBalance,
-  coinDcxKeys,
-  onSaveCoinDcxKeys,
+  coinDcxStatus,
+  onRefreshCoinDcxStatus,
   onRefreshBalance,
 }) => {
-  const [inputApiKey, setInputApiKey] = useState(coinDcxKeys?.apiKey || "");
-  const [inputApiSecret, setInputApiSecret] = useState(coinDcxKeys?.apiSecret || "");
-  const [showSecret, setShowSecret] = useState(false);
-  const [isSavingKeys, setIsSavingKeys] = useState(false);
-  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"IDLE" | "TESTING" | "SUCCESS" | "FAILED">("IDLE");
   const [testError, setTestError] = useState<string | null>(null);
-  const [maxSlippagePct, setMaxSlippagePct] = useState<number>(0.2);
+  const liveRisk = coinDcxStatus?.liveRisk;
 
-  const handleSaveAndTest = async () => {
-    if (!inputApiKey.trim() || !inputApiSecret.trim()) {
-      setTestError("Please enter both API Key and API Secret");
-      setTestStatus("FAILED");
-      return;
-    }
-
-    setIsSavingKeys(true);
+  // Validates the server-held CoinDCX keys by fetching balances with them.
+  const handleValidateServerKeys = async () => {
     setTestStatus("TESTING");
     setTestError(null);
-
     try {
-      if (onSaveCoinDcxKeys) {
-        await onSaveCoinDcxKeys({
-          apiKey: inputApiKey.trim(),
-          apiSecret: inputApiSecret.trim(),
-        });
-      }
-
-      // Test HMAC connection against /api/coindcx/validate-keys
-      const res = await fetch("/api/coindcx/validate-keys", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          apiKey: inputApiKey.trim(),
-          apiSecret: inputApiSecret.trim(),
-        }),
-      });
-
+      const res = await apiFetch("/api/coindcx/validate-keys", { method: "POST" });
       const data = await res.json();
       if (data.success) {
         setTestStatus("SUCCESS");
-        setSaveSuccessMsg("API Keys validated & saved securely!");
-        if (onRefreshBalance) {
-          await onRefreshBalance();
-        }
-        setTimeout(() => setSaveSuccessMsg(null), 4000);
+        if (onRefreshBalance) await onRefreshBalance();
       } else {
         setTestStatus("FAILED");
         setTestError(data.error || "Authentication failed on CoinDCX. Verify API permissions.");
       }
+      if (onRefreshCoinDcxStatus) await onRefreshCoinDcxStatus();
     } catch (err: any) {
       setTestStatus("FAILED");
       setTestError(err.message || "Network error while connecting to CoinDCX");
-    } finally {
-      setIsSavingKeys(false);
     }
   };
 
@@ -269,107 +235,86 @@ export const RiskAndSafetyConsole: React.FC<RiskAndSafetyConsoleProps> = ({
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <div>
                 <span className="font-semibold text-amber-300">Live Order Dispatch Armed:</span> In live mode, approving candidate setups dispatches real market/limit orders to the exchange.
-                Slippage protection is enforced at <strong>{maxSlippagePct}%</strong> and orders breaching risk limits will automatically fail closed.
+                The server rejects any order more than <strong>{liveRisk?.maxPriceDeviationPct ?? "—"}%</strong> away from its own last price, and any order breaching the server-side live limits below.
               </div>
             </div>
           </div>
         )}
 
-        {/* CoinDCX API Credentials Panel */}
+        {/* CoinDCX server credentials & live limits (read-only; configured via server env) */}
         <div className="mt-3.5 pt-3 border-t border-[#25252b]">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <Key className="w-4 h-4 text-stone-300" />
               <span className="text-xs font-semibold text-stone-200">
-                CoinDCX HMAC-SHA256 API Key & Secret Configuration
+                CoinDCX API Credentials (server-held)
               </span>
             </div>
-            {coinDcxBalance?.keyMasked && (
+            {coinDcxStatus?.configured ? (
               <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" />
-                Key Active ({coinDcxBalance.keyMasked})
+                Key Configured ({coinDcxStatus.keyMasked})
+              </span>
+            ) : (
+              <span className="text-[10px] font-mono text-rose-300 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800/50 flex items-center gap-1">
+                <XCircle className="w-3 h-3" />
+                Not configured
               </span>
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <div>
-              <label className="text-[10px] text-stone-400 block mb-1 font-mono uppercase">
-                CoinDCX API Key
-              </label>
-              <input
-                type="text"
-                value={inputApiKey}
-                onChange={(e) => setInputApiKey(e.target.value)}
-                placeholder="Enter CoinDCX API Key..."
-                className="w-full bg-[#0d0d10] border border-[#2b2b33] rounded px-3 py-1.5 text-xs text-stone-200 font-mono placeholder:text-stone-600 focus:outline-none focus:border-amber-500"
-              />
-            </div>
+          <p className="text-[11px] text-stone-400">
+            Keys are read from <code className="text-stone-300">COINDCX_API_KEY</code> / <code className="text-stone-300">COINDCX_API_SECRET</code> on the server and never sent to the browser.
+            Live orders additionally require <code className="text-stone-300">LIVE_TRADING_ENABLED=true</code>.
+          </p>
 
-            <div>
-              <label className="text-[10px] text-stone-400 block mb-1 font-mono uppercase">
-                CoinDCX API Secret
-              </label>
-              <div className="relative">
-                <input
-                  type={showSecret ? "text" : "password"}
-                  value={inputApiSecret}
-                  onChange={(e) => setInputApiSecret(e.target.value)}
-                  placeholder="Enter CoinDCX API Secret..."
-                  className="w-full bg-[#0d0d10] border border-[#2b2b33] rounded pl-3 pr-8 py-1.5 text-xs text-stone-200 font-mono placeholder:text-stone-600 focus:outline-none focus:border-amber-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowSecret(!showSecret)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-300"
-                >
-                  {showSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
+          {liveRisk && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5 font-mono text-[11px]">
+              <div className="bg-[#0d0d10] p-2 rounded border border-[#2b2b33]">
+                <span className="text-[10px] text-stone-500 block uppercase">Live Trading</span>
+                <span className={liveRisk.enabled ? "text-amber-300 font-bold" : "text-stone-300 font-bold"}>
+                  {liveRisk.enabled ? "ENABLED" : "DISABLED"}
+                </span>
+              </div>
+              <div className="bg-[#0d0d10] p-2 rounded border border-[#2b2b33]">
+                <span className="text-[10px] text-stone-500 block uppercase">Per-Order Cap</span>
+                <span className="text-stone-200">₹{liveRisk.maxOrderNotionalInr.toLocaleString("en-IN")}</span>
+              </div>
+              <div className="bg-[#0d0d10] p-2 rounded border border-[#2b2b33]">
+                <span className="text-[10px] text-stone-500 block uppercase">Daily Notional</span>
+                <span className="text-stone-200">
+                  ₹{liveRisk.openedNotionalInrToday.toLocaleString("en-IN")} / ₹{liveRisk.maxDailyNotionalInr.toLocaleString("en-IN")}
+                </span>
+              </div>
+              <div className="bg-[#0d0d10] p-2 rounded border border-[#2b2b33]">
+                <span className="text-[10px] text-stone-500 block uppercase">Daily Orders</span>
+                <span className="text-stone-200">{liveRisk.openedOrdersToday} / {liveRisk.maxDailyOrders}</span>
               </div>
             </div>
-          </div>
+          )}
 
-          <div className="flex items-center justify-between mt-2.5 flex-wrap gap-2">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleSaveAndTest}
-                disabled={isSavingKeys}
-                className="px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-stone-100 text-xs font-mono font-medium rounded border border-stone-600 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                <Key className="w-3.5 h-3.5 text-amber-400" />
-                <span>{isSavingKeys ? "Validating with CoinDCX..." : "Save & Validate HMAC Keys"}</span>
-              </button>
-
-              {testStatus === "SUCCESS" && (
-                <span className="text-xs text-emerald-400 font-mono flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Connection Verified!
-                </span>
-              )}
-              {testStatus === "FAILED" && (
-                <span className="text-xs text-rose-400 font-mono flex items-center gap-1">
-                  <XCircle className="w-3.5 h-3.5" />
-                  {testError || "Validation Failed"}
-                </span>
-              )}
-              {saveSuccessMsg && (
-                <span className="text-xs text-emerald-300 font-mono">{saveSuccessMsg}</span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 text-[11px] font-mono text-stone-400">
-              <span>Max Slippage:</span>
-              <select
-                value={maxSlippagePct}
-                onChange={(e) => setMaxSlippagePct(Number(e.target.value))}
-                className="bg-[#0d0d10] border border-[#2b2b33] rounded px-2 py-1 text-xs text-stone-300 font-mono"
-              >
-                <option value={0.1}>0.10% (Ultra Strict)</option>
-                <option value={0.2}>0.20% (Recommended)</option>
-                <option value={0.3}>0.30% (Volatile Markets)</option>
-              </select>
-            </div>
+          <div className="flex items-center gap-3 mt-2.5 flex-wrap">
+            <button
+              type="button"
+              onClick={handleValidateServerKeys}
+              disabled={testStatus === "TESTING" || !coinDcxStatus?.configured}
+              className="px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-stone-100 text-xs font-mono font-medium rounded border border-stone-600 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <Key className="w-3.5 h-3.5 text-amber-400" />
+              <span>{testStatus === "TESTING" ? "Validating with CoinDCX..." : "Validate Server Keys"}</span>
+            </button>
+            {testStatus === "SUCCESS" && (
+              <span className="text-xs text-emerald-400 font-mono flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Connection Verified!
+              </span>
+            )}
+            {testStatus === "FAILED" && (
+              <span className="text-xs text-rose-400 font-mono flex items-center gap-1">
+                <XCircle className="w-3.5 h-3.5" />
+                {testError || "Validation Failed"}
+              </span>
+            )}
           </div>
         </div>
       </div>

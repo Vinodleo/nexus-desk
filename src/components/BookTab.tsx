@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Position, HistoricalTrade, TradingExecutionMode, CoinDcxAccountBalance, RiskCalculation, FailureInjectionState } from "../types";
+import { Position, HistoricalTrade, TradingExecutionMode, CoinDcxAccountBalance, CoinDcxServerStatus, RiskCalculation, FailureInjectionState } from "../types";
 
 import { TradeAutopsyCard } from "./TradeAutopsyCard";
 import { RiskAndSafetyConsole } from "./RiskAndSafetyConsole";
@@ -33,8 +33,8 @@ interface BookTabProps {
   tradingMode?: TradingExecutionMode;
   onToggleTradingMode?: (mode: TradingExecutionMode) => void;
   coinDcxBalance?: CoinDcxAccountBalance;
-  coinDcxKeys?: { apiKey: string; apiSecret: string };
-  onSaveCoinDcxKeys?: (keys: { apiKey: string; apiSecret: string }) => Promise<void>;
+  coinDcxStatus?: CoinDcxServerStatus | null;
+  onRefreshCoinDcxStatus?: () => Promise<void>;
   onRefreshBalance?: () => Promise<any>;
   riskCalc?: RiskCalculation;
   failureState?: FailureInjectionState;
@@ -54,8 +54,8 @@ export const BookTab: React.FC<BookTabProps> = ({
   tradingMode = "PAPER",
   onToggleTradingMode,
   coinDcxBalance,
-  coinDcxKeys,
-  onSaveCoinDcxKeys,
+  coinDcxStatus,
+  onRefreshCoinDcxStatus,
   onRefreshBalance,
   riskCalc,
   failureState,
@@ -260,8 +260,8 @@ export const BookTab: React.FC<BookTabProps> = ({
             tradingMode={tradingMode}
             onToggleTradingMode={onToggleTradingMode}
             coinDcxBalance={coinDcxBalance}
-            coinDcxKeys={coinDcxKeys}
-            onSaveCoinDcxKeys={onSaveCoinDcxKeys}
+            coinDcxStatus={coinDcxStatus}
+            onRefreshCoinDcxStatus={onRefreshCoinDcxStatus}
             onRefreshBalance={onRefreshBalance}
           />
         </section>
