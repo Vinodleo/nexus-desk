@@ -188,6 +188,14 @@ export interface Order {
   feePaid: number;
 }
 
+export interface ExecutionToast {
+  id: string;
+  title: string;
+  message: string;
+  type: "SUCCESS" | "WARNING" | "INFO";
+  timestamp: string;
+}
+
 export type TradingExecutionMode = "PAPER" | "LIVE_COINDCX";
 
 export interface CoinDcxAccountBalance {

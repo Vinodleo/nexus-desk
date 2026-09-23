@@ -12,9 +12,7 @@ import {
   StrategySetup,
   TradeProposal,
   PromotedLabModel,
-  TradingExecutionMode,
-  CoinDcxAccountBalance,
-  CoinDcxServerStatus,
+  ExecutionToast,
   RiskCalculation,
 } from "./types";
 import {
@@ -37,14 +35,9 @@ import {
   loadStoredPositions,
   saveStoredPositions,
   resetStoredExperiencesToBaseline,
-  loadDailySampleTelemetry,
-  saveDailySampleTelemetry,
   loadStoredClosedTrades,
   saveStoredClosedTrades,
   getBaselineClosedTrades,
-  getCurrentISTDateString,
-  getInitialDailyTelemetry,
-  DailySampleTelemetry,
   loadStoredModelAccuracy,
   saveStoredModelAccuracy,
   LearnedModelAccuracy,
@@ -82,14 +75,11 @@ import {
 } from "./utils/audioFeedback";
 import { apiFetch, authenticateSocket } from "./services/apiClient";
 import { computeClosedTradePnl } from "./shared/tradeMath";
-
-export interface ExecutionToast {
-  id: string;
-  title: string;
-  message: string;
-  type: "SUCCESS" | "WARNING" | "INFO";
-  timestamp: string;
-}
+import type { DaemonCloseEvent } from "./services/daemonEvents";
+import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
+import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
+import { useGuardianSync } from "./hooks/useGuardianSync";
+import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 
 export default function App() {
   const { userRole, logSecurityAudit, openAuthModal, currentUser, loading } = useAuth();
@@ -124,114 +114,14 @@ export default function App() {
   const [cash, setCash] = useState<number>(() => loadStoredCapital().cash);
   const [killSwitchActive, setKillSwitchActive] = useState<boolean>(false);
 
-  // CoinDCX Live Exchange Trading Mode & Account Balance State
-  const [tradingMode, setTradingMode] = useState<TradingExecutionMode>(() => {
-    return (localStorage.getItem("nexus_trading_mode") as TradingExecutionMode) || "PAPER";
-  });
-  // CoinDCX keys live only on the server; the client just sees whether they're configured.
-  const [coinDcxStatus, setCoinDcxStatus] = useState<CoinDcxServerStatus | null>(null);
-  const [coinDcxBalance, setCoinDcxBalance] = useState<CoinDcxAccountBalance>({
-    totalInr: 0,
-    availableInr: 0,
-    lockedInr: 0,
-    totalUsdt: 0,
-    availableUsdt: 0,
-    lockedUsdt: 0,
-    loading: false,
-  });
-
-  const fetchCoinDcxBalance = useCallback(
-    async () => {
-      setCoinDcxBalance((prev) => ({ ...prev, loading: true, error: undefined }));
-      try {
-        const res = await apiFetch("/api/coindcx/balances", { method: "POST" });
-        const data = await res.json();
-        if (data.success) {
-          setCoinDcxBalance({
-            totalInr: Number(data.totalInr || 0),
-            availableInr: Number(data.availableInr || 0),
-            lockedInr: Number(data.lockedInr || 0),
-            totalUsdt: Number(data.totalUsdt || 0),
-            availableUsdt: Number(data.availableUsdt || 0),
-            lockedUsdt: Number(data.lockedUsdt || 0),
-            loading: false,
-            keyMasked: data.keyMasked,
-            lastUpdated: new Date().toLocaleTimeString(),
-          });
-          return { success: true, data };
-        } else {
-          setCoinDcxBalance((prev) => ({
-            ...prev,
-            loading: false,
-            error: data.error || "Failed to fetch balances from CoinDCX",
-          }));
-          return { success: false, error: data.error };
-        }
-      } catch (err: any) {
-        setCoinDcxBalance((prev) => ({
-          ...prev,
-          loading: false,
-          error: err.message || "Network error fetching CoinDCX balance",
-        }));
-        return { success: false, error: err.message };
-      }
-    },
-    []
-  );
-
-  const refreshCoinDcxStatus = useCallback(async () => {
-    try {
-      const res = await apiFetch("/api/coindcx/status");
-      const data = await res.json();
-      if (data.success) setCoinDcxStatus(data);
-    } catch (err) {
-      console.warn("[CoinDCX] Failed to load server credential status", err);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Earlier builds kept the CoinDCX key and secret in localStorage; purge them.
-    try {
-      localStorage.removeItem("coindcx_api_key");
-      localStorage.removeItem("coindcx_api_secret");
-    } catch {}
-    refreshCoinDcxStatus();
-  }, [refreshCoinDcxStatus]);
-
-  const handleToggleTradingMode = useCallback(
-    (newMode: TradingExecutionMode) => {
-      setTradingMode(newMode);
-      localStorage.setItem("nexus_trading_mode", newMode);
-      if (newMode === "LIVE_COINDCX") {
-        fetchCoinDcxBalance();
-        setExecutionToast({
-          id: `toast-${Date.now()}`,
-          title: "⚡ LIVE COINDCX MODE ENGAGED",
-          message:
-            "Live exchange order routing activated. Polling real account balances from CoinDCX API (/exchange/v1/users/balances).",
-          type: "WARNING",
-          timestamp: new Date().toLocaleTimeString(),
-        });
-      } else {
-        setExecutionToast({
-          id: `toast-${Date.now()}`,
-          title: "🛡️ PAPER SIMULATION MODE ACTIVE",
-          message:
-            "Switched to Paper Trading. Orders execute against the local book with simulated slippage and fees.",
-          type: "SUCCESS",
-          timestamp: new Date().toLocaleTimeString(),
-        });
-      }
-    },
-    [fetchCoinDcxBalance]
-  );
-
-  // Poll CoinDCX balance once on mount if in live mode
-  useEffect(() => {
-    if (tradingMode === "LIVE_COINDCX") {
-      fetchCoinDcxBalance();
-    }
-  }, []);
+  const {
+    tradingMode,
+    handleToggleTradingMode,
+    coinDcxStatus,
+    refreshCoinDcxStatus,
+    coinDcxBalance,
+    fetchCoinDcxBalance,
+  } = useCoinDcxAccount(setExecutionToast);
 
   // Persist Stats & Capital changes to Browser LocalStorage
   useEffect(() => {
@@ -396,6 +286,15 @@ export default function App() {
     saveStoredQuarantines(symbolQuarantines);
   }, [symbolQuarantines]);
 
+  // Apply closes made by the server guardian, crediting each exactly once.
+  const applyServerClose = useServerCloseHandler(closingPositionIds, closedTradesRef, {
+    setActivePositions,
+    setClosedTrades,
+    setEquity,
+    setCash,
+    setDailyRealizedPnl,
+  });
+
   // Live WebSocket Engine for Real Binance Data
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
@@ -413,45 +312,9 @@ export default function App() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "DAEMON_POSITION_CLOSED") {
-          const daemonEvent = msg.data;
+          const daemonEvent: DaemonCloseEvent = msg.data;
           console.log("[Daemon Position Guardian] Server closed trade event received:", daemonEvent);
-          if (daemonEvent && daemonEvent.positionId) {
-            // Remove from active positions immediately
-            setActivePositions((prev) => prev.filter((p) => p.id !== daemonEvent.positionId));
-
-            // Record to closed trades if not already added
-            setClosedTrades((prev) => {
-              if (prev.some((t) => t.id === daemonEvent.id || (t as any).positionId === daemonEvent.positionId)) {
-                return prev;
-              }
-              const histTrade: HistoricalTrade = {
-                id: daemonEvent.id,
-                positionId: daemonEvent.positionId,
-                symbol: daemonEvent.symbol,
-                direction: daemonEvent.direction,
-                setupName: daemonEvent.setupName || "Statistical Trailing System",
-                entryPrice: daemonEvent.entryPrice,
-                exitPrice: daemonEvent.exitPrice,
-                quantity: daemonEvent.quantity,
-                moneyPlaced: daemonEvent.moneyPlaced,
-                grossPnl: daemonEvent.grossPnl,
-                feesPaid: daemonEvent.feesPaid,
-                realizedPnl: daemonEvent.realizedPnl,
-                realizedPnlPercent: daemonEvent.realizedPnlPercent,
-                isWin: daemonEvent.isWin,
-                exitReason: daemonEvent.exitReason,
-                closedAt: daemonEvent.closedAt,
-                openedAt: daemonEvent.openedAt,
-                isSelfApproved: true,
-              };
-              return [histTrade, ...prev];
-            });
-
-            // Update capital & daily PnL
-            setEquity((prev) => Number((prev + daemonEvent.realizedPnl).toFixed(2)));
-            setCash((prev) => Number((prev + daemonEvent.moneyPlaced + daemonEvent.realizedPnl).toFixed(2)));
-            setDailyRealizedPnl((prev) => Number((prev + daemonEvent.realizedPnl).toFixed(2)));
-
+          if (applyServerClose(daemonEvent)) {
             setExecutionToast({
               id: `toast-daemon-${Date.now()}`,
               title: `■ [24/7 DAEMON GUARDIAN] ${daemonEvent.symbol} Auto-Closed`,
@@ -892,110 +755,8 @@ export default function App() {
   // SERVER DAEMON SYNC & WEB WORKER BACKGROUND TIMER
   // ==========================================
 
-  // 1. Sync active positions to Server Daemon whenever positions change
-  useEffect(() => {
-    const syncWithServerDaemon = async () => {
-      try {
-        const res = await apiFetch("/api/daemon/sync-positions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ positions: activePositions }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          // If server daemon rejected resurrections (already closed by guardian), remove them from client active positions
-          if (data.rejectedResurrections && data.rejectedResurrections.length > 0) {
-            const rejectedSet = new Set(data.rejectedResurrections);
-            setActivePositions((prev) => prev.filter((p) => !rejectedSet.has(p.id)));
-          }
-        }
-      } catch (err) {
-        console.warn("[DaemonSync] Failed to sync positions to server:", err);
-      }
-    };
-    syncWithServerDaemon();
-  }, [activePositions]);
-
-  // 2. Poll server daemon for closed trade events that happened while tab was asleep or backgrounded
-  useEffect(() => {
-    let lastCheckedTime = 0;
-    try {
-      const stored = localStorage.getItem("nexus_last_daemon_poll");
-      if (stored) lastCheckedTime = Number(stored) || 0;
-    } catch {}
-
-    const reconcileServerCloses = async () => {
-      try {
-        const res = await apiFetch(`/api/daemon/closed-events?since=${lastCheckedTime}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        lastCheckedTime = Date.now();
-        try {
-          localStorage.setItem("nexus_last_daemon_poll", String(lastCheckedTime));
-        } catch {}
-
-        // If local active positions are empty on initial mount, but daemon restored positions from crash recovery, restore them to UI
-        if (data.activePositions && data.activePositions.length > 0) {
-          setActivePositions((prev) => {
-            if (prev.length === 0) {
-              return data.activePositions;
-            }
-            return prev;
-          });
-        }
-
-        if (data.events && data.events.length > 0) {
-          for (const ev of data.events) {
-            setActivePositions((prev) => prev.filter((p) => p.id !== ev.positionId));
-            setClosedTrades((prev) => {
-              if (prev.some((t) => t.id === ev.id || (t as any).positionId === ev.positionId)) return prev;
-              const newTrade: HistoricalTrade = {
-                id: ev.id,
-                positionId: ev.positionId,
-                symbol: ev.symbol,
-                direction: ev.direction,
-                setupName: ev.setupName || "Statistical Trailing System",
-                entryPrice: ev.entryPrice,
-                exitPrice: ev.exitPrice,
-                quantity: ev.quantity,
-                moneyPlaced: ev.moneyPlaced,
-                grossPnl: ev.grossPnl,
-                feesPaid: ev.feesPaid,
-                realizedPnl: ev.realizedPnl,
-                realizedPnlPercent: ev.realizedPnlPercent,
-                isWin: ev.isWin,
-                exitReason: ev.exitReason,
-                closedAt: ev.closedAt,
-                openedAt: ev.openedAt,
-                holdingDurationMinutes: ev.holdingDurationMinutes,
-                isSelfApproved: true,
-              };
-              return [newTrade, ...prev];
-            });
-
-            setEquity((prev) => Number((prev + ev.realizedPnl).toFixed(2)));
-            setCash((prev) => Number((prev + ev.moneyPlaced + ev.realizedPnl).toFixed(2)));
-            setDailyRealizedPnl((prev) => Number((prev + ev.realizedPnl).toFixed(2)));
-          }
-        }
-      } catch (err) {
-        console.warn("[DaemonSync] Error reconciling daemon events:", err);
-      }
-    };
-
-    // Check immediately on mount, on window focus (waking up), and every 10s
-    reconcileServerCloses();
-    const reconcileInterval = setInterval(reconcileServerCloses, 10000);
-    window.addEventListener("focus", reconcileServerCloses);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") reconcileServerCloses();
-    });
-
-    return () => {
-      clearInterval(reconcileInterval);
-      window.removeEventListener("focus", reconcileServerCloses);
-    };
-  }, []);
+  // 1-2. Push position changes to the guardian; pull closes it made while asleep.
+  useGuardianSync(activePositions, setActivePositions, applyServerClose);
 
   // 3. Web Worker un-throttled background heartbeat
   useEffect(() => {
@@ -1166,41 +927,10 @@ export default function App() {
   const [isContinuousScanActive, setIsContinuousScanActive] =
     useState<boolean>(true);
 
-  // Live Sample Telemetry: Tracks what agents analysed, selected, and rejected
-  // Strictly scoped to 24 hours (12:00 AM to 11:59 PM IST); resets automatically to 0 on the next day
-  const [sampleTelemetry, setSampleTelemetry] = useState<DailySampleTelemetry>(() =>
-    loadDailySampleTelemetry()
-  );
-
-  // Save daily telemetry to Browser LocalStorage whenever updated
-  useEffect(() => {
-    saveDailySampleTelemetry(sampleTelemetry);
-  }, [sampleTelemetry]);
-
-  // Midnight IST rollover watcher: Checks every 10 seconds if a new IST day has started (12:00 AM IST)
-  // If date in IST has changed, automatically resets analyzedCount, selectedCount, rejectedCount to 0
-  useEffect(() => {
-    const checkISTMidnightRollover = () => {
-      const currentIST = getCurrentISTDateString();
-      setSampleTelemetry((prev) => {
-        if (prev.istDateString !== currentIST) {
-          const resetData = getInitialDailyTelemetry(currentIST);
-          saveDailySampleTelemetry(resetData);
-
-          // CRITICAL FIX: Reset Daily P&L to 0 when the 24-hour cycle resets (Midnight IST)
-          setDailyRealizedPnl(0);
-
-          return resetData;
-        }
-        return prev;
-      });
-    };
-
-    // Run check immediately and periodically
-    checkISTMidnightRollover();
-    const interval = setInterval(checkISTMidnightRollover, 10000);
-    return () => clearInterval(interval);
-  }, []);
+  // Live Sample Telemetry: what agents analysed, selected and rejected today
+  // (IST day). At midnight IST the counters and daily realized P&L reset.
+  const resetDailyPnl = useCallback(() => setDailyRealizedPnl(0), []);
+  const [sampleTelemetry, setSampleTelemetry] = useDailyTelemetry(resetDailyPnl);
 
   // Close Position with full agent trade autopsy & audio feedback
   const closePositionWithAutopsy = useCallback(
