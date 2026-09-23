@@ -1,3 +1,5 @@
+import { computeLearningStats, COIN_FLIP_BRIER, MIN_REAL_TRADES } from "../services/learningStats";
+import { isSeededExperience } from "../services/dataProvenance";
 import React, { useState } from "react";
 import { ExperienceVector, DecisionMode, RegimeType, PromotedLabModel } from "../types";
 import { LearnedModelAccuracy } from "../services/storagePersistenceService";
@@ -61,91 +63,51 @@ export const LearningTab: React.FC<LearningTabProps> = ({
 
   const isSelfApproveActive = decisionMode === "AUTO_WITHIN_LIMITS";
 
-  // Calculate learning statistics dynamically from experience memory bank
+  // Learning statistics measured on REAL trades only. The seeded starter
+  // bank is excluded (its outcomes were generated), and with fewer than
+  // MIN_REAL_TRADES real trades the metrics show "—" instead of a number.
+  const stats = computeLearningStats(experiences);
   const totalVectors = experiences.length;
-  const initialBaseVectors = 420;
-  const liveLearnedVectors = Math.max(0, totalVectors - initialBaseVectors);
-  const winVectors = experiences.filter((e) => e.outcome === "WIN");
-  const lossVectors = experiences.filter((e) => e.outcome === "LOSS");
-  const overallWinRate = totalVectors > 0 ? (winVectors.length / totalVectors) * 100 : 54;
+  const liveLearnedVectors = stats.realCount;
+  const fmtPct = (v: number | null) => (v === null ? "—" : `${v}%`);
+  const signed = (v: number | null, suffix = "%") =>
+    v === null ? "—" : `${v >= 0 ? "+" : ""}${v}${suffix}`;
 
-  // --- Rolling 30-Trade Win-Rate vs Initial Baseline Performance Engine ---
-  // Initial baseline vectors: early records logged in the experience memory
-  const baselineBatchSize = Math.min(60, totalVectors);
-  const baselineSlice = experiences.slice(-baselineBatchSize);
-  const baselineWins = baselineSlice.filter((e) => e.outcome === "WIN").length;
-  // Baseline win-rate from early historical experience memory (default 51.4%)
-  const initialBaselineWinRate =
-    baselineSlice.length > 0
-      ? Number(((baselineWins / baselineSlice.length) * 100).toFixed(1))
-      : 51.4;
-
-  // Rolling 30-trade window (the 30 most recent experiences in the bank)
-  const rollingWindowSize = 30;
-  const rolling30Slice = experiences.slice(0, Math.min(rollingWindowSize, totalVectors));
-  const rolling30Wins = rolling30Slice.filter((e) => e.outcome === "WIN").length;
-  const rolling30WinRate =
-    rolling30Slice.length > 0
-      ? Number(((rolling30Wins / rolling30Slice.length) * 100).toFixed(1))
-      : 66.7;
-
-  // Rolling 30-trade win-rate improvement over initial baseline model performance
-  const rollingWinRateGainPct = Number(
-    (rolling30WinRate - initialBaselineWinRate).toFixed(1)
-  );
-  // Target benchmark improvement delta (e.g. +20.0 percentage points gain is 100% target progress)
+  const initialBaselineWinRate = stats.earlyWinRatePct;
+  const rolling30WinRate = stats.recentWinRatePct;
+  const rollingWinRateGainPct =
+    stats.recentWinRatePct !== null && stats.earlyWinRatePct !== null
+      ? Number((stats.recentWinRatePct - stats.earlyWinRatePct).toFixed(1))
+      : null;
   const targetGainBenchmark = 20.0;
-  // Progress bar percentage (0% to 100%, clamped)
-  const progressRatioPct = Math.min(
-    100,
-    Math.max(0, Number(((rollingWinRateGainPct / targetGainBenchmark) * 100).toFixed(1)))
-  );
+  const progressRatioPct =
+    rollingWinRateGainPct === null
+      ? 0
+      : Math.min(100, Math.max(0, Number(((rollingWinRateGainPct / targetGainBenchmark) * 100).toFixed(1))));
 
-  // Model Accuracy Percentage:
-  // Derived from directional calibration accuracy: proportion of trades where outcome matched model confidence direction
-  // (P(Win) >= 0.52 resulting in WIN, and P(Win) < 0.52 vetoed/loss classification accuracy)
-  const accuratePredictions = rolling30Slice.filter((e) => {
-    const predictedWin = (e.metaConfidence || 0.5) >= 0.52;
-    const isWin = e.outcome === "WIN";
-    return (predictedWin && isWin) || (!predictedWin && !isWin);
-  }).length;
-  const calculatedLiveAccuracyPct =
-    rolling30Slice.length > 0
-      ? Number(((accuratePredictions / rolling30Slice.length) * 100).toFixed(1))
-      : 76.7;
-
-  // Active Desk Model Accuracy:
-  // If a historical model has been promoted from the Lab, it anchors the active desk.
-  // Otherwise, the active desk runs on pure live learning from trade autopsies.
+  const calculatedLiveAccuracyPct = stats.directionalAccuracyPct;
+  // Active Desk Model Accuracy: a promoted Lab model anchors the desk;
+  // otherwise it's the measured directional accuracy on real trades.
   const isLabIntegrated = Boolean(promotedLabModel);
   const modelAccuracyPct = isLabIntegrated
     ? (learnedAccuracy?.accuracyPct ?? promotedLabModel!.accuracyPct)
     : calculatedLiveAccuracyPct;
 
-  // Dynamic Learning Improvement Metrics:
-  // Baseline vs Learned Metrics:
-  // 1. Prediction Accuracy / Brier Score improvement: Baseline error was 0.28, current is 0.138
-  const baseBrierError = 0.28;
-  const currentBrierError = Math.max(0.08, Number((0.28 - (liveLearnedVectors * 0.008 + 0.14)).toFixed(3)));
-  const calibrationImprovementPct = Number((((baseBrierError - currentBrierError) / baseBrierError) * 100).toFixed(1));
+  // Calibration: real Brier score vs a no-skill forecaster that always says 50%.
+  const baseBrierError = COIN_FLIP_BRIER;
+  const currentBrierError = stats.brierScore;
+  const calibrationImprovementPct =
+    currentBrierError === null ? null : Number((((baseBrierError - currentBrierError) / baseBrierError) * 100).toFixed(1));
 
-  // 2. Win Rate Alpha gained via Meta-Label Vetoes:
   const baselineWinRate = initialBaselineWinRate;
   const postLearningWinRate = rolling30WinRate;
-  const winRateImprovementPct = Number(
-    (((postLearningWinRate - baselineWinRate) / baselineWinRate) * 100).toFixed(1)
-  );
 
-  // 3. Drawdown Reduction / Capital Preservation:
-  const baselineDrawdownPct = 14.8; // unconstrained drawdown
-  const currentDrawdownPct = Number(Math.max(4.2, 7.8 - liveLearnedVectors * 0.2).toFixed(1));
-  const drawdownReductionPct = Number((((baselineDrawdownPct - currentDrawdownPct) / baselineDrawdownPct) * 100).toFixed(1));
+  // Drawdown: largest peak-to-trough fall of cumulative real P&L.
+  const currentDrawdownPct = stats.maxDrawdownPct;
+  const realVetoCount = experiences.filter((e) => !isSeededExperience(e) && e.decision !== "TRADE").length;
 
-  // 4. Overall Compound Model Improvement %:
-  // Weighted harmonic combination of calibration gain, win rate lift, and false-breakout filtering
-  const overallModelImprovementPct = Number(
-    (calibrationImprovementPct * 0.35 + winRateImprovementPct * 0.4 + drawdownReductionPct * 0.25).toFixed(1)
-  );
+  // Headline: win-rate change from the earliest to the most recent real trades.
+  const overallModelImprovementPct = rollingWinRateGainPct;
 
   // Regime breakdown
   const regimes: { id: RegimeType; name: string }[] = [
@@ -313,15 +275,15 @@ export const LearningTab: React.FC<LearningTabProps> = ({
                 </span>
               ) : (
                 <span className="text-[11px] font-mono text-stone-400 bg-stone-900/80 px-2 py-0.5 rounded border border-stone-800">
-                  Base 420 Vectors active • Live streaming
+                  {stats.seededCount} seeded examples · no real trades yet
                 </span>
               )}
             </div>
             <h3 className="text-xl font-sans font-bold text-stone-100 mt-1.5">
               {isLabIntegrated ? (
-                <span>Integrated Performance Gain: <span className="text-emerald-400">+{overallModelImprovementPct}%</span></span>
+                <span>Integrated Performance Gain: <span className="text-emerald-400">{signed(overallModelImprovementPct, " pts")}</span></span>
               ) : (
-                <span>Live Learning Edge Gain: <span className="text-cyan-400">+{overallModelImprovementPct}%</span></span>
+                <span>Live Learning Edge Gain: <span className="text-cyan-400">{signed(overallModelImprovementPct, " pts")}</span></span>
               )}
             </h3>
             <p className="text-xs text-stone-400 mt-0.5 font-sans">
@@ -343,7 +305,7 @@ export const LearningTab: React.FC<LearningTabProps> = ({
                 <span>{isLabIntegrated ? "Active Desk Accuracy" : "Live Floor Accuracy"}</span>
               </div>
               <div className="text-xl font-mono font-bold text-cyan-300 flex items-center justify-end gap-1">
-                <span>{modelAccuracyPct}%</span>
+                <span>{fmtPct(modelAccuracyPct)}</span>
               </div>
               <div className="text-[9px] font-mono text-stone-400">
                 {isLabIntegrated ? "Lab Calibrated" : "Real-Time Calibrated"}
@@ -356,7 +318,7 @@ export const LearningTab: React.FC<LearningTabProps> = ({
               </div>
               <div className="text-2xl font-mono font-bold text-emerald-400 flex items-center justify-end gap-1">
                 <ArrowUpRight className="w-5 h-5 text-emerald-400" />
-                <span>+{overallModelImprovementPct}%</span>
+                <span>{signed(overallModelImprovementPct, " pts")}</span>
               </div>
             </div>
           </div>
@@ -390,9 +352,9 @@ export const LearningTab: React.FC<LearningTabProps> = ({
 
               <div className="p-2.5 rounded-lg bg-[#081014] border border-[#16252d] space-y-0.5">
                 <span className="text-[10px] text-stone-400 uppercase block">2. Live Experience Layer</span>
-                <div className="text-sm text-emerald-300 font-bold">{calculatedLiveAccuracyPct}% Live Match</div>
-                <div className="text-[11px] text-stone-400">Rolling 30 Win Rate: {rolling30WinRate}%</div>
-                <div className="text-[10px] text-emerald-400/90">+{liveLearnedVectors} autopsies dynamically tuning</div>
+                <div className="text-sm text-emerald-300 font-bold">{fmtPct(calculatedLiveAccuracyPct)} Live Match</div>
+                <div className="text-[11px] text-stone-400">Recent Win Rate: {fmtPct(rolling30WinRate)}</div>
+                <div className="text-[10px] text-emerald-400/90">{liveLearnedVectors} real trades recorded</div>
               </div>
 
               <div className="p-2.5 rounded-lg bg-[#081014] border border-[#16252d] space-y-0.5">
@@ -434,26 +396,26 @@ export const LearningTab: React.FC<LearningTabProps> = ({
               <div className="flex items-center gap-2">
                 <Activity className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span className="text-xs font-mono font-bold text-stone-200">
-                  Rolling 30-Trade Win-Rate vs Initial Baseline
+                  Recent vs Earliest Real Trades (win rate)
                 </span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/50">
-                  +{rollingWinRateGainPct}% Alpha Gained
+                  {signed(rollingWinRateGainPct, " pts")}
                 </span>
               </div>
 
               <div className="flex items-center gap-3 text-xs font-mono">
                 <div className="flex items-center gap-1.5">
                   <span className="text-stone-500 text-[11px]">Initial Baseline:</span>
-                  <span className="text-stone-300 font-semibold">{initialBaselineWinRate}%</span>
+                  <span className="text-stone-300 font-semibold">{fmtPct(initialBaselineWinRate)}</span>
                 </div>
                 <div className="text-stone-600">→</div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-stone-500 text-[11px]">Rolling 30-Trade:</span>
-                  <span className="text-emerald-400 font-bold">{rolling30WinRate}%</span>
+                  <span className="text-emerald-400 font-bold">{fmtPct(rolling30WinRate)}</span>
                 </div>
                 <div className="hidden sm:flex items-center gap-1 text-[11px] text-cyan-400 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/30">
                   <Gauge className="w-3 h-3 text-cyan-400" />
-                  <span>Accuracy: {modelAccuracyPct}%</span>
+                  <span>Accuracy: {fmtPct(modelAccuracyPct)}</span>
                 </div>
               </div>
             </div>
@@ -464,7 +426,7 @@ export const LearningTab: React.FC<LearningTabProps> = ({
                 <span className="flex items-center gap-1">
                   <span>Performance Gain Progress</span>
                   <span className="text-stone-500 font-normal">
-                    (+{rollingWinRateGainPct}% / +{targetGainBenchmark}% target)
+                    ({signed(rollingWinRateGainPct, " pts")} / +{targetGainBenchmark} pts target)
                   </span>
                 </span>
                 <span className="text-emerald-400 font-bold font-mono">
@@ -482,7 +444,7 @@ export const LearningTab: React.FC<LearningTabProps> = ({
               </div>
 
               <div className="flex items-center justify-between text-[9px] font-mono text-stone-500 pt-0.5">
-                <span>Baseline ({initialBaselineWinRate}%)</span>
+                <span>Earliest ({fmtPct(initialBaselineWinRate)})</span>
                 <span>Midpoint (+10% gain)</span>
                 <span>Target (+20% Alpha Gain)</span>
               </div>
@@ -499,20 +461,20 @@ export const LearningTab: React.FC<LearningTabProps> = ({
                 Win Rate Alpha Gain
               </span>
               <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50">
-                +{winRateImprovementPct}%
+                {signed(rollingWinRateGainPct, " pts")}
               </span>
             </div>
             <div className="text-xl font-mono font-bold text-stone-100">
-              {postLearningWinRate}% <span className="text-xs font-normal text-stone-500">from {baselineWinRate}%</span>
+              {fmtPct(postLearningWinRate)} <span className="text-xs font-normal text-stone-500">from {fmtPct(baselineWinRate)}</span>
             </div>
             <div className="h-1.5 w-full bg-[#18201e] rounded-full overflow-hidden">
               <div
                 className="h-full bg-emerald-400 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(100, (postLearningWinRate / 80) * 100)}%` }}
+                style={{ width: `${Math.min(100, ((postLearningWinRate ?? 0) / 80) * 100)}%` }}
               />
             </div>
             <p className="text-[10px] font-mono text-stone-500">
-              +{(postLearningWinRate - baselineWinRate).toFixed(1)} percentage points of raw win-rate gained by filtering negative-EV setups.
+              Win rate of your most recent real trades vs your earliest ones. Seeded starter examples are excluded.
             </p>
           </div>
 
@@ -523,20 +485,20 @@ export const LearningTab: React.FC<LearningTabProps> = ({
                 P(Win) Calibration Error
               </span>
               <span className="text-xs font-mono font-bold text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/50">
-                -{calibrationImprovementPct}% error
+                {calibrationImprovementPct === null ? "—" : `${calibrationImprovementPct >= 0 ? "-" : "+"}${Math.abs(calibrationImprovementPct)}% vs coin-flip`}
               </span>
             </div>
             <div className="text-xl font-mono font-bold text-stone-100">
-              {currentBrierError} <span className="text-xs font-normal text-stone-500">Brier score (was {baseBrierError})</span>
+              {currentBrierError ?? "—"} <span className="text-xs font-normal text-stone-500">Brier score (coin-flip: {baseBrierError})</span>
             </div>
             <div className="h-1.5 w-full bg-[#161c28] rounded-full overflow-hidden">
               <div
                 className="h-full bg-cyan-400 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(100, calibrationImprovementPct)}%` }}
+                style={{ width: `${Math.max(0, Math.min(100, calibrationImprovementPct ?? 0))}%` }}
               />
             </div>
             <p className="text-[10px] font-mono text-stone-500">
-              Probabilities match empirical outcomes with {((1 - currentBrierError) * 100).toFixed(1)}% statistical calibration fidelity.
+              Mean squared error of P(Win) against real outcomes. Lower is better; below 0.25 beats always guessing 50%.
             </p>
           </div>
 
@@ -544,23 +506,23 @@ export const LearningTab: React.FC<LearningTabProps> = ({
           <div className="rounded-xl bg-[#120d0a]/80 border border-[#302216] p-3.5 space-y-1.5">
             <div className="flex items-center justify-between text-stone-400">
               <span className="text-[11px] font-mono uppercase tracking-wider">
-                Max Drawdown Avoided
+                Max Drawdown (Real Trades)
               </span>
               <span className="text-xs font-mono font-bold text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/50">
-                -{drawdownReductionPct}% risk
+                {stats.enough ? "measured" : "—"}
               </span>
             </div>
             <div className="text-xl font-mono font-bold text-stone-100">
-              {currentDrawdownPct}% <span className="text-xs font-normal text-stone-500">reduced from {baselineDrawdownPct}%</span>
+              {fmtPct(currentDrawdownPct)} <span className="text-xs font-normal text-stone-500">peak to trough</span>
             </div>
             <div className="h-1.5 w-full bg-[#241c14] rounded-full overflow-hidden">
               <div
                 className="h-full bg-amber-400 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(100, drawdownReductionPct)}%` }}
+                style={{ width: `${Math.min(100, (currentDrawdownPct ?? 0) * 10)}%` }}
               />
             </div>
             <p className="text-[10px] font-mono text-stone-500">
-              Systematic veto of high-volatility traps preserved an estimated ₹16,420 in trading capital.
+              Largest fall in cumulative realized P&L across your real trades, as a % of peak equity.
             </p>
           </div>
         </div>
@@ -581,7 +543,7 @@ export const LearningTab: React.FC<LearningTabProps> = ({
           </div>
           <div className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
             <TrendingUp className="w-3 h-3" />
-            <span>+{liveLearnedVectors + 14} vectors synthesized</span>
+            <span>{stats.realCount} real · {stats.seededCount} seeded</span>
           </div>
         </div>
 
@@ -594,10 +556,10 @@ export const LearningTab: React.FC<LearningTabProps> = ({
             <Target className="w-3.5 h-3.5 text-cyan-400" />
           </div>
           <div className="text-xl font-mono font-bold text-stone-100">
-            +{(calibrationImprovementPct).toFixed(0)}%
+            {calibrationImprovementPct === null ? "—" : `${calibrationImprovementPct >= 0 ? "+" : ""}${calibrationImprovementPct.toFixed(0)}%`}
           </div>
           <div className="text-[10px] font-mono text-stone-400">
-            Confidence fidelity: <span className="text-emerald-400">High</span>
+            Calibration vs coin-flip: <span className="text-emerald-400">{stats.enough ? "measured" : `${stats.realCount}/${MIN_REAL_TRADES} real trades`}</span>
           </div>
         </div>
 
@@ -605,15 +567,15 @@ export const LearningTab: React.FC<LearningTabProps> = ({
         <div className="rounded-xl bg-[#0e0e12] border border-[#202026] p-3.5 space-y-1">
           <div className="flex items-center justify-between text-stone-500">
             <span className="text-[10px] font-mono uppercase tracking-wider">
-              False Breaks Vetoed
+              Vetoes (Real Scans)
             </span>
             <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
           </div>
           <div className="text-xl font-mono font-bold text-stone-100">
-            96 Vetoes
+            {realVetoCount} Vetoes
           </div>
           <div className="text-[10px] font-mono text-amber-400">
-            +{drawdownReductionPct}% safer execution
+            recorded on real scans
           </div>
         </div>
 
@@ -651,8 +613,11 @@ export const LearningTab: React.FC<LearningTabProps> = ({
               Dynamic feature weights adjusted by Meta-Labeler through experience
             </p>
           </div>
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#181822] text-stone-300 border border-[#282836]">
-            WEIGHT DELTA
+          <span
+            className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/50"
+            title="These weights and deltas are fixed example values, not measured from your trades."
+          >
+            ILLUSTRATIVE · NOT MEASURED
           </span>
         </div>
 

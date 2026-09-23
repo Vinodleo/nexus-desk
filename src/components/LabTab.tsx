@@ -548,8 +548,16 @@ export const LabTab: React.FC<LabTabProps> = ({
                   </div>
                 </div>
 
+                {realDataLearningResult.isSynthetic && (
+                  <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-200 text-[11px] font-mono leading-relaxed">
+                    ⚠ Generated data: the exchange couldn't be reached, so this evaluation ran on generated
+                    candles, not market history. Its accuracy and win rate say nothing about real trading,
+                    and it can't be promoted to the live desk. Retry, or upload a CSV of real candles.
+                  </div>
+                )}
+
                 {/* Explicit Promotion Control */}
-                {!(
+                {realDataLearningResult.isSynthetic ? null : !(
                   promotedLabModel &&
                   promotedLabModel.datasetName === realDataLearningResult.datasetName &&
                   promotedLabModel.accuracyPct === realDataLearningResult.learnedMetrics.accuracyPercent

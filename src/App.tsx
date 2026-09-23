@@ -80,6 +80,7 @@ import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { useGuardianSync } from "./hooks/useGuardianSync";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
+import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 
 export default function App() {
   const { userRole, logSecurityAudit, openAuthModal, currentUser, loading } = useAuth();
@@ -1317,6 +1318,21 @@ export default function App() {
       const isLiveExecution = tradingMode === "LIVE_COINDCX";
 
       // If in live mode, ensure we have credentials configured
+      // Never send real money on a signal computed from generated prices.
+      if (isLiveExecution && isBuiltOnSyntheticPrices(proposal)) {
+        inFlightProposalIds.current.delete(proposal.id);
+        setExecutionToast({
+          id: `toast-${Date.now()}`,
+          title: "Live order blocked: generated price data",
+          message: `${proposal.symbol}'s signal was computed on ${Math.round(
+            (proposal.dataQuality?.syntheticBarShare ?? 0) * 100
+          )}% generated price history. Wait for a fresh scan on real data, or trade it in paper mode.`,
+          type: "WARNING",
+          timestamp: new Date().toLocaleTimeString(),
+        });
+        return;
+      }
+
       if (isLiveExecution && !coinDcxStatus?.configured) {
         inFlightProposalIds.current.delete(proposal.id);
         setExecutionToast({
@@ -1541,6 +1557,15 @@ export default function App() {
         // tuned for intraday setups.
         if (proposal.setup.horizon === "swing") {
           deferred.push({ proposal, reason: "Swing/long-horizon setup — always requires manual approval, regardless of consensus." });
+          continue;
+        }
+
+        // Signals computed on generated price history aren't evidence about
+        // the real market. Autopilot never acts on them; a human can still
+        // approve one knowingly (it's badged in the queue).
+        if (isBuiltOnSyntheticPrices(proposal)) {
+          const pct = Math.round((proposal.dataQuality?.syntheticBarShare ?? 0) * 100);
+          deferred.push({ proposal, reason: `Built on generated price history (${pct}% of bars) — manual review only.` });
           continue;
         }
 
@@ -2240,6 +2265,16 @@ export default function App() {
             currentAccuracy={learnedAccuracy}
             promotedLabModel={promotedLabModel}
             onPromoteLabModel={(result) => {
+              if (result.isSynthetic) {
+                setExecutionToast({
+                  id: `toast-${Date.now()}`,
+                  title: "Promotion blocked: generated data",
+                  message: "This Lab result was trained on generated candles, not market history. Retrain on real data to promote.",
+                  type: "WARNING",
+                  timestamp: new Date().toLocaleTimeString(),
+                });
+                return;
+              }
               const promoted: PromotedLabModel = {
                 promotedAt: new Date().toISOString(),
                 datasetName: result.datasetName || `${result.symbol} Custom`,

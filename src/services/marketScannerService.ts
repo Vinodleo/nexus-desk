@@ -25,6 +25,25 @@ import {
   retrieveSimilarExperiences,
 } from "./experienceMemory";
 import { computeMetaLabelScore } from "./metaLabeling";
+import { syntheticBarShare } from "./dataProvenance";
+
+// A Lab model trained on generated candles says nothing about the real
+// market, so the live desk ignores it (default hurdle, no persona tuning, no
+// TF.js model) even if an older build let it be promoted.
+let warnedSyntheticPromotion = false;
+function loadUsablePromotedModel() {
+  const model = loadStoredPromotedLabModel();
+  if (model?.isSynthetic) {
+    if (!warnedSyntheticPromotion) {
+      warnedSyntheticPromotion = true;
+      console.warn(
+        `[Scanner] Ignoring promoted Lab model "${model.datasetName}": it was trained on generated candles. Retrain on real data and promote again.`
+      );
+    }
+    return null;
+  }
+  return model;
+}
 import {
   DEFAULT_RISK_POLICY,
   RiskPolicyConfig,
@@ -88,7 +107,7 @@ export async function scanSingleMarket(
     options.failureState.simulateOrderBookThinLiquidity
   );
   const regime: RegimeType = classifyRegime(bars);
-  const promotedModel = loadStoredPromotedLabModel();
+  const promotedModel = loadUsablePromotedModel();
   const experiences =
     options.experiences || generateInitialExperienceDatabase();
   const proposals: TradeProposal[] = [];
@@ -300,6 +319,12 @@ export async function scanSingleMarket(
         supportingPersonas: sourcePanel.supportingPersonas,
         dissentingPersonas: sourcePanel.dissentingPersonas,
         personaVotesCast: sourcePanel.totalVotesCast,
+        dataQuality: {
+          syntheticBarShare: syntheticBarShare(bars),
+          seededExperienceShare: retrieval.seededShare,
+          // generateOrderBook() models spread/depth; there's no live book feed yet.
+          simulatedOrderBook: true,
+        },
       };
       proposals.push(proposal);
     }
@@ -344,7 +369,7 @@ export async function scanAllMarkets(
   const newProposals: TradeProposal[] = [];
   let totalSetupsEvaluated = 0;
 
-  const promotedModel = loadStoredPromotedLabModel();
+  const promotedModel = loadUsablePromotedModel();
   let tfjsModel: tf.LayersModel | undefined = undefined;
 
   if (promotedModel?.hasTrainedModel) {

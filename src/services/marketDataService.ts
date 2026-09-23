@@ -302,6 +302,7 @@ export function generateInitialBars(
 
     bars.push({
       time: barTime,
+      isSynthetic: true,
       open,
       high,
       low,
@@ -391,6 +392,7 @@ export function generateNextBar(
   });
 
   return {
+    isSynthetic: true,
     time,
     open,
     high,

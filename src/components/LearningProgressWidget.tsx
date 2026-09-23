@@ -171,6 +171,11 @@ export const LearningProgressWidget: React.FC<LearningProgressWidgetProps> = ({
       {/* Background visual glow */}
       <div className="absolute -top-10 -right-10 w-52 h-52 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
+      <div className="text-[10px] font-mono rounded-lg px-2.5 py-1.5 bg-amber-950/40 border border-amber-800/50 text-amber-200">
+        Illustrative learning curve: the phases and figures below are fixed example values, not measured from
+        your trades. See the win-rate, calibration and drawdown cards for real measurements.
+      </div>
+
       {/* Header section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1c1c28] pb-3.5">
         <div className="space-y-1">
