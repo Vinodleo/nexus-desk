@@ -45,6 +45,21 @@ from Zerodha Kite.
   caps, so exits are never blocked. The ledger is kept in
   `data/live_order_ledger.json`, and the trading day resets at midnight IST.
 
+- **Live exits are sent by the server** (`server/liveExecution.ts`).
+  - Every accepted live entry is registered by its position ID
+    (`data/live_positions.json`).
+  - When the guardian hits a stop, target or expiry, or you close the
+    position, the server sends the market exit itself. A closed browser can't
+    leave a real position open.
+  - Each exit has a fixed `client_order_id`. Before any re-send, the server
+    looks the order up on CoinDCX (`/exchange/v1/orders/status`) so an exit is
+    never sent twice.
+  - Failed exits retry with backoff. After 10 attempts the server logs
+    `EXIT FAILED` and alerts the client. **Before going live, confirm
+    that the order-status endpoint accepts `client_order_id`.**
+- **Positions are per user.** Guardian positions and events are scoped to the
+  Firebase user, and a sync can't drop an open live position.
+
 ## Setup
 
 ```bash
@@ -65,6 +80,17 @@ Type-check:
 npm run lint
 ```
 
+### Tests
+
+```bash
+npm test            # unit tests (Vitest): risk engine, fees/P&L, guardian stops,
+                    # live-order limits, live exits (fake CoinDCX), auth
+npm run test:rules  # Firestore rules against the emulator (needs Java 11+)
+```
+
+CI (`.github/workflows/ci.yml`) runs typecheck, unit tests and the build, plus
+the rules suite, on every pull request and on pushes to `main`.
+
 ### Environment variables
 
 See `.env.example` for the full list. At minimum you need:
@@ -79,6 +105,13 @@ See `.env.example` for the full list. At minimum you need:
 
 ### Firestore rules
 
-Deploy `firestore.rules` to your Firebase project. Clients can no longer write
-the `users/{uid}/credentials` documents. The Security Console → Exchange API
-tab can delete a legacy plain-text key document left by earlier builds.
+Deploy `firestore.rules` to your Firebase project (`firebase deploy --only firestore:rules`).
+- Profiles and everything under them can be read and written only by
+  their owner.
+- `uid`, `email` and `createdAt` are fixed once a profile exists, and
+  profile fields must be on an allow-list and have the right type.
+- Positions and audit logs have strict shapes. Audit logs are append-only
+  and time-stamped by the server.
+- Clients can't write `users/{uid}/credentials`. The Security Console →
+  Exchange API tab can delete a legacy plain-text key document left by
+  earlier builds.
