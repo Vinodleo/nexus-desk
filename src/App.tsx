@@ -1490,16 +1490,18 @@ export default function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            symbol: pos.symbol,
-            direction: pos.direction,
-            entryPrice: pos.entryPrice,
-            exitPrice,
-            pnl: finalPnl,
-            pnlPercent,
-            setupName: pos.setupName,
-            metaConfidence: pos.metaConfidence,
-            outcome: isWin ? "WIN" : "LOSS",
-            exitReason: reason,
+            trade: {
+              symbol: pos.symbol,
+              direction: pos.direction,
+              entryPrice: pos.entryPrice,
+              exitPrice,
+              realizedPnl: finalPnl,
+              pnlPercent,
+              setupName: pos.setupName,
+              metaConfidence: pos.metaConfidence,
+              outcome: isWin ? "WIN" : "LOSS",
+              exitReason: reason,
+            },
           }),
         });
       } catch {
