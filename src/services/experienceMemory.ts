@@ -1,4 +1,5 @@
 import { ExperienceVector, StrategySetup, RegimeType, TradeAutopsy } from "../types";
+import { seededShare } from "./dataProvenance";
 
 // Seed historical experiences
 export function generateInitialExperienceDatabase(): ExperienceVector[] {
@@ -43,6 +44,7 @@ export function generateInitialExperienceDatabase(): ExperienceVector[] {
 
     experiences.push({
       id: `exp-${i + 1}`,
+      isSeeded: true,
       timestamp: date.toISOString(),
       symbol,
       setupName: family === "trend_following" ? "Trend Momentum Continuation" : family === "breakout_confirmation" ? "Breakout With Confirmation" : "Range Mean Reversion",
@@ -81,6 +83,8 @@ export function retrieveSimilarExperiences(
   avgLossDollars: number;
   sampleCount: number;
   similarityScore: number;
+  /** Share of the neighbours that are seeded examples rather than real trades. */
+  seededShare: number;
 } {
   const targetFeatures = {
     adx: setup.features.adx,
@@ -127,5 +131,6 @@ export function retrieveSimilarExperiences(
     avgLossDollars: Number(avgLossDollars.toFixed(2)),
     sampleCount: topK.length,
     similarityScore: Number(avgSimilarity.toFixed(2)),
+    seededShare: seededShare(topK.map((s) => s.item)),
   };
 }

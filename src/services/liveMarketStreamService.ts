@@ -6,7 +6,59 @@ import {
 } from "./marketDataService";
 import { apiFetch, authenticateSocket } from "./apiClient";
 
-export class LiveMarketStreamService {
+export const MIN_REAL_SEED_BARS = 30;
+
+// Real recent 1-minute candles from CoinDCX, oldest first, or null.
+async function fetchRecentMinuteBars(symbol: string): Promise<MarketBar[] | null> {
+  try {
+    const base = symbol.split("/")[0];
+    const res = await apiFetch(`/api/coindcx/candles?symbol=${base}&interval=1m&limit=120`);
+    if (!res.ok) return null;
+    const raw = await res.json();
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    // CoinDCX returns candles newest-first; indicator math needs oldest-first.
+    return [...raw].reverse().map((c: any) => ({
+      time: new Date(c.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestampMs: c.time,
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      volume: Number(c.volume),
+    }));
+  } catch {
+    return null;
+  }
+}
+
+// Last resort: a generated 2-hour random walk ending at the live price.
+// Every bar is flagged isSynthetic.
+function generateSeedBars(currentLivePrice: number): MarketBar[] {
+  const rawBars: MarketBar[] = [];
+  let runningPrice = currentLivePrice * 0.995; // start slightly lower 2 hours ago
+  const now = Date.now();
+  for (let i = 120; i >= 0; i--) {
+    const tMs = now - i * 60000;
+    const volatility = currentLivePrice * 0.001;
+    const shift = (Math.random() - 0.45) * volatility;
+    if (i === 0) runningPrice = currentLivePrice; // force last bar to equal exactly live price
+    else runningPrice += shift;
+
+    rawBars.push({
+      time: new Date(tMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestampMs: tMs,
+      isSynthetic: true,
+      open: runningPrice - Math.random() * volatility * 0.5,
+      close: runningPrice,
+      high: runningPrice + Math.random() * volatility,
+      low: runningPrice - Math.random() * volatility,
+      volume: Math.random() * 5 + 1,
+    });
+  }
+  return rawBars;
+}
+
+class LiveMarketStreamService {
   private reconnectTimer: NodeJS.Timeout | null = null;
 
   // Store the last 120 decorated bars per symbol
@@ -54,38 +106,27 @@ export class LiveMarketStreamService {
         }
       });
 
+      // 2. Seed each chart with real recent 1m candles where we can get them
+      //    (CoinDCX, crypto only). Only when that fails fall back to a
+      //    generated history, and flag those bars isSynthetic so everything
+      //    downstream (scanner, proposals, autopilot) knows.
+      const realSeeds = await Promise.all(
+        cryptoSymbolsOnly.map(async (sym) => [sym, await fetchRecentMinuteBars(sym)] as const)
+      );
+      const realSeedBySymbol = new Map(realSeeds);
+
       for (const sym of activeSymbols) {
+        const real = realSeedBySymbol.get(sym);
+        if (real && real.length >= MIN_REAL_SEED_BARS) {
+          this.marketData.set(sym, decorateBarsWithIndicators(real));
+          continue;
+        }
+
         // Fall back to the hardcoded config basePrice if CoinDCX fetch fails for this symbol
         const configBasePrice =
           SUPPORTED_SYMBOLS.find((s) => s.symbol === sym)?.basePrice || 100;
         const currentLivePrice = priceMap.get(sym) || configBasePrice;
-
-        // 2. Generate a realistic recent 120m history leading up to the exact live price
-        const rawBars: MarketBar[] = [];
-        let runningPrice = currentLivePrice * 0.995; // start slightly lower 2 hours ago
-
-        const now = Date.now();
-        for (let i = 120; i >= 0; i--) {
-          const tMs = now - i * 60000;
-          const volatility = currentLivePrice * 0.001;
-          const shift = (Math.random() - 0.45) * volatility;
-          if (i === 0) runningPrice = currentLivePrice; // force last bar to equal exactly live price
-          else runningPrice += shift;
-
-          rawBars.push({
-            time: new Date(tMs).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            timestampMs: tMs,
-            open: runningPrice - Math.random() * volatility * 0.5,
-            close: runningPrice,
-            high: runningPrice + Math.random() * volatility,
-            low: runningPrice - Math.random() * volatility,
-            volume: Math.random() * 5 + 1,
-          });
-        }
-        this.marketData.set(sym, decorateBarsWithIndicators(rawBars));
+        this.marketData.set(sym, decorateBarsWithIndicators(generateSeedBars(currentLivePrice)));
       }
     } catch (e) {
       console.error("Failed to fetch initial CoinDCX data", e);

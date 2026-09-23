@@ -64,6 +64,41 @@ function cleanErrorMessage(rawMsg: string): string {
   return rawMsg.replace(/[\n\r]/g, " ").slice(0, 160);
 }
 
+// Gemini models to try, in order. Override with GEMINI_MODELS (comma-separated)
+// if a name is retired or you want a different primary.
+const DEFAULT_GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
+export function geminiModels(): string[] {
+  const configured = (process.env.GEMINI_MODELS || "")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return configured.length > 0 ? configured : DEFAULT_GEMINI_MODELS;
+}
+
+// A wrong or retired model name otherwise looks like any other AI failure:
+// every agent silently answers from the rule-based fallback. Say so loudly,
+// once per model.
+const warnedModels = new Set<string>();
+export function isModelUnavailableError(err: any): boolean {
+  const status = err?.status || err?.statusCode || err?.code;
+  const msg = String(err?.message || "").toLowerCase();
+  return (
+    status === 404 ||
+    msg.includes("not found") ||
+    msg.includes("is not supported") ||
+    msg.includes("unknown model") ||
+    msg.includes("invalid model")
+  );
+}
+function warnIfModelUnavailable(model: string, err: any) {
+  if (!isModelUnavailableError(err) || warnedModels.has(model)) return;
+  warnedModels.add(model);
+  console.warn(
+    `[AI] Gemini model "${model}" is unavailable (${cleanErrorMessage(err?.message || "")}). ` +
+      `Agents will use the next model or the rule-based fallback. Set GEMINI_MODELS to valid model names.`
+  );
+}
+
 // Circuit breaker for Quota / Rate Limits to prevent repeated failures
 let quotaCooldownUntil = 0;
 function isQuotaExhaustedError(err: any): boolean {
@@ -95,8 +130,8 @@ async function executeResilientAiGeneration(params: {
     throw new Error("QUOTA_COOLDOWN_ACTIVE");
   }
 
-  // Model cascade: try primary first, fallback to lightweight model
-  const modelsToTry = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  // Model cascade: try primary first, fall back to the lighter model.
+  const modelsToTry = geminiModels();
   let lastError: any = null;
 
   for (const model of modelsToTry) {
@@ -120,6 +155,7 @@ async function executeResilientAiGeneration(params: {
       }
     } catch (err: any) {
       lastError = err;
+      warnIfModelUnavailable(model, err);
       if (isQuotaExhaustedError(err)) {
         // Activate 60s quota cooldown to prevent spamming exhausted quota
         quotaCooldownUntil = Date.now() + 60000;

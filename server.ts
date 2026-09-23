@@ -46,6 +46,12 @@ app.use(tradingRouter);
 app.use(guardianRouter);
 app.use(agentsRouter);
 
+// Unknown API paths get a JSON 404 instead of falling through to the SPA's
+// index.html (which answered 200 with a web page).
+app.use("/api", (_req: Request, res: Response) => {
+  res.status(404).json({ success: false, error: "Not found", code: "NOT_FOUND" });
+});
+
 // Restore guardian state before anything can tick, and flush it on shutdown.
 loadDaemonStateFromDisk();
 for (const signal of ["SIGTERM", "SIGINT"] as const) {

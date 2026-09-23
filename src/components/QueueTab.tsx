@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { TradeProposal } from "../types";
+import { DataQualityNotice } from "./DataQualityNotice";
 import {
   Check,
   X,
@@ -365,6 +366,8 @@ export const QueueTab: React.FC<QueueTabProps> = ({
                   {(proposal.evAssessment.expectedNetValue / 100).toFixed(2)}R
                   net after 14 bps round-trip friction.
                 </div>
+
+                <DataQualityNotice quality={proposal.dataQuality} />
 
                 {proposal.status === "DEFERRED" && proposal.deferralReason && (
                   <div className="text-[10px] font-mono text-amber-300 bg-amber-950/30 border border-amber-800/40 rounded-lg px-2.5 py-1.5">

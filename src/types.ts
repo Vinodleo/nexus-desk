@@ -19,6 +19,8 @@ export type DecisionMode = "MANUAL" | "SEMI_AUTO" | "AUTO_WITHIN_LIMITS";
 export interface MarketBar {
   time: string;
   timestampMs?: number;
+  /** Generated, not observed. Set on backfilled or simulated bars. */
+  isSynthetic?: boolean;
   open: number;
   high: number;
   low: number;
@@ -78,6 +80,8 @@ export interface StrategySetup {
 
 export interface ExperienceVector {
   id: string;
+  /** Part of the generated starter memory bank, not a real trade. */
+  isSeeded?: boolean;
   timestamp: string;
   symbol: string;
   setupName: string;
@@ -144,6 +148,15 @@ export interface RiskCalculation {
   rejectionReason?: string;
 }
 
+export interface ProposalDataQuality {
+  /** Share (0-1) of the price bars behind the signal that were generated. */
+  syntheticBarShare: number;
+  /** Share (0-1) of the similar past trades behind the win rate that are seeded examples. */
+  seededExperienceShare: number;
+  /** Order-book spread/depth used for costs and the liquidity check is simulated. */
+  simulatedOrderBook: boolean;
+}
+
 export interface TradeProposal {
   id: string;
   timestamp: string;
@@ -165,6 +178,8 @@ export interface TradeProposal {
   failureConditionRisk?: string;
   /** Trader-panel fields — weighted share of personas backing this direction, and who was on each side. */
   ensembleAgreement?: number;
+  /** How much of this proposal rests on generated rather than observed data. */
+  dataQuality?: ProposalDataQuality;
   supportingPersonas?: string[];
   dissentingPersonas?: string[];
   personaVotesCast?: number;

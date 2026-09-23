@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { KiteConnect, KiteTicker } from "kiteconnect";
 import { broadcast } from "../realtime";
 
-import { validate, zerodhaCallbackBody, zerodhaCandlesQuery, zerodhaOrderBody } from "../validation";
+import { validate, zerodhaCallbackBody, zerodhaCandlesQuery } from "../validation";
 
 export const router = Router();
 
@@ -182,34 +182,6 @@ router.get("/api/zerodha/candles", validate({ query: zerodhaCandlesQuery }), asy
     res.json(data);
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to fetch Zerodha historical data" });
-  }
-});
-
-// Mock order placement route
-router.post("/api/zerodha/order", validate({ body: zerodhaOrderBody }), async (req: Request, res: Response) => {
-  const { symbol, quantity, transaction_type, order_type, price } = req.body;
-
-  if (!kiteInstance || !zerodhaAccessToken) {
-    return res.status(401).json({ error: "Unauthorized. Please login to Zerodha first." });
-  }
-
-  try {
-    // In production:
-    // const orderId = await kiteInstance.placeOrder("regular", {
-    //   exchange: "NSE",
-    //   tradingsymbol: symbol,
-    //   transaction_type: transaction_type,
-    //   quantity: quantity,
-    //   order_type: order_type,
-    //   product: "MIS",
-    //   price: price
-    // });
-
-    // Mocking the success for safety right now
-    const orderId = "ZRD-" + Math.random().toString(36).substr(2, 9).toUpperCase();
-    return res.json({ success: true, order_id: orderId });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
   }
 });
 

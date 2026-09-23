@@ -196,10 +196,12 @@ export function saveStoredExperiences(experiences: ExperienceVector[]): void {
  * Load agent track record stats from Browser LocalStorage.
  */
 export function loadStoredStats(): AgentLearningStats {
+  // A fresh desk starts with no track record. (This used to default to a
+  // made-up 18 trades / 12 wins / 6 losses.)
   const fallback: AgentLearningStats = {
-    selfApprovedCount: 18,
-    selfApprovedWins: 12,
-    selfApprovedLosses: 6,
+    selfApprovedCount: 0,
+    selfApprovedWins: 0,
+    selfApprovedLosses: 0,
     lastUpdated: new Date().toISOString(),
   };
   try {

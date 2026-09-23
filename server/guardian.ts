@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { Router, type Request, type Response } from "express";
 import type { AuthedRequest } from "./auth";
-import { applyGuardianTick, isPastHoldingTime } from "./guardianLogic";
+import { applyGuardianTick, isPastHoldingTime, mergeSyncedGuardState } from "./guardianLogic";
 import { getLivePosition, isOpenLivePosition, requestLiveExit } from "./liveExecution";
 import { broadcastToUser } from "./realtime";
 import { computeClosedTradePnl } from "../src/shared/tradeMath";
@@ -228,10 +228,7 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
       userId: uid,
       isLiveOrder: isLive,
       ...(isLive ? { quantity: live!.quantity } : {}),
-      highestPrice: existing?.highestPrice ? Math.max(existing.highestPrice, p.highestPrice || p.entryPrice) : (p.highestPrice || p.entryPrice),
-      lowestPrice: existing?.lowestPrice ? Math.min(existing.lowestPrice, p.lowestPrice || p.entryPrice) : (p.lowestPrice || p.entryPrice),
-      trailActive: existing?.trailActive ?? p.trailActive ?? false,
-      stopLoss: existing?.stopLoss ?? p.stopLoss,
+      ...mergeSyncedGuardState(p.direction, p.entryPrice, existing, p),
     });
   }
 

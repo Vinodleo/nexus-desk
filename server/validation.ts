@@ -109,14 +109,6 @@ export const zerodhaCandlesQuery = z.object({
     .optional(),
 });
 
-export const zerodhaOrderBody = z.object({
-  symbol,
-  quantity: z.number().int().positive(),
-  transaction_type: z.enum(["BUY", "SELL"]),
-  order_type: z.enum(["MARKET", "LIMIT"]).optional(),
-  price: positiveNumber.optional(),
-});
-
 // ---------- AI agents (loose: context objects are passed to the model) ----------
 
 const jsonObject = z.record(z.unknown());
