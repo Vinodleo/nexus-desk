@@ -51,13 +51,14 @@ function useBook(initialTrades: HistoricalTrade[] = []) {
   const [equity, setEquity] = useState(100000);
   const [cash, setCash] = useState(99000);
   const [dailyRealizedPnl, setDailyRealizedPnl] = useState(0);
+  const [allTimeRealizedPnl, setAllTimeRealizedPnl] = useState(-100);
   const closingPositionIds = useRef(new Set<string>());
   const closedTradesRef = useRef(closedTrades);
   closedTradesRef.current = closedTrades;
   const apply = useServerCloseHandler(closingPositionIds, closedTradesRef, {
-    setActivePositions, setClosedTrades, setEquity, setCash, setDailyRealizedPnl,
+    setActivePositions, setClosedTrades, setEquity, setCash, setDailyRealizedPnl, setAllTimeRealizedPnl,
   });
-  return { apply, activePositions, closedTrades, equity, cash, dailyRealizedPnl, closingPositionIds };
+  return { apply, activePositions, closedTrades, equity, cash, dailyRealizedPnl, allTimeRealizedPnl, closingPositionIds };
 }
 
 describe("useServerCloseHandler", () => {
@@ -69,8 +70,11 @@ describe("useServerCloseHandler", () => {
     expect(result.current.activePositions.map((p) => p.id)).toEqual(["pos-2"]);
     expect(result.current.closedTrades).toHaveLength(1);
     expect(result.current.equity).toBe(100009);
-    expect(result.current.cash).toBe(100009); // 99000 + 1000 placed + 9
+    // Cash moves by realized P&L only, like the browser's own close; the
+    // position's notional (1000) was never debited, so it isn't credited back.
+    expect(result.current.cash).toBe(99009);
     expect(result.current.dailyRealizedPnl).toBe(9);
+    expect(result.current.allTimeRealizedPnl).toBe(-91);
   });
 
   it("credits only once when the WebSocket and the poll both deliver the close", () => {
@@ -80,6 +84,8 @@ describe("useServerCloseHandler", () => {
     act(() => { second = result.current.apply(closeEvent()); });
     expect(second).toBe(false);
     expect(result.current.equity).toBe(100009);
+    expect(result.current.cash).toBe(99009);
+    expect(result.current.allTimeRealizedPnl).toBe(-91);
     expect(result.current.dailyRealizedPnl).toBe(9);
     expect(result.current.closedTrades).toHaveLength(1);
   });
@@ -203,5 +209,13 @@ describe("useCoinDcxAccount", () => {
     await waitFor(() => expect(result.current.coinDcxBalance.availableInr).toBe(1234.5));
     expect(localStorage.getItem("nexus_trading_mode")).toBe("LIVE_COINDCX");
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ type: "WARNING" }));
+  });
+});
+
+describe("loadStoredCapital", () => {
+  it("repairs cash inflated by old guardian-close accounting", async () => {
+    const { loadStoredCapital } = await import("../../src/services/storagePersistenceService");
+    localStorage.setItem("nexus_agent_capital_inr_v4", JSON.stringify({ equity: 94483.96, cash: 373144.5, dailyRealizedPnl: 0, allTimeRealizedPnl: -5688.13 }));
+    expect(loadStoredCapital().cash).toBe(94483.96);
   });
 });

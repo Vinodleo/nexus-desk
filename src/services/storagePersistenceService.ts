@@ -250,7 +250,10 @@ export function loadStoredCapital(): AgentCapitalState {
 
       return {
         equity: Number(parsed.equity) || fallback.equity,
-        cash: Number(parsed.cash) || fallback.cash,
+        // The paper book never debits cash when a position opens, so cash and
+        // equity always move together. Older builds inflated cash on
+        // server-guardian closes; re-deriving it from equity repairs that.
+        cash: Number(parsed.equity) || fallback.cash,
         // Reset daily PNL to 0 if it's a new day
         dailyRealizedPnl: savedDate === todayIST ? (Number(parsed.dailyRealizedPnl) || 0) : 0,
         allTimeRealizedPnl:
