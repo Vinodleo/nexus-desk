@@ -462,6 +462,25 @@ export default function App() {
           return;
         }
 
+        if (msg.type === "LIVE_EXIT_UPDATE") {
+          const rec = msg.data;
+          if (rec?.status === "CLOSED") {
+            fetchCoinDcxBalance();
+          } else if (rec?.status === "EXIT_FAILED") {
+            setExecutionToast({
+              id: `toast-live-exit-${Date.now()}`,
+              title: `🚨 LIVE EXIT FAILED: ${rec.market}`,
+              message: `The server could not close ${rec.quantity} ${rec.market} after ${rec.exitAttempts} attempts (${rec.lastError}). Close it manually on CoinDCX.`,
+              type: "WARNING",
+              timestamp: new Date().toLocaleTimeString(),
+            });
+            sendAlertNotification(`🚨 Live exit failed: ${rec.market}`, {
+              body: "Close the position manually on CoinDCX.",
+            });
+          }
+          return;
+        }
+
         if (msg.type === "TICK") {
           console.log("TICK received", msg.data);
           const newPrices = msg.data;
@@ -1226,29 +1245,30 @@ export default function App() {
       setEquity((prev) => Number((prev + finalPnl).toFixed(2)));
       setCash((prev) => Number((prev + finalPnl).toFixed(2)));
 
-      // If position was a live order on CoinDCX, dispatch the exit order to the exchange
+      // Live positions are exited by the server (idempotently, with retries),
+      // so the exchange order goes out even if this tab closes right now.
       if (pos.isLiveOrder) {
-        apiFetch("/api/execute-trade", {
+        apiFetch("/api/live/close-position", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            symbol: pos.symbol,
-            side: pos.direction === "LONG" ? "SHORT" : "LONG",
-            quantity: pos.quantity,
-            price: exitPrice,
-            orderType: "MARKET",
-            isPaperTrade: false,
-            confirmLiveOrder: true,
-          }),
+          body: JSON.stringify({ positionId: pos.id, reason }),
         })
           .then((res) => res.json())
           .then((exitData) => {
             if (exitData.success) {
               fetchCoinDcxBalance();
+            } else {
+              setExecutionToast({
+                id: `toast-${Date.now()}`,
+                title: "⚠️ Live exit not confirmed yet",
+                message: `${pos.symbol}: ${exitData.error || "exit pending"}. The server keeps retrying.`,
+                type: "WARNING",
+                timestamp: new Date().toLocaleTimeString(),
+              });
             }
           })
           .catch((err) => {
-            console.error("Failed to dispatch live exit order to CoinDCX:", err);
+            console.error("Failed to request live exit:", err);
           });
       }
 
@@ -1627,6 +1647,7 @@ export default function App() {
           orderType: "MARKET",
           isPaperTrade: !isLiveExecution,
           confirmLiveOrder: isLiveExecution,
+          positionId: newPosition.id,
         }),
       })
         .then((res) => res.json())

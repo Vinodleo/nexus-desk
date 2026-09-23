@@ -12,13 +12,24 @@ import { KiteConnect, KiteTicker } from 'kiteconnect';
 
 dotenv.config();
 
-import { requireAuth, verifyToken } from "./server/auth";
+import { requireAuth, verifyToken, type AuthedRequest } from "./server/auth";
 import {
   evaluateLiveOrder,
   recordLiveOrder,
   liveRiskSnapshot,
   withLiveOrderLock,
 } from "./server/liveOrderGuard";
+import {
+  clientOrderId,
+  placeMarketOrder,
+  lookupByClientOrderId,
+  registerLiveEntry,
+  getLivePosition,
+  isOpenLivePosition,
+  listLivePositions,
+  requestLiveExit,
+  setLiveExitListener,
+} from "./server/liveExecution";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -47,7 +58,19 @@ function broadcast(message: unknown) {
   });
 }
 
-type AuthedSocket = WebSocket & { isAuthed?: boolean };
+type AuthedSocket = WebSocket & { isAuthed?: boolean; uid?: string };
+
+// Per-user events (guardian closes, live exit status) go only to that user's sockets.
+function broadcastToUser(uid: string | undefined, message: unknown) {
+  if (!globalWss || !uid) return;
+  const payload = JSON.stringify(message);
+  globalWss.clients.forEach((client) => {
+    const s = client as AuthedSocket;
+    if (s.readyState === WebSocket.OPEN && s.isAuthed && s.uid === uid) s.send(payload);
+  });
+}
+
+setLiveExitListener((rec) => broadcastToUser(rec.userId, { type: "LIVE_EXIT_UPDATE", data: rec }));
 
 // ==========================================
 // ZERODHA KITE CONNECT INTEGRATION ROUTES
@@ -629,7 +652,7 @@ app.get("/api/coindcx/candles", async (req, res) => {
 
 // CoinDCX Authenticated Trade Execution Route
 app.post("/api/execute-trade", async (req, res) => {
-  const { symbol, side, quantity, price, orderType, isPaperTrade, confirmLiveOrder, maxSlippagePct } = req.body;
+  const { symbol, side, quantity, price, isPaperTrade, confirmLiveOrder, positionId } = req.body;
   const { apiKey, apiSecret } = getCoinDcxCredentials(req);
 
   // Fail-safe default: a request only goes live if isPaperTrade is exactly
@@ -672,13 +695,26 @@ app.post("/api/execute-trade", async (req, res) => {
     return res.status(400).json({ success: false, error: "symbol and side (LONG/SHORT/buy/sell) are required", code: "BAD_REQUEST" });
   }
 
+  if (typeof positionId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(positionId)) {
+    return res.status(400).json({ success: false, error: "positionId is required for live orders", code: "BAD_REQUEST" });
+  }
+  const userId: string = (req as AuthedRequest).user!.uid;
+
   // Format market pair for CoinDCX: e.g. "BTC/INR" -> "BTCINR", "B-BTC_INR" -> "BTCINR"
   const cleanMarket = symbol.replace(/^[A-Za-z]+-/, "").replace(/[\/_-]/g, "").toUpperCase();
   // CoinDCX side is "buy" or "sell"
   const orderSide: "buy" | "sell" = (side === "LONG" || side === "buy") ? "buy" : "sell";
   const orderQty = Number(quantity);
 
+  // This route only OPENS live positions; exits go through
+  // /api/live/close-position so the server owns them.
   return withLiveOrderLock(async () => {
+  const existing = getLivePosition(positionId);
+  if (existing) {
+    // Same position submitted twice: never open it again.
+    return res.json({ success: true, mode: "LIVE", orderId: existing.entryOrderId, duplicate: true, message: "Position already opened." });
+  }
+
   const decision = evaluateLiveOrder({
     market: cleanMarket,
     side: orderSide,
@@ -686,71 +722,81 @@ app.post("/api/execute-trade", async (req, res) => {
     clientPrice: price === undefined || price === null ? undefined : Number(price),
     referencePrice: await getReferencePrice(cleanMarket),
   });
-  if (decision.status === "rejected") {
-    console.warn(`[LiveOrderGuard] Rejected ${orderSide} ${orderQty} ${cleanMarket} (user ${(req as any).user?.email}): ${decision.reason}`);
-    return res.status(403).json({ success: false, error: decision.reason, code: decision.code });
+  if (decision.status === "rejected" || decision.isReducing) {
+    const reason = decision.status === "rejected"
+      ? decision.reason
+      : "This order would net against an open live position; close that position instead.";
+    const code = decision.status === "rejected" ? decision.code : "WOULD_REDUCE";
+    console.warn(`[LiveOrderGuard] Rejected ${orderSide} ${orderQty} ${cleanMarket} (user ${(req as AuthedRequest).user?.email}): ${reason}`);
+    return res.status(403).json({ success: false, error: reason, code });
   }
 
-  try {
-    const timestamp = Math.floor(Date.now());
-    // CoinDCX order_type is "market_order" or "limit_order"
-    const cdcxOrderType = (orderType === "MARKET" || !price) ? "market_order" : "limit_order";
-
-    const body: Record<string, any> = {
-      side: orderSide,
-      order_type: cdcxOrderType,
-      market: cleanMarket,
-      total_quantity: orderQty,
-      timestamp: timestamp,
-      client_order_id: `nx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-    };
-
-    if (cdcxOrderType !== "market_order" && price) {
-      body.price_per_unit = Number(price);
-    }
-
-    const payload = JSON.stringify(body);
-    const signature = crypto.createHmac('sha256', apiSecret).update(payload).digest('hex');
-
-    const cdcxResponse = await fetch('https://api.coindcx.com/exchange/v1/orders/create', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-AUTH-APIKEY': apiKey,
-        'X-AUTH-SIGNATURE': signature
-      },
-      body: payload
-    });
-
-    const data: any = await cdcxResponse.json();
-
-    if (!cdcxResponse.ok) {
-      return res.status(cdcxResponse.status).json({
-        success: false,
-        error: data?.message || `CoinDCX rejected order (${cdcxResponse.status})`,
-        cdcxResponse: data
-      });
-    }
-
-    const exchangeOrderId = data?.orders?.[0]?.id || data?.id || ("cdcx_" + Date.now());
-    const executedPrice = data?.orders?.[0]?.price_per_unit || price;
-    recordLiveOrder(cleanMarket, orderSide, orderQty, decision.notionalInr, decision.isReducing);
-    console.log(`[LiveOrder] ${orderSide} ${orderQty} ${cleanMarket} accepted (order ${exchangeOrderId}, user ${(req as any).user?.email})`);
-
+  const entryClientOrderId = clientOrderId("open", positionId);
+  const accept = (orderId: string, data?: any) => {
+    recordLiveOrder(cleanMarket, orderSide, orderQty, decision.notionalInr, false);
+    registerLiveEntry({ positionId, userId, market: cleanMarket, entrySide: orderSide, quantity: orderQty, entryOrderId: orderId, entryClientOrderId });
+    console.log(`[LiveOrder] ${orderSide} ${orderQty} ${cleanMarket} accepted (order ${orderId}, position ${positionId}, user ${(req as AuthedRequest).user?.email})`);
     return res.json({
       success: true,
       mode: "LIVE",
       message: "LIVE TRADE: Order dispatched & accepted by CoinDCX Exchange.",
-      orderId: exchangeOrderId,
-      executedPrice: Number(executedPrice),
+      orderId,
+      executedPrice: Number(data?.orders?.[0]?.price_per_unit || price),
       cdcxResponse: data,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
+  };
+
+  try {
+    const result = await placeMarketOrder(cleanMarket, orderSide, orderQty, entryClientOrderId);
+    if (!result.ok) {
+      return res.status(result.status).json({
+        success: false,
+        error: result.data?.message || `CoinDCX rejected order (${result.status})`,
+        cdcxResponse: result.data,
+      });
+    }
+    return accept(result.orderId || entryClientOrderId, result.data);
   } catch (e: any) {
+    // The request may have reached CoinDCX even though we lost the response.
+    // If it did, register the position so the guardian still protects it.
+    const found = await lookupByClientOrderId(entryClientOrderId);
+    if (found.state === "found") return accept(found.orderId || entryClientOrderId);
     console.error("[CoinDCX Order Dispatch] Error:", e);
-    return res.status(500).json({ success: false, error: e.message || "Failed to dispatch order to CoinDCX" });
+    return res.status(502).json({
+      success: false,
+      error: found.state === "unknown"
+        ? `Order outcome unknown (${e.message}). Check CoinDCX for client order ${entryClientOrderId} before retrying.`
+        : e.message || "Failed to dispatch order to CoinDCX",
+      code: found.state === "unknown" ? "OUTCOME_UNKNOWN" : "DISPATCH_FAILED",
+    });
   }
   });
+});
+
+// Close a live position. The server sends the exit (idempotently, with
+// retries); the client only asks. Safe to call more than once.
+app.post("/api/live/close-position", async (req: Request, res: Response) => {
+  const { positionId, reason } = req.body || {};
+  const rec = typeof positionId === "string" ? getLivePosition(positionId) : undefined;
+  if (!rec || rec.userId !== (req as AuthedRequest).user!.uid) {
+    return res.status(404).json({ success: false, error: "No live position with that id", code: "NOT_FOUND" });
+  }
+  // Stop the guardian from also acting on it; the exit below covers it.
+  daemonPositions.delete(positionId);
+  scheduleDaemonDiskSave(0);
+  const updated = await requestLiveExit(positionId, typeof reason === "string" ? reason.slice(0, 40) : "MANUAL");
+  const status = updated?.status;
+  return res.status(status === "CLOSED" ? 200 : 202).json({
+    success: status === "CLOSED",
+    status,
+    error: status === "CLOSED" ? undefined : updated?.lastError,
+    position: updated,
+  });
+});
+
+app.get("/api/live/positions", (req: Request, res: Response) => {
+  res.json({ success: true, positions: listLivePositions((req as AuthedRequest).user!.uid) });
 });
 
 // ==========================================
@@ -778,6 +824,7 @@ export interface DaemonPosition {
   isSelfApproved?: boolean;
   setupName?: string;
   userId?: string;
+  isLiveOrder?: boolean; // set by the server from its live registry, never trusted from the client
 }
 
 export interface DaemonClosedTrade {
@@ -799,6 +846,8 @@ export interface DaemonClosedTrade {
   openedAt: string;
   holdingDurationMinutes?: number;
   setupName?: string;
+  userId?: string;
+  isLiveOrder?: boolean;
 }
 
 interface DaemonPersistedState {
@@ -906,14 +955,23 @@ process.on("SIGINT", () => {
 });
 
 // Comprehensive daemon state inspector & recovery diagnostics
-app.get("/api/daemon/state", (_req: Request, res: Response) => {
+// Positions saved before per-user tracking have no userId; the first user to
+// sync claims them (this app has a single operator in practice).
+function ownedBy(uid: string) {
+  return (p: { userId?: string }) => p.userId === uid;
+}
+
+app.get("/api/daemon/state", (req: Request, res: Response) => {
+  const uid = (req as AuthedRequest).user!.uid;
+  const mine = Array.from(daemonPositions.values()).filter(ownedBy(uid));
+  const myClosed = daemonClosedTrades.filter(ownedBy(uid));
   res.json({
     success: true,
     status: "ACTIVE",
-    trackedCount: daemonPositions.size,
-    activePositions: Array.from(daemonPositions.values()),
-    closedEventsCount: daemonClosedTrades.length,
-    recentClosedTrades: daemonClosedTrades.slice(0, 50),
+    trackedCount: mine.length,
+    activePositions: mine,
+    closedEventsCount: myClosed.length,
+    recentClosedTrades: myClosed.slice(0, 50),
     persistedStorage: "READY",
     storageFilePath: DAEMON_STORAGE_FILE,
     lastSavedAt: daemonLastSavedAt,
@@ -929,29 +987,50 @@ app.post("/api/daemon/sync-positions", (req: Request, res: Response) => {
     return res.status(400).json({ error: "positions array required" });
   }
 
+  const uid = (req as AuthedRequest).user!.uid;
   const incomingIds = new Set(positions.map((p: DaemonPosition) => p.id));
   
   // Set of closed position IDs to prevent ghost resurrection of positions closed by server
   const closedPositionIds = new Set(daemonClosedTrades.map(t => t.positionId));
   const rejectedResurrections: string[] = [];
 
-  // Remove positions that the client explicitly closed
-  for (const id of daemonPositions.keys()) {
-    if (!incomingIds.has(id)) {
+  // Claim legacy positions saved before per-user tracking.
+  for (const pos of daemonPositions.values()) {
+    if (!pos.userId) pos.userId = uid;
+  }
+  for (const t of daemonClosedTrades) {
+    if (!t.userId) t.userId = uid;
+  }
+
+  // Remove this user's positions that the client explicitly closed. A LIVE
+  // position is never dropped this way (e.g. by a client that lost its local
+  // state) — it leaves the guardian only through a real exchange exit.
+  for (const [id, pos] of daemonPositions) {
+    if (pos.userId === uid && !incomingIds.has(id) && !isOpenLivePosition(id)) {
       daemonPositions.delete(id);
     }
   }
 
   // Update or insert current positions
   for (const p of positions) {
+    if (!p || typeof p.id !== "string") continue;
     if (closedPositionIds.has(p.id)) {
       rejectedResurrections.push(p.id);
       continue;
     }
 
     const existing = daemonPositions.get(p.id);
+    if (existing && existing.userId && existing.userId !== uid) continue; // someone else's position id
+
+    // A live position is guarded only while the server's registry says it's
+    // open, and on the server's own quantity — never the client's claim.
+    const live = getLivePosition(p.id);
+    const isLive = !!live && live.status === "OPEN" && live.userId === uid;
     daemonPositions.set(p.id, {
       ...p,
+      userId: uid,
+      isLiveOrder: isLive,
+      ...(isLive ? { quantity: live!.quantity } : {}),
       highestPrice: existing?.highestPrice ? Math.max(existing.highestPrice, p.highestPrice || p.entryPrice) : (p.highestPrice || p.entryPrice),
       lowestPrice: existing?.lowestPrice ? Math.min(existing.lowestPrice, p.lowestPrice || p.entryPrice) : (p.lowestPrice || p.entryPrice),
       trailActive: existing?.trailActive ?? p.trailActive ?? false,
@@ -975,13 +1054,15 @@ app.post("/api/daemon/sync-positions", (req: Request, res: Response) => {
 app.get("/api/daemon/closed-events", (req: Request, res: Response) => {
   const since = req.query.since ? Number(req.query.since) : 0;
   // If since is 0 or negative, return recent events up to 50
+  const uid = (req as AuthedRequest).user!.uid;
+  const myClosed = daemonClosedTrades.filter(ownedBy(uid));
   const events = since > 0
-    ? daemonClosedTrades.filter(t => new Date(t.closedAt).getTime() > since)
-    : daemonClosedTrades.slice(0, 50);
+    ? myClosed.filter(t => new Date(t.closedAt).getTime() > since)
+    : myClosed.slice(0, 50);
   res.json({
     success: true,
     events,
-    activePositions: Array.from(daemonPositions.values()),
+    activePositions: Array.from(daemonPositions.values()).filter(ownedBy(uid)),
     lastSavedAt: daemonLastSavedAt
   });
 });
@@ -1029,6 +1110,8 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     openedAt: pos.openTime,
     holdingDurationMinutes,
     setupName: pos.setupName || "Statistical Trailing System",
+    userId: pos.userId,
+    isLiveOrder: !!pos.isLiveOrder,
   };
 
   daemonClosedTrades.unshift(closedRecord);
@@ -1039,8 +1122,18 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
 
   console.log(`[Daemon Position Guardian] Auto-closed ${pos.symbol} (${pos.direction}) @ ${exitPrice} | Reason: ${reason} | PnL: ₹${finalPnl}`);
 
-  // Broadcast exit immediately to any connected WebSocket clients
-  broadcast({ type: "DAEMON_POSITION_CLOSED", data: closedRecord });
+  // A live position also needs a real exit on the exchange. The server sends
+  // it itself (idempotent, retried) so a closed browser can't leave it open.
+  // For a live position the P&L above is an estimate at the trigger price;
+  // the market exit fills wherever the book is.
+  if (pos.isLiveOrder && isOpenLivePosition(pos.id)) {
+    requestLiveExit(pos.id, reason).catch((err) =>
+      console.error(`[Daemon Position Guardian] Live exit for ${pos.id} errored:`, err)
+    );
+  }
+
+  // Tell the owner's connected clients immediately
+  broadcastToUser(pos.userId, { type: "DAEMON_POSITION_CLOSED", data: closedRecord });
 }
 
 // Evaluate all daemon positions against the latest price tick
@@ -1510,7 +1603,8 @@ async function startServer() {
       try {
         const msg = JSON.parse(raw.toString());
         if (msg?.type !== "AUTH") throw new Error("Expected AUTH message");
-        await verifyToken(msg.token);
+        const decoded = await verifyToken(msg.token);
+        socket.uid = decoded.uid;
         socket.isAuthed = true;
         clearTimeout(authTimer);
         socket.send(JSON.stringify({ type: "AUTH_OK" }));
