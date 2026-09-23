@@ -8,6 +8,7 @@ interface BookSetters {
   setEquity: Dispatch<SetStateAction<number>>;
   setCash: Dispatch<SetStateAction<number>>;
   setDailyRealizedPnl: Dispatch<SetStateAction<number>>;
+  setAllTimeRealizedPnl: Dispatch<SetStateAction<number>>;
 }
 
 // Applies a close made by the server guardian to the browser book.
@@ -21,7 +22,7 @@ interface BookSetters {
 export function useServerCloseHandler(
   closingPositionIds: MutableRefObject<Set<string>>,
   closedTradesRef: MutableRefObject<HistoricalTrade[]>,
-  { setActivePositions, setClosedTrades, setEquity, setCash, setDailyRealizedPnl }: BookSetters
+  { setActivePositions, setClosedTrades, setEquity, setCash, setDailyRealizedPnl, setAllTimeRealizedPnl }: BookSetters
 ) {
   return useCallback(
     (ev: DaemonCloseEvent): boolean => {
@@ -36,10 +37,14 @@ export function useServerCloseHandler(
         prev.some((t) => t.id === ev.id || t.positionId === ev.positionId) ? prev : [daemonEventToTrade(ev), ...prev]
       );
       setEquity((prev) => Number((prev + ev.realizedPnl).toFixed(2)));
-      setCash((prev) => Number((prev + ev.moneyPlaced + ev.realizedPnl).toFixed(2)));
+      // Same accounting as the browser's own close: opening a paper position
+      // never debits cash, so a close credits only the realized P&L. (It used
+      // to add moneyPlaced too, inflating cash by the trade's full size.)
+      setCash((prev) => Number((prev + ev.realizedPnl).toFixed(2)));
       setDailyRealizedPnl((prev) => Number((prev + ev.realizedPnl).toFixed(2)));
+      setAllTimeRealizedPnl((prev) => Number((prev + ev.realizedPnl).toFixed(2)));
       return true;
     },
-    [closingPositionIds, closedTradesRef, setActivePositions, setClosedTrades, setEquity, setCash, setDailyRealizedPnl]
+    [closingPositionIds, closedTradesRef, setActivePositions, setClosedTrades, setEquity, setCash, setDailyRealizedPnl, setAllTimeRealizedPnl]
   );
 }

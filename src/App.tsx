@@ -293,6 +293,7 @@ export default function App() {
     setEquity,
     setCash,
     setDailyRealizedPnl,
+    setAllTimeRealizedPnl,
   });
 
   // Live WebSocket Engine for Real Binance Data
