@@ -73,13 +73,20 @@ import {
   playProfitTargetSound,
   playStopLossSound,
 } from "./utils/audioFeedback";
-import { apiFetch, authenticateSocket } from "./services/apiClient";
+import { apiFetch } from "./services/apiClient";
 import { computeClosedTradePnl } from "./shared/tradeMath";
 import type { DaemonCloseEvent } from "./services/daemonEvents";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { useGuardianSync } from "./hooks/useGuardianSync";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
+import { useLiveFeed } from "./hooks/useLiveFeed";
+import {
+  applyTickToPosition,
+  priceForPosition,
+  type SuspectTick,
+  type TickExitReason,
+} from "./services/positionTick";
 import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 
 export default function App() {
@@ -248,7 +255,7 @@ export default function App() {
   // genuinely moved (e.g. it just recovered from an outage) rather than one
   // bad print — so we accept it immediately instead of staying stuck
   // comparing forever against an increasingly stale reference price.
-  const pendingSuspectPrices = useRef<Map<string, number>>(new Map());
+  const pendingSuspectPrices = useRef<Map<string, SuspectTick>>(new Map());
   // Guards against the same proposal being turned into two positions when a
   // manual approval (handleApproveProposal) and an autopilot approval
   // (handleBatchApproveAllProposals) race each other — both read
@@ -297,455 +304,83 @@ export default function App() {
     setAllTimeRealizedPnl,
   });
 
-  // Live WebSocket Engine for Real Binance Data
+  // Live feed: prices, guardian closes and live-exit updates from the server.
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  // closePositionWithAutopsy is defined further down; the feed reaches it
+  // through this ref so it always calls the current version.
+  const closePositionRef = useRef<(pos: Position, exitPrice: number, reason: TickExitReason | "EXPIRY_TIME") => void>(
+    () => {}
+  );
+  const tickSeq = useRef(0);
 
-  useEffect(() => {
-    // Determine the WS protocol and host based on current window location
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}`;
-
-    const ws = new WebSocket(wsUrl);
-    ws.onopen = () => {
-      authenticateSocket(ws);
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "DAEMON_POSITION_CLOSED") {
-          const daemonEvent: DaemonCloseEvent = msg.data;
-          console.log("[Daemon Position Guardian] Server closed trade event received:", daemonEvent);
-          if (applyServerClose(daemonEvent)) {
-            setExecutionToast({
-              id: `toast-daemon-${Date.now()}`,
-              title: `■ [24/7 DAEMON GUARDIAN] ${daemonEvent.symbol} Auto-Closed`,
-              message: `Server-side guardian closed ${daemonEvent.symbol} (${daemonEvent.direction}) @ ₹${daemonEvent.exitPrice} [${daemonEvent.exitReason}]. Net P&L: ₹${daemonEvent.realizedPnl >= 0 ? '+' : ''}${daemonEvent.realizedPnl}`,
-              type: daemonEvent.isWin ? "SUCCESS" : "WARNING",
-              timestamp: new Date().toLocaleTimeString(),
-            });
-          }
-          return;
-        }
-
-        if (msg.type === "LIVE_EXIT_UPDATE") {
-          const rec = msg.data;
-          if (rec?.status === "CLOSED") {
-            fetchCoinDcxBalance();
-          } else if (rec?.status === "EXIT_FAILED") {
-            setExecutionToast({
-              id: `toast-live-exit-${Date.now()}`,
-              title: `🚨 LIVE EXIT FAILED: ${rec.market}`,
-              message: `The server could not close ${rec.quantity} ${rec.market} after ${rec.exitAttempts} attempts (${rec.lastError}). Close it manually on CoinDCX.`,
-              type: "WARNING",
-              timestamp: new Date().toLocaleTimeString(),
-            });
-            sendAlertNotification(`🚨 Live exit failed: ${rec.market}`, {
-              body: "Close the position manually on CoinDCX.",
-            });
-          }
-          return;
-        }
-
-        if (msg.type === "TICK") {
-          console.log("TICK received", msg.data);
-          const newPrices = msg.data;
-          setLivePrices((prev) => ({ ...prev, ...newPrices }));
-
-          // Update active positions based on REAL LIVE PRICES
-          setActivePositions((prev) => {
-            if (prev.length === 0) return prev;
-            let changed = false;
-
-            const nextPositions: Position[] = [];
-
-            for (const pos of prev) {
-              let realINRPrice = newPrices[pos.symbol];
-
-              if (!realINRPrice) {
-                const baseAsset = pos.symbol.split('/')[0];
-                const binanceSymbol = `${baseAsset}/USDT`;
-                const liveCrypto = newPrices[binanceSymbol];
-                if (liveCrypto) {
-                  realINRPrice = liveCrypto * 83.5;
-                }
-              }
-
-              if (!realINRPrice) {
-                nextPositions.push(pos);
-                continue;
-              }
-
-              // Price sanity guard: reject a single tick that implies an
-              // implausible move (e.g. a stale/synthetic fallback price
-              // getting mixed in with a real feed) rather than trusting it
-              // blindly. A real market — even a volatile crypto pair —
-              // essentially never moves >25% between consecutive ticks;
-              // seeing that is a strong sign the tick is bad data, not a
-              // real move, and acting on it risks stopping a position out
-              // against a number that was never actually true.
-              const referencePrice = pos.currentPrice || pos.entryPrice;
-              const tickDeviation =
-                referencePrice > 0
-                  ? Math.abs(realINRPrice - referencePrice) / referencePrice
-                  : 0;
-
-              if (tickDeviation > 0.25) {
-                const pending = pendingSuspectPrices.current.get(pos.id);
-                const confirmsPending =
-                  pending !== undefined &&
-                  Math.abs(realINRPrice - pending) / pending < 0.03;
-
-                if (confirmsPending) {
-                  // A second, independent tick landed close to the first
-                  // "suspect" one — that's real agreement, not a fluke.
-                  // Accept it: jump straight to the confirmed price rather
-                  // than slowly re-testing the 25% gate bar by bar.
-                  console.log(
-                    `[PriceGuard] Confirmed recovery for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (two consecutive ticks agreed). Accepting.`
-                  );
-                  pendingSuspectPrices.current.delete(pos.id);
-                } else {
-                  console.warn(
-                    `[PriceGuard] Rejected implausible tick for ${pos.symbol}: ${referencePrice} -> ${realINRPrice} (${(tickDeviation * 100).toFixed(0)}% single-tick move). Awaiting confirmation. Position left unchanged.`
-                  );
-                  pendingSuspectPrices.current.set(pos.id, realINRPrice);
-                  nextPositions.push(pos);
-                  continue;
-                }
-              } else if (pendingSuspectPrices.current.has(pos.id)) {
-                // Tick came back within normal range on its own — drop
-                // whatever we were waiting to confirm.
-                pendingSuspectPrices.current.delete(pos.id);
-              }
-
-              const isLong = pos.direction === "LONG";
-
-              // Evaluate Stop Loss, Trailing Profit Lock, and Take Profit against LIVE tick
-              let hitExit = false;
-              let exitReason: "STOP_LOSS" | "TAKE_PROFIT" | "TRAILING_STOP" | null = null;
-              let exitFillPrice = realINRPrice;
-
-              const atr = pos.atrAtEntry || (pos.entryPrice * 0.005);
-              const isTrendRunner =
-                pos.trailMode === "TREND_RUNNER" ||
-                pos.family === "trend_following" ||
-                pos.family === "breakout_confirmation" ||
-                (pos.expectedHoldingTimeMinutes || 30) > 60;
-
-              if (isLong) {
-                // Track peak high price
-                pos.highestPrice = Math.max(pos.highestPrice || pos.entryPrice, realINRPrice);
-                const peakGain = Math.max(0, pos.highestPrice - pos.entryPrice);
-                const profitInATR = atr > 0 ? peakGain / atr : 0;
-                const profitPct = (peakGain / pos.entryPrice) * 100;
-                const initialTP = pos.initialTakeProfit || pos.takeProfit;
-                const targetDist = Math.max(0.001, initialTP - pos.entryPrice);
-                const targetProgress = peakGain / targetDist;
-
-                if (isTrendRunner) {
-                  // --- TREND RUNNER MODE (LONG) ---
-                  // Activate trail once solidly established (at least 0.8% gain, 1.2 ATR, or 50% towards target)
-                  if (!pos.trailActive && (profitPct >= 0.80 || profitInATR >= 1.2 || targetProgress >= 0.50)) {
-                    pos.trailActive = true;
-                  }
-
-                  if (pos.trailActive) {
-                    // When price reaches or exceeds the initial target:
-                    if (realINRPrice >= initialTP) {
-                      const targetLockPrice = initialTP;
-                      if (targetLockPrice > pos.stopLoss) {
-                        pos.stopLoss = targetLockPrice;
-                        changed = true;
-                      }
-
-                      // Expand target to runner stage
-                      const extendedTarget = initialTP + targetDist * 1.5;
-                      if (pos.takeProfit < extendedTarget) {
-                        pos.takeProfit = extendedTarget;
-                        changed = true;
-                      }
-
-                      // Trail behind highest peak at 1.5 ATR distance, never falling below targetLockPrice
-                      const runnerTrailStop = Math.max(targetLockPrice, pos.highestPrice - (atr * 1.5));
-                      if (runnerTrailStop > pos.stopLoss) {
-                        pos.stopLoss = runnerTrailStop;
-                        changed = true;
-                      }
-                    } else {
-                      // Pre-target phase: Breathing room with break-even floor once trail is active
-                      const breakevenFloor = pos.entryPrice * 1.002;
-                      const structuralTrail = pos.highestPrice - (atr * 1.5);
-                      const dynamicStop = Math.max(breakevenFloor, structuralTrail);
-
-                      if (dynamicStop > pos.stopLoss) {
-                        pos.stopLoss = dynamicStop;
-                        changed = true;
-                      }
-                    }
-                  }
-
-                  // Exit Evaluation for Long Trend Runner
-                  if (realINRPrice >= pos.takeProfit) {
-                    hitExit = true;
-                    exitReason = "TAKE_PROFIT";
-                    exitFillPrice = realINRPrice;
-                  } else if (realINRPrice <= pos.stopLoss) {
-                    hitExit = true;
-                    if (pos.trailActive || pos.stopLoss >= pos.entryPrice) {
-                      exitReason = "TRAILING_STOP";
-                      exitFillPrice = realINRPrice;
-                    } else {
-                      exitReason = "STOP_LOSS";
-                      exitFillPrice = realINRPrice;
-                    }
-                  }
-                } else {
-                  // --- SCALP MODE (LONG) ---
-                  // Require meaningful progress: at least 0.60% profit, 1.0 ATR, or 40% towards TP
-                  // to prevent cutting trades prematurely on random 0.15% bid-ask spread flickers.
-                  if (!pos.trailActive && (profitPct >= 0.60 || profitInATR >= 1.0 || targetProgress >= 0.40)) {
-                    pos.trailActive = true;
-                  }
-
-                  if (pos.trailActive) {
-                    // Pre-target scalp breakeven: +0.18% covers 0.10% CoinDCX round-trip fees + micro spread
-                    const breakevenFloor = pos.entryPrice * 1.0018;
-                    let ratchetGain = pos.entryPrice * 0.0018;
-                    if (profitInATR >= 1.8 || targetProgress >= 0.75) {
-                      ratchetGain = Math.max(ratchetGain, peakGain * 0.70);
-                    } else if (profitInATR >= 1.0 || targetProgress >= 0.50) {
-                      ratchetGain = Math.max(ratchetGain, peakGain * 0.50);
-                    }
-
-                    const dynamicStop = Math.max(breakevenFloor, pos.entryPrice + ratchetGain);
-                    if (dynamicStop > pos.stopLoss) {
-                      pos.stopLoss = dynamicStop;
-                      changed = true;
-                    }
-                  }
-
-                  // Exit Evaluation for Long Scalpers
-                  if (realINRPrice >= pos.takeProfit) {
-                    hitExit = true;
-                    exitReason = "TAKE_PROFIT";
-                    exitFillPrice = realINRPrice;
-                  } else if (realINRPrice <= pos.stopLoss) {
-                    hitExit = true;
-                    if (pos.trailActive || pos.stopLoss >= pos.entryPrice) {
-                      exitReason = "TRAILING_STOP";
-                      exitFillPrice = realINRPrice;
-                    } else {
-                      exitReason = "STOP_LOSS";
-                      exitFillPrice = realINRPrice;
-                    }
-                  }
-                }
-              } else {
-                // Short Trailing Stop & Profit Lock Logic
-                pos.lowestPrice = Math.min(pos.lowestPrice || pos.entryPrice, realINRPrice);
-                const peakGain = Math.max(0, pos.entryPrice - pos.lowestPrice);
-                const profitInATR = atr > 0 ? peakGain / atr : 0;
-                const profitPct = (peakGain / pos.entryPrice) * 100;
-                const initialTP = pos.initialTakeProfit || pos.takeProfit;
-                const targetDist = Math.max(0.001, pos.entryPrice - initialTP);
-                const targetProgress = peakGain / targetDist;
-
-                if (isTrendRunner) {
-                  // --- TREND RUNNER MODE (SHORT) ---
-                  // Activate trail once solidly established (at least 0.8% gain, 1.2 ATR, or 50% towards target)
-                  if (!pos.trailActive && (profitPct >= 0.80 || profitInATR >= 1.2 || targetProgress >= 0.50)) {
-                    pos.trailActive = true;
-                  }
-
-                  if (pos.trailActive) {
-                    if (realINRPrice <= initialTP) {
-                      const targetLockPrice = initialTP;
-                      if (targetLockPrice < pos.stopLoss) {
-                        pos.stopLoss = targetLockPrice;
-                        changed = true;
-                      }
-
-                      // Expand target to runner stage
-                      const extendedTarget = initialTP - targetDist * 1.5;
-                      if (pos.takeProfit > extendedTarget) {
-                        pos.takeProfit = extendedTarget;
-                        changed = true;
-                      }
-
-                      // Trail behind lowest trough at 1.5 ATR distance, never rising above targetLockPrice
-                      const runnerTrailStop = Math.min(targetLockPrice, pos.lowestPrice + (atr * 1.5));
-                      if (runnerTrailStop < pos.stopLoss) {
-                        pos.stopLoss = runnerTrailStop;
-                        changed = true;
-                      }
-                    } else {
-                      // Pre-target phase: Breathing room for structural trend pullbacks
-                      const breakevenCeiling = pos.entryPrice * 0.998;
-                      const structuralTrail = pos.lowestPrice + (atr * 1.5);
-                      const dynamicStop = Math.min(breakevenCeiling, structuralTrail);
-
-                      if (dynamicStop < pos.stopLoss) {
-                        pos.stopLoss = dynamicStop;
-                        changed = true;
-                      }
-                    }
-                  }
-
-                  // Exit Evaluation for Short Trend Runner
-                  if (realINRPrice <= pos.takeProfit) {
-                    hitExit = true;
-                    exitReason = "TAKE_PROFIT";
-                    exitFillPrice = realINRPrice;
-                  } else if (realINRPrice >= pos.stopLoss) {
-                    hitExit = true;
-                    if (pos.trailActive || pos.stopLoss <= pos.entryPrice) {
-                      exitReason = "TRAILING_STOP";
-                      exitFillPrice = realINRPrice;
-                    } else {
-                      exitReason = "STOP_LOSS";
-                      exitFillPrice = realINRPrice;
-                    }
-                  }
-                } else {
-                  // --- SCALP MODE (SHORT) ---
-                  // Require meaningful progress: at least 0.60% profit, 1.0 ATR, or 40% towards TP
-                  // to prevent closing short positions on micro 0.05-paise noise.
-                  if (!pos.trailActive && (profitPct >= 0.60 || profitInATR >= 1.0 || targetProgress >= 0.40)) {
-                    pos.trailActive = true;
-                  }
-
-                  if (pos.trailActive) {
-                    // Pre-target scalp breakeven ceiling: -0.18% covers 0.10% CoinDCX round-trip fees + micro spread
-                    const breakevenCeiling = pos.entryPrice * 0.9982;
-                    let ratchetGain = pos.entryPrice * 0.0018;
-                    if (profitInATR >= 1.8 || targetProgress >= 0.75) {
-                      ratchetGain = Math.max(ratchetGain, peakGain * 0.70);
-                    } else if (profitInATR >= 1.0 || targetProgress >= 0.50) {
-                      ratchetGain = Math.max(ratchetGain, peakGain * 0.50);
-                    }
-
-                    const dynamicStop = Math.min(breakevenCeiling, pos.entryPrice - ratchetGain);
-                    if (dynamicStop < pos.stopLoss) {
-                      pos.stopLoss = dynamicStop;
-                      changed = true;
-                    }
-                  }
-
-                  // Exit Evaluation for Short Scalpers
-                  if (realINRPrice <= pos.takeProfit) {
-                    hitExit = true;
-                    exitReason = "TAKE_PROFIT";
-                    exitFillPrice = realINRPrice;
-                  } else if (realINRPrice >= pos.stopLoss) {
-                    hitExit = true;
-                    if (pos.trailActive || pos.stopLoss <= pos.entryPrice) {
-                      exitReason = "TRAILING_STOP";
-                      exitFillPrice = realINRPrice;
-                    } else {
-                      exitReason = "STOP_LOSS";
-                      exitFillPrice = realINRPrice;
-                    }
-                  }
-                }
-              }
-
-              if (hitExit && exitReason) {
-                const finalExitPrice = exitFillPrice;
-                const finalExitReason = exitReason;
-                setTimeout(() => {
-                  closePositionWithAutopsy(pos, finalExitPrice, finalExitReason);
-                }, 10);
-                changed = true;
-                continue; // Position is being closed
-              }
-
-              const pnl = (realINRPrice - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
-              const moneyPlaced = pos.entryPrice * pos.quantity;
-              const pnlPercent = (pnl / moneyPlaced) * 100;
-
-              if (Math.abs(realINRPrice - pos.currentPrice) > 0.0001) {
-                changed = true;
-              }
-
-              nextPositions.push({
-                ...pos,
-                currentPrice: realINRPrice,
-                unrealizedPnl: pnl,
-                unrealizedPnlPercent: pnlPercent,
-              });
-            }
-
-            return changed ? nextPositions : prev;
-          });
-        }
-      } catch (err) {
-        console.error("WS parse error", err);
-      }
-    };
-
-    // REST polling backstop: some symbols' real-time WebSocket channels
-    // have proven unreliable (a position can sit frozen at its exact entry
-    // price indefinitely if its channel never delivers a tick — this is
-    // what caused the frozen 0.00% seen on a JUP/INR position). This polls
-    // CoinDCX's public ticker — the same one used for the initial seed —
-    // every 6s and feeds it through the exact same handler as a real WS
-    // message, so P&L keeps moving with the real market even for a symbol
-    // whose live stream isn't cooperating, just at coarser granularity.
-    const pollRestPrices = async () => {
-      try {
-        const res = await apiFetch('/api/coindcx/ticker');
-        const tickers = await res.json();
-        const priceMap: Record<string, number> = {};
-        tickers.forEach((t: any) => {
-          const sym = t.market.endsWith("USDT")
-            ? t.market.replace("USDT", "/USDT")
-            : t.market.replace("INR", "/INR");
-          priceMap[sym] = parseFloat(t.last_price);
-        });
-        if (Object.keys(priceMap).length > 0 && ws.onmessage) {
-          (ws.onmessage as (ev: MessageEvent) => void)(
-            new MessageEvent("message", {
-              data: JSON.stringify({ type: "TICK", data: priceMap }),
-            })
-          );
-        }
-      } catch (err) {
-        console.warn("[RESTPriceBackstop] poll failed", err);
-      }
-    };
-    const restPollInterval = setInterval(pollRestPrices, 6000);
-
-    // Enforce the max-holding-time limit shown in the UI as "Hard Limit
-    // Protected" — this was previously only a label with nothing behind
-    // it: expectedHoldingTimeMinutes was set on every position but never
-    // actually checked anywhere, so a position could sit open indefinitely
-    // regardless of what the UI promised. This closes that gap: every 30s,
-    // any position past its holding-time limit gets force-closed at the
-    // best currently-known price rather than left open with a safety net
-    // that doesn't exist.
-    const checkHoldingTimeExpiry = () => {
+  useLiveFeed({
+    onTick: (prices) => {
+      const seq = ++tickSeq.current;
+      setLivePrices((prev) => ({ ...prev, ...prices }));
       setActivePositions((prev) => {
-        const now = Date.now();
+        if (prev.length === 0) return prev;
+        let changed = false;
+        const next: Position[] = [];
         for (const pos of prev) {
-          const openedMs = pos.openTime ? new Date(pos.openTime).getTime() : now;
-          const elapsedMinutes = (now - openedMs) / 60000;
-          if (elapsedMinutes >= (pos.expectedHoldingTimeMinutes || 30)) {
-            setTimeout(() => {
-              closePositionWithAutopsy(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
-            }, 10);
+          const out = applyTickToPosition(pos, priceForPosition(pos, prices), pendingSuspectPrices.current, seq);
+          if (out.kind === "exit") {
+            const { position, price, reason } = out;
+            // closePositionWithAutopsy de-duplicates, so a repeated updater run is harmless.
+            setTimeout(() => closePositionRef.current(position, price, reason), 10);
+            changed = true;
+            continue;
           }
+          if (out.kind === "updated" && out.changed) changed = true;
+          next.push(out.position);
         }
-        return prev; // closePositionWithAutopsy removes the expired ones itself
+        return changed ? next : prev;
       });
-    };
-    const expiryCheckInterval = setInterval(checkHoldingTimeExpiry, 30000);
+    },
+    onServerClose: (ev) => {
+      console.log("[Daemon Position Guardian] Server closed trade event received:", ev);
+      if (applyServerClose(ev)) {
+        setExecutionToast({
+          id: `toast-daemon-${Date.now()}`,
+          title: `■ [24/7 DAEMON GUARDIAN] ${ev.symbol} Auto-Closed`,
+          message: `Server-side guardian closed ${ev.symbol} (${ev.direction}) @ ₹${ev.exitPrice} [${ev.exitReason}]. Net P&L: ₹${ev.realizedPnl >= 0 ? "+" : ""}${ev.realizedPnl}`,
+          type: ev.isWin ? "SUCCESS" : "WARNING",
+          timestamp: new Date().toLocaleTimeString(),
+        });
+      }
+    },
+    onLiveExitUpdate: (rec) => {
+      if (rec.status === "CLOSED") {
+        fetchCoinDcxBalance();
+      } else if (rec.status === "EXIT_FAILED") {
+        setExecutionToast({
+          id: `toast-live-exit-${Date.now()}`,
+          title: `🚨 LIVE EXIT FAILED: ${rec.market}`,
+          message: `The server could not close ${rec.quantity} ${rec.market} after ${rec.exitAttempts} attempts (${rec.lastError}). Close it manually on CoinDCX.`,
+          type: "WARNING",
+          timestamp: new Date().toLocaleTimeString(),
+        });
+        sendAlertNotification(`🚨 Live exit failed: ${rec.market}`, {
+          body: "Close the position manually on CoinDCX.",
+        });
+      }
+    },
+  });
 
-    return () => {
-      ws.close();
-      clearInterval(restPollInterval);
-      clearInterval(expiryCheckInterval);
+  // Enforce each position's max holding time (the UI's "Hard Limit
+  // Protected"): every 30s, close anything past its limit at the best known
+  // price.
+  useEffect(() => {
+    const checkHoldingTimeExpiry = () => {
+      const now = Date.now();
+      for (const pos of activePositionsRef.current) {
+        const openedMs = pos.openTime ? new Date(pos.openTime).getTime() : now;
+        if ((now - openedMs) / 60000 >= (pos.expectedHoldingTimeMinutes || 30)) {
+          closePositionRef.current(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
+        }
+      }
     };
+    const interval = setInterval(checkHoldingTimeExpiry, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // Persist closed trades to LocalStorage
@@ -1242,6 +877,7 @@ export default function App() {
     },
     [logSecurityAudit, sendAlertNotification]
   );
+  closePositionRef.current = closePositionWithAutopsy;
 
   const handleClosePosition = useCallback(
     (pos: Position) => {
