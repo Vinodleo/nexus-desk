@@ -19,7 +19,11 @@ export interface RiskPolicyConfig {
   minLiquidityScore: number; // 30 minimum order book depth
   maxSpreadTolerancePercent: number; // 0.08% max spread
   fixedBrokerageFeeDollars: number; // legacy equity-style flat fee — unused now, kept for backward compatibility
-  takerFeeRateRoundTrip: number; // CoinDCX spot INR taker fee, round-trip (buy+sell) as a fraction of trade value
+  // CoinDCX INR-Margin Futures Fee Structure:
+  // 0.02% maker / 0.05% taker per side, applying to both opening and closing a position.
+  takerFeeRatePerSide: number; // 0.0005 (0.05% per side taker fee)
+  makerFeeRatePerSide: number; // 0.0002 (0.02% per side maker fee)
+  takerFeeRateRoundTrip: number; // 0.0010 (0.10% round trip conservative assumption for taker open + taker close)
   autopilotMaxApprovalsPerHour: number; // hard cap on trades opened via Autonomous Self-Approval per rolling hour
   autopilotMinConsensus: number; // 0..1 — min weighted trader-panel agreement required for self-approval
   autopilotMinPersonaVotes: number; // min number of personas that must have voted for self-approval to fire
@@ -36,12 +40,12 @@ export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
   minLiquidityScore: 35,
   maxSpreadTolerancePercent: 0.10,
   fixedBrokerageFeeDollars: 20.0,
-  // CoinDCX's published spot INR taker fee runs roughly 0.03%-0.50% by
-  // volume tier; 0.1% per side (0.2% round trip) is a reasonable regular-
-  // tier default — verify against your actual account's fee tier (visible
-  // in CoinDCX settings) and adjust, since this directly drives whether
-  // small trades look EV-positive.
-  takerFeeRateRoundTrip: 0.002,
+  // CoinDCX INR-Margin Futures Fee:
+  // 0.02% maker / 0.05% taker applied to both opening and closing.
+  // Using 0.05% per side (0.10% round-trip) as the conservative baseline taker rate.
+  takerFeeRatePerSide: 0.0005,
+  makerFeeRatePerSide: 0.0002,
+  takerFeeRateRoundTrip: 0.0010, // 0.05% open + 0.05% close = 0.10% round-trip
   autopilotMaxApprovalsPerHour: 3,
   autopilotMinConsensus: 0.7,
   autopilotMinPersonaVotes: 2,
@@ -66,24 +70,29 @@ export function evaluateExpectedValue(
   const avgWinDollars = rewardPerUnit * units;
   const avgLossDollars = riskPerUnit * units;
 
-  // Costs estimation:
+  // Costs estimation — genuinely different fee structures per asset class,
+  // not a one-size-fits-all constant. Crypto exchanges (CoinDCX) charge a
+  // percentage-of-trade-value taker fee; Zerodha (equities) charges a flat
+  // fee per executed order regardless of trade size (₹20 or 0.03%,
+  // whichever is lower, for intraday — flat ₹20 is the safe conservative
+  // assumption at the trade sizes this app runs).
+  const isEquity = !setup.symbol.includes("/");
   const estimatedSpreadCost = spread * units;
-  // Crypto exchanges (CoinDCX included) charge a percentage-of-trade-value
-  // taker fee, not a flat per-order fee like an equity discount broker —
-  // this used to be hardcoded to a flat ₹40 (an equity-brokerage-style
-  // assumption left over from this app's Zerodha side), which overstated
-  // costs on small trades and understated them on large ones.
-  const estimatedBrokerageFee =
-    setup.entryPrice * units * policy.takerFeeRateRoundTrip;
+  const estimatedBrokerageFee = isEquity
+    ? 40.0 // ~₹20/side, ₹40 round trip flat — Zerodha intraday equity brokerage
+    : setup.entryPrice * units * policy.takerFeeRateRoundTrip;
   const slippageRate = depthScore < 40 ? 0.0006 : 0.0002; // higher in thin liquidity
+
   const estimatedSlippageCost = setup.entryPrice * units * slippageRate;
   const estimatedLatencyTax = 5.0; // buffer for micro-delays
 
   const totalCost = Number(
-    (estimatedSpreadCost +
+    (
+      estimatedSpreadCost +
       estimatedBrokerageFee +
       estimatedSlippageCost +
-      estimatedLatencyTax).toFixed(2)
+      estimatedLatencyTax
+    ).toFixed(2)
   );
 
   const rawGrossEdge = pWin * avgWinDollars - pLoss * avgLossDollars;
@@ -142,8 +151,14 @@ export function evaluateRiskEngine(
   }
 
   // Check Symbol Quarantine (Embargo after consecutive losses)
-  if (passed && options?.quarantinedUntilMs && options.quarantinedUntilMs > Date.now()) {
-    const remainingMins = Math.ceil((options.quarantinedUntilMs - Date.now()) / 60000);
+  if (
+    passed &&
+    options?.quarantinedUntilMs &&
+    options.quarantinedUntilMs > Date.now()
+  ) {
+    const remainingMins = Math.ceil(
+      (options.quarantinedUntilMs - Date.now()) / 60000
+    );
     passed = false;
     rejectionReason = `REJECTED BY RISK: ${setup.symbol} is under embargo (${remainingMins}m remaining) due to consecutive loss protection.`;
   }
@@ -155,7 +170,13 @@ export function evaluateRiskEngine(
     // If the spread eats more than 25% of the stop loss, the trade is practically unviable
     if (spreadFractionOfStop > 0.25) {
       passed = false;
-      rejectionReason = `REJECTED BY RISK: Bid-ask spread (₹${options.spread.toFixed(2)}) is ${(spreadFractionOfStop * 100).toFixed(0)}% of stop distance (₹${spreadStopDistance.toFixed(2)}). Max allowed is 25%.`;
+      rejectionReason = `REJECTED BY RISK: Bid-ask spread (₹${options.spread.toFixed(
+        2
+      )}) is ${(spreadFractionOfStop * 100).toFixed(
+        0
+      )}% of stop distance (₹${spreadStopDistance.toFixed(
+        2
+      )}). Max allowed is 25%.`;
     }
   }
 
@@ -233,7 +254,6 @@ export function evaluateRiskEngine(
   const b = setup.riskRewardRatio;
   const p = metaScore.calibratedWinProbability;
   const q = 1 - p;
-
   const fullKelly = b > 0 ? Math.max(0, (p * b - q) / b) : 0;
   const quarterKelly = 0.25 * fullKelly;
 
@@ -247,14 +267,12 @@ export function evaluateRiskEngine(
   // Max order value cap (10k INR)
   const maxOrderValue = 10000;
   const maxUnitsByValue = maxOrderValue / setup.entryPrice;
-
   let recommendedUnits = Math.min(rawUnits, maxUnitsByValue);
 
   // Snap to exchange lot size
   const symConfig = getSymbolConfig(setup.symbol);
   const lotSize = symConfig?.lotSize || 1;
   const lots = Math.floor(recommendedUnits / lotSize);
-
   recommendedUnits = Number((lots * lotSize).toFixed(6));
 
   if (recommendedUnits === 0 && passed) {

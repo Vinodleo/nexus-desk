@@ -45,6 +45,12 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if isSignedIn() && request.auth.uid == userId;
       }
+      match /activePositions/{positionId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(positionId) &&
+                              incoming().keys().hasAll(['userId']) && incoming().userId == request.auth.uid;
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
     }
     
     match /auditLogs/{logId} {

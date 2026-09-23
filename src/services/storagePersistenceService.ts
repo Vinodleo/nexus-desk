@@ -9,6 +9,25 @@ const STORAGE_KEY_CLOSED_TRADES = "nexus_agent_closed_trades_inr_v4";
 const STORAGE_KEY_MODEL_ACCURACY = "nexus_agent_model_accuracy_inr_v4";
 const STORAGE_KEY_PROMOTED_LAB_MODEL = "nexus_agent_promoted_lab_model_inr_v4";
 const STORAGE_KEY_QUARANTINES = "nexus_agent_quarantines_inr_v1";
+const STORAGE_KEY_TRADING_MODE = "nexus_agent_trading_mode_v1";
+
+export function loadStoredTradingMode(): "PAPER" | "LIVE" {
+  try {
+    const val = localStorage.getItem(STORAGE_KEY_TRADING_MODE);
+    if (val === "LIVE" || val === "PAPER") return val;
+  } catch (err) {
+    console.warn("Failed to load trading mode from LocalStorage:", err);
+  }
+  return "PAPER";
+}
+
+export function saveStoredTradingMode(mode: "PAPER" | "LIVE"): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_TRADING_MODE, mode);
+  } catch (err) {
+    console.warn("Failed to save trading mode to LocalStorage:", err);
+  }
+}
 
 export interface SymbolQuarantineRecord {
   symbol: string;
@@ -418,11 +437,9 @@ export function loadStoredClosedTrades(): HistoricalTrade[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed)) {
-        // Filter out old dummy placeholders that might be stuck in the user's local storage
-        const filtered = parsed.filter(t => !t.id.startsWith("trade-hist-"));
-        if (filtered.length > 0) {
-          return filtered;
-        }
+        // Filter out old dummy placeholders and any legacy USDT/BTCUSDT test trades
+        const filtered = parsed.filter(t => !t.id.startsWith("trade-hist-") && t.symbol !== "BTCUSDT" && !t.symbol.endsWith("USDT"));
+        return filtered;
       }
     }
   } catch (err) {
@@ -488,6 +505,54 @@ export async function syncToFirebase(userId: string) {
       await tradesBatch.commit();
     }
 
+    // Synchronize active open positions to cloud
+    const positions = loadStoredPositions();
+    const posCollection = collection(db, "users", userId, "activePositions");
+    const existingPosSnap = await getDocs(posCollection);
+    const currentPosIds = new Set(positions.map(p => p.id));
+    
+    // Prune closed positions from Firestore
+    if (!existingPosSnap.empty) {
+      const deleteBatch = writeBatch(db);
+      let needsPrune = false;
+      existingPosSnap.docs.forEach(docSnap => {
+        if (!currentPosIds.has(docSnap.id)) {
+          deleteBatch.delete(docSnap.ref);
+          needsPrune = true;
+        }
+      });
+      if (needsPrune) {
+        await deleteBatch.commit();
+      }
+    }
+
+    // Upsert current open positions
+    if (positions.length > 0) {
+      const posBatch = writeBatch(db);
+      positions.forEach(pos => {
+        const posRef = doc(db, "users", userId, "activePositions", pos.id);
+        posBatch.set(posRef, {
+          id: pos.id,
+          userId,
+          symbol: pos.symbol,
+          direction: pos.direction,
+          entryPrice: pos.entryPrice,
+          currentPrice: pos.currentPrice || pos.entryPrice,
+          stopLoss: pos.stopLoss,
+          takeProfit: pos.takeProfit,
+          quantity: pos.quantity,
+          moneyPlaced: pos.entryPrice * pos.quantity,
+          trailActive: Boolean(pos.trailActive),
+          trailMode: pos.trailMode || "DYNAMIC_RATIO",
+          highestPrice: pos.highestPrice || pos.entryPrice,
+          lowestPrice: pos.lowestPrice || pos.entryPrice,
+          openTime: pos.openTime,
+          setupName: pos.setupName || "Statistical Trailing System",
+        });
+      });
+      await posBatch.commit();
+    }
+
     console.log("Successfully synced to Firebase cloud.");
   } catch (err) {
     console.error("Firebase sync error", err);
@@ -546,6 +611,15 @@ export async function syncFromFirebase(userId: string): Promise<boolean> {
     if (!tradesSnap.empty) {
       const trades = tradesSnap.docs.map(d => d.data() as HistoricalTrade);
       saveStoredClosedTrades(trades);
+    }
+
+    // Hydrate active positions from cloud
+    const posSnap = await getDocs(collection(db, "users", userId, "activePositions"));
+    if (!posSnap.empty) {
+      const cloudPositions = posSnap.docs.map(d => d.data() as Position);
+      if (cloudPositions.length > 0) {
+        saveStoredPositions(cloudPositions);
+      }
     }
 
     return true;

@@ -1,6 +1,9 @@
 import { MarketBar, RegimeType } from "../types";
 import { SUPPORTED_SYMBOLS } from "./marketDataService";
-import { decorateBarsWithIndicators, classifyRegime } from "./marketDataService";
+import {
+  decorateBarsWithIndicators,
+  classifyRegime,
+} from "./marketDataService";
 
 export class LiveMarketStreamService {
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -23,20 +26,22 @@ export class LiveMarketStreamService {
   constructor() {}
 
   async initialize() {
-    const activeSymbols = [
-      "BTC/INR",
-      "ETH/INR",
-      "SOL/INR",
-      "AVAX/INR",
-      "NEAR/INR",
-      "JUP/INR",
-      "XRP/INR"
-    ];
+    // Derived from SUPPORTED_SYMBOLS rather than a separate hardcoded list —
+    // a hardcoded copy of this list has silently missed newly-added symbols
+    // more than once now (XRP/INR twice, then reverted again when a file
+    // got pasted out of order). One source of truth, permanently.
+    const activeSymbols = SUPPORTED_SYMBOLS.map((s) => s.symbol);
+    const cryptoSymbolsOnly = SUPPORTED_SYMBOLS.filter(
+      (s) => s.assetClass === "crypto"
+    ).map((s) => s.symbol);
+    const equitySymbolsOnly = SUPPORTED_SYMBOLS.filter(
+      (s) => s.assetClass === "equity"
+    ).map((s) => s.symbol);
 
     console.log("Fetching initial live data for streaming...");
     try {
       // 1. Fetch current CoinDCX prices to base our initial chart
-      const res = await fetch('/api/coindcx/ticker');
+      const res = await fetch("/api/coindcx/ticker");
       const tickers = await res.json();
 
       const priceMap = new Map<string, number>();
@@ -50,29 +55,33 @@ export class LiveMarketStreamService {
 
       for (const sym of activeSymbols) {
         // Fall back to the hardcoded config basePrice if CoinDCX fetch fails for this symbol
-        const configBasePrice = SUPPORTED_SYMBOLS.find(s => s.symbol === sym)?.basePrice || 100;
+        const configBasePrice =
+          SUPPORTED_SYMBOLS.find((s) => s.symbol === sym)?.basePrice || 100;
         const currentLivePrice = priceMap.get(sym) || configBasePrice;
 
         // 2. Generate a realistic recent 120m history leading up to the exact live price
         const rawBars: MarketBar[] = [];
         let runningPrice = currentLivePrice * 0.995; // start slightly lower 2 hours ago
-        const now = Date.now();
 
+        const now = Date.now();
         for (let i = 120; i >= 0; i--) {
-          const tMs = now - (i * 60000);
+          const tMs = now - i * 60000;
           const volatility = currentLivePrice * 0.001;
           const shift = (Math.random() - 0.45) * volatility;
           if (i === 0) runningPrice = currentLivePrice; // force last bar to equal exactly live price
           else runningPrice += shift;
 
           rawBars.push({
-            time: new Date(tMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            time: new Date(tMs).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
             timestampMs: tMs,
-            open: runningPrice - (Math.random() * volatility * 0.5),
+            open: runningPrice - Math.random() * volatility * 0.5,
             close: runningPrice,
-            high: runningPrice + (Math.random() * volatility),
-            low: runningPrice - (Math.random() * volatility),
-            volume: Math.random() * 5 + 1
+            high: runningPrice + Math.random() * volatility,
+            low: runningPrice - Math.random() * volatility,
+            volume: Math.random() * 5 + 1,
           });
         }
         this.marketData.set(sym, decorateBarsWithIndicators(rawBars));
@@ -87,8 +96,20 @@ export class LiveMarketStreamService {
 
     // Higher-timeframe data isn't tick-driven — fetch it once now, then on
     // a slow interval. 1h candles don't need refreshing every few seconds.
-    this.refreshHigherTimeframeData(activeSymbols);
-    setInterval(() => this.refreshHigherTimeframeData(activeSymbols), 5 * 60 * 1000);
+    // CoinDCX's candles endpoint only covers crypto pairs, and Zerodha's
+    // historical-candles endpoint only works once logged in — each asset
+    // class fetches its higher-timeframe view from its own real source.
+    this.refreshHigherTimeframeData(cryptoSymbolsOnly, "crypto");
+    this.refreshHigherTimeframeData(equitySymbolsOnly, "equity");
+
+    setInterval(
+      () => this.refreshHigherTimeframeData(cryptoSymbolsOnly, "crypto"),
+      5 * 60 * 1000
+    );
+    setInterval(
+      () => this.refreshHigherTimeframeData(equitySymbolsOnly, "equity"),
+      5 * 60 * 1000
+    );
   }
 
   /**
@@ -99,31 +120,70 @@ export class LiveMarketStreamService {
    * check reads — grounded in CoinDCX's own real historical data, not the
    * synthetic backfill the 5m bars start from.
    */
-  private async refreshHigherTimeframeData(symbols: string[]) {
+  private async refreshHigherTimeframeData(
+    symbols: string[],
+    assetClass: "crypto" | "equity"
+  ) {
     for (const sym of symbols) {
       try {
-        const base = sym.split("/")[0];
-        const res = await fetch(`/api/coindcx/candles?symbol=${base}&interval=1h&limit=100`);
+        let res: Response;
+        if (assetClass === "crypto") {
+          const base = sym.split("/")[0];
+          res = await fetch(
+            `/api/coindcx/candles?symbol=${base}&interval=1h&limit=100`
+          );
+        } else {
+          // Zerodha's historical-candles endpoint needs an active login —
+          // a 401 here just means "not connected yet", not a real failure.
+          res = await fetch(
+            `/api/zerodha/candles?symbol=${sym}&interval=60minute`
+          );
+          if (res.status === 401) {
+            continue;
+          }
+        }
+
         if (!res.ok) {
-          console.warn(`[HigherTimeframe] ${sym}: candles fetch failed (${res.status})`);
+          console.warn(
+            `[HigherTimeframe] ${sym}: candles fetch failed (${res.status})`
+          );
           continue;
         }
+
         const raw = await res.json();
         if (!Array.isArray(raw) || raw.length === 0) {
-          console.warn(`[HigherTimeframe] ${sym}: empty/invalid candle response`);
+          console.warn(
+            `[HigherTimeframe] ${sym}: empty/invalid candle response`
+          );
           continue;
         }
-        // CoinDCX returns candles newest-first; indicator math needs oldest-first.
-        const ascending = [...raw].reverse();
-        const bars: MarketBar[] = ascending.map((c: any) => ({
-          time: new Date(c.time).toISOString(),
-          timestampMs: c.time,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volume,
-        }));
+
+        let bars: MarketBar[];
+        if (assetClass === "crypto") {
+          // CoinDCX returns candles newest-first; indicator math needs oldest-first.
+          const ascending = [...raw].reverse();
+          bars = ascending.map((c: any) => ({
+            time: new Date(c.time).toISOString(),
+            timestampMs: c.time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+          }));
+        } else {
+          // Zerodha's getHistoricalData already returns oldest-first.
+          bars = raw.map((c: any) => ({
+            time: new Date(c.date).toISOString(),
+            timestampMs: new Date(c.date).getTime(),
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+          }));
+        }
+
         const decorated = decorateBarsWithIndicators(bars);
         this.higherTimeframeData.set(sym, decorated);
         this.macroRegimes.set(sym, classifyRegime(decorated));
@@ -152,7 +212,7 @@ export class LiveMarketStreamService {
     }
 
     // Connect to our Node.js backend relay which has an unfiltered, high-frequency connection to CoinDCX
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}`;
     this.ws = new WebSocket(wsUrl);
 
@@ -163,8 +223,8 @@ export class LiveMarketStreamService {
     this.ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'TICK' && msg.data) {
-          Object.keys(msg.data).forEach(symbolInternal => {
+        if (msg.type === "TICK" && msg.data) {
+          Object.keys(msg.data).forEach((symbolInternal) => {
             const price = parseFloat(msg.data[symbolInternal]);
             if (msg.is24h) {
               // Update 24h map if this is a ticker event
@@ -174,13 +234,18 @@ export class LiveMarketStreamService {
               if (!this.marketData.has(symbolInternal)) return;
               const bars = this.marketData.get(symbolInternal)!;
               if (bars.length === 0) return;
+
               const lastBar = bars[bars.length - 1];
               const tradeTime = Date.now();
-              const isNewMinute = (tradeTime - lastBar.timestampMs) > 60000;
+              const isNewMinute =
+                tradeTime - (lastBar.timestampMs || 0) > 60000;
 
               if (isNewMinute) {
                 const newBar = {
-                  time: new Date(tradeTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                  time: new Date(tradeTime).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
                   timestampMs: tradeTime,
                   open: price,
                   high: price,
@@ -197,7 +262,10 @@ export class LiveMarketStreamService {
                 // Note: volume aggregation omitted for brevity in relay
               }
 
-              this.marketData.set(symbolInternal, decorateBarsWithIndicators(bars));
+              this.marketData.set(
+                symbolInternal,
+                decorateBarsWithIndicators(bars)
+              );
             }
           });
           this.notifyListeners();
@@ -228,7 +296,7 @@ export class LiveMarketStreamService {
   }
 
   private notifyListeners() {
-    this.globalListeners.forEach(cb => cb());
+    this.globalListeners.forEach((cb) => cb());
   }
 }
 

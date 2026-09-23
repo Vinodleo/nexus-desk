@@ -1,6 +1,6 @@
 import React from "react";
-import { Sparkles, ShieldCheck, Shield, Lock, Check } from "lucide-react";
-import { DecisionMode } from "../types";
+import { Sparkles, ShieldCheck, Shield, Lock, Check, Zap, RefreshCw, Coins, AlertCircle } from "lucide-react";
+import { DecisionMode, TradingExecutionMode, CoinDcxAccountBalance } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { BackgroundExecutionStatus } from "../services/backgroundTradingService";
 import { BackgroundExecutionBadge } from "./BackgroundExecutionBadge";
@@ -38,6 +38,11 @@ interface NexusHeaderProps {
   backgroundStatus?: BackgroundExecutionStatus;
   isPlaying?: boolean;
   onOpenBackgroundModal?: () => void;
+  tradingMode?: TradingExecutionMode;
+  onToggleTradingMode?: (mode: TradingExecutionMode) => void;
+  coinDcxBalance?: CoinDcxAccountBalance;
+  onRefreshCoinDcxBalance?: () => void;
+  onOpenRiskConsole?: () => void;
 }
 
 
@@ -85,12 +90,80 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
   backgroundStatus,
   isPlaying = false,
   onOpenBackgroundModal,
+  tradingMode = "PAPER",
+  onToggleTradingMode,
+  coinDcxBalance,
+  onRefreshCoinDcxBalance,
+  onOpenRiskConsole,
 }) => {
   const { currentUser, userProfile, userRole, openAuthModal } = useAuth();
-  const dailyPct = (dailyPnl / (equity || 100000)) * 100;
+  const isLiveTrading = tradingMode === "LIVE_COINDCX";
+  const displayEquity = isLiveTrading && coinDcxBalance && coinDcxBalance.totalInr > 0 ? coinDcxBalance.totalInr : equity;
+  const displayCash = isLiveTrading && coinDcxBalance && coinDcxBalance.availableInr > 0 ? coinDcxBalance.availableInr : cash;
+  const dailyPct = (dailyPnl / (displayEquity || 100000)) * 100;
   const isPnlPositive = dailyPnl >= 0;
 
   const liveCrypto = useLiveTickers();
+
+  // Zerodha connection state. A successful login redirects back to this
+  // same page with ?request_token=... appended (the redirect URL
+  // registered against your API key in Zerodha's developer console must
+  // point back here) — on mount, if that param is present, exchange it
+  // for a session immediately, then strip it from the URL.
+  const [zerodhaStatus, setZerodhaStatus] = React.useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+  const [zerodhaError, setZerodhaError] = React.useState<string>("");
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestToken = params.get("request_token");
+    if (!requestToken) return;
+
+    setZerodhaStatus("connecting");
+    fetch("/api/zerodha/callback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestToken }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.success) {
+          setZerodhaStatus("connected");
+        } else {
+          setZerodhaStatus("error");
+          setZerodhaError(data?.error || "Zerodha login failed");
+        }
+        // Clean the request_token out of the URL either way, so a refresh
+        // doesn't try to redeem an already-used (and by then invalid) token.
+        params.delete("request_token");
+        params.delete("action");
+        params.delete("status");
+        const cleanUrl = window.location.pathname + (params.toString() ? `?${params}` : "");
+        window.history.replaceState({}, "", cleanUrl);
+      })
+      .catch((err) => {
+        setZerodhaStatus("error");
+        setZerodhaError(err?.message || "Zerodha login failed");
+      });
+  }, []);
+
+  const handleZerodhaConnect = async () => {
+    try {
+      setZerodhaStatus("connecting");
+      const res = await fetch("/api/zerodha/init", { method: "POST" });
+      const data = await res.json();
+      if (data?.loginUrl) {
+        // Full-page redirect to Zerodha's own login page — 2FA and
+        // everything happens on their site, never ours.
+        window.location.href = data.loginUrl;
+      } else {
+        setZerodhaStatus("error");
+        setZerodhaError(data?.error || "Could not start Zerodha login — check ZERODHA_API_KEY is set.");
+      }
+    } catch (err: any) {
+      setZerodhaStatus("error");
+      setZerodhaError(err?.message || "Could not reach the server.");
+    }
+  };
 
   // Realistic Indian equities, macro and combine with live crypto
   // We removed the hardcoded Indian Equities to keep this a dedicated Crypto dashboard.
@@ -123,11 +196,23 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
               <button className="whitespace-nowrap px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-semibold rounded-md bg-[#1f1f24] text-emerald-400 shadow-sm border border-[#2a2a30]">
                 Crypto (CoinDCX)
               </button>
-              <button 
-                className="whitespace-nowrap px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-semibold rounded-md text-stone-500 hover:text-stone-300 transition-colors"
-                onClick={() => alert("Zerodha Indian Equities dashboard module will be built here next!")}
+              <button
+                className={`whitespace-nowrap px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-semibold rounded-md transition-colors ${
+                  zerodhaStatus === "connected"
+                    ? "bg-[#1f1f24] text-emerald-400 border border-[#2a2a30]"
+                    : "text-stone-500 hover:text-stone-300"
+                }`}
+                onClick={handleZerodhaConnect}
+                disabled={zerodhaStatus === "connecting"}
+                title={zerodhaStatus === "error" ? zerodhaError : undefined}
               >
-                Indian Equities 🔒
+                {zerodhaStatus === "connected"
+                  ? "Indian Equities ●"
+                  : zerodhaStatus === "connecting"
+                  ? "Connecting…"
+                  : zerodhaStatus === "error"
+                  ? "Indian Equities ⚠"
+                  : "Indian Equities — Connect"}
               </button>
             </div>
 
@@ -171,9 +256,31 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
               {tapeMode}
             </button>
             <span className="hidden sm:inline text-stone-600">·</span>
-            <span className="hidden sm:inline px-1 py-0.5 rounded bg-stone-900 border border-stone-800 text-[9px] text-stone-300">
-              PAPER
-            </span>
+            {/* Trading Execution Mode Toggle: Paper vs Live CoinDCX */}
+            <button
+              onClick={() => {
+                if (onToggleTradingMode) {
+                  onToggleTradingMode(isLiveTrading ? "PAPER" : "LIVE_COINDCX");
+                }
+              }}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[9px] font-bold tracking-wider transition-all cursor-pointer shadow-xs ${
+                isLiveTrading
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/60 hover:bg-amber-500/30 ring-1 ring-amber-500/40"
+                  : "bg-emerald-950/60 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-900/50"
+              }`}
+              title="Click to toggle between Paper Simulation and Live CoinDCX Exchange"
+            >
+              {isLiveTrading ? (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                  <span>⚡ LIVE COINDCX</span>
+                </>
+              ) : (
+                <>
+                  <span>🛡️ PAPER</span>
+                </>
+              )}
+            </button>
 
             {/* Clean, Visible Security & Operator Clearance Button */}
             <button
@@ -192,11 +299,28 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
         {/* Key Metrics Row */}
         <div className="grid grid-cols-5 gap-1.5 sm:gap-2 my-2.5 sm:my-3 pt-1 text-left">
           <div className="min-w-0">
-            <div className="text-[9px] sm:text-[10px] font-mono tracking-wider text-stone-400 uppercase">
-              Equity
+            <div className="text-[9px] sm:text-[10px] font-mono tracking-wider text-stone-400 uppercase flex items-center gap-1">
+              <span>{isLiveTrading ? "CoinDCX Equity" : "Paper Equity"}</span>
+              {isLiveTrading && (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" title="Live Exchange Capital" />
+              )}
             </div>
-            <div className="text-xs sm:text-base font-mono font-medium text-stone-100 mt-0.5 truncate">
-              ₹{equity.toLocaleString("en-IN")}
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <div className={`text-xs sm:text-base font-mono font-medium truncate ${
+                isLiveTrading ? "text-amber-300" : "text-stone-100"
+              }`}>
+                ₹{displayEquity.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              {isLiveTrading && onRefreshCoinDcxBalance && (
+                <button
+                  onClick={onRefreshCoinDcxBalance}
+                  disabled={coinDcxBalance?.loading}
+                  className="text-stone-400 hover:text-amber-300 transition-colors p-0.5 cursor-pointer"
+                  title="Refresh CoinDCX Account Balances"
+                >
+                  <RefreshCw className={`w-3 h-3 ${coinDcxBalance?.loading ? "animate-spin text-amber-400" : ""}`} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -239,10 +363,12 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
           </div>
           <div className="min-w-0">
             <div className="text-[9px] sm:text-[10px] font-mono tracking-wider text-stone-400 uppercase">
-              Cash
+              {isLiveTrading ? "Avail Cash" : "Cash"}
             </div>
-            <div className="text-xs sm:text-base font-mono font-medium text-stone-100 mt-0.5 truncate">
-              ₹{cash.toLocaleString("en-IN")}
+            <div className={`text-xs sm:text-base font-mono font-medium mt-0.5 truncate ${
+              isLiveTrading ? "text-amber-200" : "text-stone-100"
+            }`}>
+              ₹{displayCash.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
 

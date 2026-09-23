@@ -70,6 +70,30 @@
         "closedAt": { "type": "string" },
         "autopsy": { "type": "object" }
       }
+    },
+    "ActivePosition": {
+      "title": "Active Position",
+      "description": "Currently open trade position tracked by daemon",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\\\-]+$" },
+        "symbol": { "type": "string", "maxLength": 50 },
+        "direction": { "type": "string", "maxLength": 50 },
+        "entryPrice": { "type": "number" },
+        "currentPrice": { "type": "number" },
+        "stopLoss": { "type": "number" },
+        "takeProfit": { "type": "number" },
+        "quantity": { "type": "number" },
+        "moneyPlaced": { "type": "number" },
+        "trailActive": { "type": "boolean" },
+        "trailMode": { "type": "string", "maxLength": 50 },
+        "highestPrice": { "type": "number" },
+        "lowestPrice": { "type": "number" },
+        "openTime": { "type": "string" },
+        "setupName": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["id", "userId", "symbol", "direction", "entryPrice"]
     }
   },
   "firestore": {
@@ -88,6 +112,10 @@
     "/users/{userId}/closedTrades/{tradeId}": {
       "schema": { "$ref": "#/entities/HistoricalTrade" },
       "description": "Closed trades per user"
+    },
+    "/users/{userId}/activePositions/{positionId}": {
+      "schema": { "$ref": "#/entities/ActivePosition" },
+      "description": "Active positions monitored across devices"
     }
   }
 }

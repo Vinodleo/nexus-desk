@@ -12,6 +12,7 @@ import {
 } from "../types";
 import {
   SUPPORTED_SYMBOLS,
+  isIndianEquityMarketOpen,
   SymbolConfig,
   classifyRegime,
   generateInitialBars,
@@ -31,8 +32,8 @@ import {
   evaluateRiskEngine,
 } from "./riskEngine";
 import { loadStoredPromotedLabModel } from "./storagePersistenceService";
-import { loadMetaModel, predictConfidenceBatch } from './mlService';
-import * as tf from '@tensorflow/tfjs';
+import { loadMetaModel, predictConfidenceBatch } from "./mlService";
+import * as tf from "@tensorflow/tfjs";
 
 export interface ScanMarketOptions {
   symbols?: string[];
@@ -78,7 +79,8 @@ export async function scanSingleMarket(
   tfjsModel?: tf.LayersModel
 ): Promise<MarketScanResult> {
   const policy = options.riskPolicy || DEFAULT_RISK_POLICY;
-  const currentBar = (bars && bars.length > 0) ? bars[bars.length - 1] : undefined;
+  const currentBar =
+    bars && bars.length > 0 ? bars[bars.length - 1] : undefined;
   const price = currentBar ? currentBar.close : symbolConfig.basePrice;
   const orderBook = generateOrderBook(
     price,
@@ -87,7 +89,8 @@ export async function scanSingleMarket(
   );
   const regime: RegimeType = classifyRegime(bars);
   const promotedModel = loadStoredPromotedLabModel();
-  const experiences = options.experiences || generateInitialExperienceDatabase();
+  const experiences =
+    options.experiences || generateInitialExperienceDatabase();
   const proposals: TradeProposal[] = [];
 
   // Run the full trader panel: multiple differentiated personas vote,
@@ -105,7 +108,12 @@ export async function scanSingleMarket(
       macroRegime: liveMarketStream.getMacroRegime(symbolConfig.symbol),
     },
     (setup) => {
-      const retrieval = retrieveSimilarExperiences(setup, regime, experiences, 15);
+      const retrieval = retrieveSimilarExperiences(
+        setup,
+        regime,
+        experiences,
+        15
+      );
       return computeMetaLabelScore({
         setup,
         regime,
@@ -132,7 +140,12 @@ export async function scanSingleMarket(
       macroRegime: liveMarketStream.getMacroRegime(symbolConfig.symbol),
     },
     (setup) => {
-      const retrieval = retrieveSimilarExperiences(setup, regime, experiences, 15);
+      const retrieval = retrieveSimilarExperiences(
+        setup,
+        regime,
+        experiences,
+        15
+      );
       return computeMetaLabelScore({
         setup,
         regime,
@@ -146,8 +159,8 @@ export async function scanSingleMarket(
 
   const candidates: { setup: StrategySetup; panel: typeof panel }[] = [];
   if (panel.setup) candidates.push({ setup: panel.setup, panel });
-  if (swingPanel.setup) candidates.push({ setup: swingPanel.setup, panel: swingPanel });
-
+  if (swingPanel.setup)
+    candidates.push({ setup: swingPanel.setup, panel: swingPanel });
   const qualifiedSetups = candidates.map((c) => c.setup);
 
   // Batch Prediction Preparation
@@ -157,7 +170,10 @@ export async function scanSingleMarket(
       // Build the same 6 features for TFJS Model (ATR, VolSurge, RSI, VWAP_Dist, TimeOfDay, Slope)
       // Note: we can use setup.features values
       const atrScaled = setup.features.atr / price;
-      const volSurgeScaled = Math.min(setup.features.volumeSurgeRatio / 5, 1);
+      const volSurgeScaled = Math.min(
+        setup.features.volumeSurgeRatio / 5,
+        1
+      );
       const rsiScaled = setup.features.rsi / 100;
       const vwapDist = setup.features.vwapDistancePercent / 100;
       const date = new Date();
@@ -168,7 +184,14 @@ export async function scanSingleMarket(
       if (regime === "trending_bullish") slope = 0.05;
       else if (regime === "trending_bearish") slope = -0.05;
 
-      candidateFeatures.push([atrScaled, volSurgeScaled, rsiScaled, vwapDist, timeOfDay, slope]);
+      candidateFeatures.push([
+        atrScaled,
+        volSurgeScaled,
+        rsiScaled,
+        vwapDist,
+        timeOfDay,
+        slope,
+      ]);
     }
   }
 
@@ -182,7 +205,12 @@ export async function scanSingleMarket(
     const sourcePanel = candidates[i].panel;
 
     // 1. Experience Retrieval
-    const retrieval = retrieveSimilarExperiences(setup, regime, experiences, 15);
+    const retrieval = retrieveSimilarExperiences(
+      setup,
+      regime,
+      experiences,
+      15
+    );
 
     // 2. Meta-Label Scoring
     const metaScore: MetaLabelScore = computeMetaLabelScore({
@@ -195,7 +223,8 @@ export async function scanSingleMarket(
 
     if (tfjsModel && predictions.length > i) {
       metaScore.confidence = predictions[i];
-      metaScore.confidenceRationale = "TensorFlow.js Neural Net Real-time Prediction";
+      metaScore.confidenceRationale =
+        "TensorFlow.js Neural Net Real-time Prediction";
     }
 
     // 3. Expected Value Assessment
@@ -227,7 +256,8 @@ export async function scanSingleMarket(
     );
 
     // Must pass edge criteria, risk constraints, and dynamic confidence hurdle
-    const requiredConfidence = promotedModel?.optimizedParameters?.minConfidence ?? 0.58;
+    const requiredConfidence =
+      promotedModel?.optimizedParameters?.minConfidence ?? 0.58;
 
     if (
       evAssessment.isPositiveEdge &&
@@ -235,8 +265,13 @@ export async function scanSingleMarket(
       riskCalc.recommendedPositionSizeUnits > 0 &&
       metaScore.confidence >= requiredConfidence
     ) {
-      const sanitizedId = symbolConfig.symbol.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-      const uniqueSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+      const sanitizedId = symbolConfig.symbol
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase();
+      const uniqueSuffix = Math.random()
+        .toString(36)
+        .substring(2, 6)
+        .toUpperCase();
       const now = Date.now();
       const expiryMs = 60000; // 60s human approval window
 
@@ -252,10 +287,13 @@ export async function scanSingleMarket(
         status: "PENDING_APPROVAL",
         approvalExpiryMs: expiryMs,
         expiresAt: now + expiryMs,
-        approvalToken: `AUTH-${uniqueSuffix}-${Math.floor(1000 + Math.random() * 9000)}`,
+        approvalToken: `AUTH-${uniqueSuffix}-${Math.floor(
+          1000 + Math.random() * 9000
+        )}`,
         supervisorNotes: `Trader panel (${sourcePanel.supportingPersonas.length}/${sourcePanel.totalVotesCast} personas, ${(sourcePanel.agreementScore * 100).toFixed(0)}% weighted agreement) detected ${setup.name} in ${regime.replace(/_/g, " ")}. Meta-confidence ${(metaScore.confidence * 100).toFixed(0)}%, net EV +₹${evAssessment.expectedNetValue.toFixed(2)}. Allocated ${riskCalc.recommendedPositionSizeUnits} units (₹${riskCalc.riskDollars.toFixed(0)} risk). Placed in Queue for human authorization.`,
         marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. Spread is ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}% with depth score ${orderBook.depthScore}/100.`,
-        aiRecommendation: metaScore.confidence >= 0.60 ? "TRADE_FAVORED" : "CAUTION",
+        aiRecommendation:
+          metaScore.confidence >= 0.60 ? "TRADE_FAVORED" : "CAUTION",
         modelUsed: "Multi-Agent Trader Panel v3.0",
         failureConditionRisk: `Adverse move against ${setup.direction} invalidating level @ ₹${setup.stopLoss.toFixed(2)}.`,
         ensembleAgreement: sourcePanel.agreementScore,
@@ -272,7 +310,8 @@ export async function scanSingleMarket(
     symbolName: symbolConfig.name,
     price,
     regime,
-    evaluatedSetupsCount: panel.totalPersonasRun + swingPanel.totalPersonasRun,
+    evaluatedSetupsCount:
+      panel.totalPersonasRun + swingPanel.totalPersonasRun,
     qualifiedSetupsCount: qualifiedSetups.length,
     orderBook,
     proposals,
@@ -290,11 +329,14 @@ export async function scanSingleMarket(
  * Scans all supported markets or a chosen subset and aggregates
  * all qualifying trade proposals into the queue.
  */
-export async function scanAllMarkets(options: ScanMarketOptions): Promise<FullScanReport> {
+export async function scanAllMarkets(
+  options: ScanMarketOptions
+): Promise<FullScanReport> {
   const targetSymbols = options.symbols
-    ? SUPPORTED_SYMBOLS.filter((s) =>
-        options.symbols!.includes(s.symbol) ||
-        (options.symbols!.includes("XPR/INR") && s.symbol === "XRP/INR")
+    ? SUPPORTED_SYMBOLS.filter(
+        (s) =>
+          options.symbols!.includes(s.symbol) ||
+          (options.symbols!.includes("XPR/INR") && s.symbol === "XRP/INR")
       )
     : SUPPORTED_SYMBOLS;
 
@@ -312,16 +354,32 @@ export async function scanAllMarkets(options: ScanMarketOptions): Promise<FullSc
     }
   }
 
+  const equityMarketOpen = isIndianEquityMarketOpen();
+
   for (const symbolConfig of targetSymbols) {
-    let bars = options.barsMap && options.barsMap[symbolConfig.symbol]
-      ? options.barsMap[symbolConfig.symbol]
-      : liveMarketStream.getBars(symbolConfig.symbol);
+    // Equities only get analysed within NSE cash-market hours (9:15-3:30
+    // IST, Mon-Fri) — crypto is unaffected, it trades 24/7. Scanning
+    // RELIANCE at 2 AM IST isn't just pointless, it's actively wrong:
+    // there's no real market open to be reacting to.
+    if (symbolConfig.assetClass === "equity" && !equityMarketOpen) {
+      continue;
+    }
+
+    let bars =
+      options.barsMap && options.barsMap[symbolConfig.symbol]
+        ? options.barsMap[symbolConfig.symbol]
+        : liveMarketStream.getBars(symbolConfig.symbol);
 
     if (!bars || bars.length === 0) {
       bars = generateInitialBars(symbolConfig, 75);
     }
 
-    const scanResult = await scanSingleMarket(symbolConfig, bars, options, tfjsModel);
+    const scanResult = await scanSingleMarket(
+      symbolConfig,
+      bars,
+      options,
+      tfjsModel
+    );
     resultsBySymbol.push(scanResult);
     totalSetupsEvaluated += scanResult.evaluatedSetupsCount;
 

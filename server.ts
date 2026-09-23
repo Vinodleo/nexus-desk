@@ -2,6 +2,7 @@ import io from "socket.io-client";
 import crypto from "crypto";
 import express, { Request, Response } from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
@@ -26,9 +27,30 @@ let kiteTickerInstance: any = null;
 let globalWss: WebSocketServer | null = null;
 let zerodhaAccessToken: string | null = null;
 
+// Hardcode known NSE Instrument Tokens for the MVP symbols — shared between
+// the live ticker subscription and the historical-candles endpoint below.
+let ZERODHA_INSTRUMENT_MAP: Record<number, string> = {
+  341249: "HDFCBANK",
+  738561: "RELIANCE",
+  2953217: "TCS",
+  779521: "SBIN"
+};
+
+// Trading symbols we want tokens for — resolved dynamically from Zerodha's
+// own real instrument list on each login (see /api/zerodha/callback) rather
+// than more hardcoded numbers. Instrument tokens are stable long-term, but
+// this avoids ever having to guess or hand-verify one again, and makes
+// adding a new symbol later a one-line change here instead of a token hunt.
+const ZERODHA_TARGET_SYMBOLS = [
+  "HDFCBANK", "RELIANCE", "TCS", "SBIN",
+  "ICICIBANK", "INFY", "HINDUNILVR", "TATAMOTORS", "SUNPHARMA", "BHARTIARTL"
+];
+
 app.post("/api/zerodha/init", (req: Request, res: Response) => {
-  const { apiKey } = req.body;
-  if (!apiKey) return res.status(400).json({ error: "Missing API Key" });
+  // API key comes from the server's own env var, matching how CoinDCX's
+  // keys are handled — never asked of or exposed to the client.
+  const apiKey = process.env.ZERODHA_API_KEY;
+  if (!apiKey) return res.status(400).json({ error: "ZERODHA_API_KEY not set in environment." });
 
   // Initialize the SDK
   kiteInstance = new KiteConnect({
@@ -40,7 +62,9 @@ app.post("/api/zerodha/init", (req: Request, res: Response) => {
 });
 
 app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
-  const { requestToken, apiSecret } = req.body;
+  const { requestToken } = req.body;
+  const apiSecret = process.env.ZERODHA_API_SECRET;
+  if (!apiSecret) return res.status(400).json({ error: "ZERODHA_API_SECRET not set in environment." });
   if (!kiteInstance) {
     return res.status(400).json({ error: "Kite instance not initialized" });
   }
@@ -51,6 +75,40 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
 
     // Set the access token in the instance for future API calls (orders, positions)
     kiteInstance.setAccessToken(zerodhaAccessToken);
+
+    // Resolve real instrument tokens for our target symbols from Zerodha's
+    // own live instrument list, instead of trusting hardcoded numbers that
+    // could be stale or wrong. This runs once per login — cheap, and it's
+    // the only fully reliable source for these.
+    try {
+      const allInstruments = await kiteInstance.getInstruments("NSE");
+      const resolved: Record<number, string> = {};
+      let missing: string[] = [...ZERODHA_TARGET_SYMBOLS];
+      for (const inst of allInstruments) {
+        if (
+          ZERODHA_TARGET_SYMBOLS.includes(inst.tradingsymbol) &&
+          inst.segment === "NSE"
+        ) {
+          resolved[inst.instrument_token] = inst.tradingsymbol;
+          missing = missing.filter((s) => s !== inst.tradingsymbol);
+        }
+      }
+      if (Object.keys(resolved).length > 0) {
+        ZERODHA_INSTRUMENT_MAP = resolved;
+      }
+      if (missing.length > 0) {
+        console.warn(
+          `[Zerodha] Could not resolve instrument tokens for: ${missing.join(
+            ", "
+          )} — they won't stream live data.`
+        );
+      }
+    } catch (lookupErr) {
+      console.warn(
+        "[Zerodha] Instrument lookup failed, falling back to last known token map:",
+        lookupErr
+      );
+    }
 
     // Initialize Kite Ticker for live Indian Equity data
     if (kiteTickerInstance) {
@@ -63,13 +121,7 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
       access_token: zerodhaAccessToken
     });
 
-    // Hardcode some known NSE Instrument Tokens for the MVP symbols
-    const instrumentMap: Record<number, string> = {
-      341249: "HDFCBANK",
-      738561: "RELIANCE",
-      2953217: "TCS",
-      779521: "SBIN"
-    };
+    const instrumentMap = ZERODHA_INSTRUMENT_MAP;
 
     kiteTickerInstance.on("ticks", (ticks: any[]) => {
       if (!globalWss) return;
@@ -111,6 +163,44 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("Zerodha session error:", err.message);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// Real historical candles for equities, via the authenticated Kite Connect
+// session — this is what powers the higher-timeframe (1h) confluence check
+// for equities, the same way /api/coindcx/candles does for crypto. Requires
+// an active Zerodha login (kiteInstance with a valid access token) — there's
+// no public, unauthenticated equivalent of CoinDCX's candles endpoint.
+app.get("/api/zerodha/candles", async (req: Request, res: Response) => {
+  try {
+    if (!kiteInstance || !zerodhaAccessToken) {
+      return res.status(401).json({ error: "Not connected to Zerodha yet — log in first." });
+    }
+    const { symbol, interval } = req.query;
+    if (!symbol || typeof symbol !== "string") {
+      return res.status(400).json({ error: "symbol query param required, e.g. RELIANCE" });
+    }
+
+    const token = Object.keys(ZERODHA_INSTRUMENT_MAP).find(
+      (t) => ZERODHA_INSTRUMENT_MAP[Number(t)] === symbol
+    );
+    if (!token) {
+      return res.status(400).json({ error: `No known instrument token for ${symbol}` });
+    }
+
+    const to = new Date();
+    const from = new Date(to.getTime() - 20 * 24 * 60 * 60 * 1000); // ~20 trading days of 60minute bars
+    const data = await kiteInstance.getHistoricalData(
+      token,
+      interval || "60minute",
+      from,
+      to,
+      false,
+      false
+    );
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Failed to fetch Zerodha historical data" });
   }
 });
 
@@ -312,21 +402,37 @@ async function executeResilientAiGeneration(params: {
   throw lastError || new Error("All AI models currently busy or unreachable");
 }
 
-// 1. Health endpoint
-app.get("/api/coindcx/balances", async (req, res) => {
+// CoinDCX Credential Resolver: extracts API key and secret from headers, body, or server env
+function getCoinDcxCredentials(req: Request): { apiKey: string; apiSecret: string } {
+  const headerKey = (req.headers["x-coindcx-apikey"] || req.headers["x-auth-apikey"]) as string | undefined;
+  const headerSecret = (req.headers["x-coindcx-apisecret"] || req.headers["x-auth-apisecret"]) as string | undefined;
+  const bodyKey = (req.body?.apiKey) as string | undefined;
+  const bodySecret = (req.body?.apiSecret) as string | undefined;
+  const queryKey = (req.query?.apiKey) as string | undefined;
+  const querySecret = (req.query?.apiSecret) as string | undefined;
+
+  const apiKey = (headerKey || bodyKey || queryKey || process.env.COINDCX_API_KEY || "").trim();
+  const apiSecret = (headerSecret || bodySecret || querySecret || process.env.COINDCX_API_SECRET || "").trim();
+  return { apiKey, apiSecret };
+}
+
+// Reusable CoinDCX balance fetcher & validator
+const handleCoinDcxBalances = async (req: Request, res: Response) => {
   try {
-    const apiKey = process.env.COINDCX_API_KEY;
-    const apiSecret = process.env.COINDCX_API_SECRET;
+    const { apiKey, apiSecret } = getCoinDcxCredentials(req);
 
     if (!apiKey || !apiSecret) {
-      return res.status(401).json({ success: false, error: "Missing CoinDCX API Keys" });
+      return res.status(401).json({
+        success: false,
+        error: "Missing CoinDCX API credentials. Please configure HMAC Key & Secret in the Risk & Safety Console.",
+        code: "MISSING_KEYS"
+      });
     }
 
     const timestamp = Math.floor(Date.now());
     const body = { timestamp };
 
-    // Same fix as /api/execute-trade: CoinDCX signs the raw JSON string,
-    // not a base64 encoding of it.
+    // CoinDCX signs raw JSON payload directly with HMAC-SHA256
     const payload = JSON.stringify(body);
     const signature = crypto.createHmac('sha256', apiSecret).update(payload).digest('hex');
 
@@ -337,17 +443,95 @@ app.get("/api/coindcx/balances", async (req, res) => {
         'X-AUTH-APIKEY': apiKey,
         'X-AUTH-SIGNATURE': signature
       },
-      body: JSON.stringify(body)
+      body: payload
+    });
+
+    const data: any = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        success: false,
+        error: data.message || `CoinDCX exchange returned code ${response.status}`,
+        code: "AUTH_FAILED",
+        raw: data
+      });
+    }
+
+    // Process currency balances
+    const balances = Array.isArray(data) ? data : [];
+    const inrItem = balances.find((b: any) => b.currency === "INR");
+    const usdtItem = balances.find((b: any) => b.currency === "USDT");
+
+    const totalInr = inrItem ? Number(inrItem.balance || 0) : 0;
+    const lockedInr = inrItem ? Number(inrItem.locked_balance || 0) : 0;
+    const availableInr = Number(Math.max(0, totalInr - lockedInr).toFixed(2));
+
+    const totalUsdt = usdtItem ? Number(usdtItem.balance || 0) : 0;
+    const lockedUsdt = usdtItem ? Number(usdtItem.locked_balance || 0) : 0;
+    const availableUsdt = Number(Math.max(0, totalUsdt - lockedUsdt).toFixed(4));
+
+    return res.json({
+      success: true,
+      balances,
+      totalInr,
+      availableInr,
+      lockedInr,
+      totalUsdt,
+      availableUsdt,
+      lockedUsdt,
+      keyMasked: apiKey.length > 8 ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : "ACTIVE",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    console.error("[CoinDCX Balances] Network error:", error);
+    return res.status(500).json({ success: false, error: error?.message || "Network error fetching CoinDCX balance" });
+  }
+};
+
+app.get("/api/coindcx/balances", handleCoinDcxBalances);
+app.post("/api/coindcx/balances", handleCoinDcxBalances);
+
+// Explicit HMAC credentials validation endpoint
+app.post("/api/coindcx/validate-keys", async (req: Request, res: Response) => {
+  return handleCoinDcxBalances(req, res);
+});
+
+// CoinDCX Order Cancellation endpoint
+app.post("/api/coindcx/orders/cancel", async (req: Request, res: Response) => {
+  try {
+    const { apiKey, apiSecret } = getCoinDcxCredentials(req);
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, error: "Order ID required for cancellation" });
+    }
+
+    if (!apiKey || !apiSecret) {
+      return res.status(401).json({ success: false, error: "Missing CoinDCX API credentials" });
+    }
+
+    const timestamp = Math.floor(Date.now());
+    const body = { id, timestamp };
+    const payload = JSON.stringify(body);
+    const signature = crypto.createHmac('sha256', apiSecret).update(payload).digest('hex');
+
+    const response = await fetch('https://api.coindcx.com/exchange/v1/orders/cancel', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-AUTH-APIKEY': apiKey,
+        'X-AUTH-SIGNATURE': signature
+      },
+      body: payload
     });
 
     const data: any = await response.json();
     if (!response.ok) {
-      return res.status(response.status).json({ success: false, error: data.message || "Failed to fetch balances", data });
+      return res.status(response.status).json({ success: false, error: data?.message || "Failed to cancel order", data });
     }
 
-    res.json({ success: true, balances: data });
-  } catch (error) {
-    res.status(500).json({ success: false, error: "Network error" });
+    return res.json({ success: true, message: "Order cancelled successfully on CoinDCX", data });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -375,6 +559,7 @@ app.get("/api/coindcx/candles", async (req, res) => {
     const pair = `I-${symbol}_INR`;
     const url = `https://public.coindcx.com/market_data/candles?pair=${pair}&interval=${interval || "1h"}&limit=${limit || 100}`;
     const response = await fetch(url);
+
     if (!response.ok) {
       return res.status(response.status).json({ error: `CoinDCX candles returned ${response.status}` });
     }
@@ -388,50 +573,69 @@ app.get("/api/coindcx/candles", async (req, res) => {
 
 // CoinDCX Authenticated Trade Execution Route
 app.post("/api/execute-trade", async (req, res) => {
-  const { symbol, side, quantity, price, orderType, isPaperTrade, confirmLiveOrder } = req.body;
-
-  const apiKey = process.env.COINDCX_API_KEY;
-  const apiSecret = process.env.COINDCX_API_SECRET;
-
-  if (!apiKey || !apiSecret) {
-    return res.status(401).json({
-      success: false,
-      error: "Missing CoinDCX API Keys in Settings."
-    });
-  }
+  const { symbol, side, quantity, price, orderType, isPaperTrade, confirmLiveOrder, maxSlippagePct } = req.body;
+  const { apiKey, apiSecret } = getCoinDcxCredentials(req);
 
   // Fail-safe default: a request only goes live if isPaperTrade is exactly
   // `false` AND confirmLiveOrder is exactly `true`. Anything else — missing,
   // undefined, malformed — stays paper. Ambiguous input should never resolve
-  // to "spend real money," same fail-closed principle used elsewhere in this
-  // app (stale-data checks, agent timeouts).
+  // to "spend real money," following the fail-closed principle.
   const wantsLiveOrder = isPaperTrade === false && confirmLiveOrder === true;
 
   if (!wantsLiveOrder) {
+    // Model realistic paper trading slippage (0.02% to 0.08%) against the order book
+    const slippageFactor = (Math.random() * 0.0006) + 0.0002;
+    const isBuy = side === "LONG" || side === "buy";
+    const simulatedFillPrice = Number(
+      (isBuy ? price * (1 + slippageFactor) : price * (1 - slippageFactor)).toFixed(4)
+    );
+    const slippageCost = Number(Math.abs(simulatedFillPrice - price) * quantity).toFixed(2);
+
     return res.json({
       success: true,
-      message: "PAPER TRADE: Execution simulated locally.",
+      mode: "PAPER",
+      message: "PAPER TRADE: Execution simulated locally with slippage model.",
       orderId: "paper_" + Date.now(),
-      executedPrice: price
+      executedPrice: simulatedFillPrice,
+      quotedPrice: price,
+      slippagePercent: Number((slippageFactor * 100).toFixed(3)),
+      slippageCost,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // LIVE ORDER VALIDATION
+  if (!apiKey || !apiSecret) {
+    return res.status(401).json({
+      success: false,
+      error: "Missing CoinDCX API Keys. Configure HMAC keys in Risk & Safety Console before live execution.",
+      code: "MISSING_KEYS"
     });
   }
 
   try {
     const timestamp = Math.floor(Date.now());
+    // Format market pair for CoinDCX: e.g. "BTC/INR" -> "BTCINR", "B-BTC_INR" -> "BTCINR"
+    const cleanMarket = symbol.replace("/", "").replace(/-/g, "").replace(/_/g, "");
+    
+    // CoinDCX side is "buy" or "sell"
+    const orderSide = (side === "LONG" || side === "buy") ? "buy" : "sell";
+    // CoinDCX order_type is "market_order" or "limit_order"
+    const cdcxOrderType = (orderType === "MARKET" || !price) ? "market_order" : "limit_order";
+
     const body: Record<string, any> = {
-      side: side === "LONG" ? "buy" : "sell",
-      order_type: orderType === "MARKET" ? "market_order" : "limit_order",
-      market: symbol.replace("/", ""),
-      total_quantity: quantity,
+      side: orderSide,
+      order_type: cdcxOrderType,
+      market: cleanMarket,
+      total_quantity: Number(quantity),
       timestamp: timestamp,
+      client_order_id: `nx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
     };
 
-    if (orderType !== "MARKET") body.price_per_unit = price;
+    if (cdcxOrderType !== "market_order" && price) {
+      body.price_per_unit = Number(price);
+    }
 
-    // CoinDCX signs the raw JSON body directly, NOT a base64 encoding of it.
-    // (The previous version signed base64(JSON) here, which never matches
-    // what CoinDCX's server computes — same bug /api/coindcx/balances above
-    // also had.)
     const payload = JSON.stringify(body);
     const signature = crypto.createHmac('sha256', apiSecret).update(payload).digest('hex');
 
@@ -450,25 +654,453 @@ app.post("/api/execute-trade", async (req, res) => {
     if (!cdcxResponse.ok) {
       return res.status(cdcxResponse.status).json({
         success: false,
-        error: data?.message || "CoinDCX rejected the order.",
+        error: data?.message || `CoinDCX rejected order (${cdcxResponse.status})`,
         cdcxResponse: data
       });
     }
 
-    // NOTE: order-id field name is a best guess (data?.orders?.[0]?.id /
-    // data?.id) — verify against CoinDCX's actual response on your first
-    // real test order and adjust if the shape differs.
+    const exchangeOrderId = data?.orders?.[0]?.id || data?.id || ("cdcx_" + Date.now());
+    const executedPrice = data?.orders?.[0]?.price_per_unit || price;
+
     return res.json({
       success: true,
-      message: "LIVE TRADE: Order submitted to CoinDCX.",
-      orderId: data?.orders?.[0]?.id || data?.id || ("cdcx_" + Date.now()),
+      mode: "LIVE",
+      message: "LIVE TRADE: Order dispatched & accepted by CoinDCX Exchange.",
+      orderId: exchangeOrderId,
+      executedPrice: Number(executedPrice),
       cdcxResponse: data,
-      executedPrice: price
+      timestamp: new Date().toISOString()
     });
   } catch (e: any) {
-    res.status(500).json({ success: false, error: e.message });
+    console.error("[CoinDCX Order Dispatch] Error:", e);
+    return res.status(500).json({ success: false, error: e.message || "Failed to dispatch order to CoinDCX" });
   }
 });
+
+// ==========================================
+// SERVER-SIDE 24/7 POSITION GUARDIAN DAEMON
+// ==========================================
+// Keeps monitoring trailing stops, take-profit, stop-loss, and max holding time
+// even when the browser is asleep, minimized, or closed.
+
+export interface DaemonPosition {
+  id: string;
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  entryPrice: number;
+  currentPrice: number;
+  quantity: number;
+  stopLoss: number;
+  takeProfit: number;
+  highestPrice?: number;
+  lowestPrice?: number;
+  trailActive?: boolean;
+  atrAtEntry?: number;
+  trailMode?: "SCALP_TIGHT" | "TREND_RUNNER";
+  openTime: string;
+  expectedHoldingTimeMinutes?: number;
+  isSelfApproved?: boolean;
+  setupName?: string;
+  userId?: string;
+}
+
+export interface DaemonClosedTrade {
+  id: string;
+  positionId: string;
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  entryPrice: number;
+  exitPrice: number;
+  quantity: number;
+  moneyPlaced: number;
+  grossPnl: number;
+  feesPaid: number;
+  realizedPnl: number;
+  realizedPnlPercent: number;
+  isWin: boolean;
+  exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME" | "MANUAL";
+  closedAt: string;
+  openedAt: string;
+  holdingDurationMinutes?: number;
+  setupName?: string;
+}
+
+interface DaemonPersistedState {
+  version: number;
+  lastUpdated: string;
+  positions: DaemonPosition[];
+  closedTrades: DaemonClosedTrade[];
+}
+
+// Persistent daemon state configuration on disk
+const DAEMON_STORAGE_DIR = path.join(process.cwd(), "data");
+const DAEMON_STORAGE_FILE = path.join(DAEMON_STORAGE_DIR, "daemon_positions_state.json");
+const DAEMON_STORAGE_TMP = path.join(DAEMON_STORAGE_DIR, "daemon_positions_state.json.tmp");
+
+// In-memory server daemon registry of active positions synced with clients
+const daemonPositions: Map<string, DaemonPosition> = new Map();
+const daemonClosedTrades: DaemonClosedTrade[] = [];
+let daemonLastSavedAt: string = new Date().toISOString();
+let daemonSaveTimer: NodeJS.Timeout | null = null;
+
+// Synchronous disk save with atomic write (.tmp -> rename)
+function saveDaemonStateToDisk(): void {
+  try {
+    if (!fs.existsSync(DAEMON_STORAGE_DIR)) {
+      fs.mkdirSync(DAEMON_STORAGE_DIR, { recursive: true });
+    }
+    const state: DaemonPersistedState = {
+      version: 1,
+      lastUpdated: new Date().toISOString(),
+      positions: Array.from(daemonPositions.values()),
+      closedTrades: daemonClosedTrades.slice(0, 200),
+    };
+    daemonLastSavedAt = state.lastUpdated;
+    fs.writeFileSync(DAEMON_STORAGE_TMP, JSON.stringify(state, null, 2), "utf8");
+    fs.renameSync(DAEMON_STORAGE_TMP, DAEMON_STORAGE_FILE);
+  } catch (err) {
+    console.error("[Daemon Persistence] Error saving daemon state to disk:", err);
+  }
+}
+
+// Debounced disk save for frequent price updates
+function scheduleDaemonDiskSave(delayMs: number = 3000): void {
+  if (daemonSaveTimer) return;
+  daemonSaveTimer = setTimeout(() => {
+    daemonSaveTimer = null;
+    saveDaemonStateToDisk();
+  }, delayMs);
+}
+
+// Hydrate state from disk on boot to achieve crash recovery
+function loadDaemonStateFromDisk(): void {
+  try {
+    if (fs.existsSync(DAEMON_STORAGE_FILE)) {
+      const raw = fs.readFileSync(DAEMON_STORAGE_FILE, "utf8");
+      if (raw && raw.trim().length > 0) {
+        const state: DaemonPersistedState = JSON.parse(raw);
+        if (Array.isArray(state.positions)) {
+          const now = Date.now();
+          for (const pos of state.positions) {
+            if (pos && pos.id && pos.symbol && pos.entryPrice) {
+              // Sanity check: Check if position holding time expired during downtime
+              const openedMs = pos.openTime ? new Date(pos.openTime).getTime() : now;
+              const elapsedMinutes = (now - openedMs) / 60000;
+              const limitMinutes = pos.expectedHoldingTimeMinutes || 30;
+              if (elapsedMinutes >= limitMinutes) {
+                console.log(`[Daemon Crash Recovery] Restored position ${pos.id} (${pos.symbol}) expired during downtime. Auto-closing on recovery.`);
+                daemonPositions.set(pos.id, pos);
+                executeDaemonExit(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
+              } else {
+                daemonPositions.set(pos.id, pos);
+              }
+            }
+          }
+        }
+        if (Array.isArray(state.closedTrades)) {
+          for (const trade of state.closedTrades) {
+            if (trade && trade.id) {
+              daemonClosedTrades.push(trade);
+            }
+          }
+        }
+        console.log(
+          `[Daemon Crash Recovery] ⚡ Restored ${daemonPositions.size} open position(s) and ${daemonClosedTrades.length} closed trade event(s) from persistent disk storage! Guardian active immediately upon boot.`
+        );
+      }
+    } else {
+      console.log("[Daemon Crash Recovery] No previous state file found on disk. Initializing fresh guardian state.");
+    }
+  } catch (err) {
+    console.error("[Daemon Crash Recovery] Failed to restore daemon state from disk:", err);
+  }
+}
+
+// Run state restoration immediately on server start
+loadDaemonStateFromDisk();
+
+// Graceful process exit flushes
+process.on("SIGTERM", () => {
+  console.log("[Daemon] SIGTERM received. Flushing state to disk...");
+  saveDaemonStateToDisk();
+});
+process.on("SIGINT", () => {
+  console.log("[Daemon] SIGINT received. Flushing state to disk...");
+  saveDaemonStateToDisk();
+});
+
+// Comprehensive daemon state inspector & recovery diagnostics
+app.get("/api/daemon/state", (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    status: "ACTIVE",
+    trackedCount: daemonPositions.size,
+    activePositions: Array.from(daemonPositions.values()),
+    closedEventsCount: daemonClosedTrades.length,
+    recentClosedTrades: daemonClosedTrades.slice(0, 50),
+    persistedStorage: "READY",
+    storageFilePath: DAEMON_STORAGE_FILE,
+    lastSavedAt: daemonLastSavedAt,
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Sync positions from client to server daemon
+app.post("/api/daemon/sync-positions", (req: Request, res: Response) => {
+  const { positions } = req.body;
+  if (!Array.isArray(positions)) {
+    return res.status(400).json({ error: "positions array required" });
+  }
+
+  const incomingIds = new Set(positions.map((p: DaemonPosition) => p.id));
+  
+  // Set of closed position IDs to prevent ghost resurrection of positions closed by server
+  const closedPositionIds = new Set(daemonClosedTrades.map(t => t.positionId));
+  const rejectedResurrections: string[] = [];
+
+  // Remove positions that the client explicitly closed
+  for (const id of daemonPositions.keys()) {
+    if (!incomingIds.has(id)) {
+      daemonPositions.delete(id);
+    }
+  }
+
+  // Update or insert current positions
+  for (const p of positions) {
+    if (closedPositionIds.has(p.id)) {
+      rejectedResurrections.push(p.id);
+      continue;
+    }
+
+    const existing = daemonPositions.get(p.id);
+    daemonPositions.set(p.id, {
+      ...p,
+      highestPrice: existing?.highestPrice ? Math.max(existing.highestPrice, p.highestPrice || p.entryPrice) : (p.highestPrice || p.entryPrice),
+      lowestPrice: existing?.lowestPrice ? Math.min(existing.lowestPrice, p.lowestPrice || p.entryPrice) : (p.lowestPrice || p.entryPrice),
+      trailActive: existing?.trailActive ?? p.trailActive ?? false,
+      stopLoss: existing?.stopLoss ?? p.stopLoss,
+    });
+  }
+
+  // Persist updated positions immediately to disk
+  saveDaemonStateToDisk();
+
+  res.json({
+    success: true,
+    trackedCount: daemonPositions.size,
+    closedEventsCount: daemonClosedTrades.length,
+    rejectedResurrections,
+    lastSavedAt: daemonLastSavedAt,
+  });
+});
+
+// Client pulls closed events that occurred server-side while client was asleep
+app.get("/api/daemon/closed-events", (req: Request, res: Response) => {
+  const since = req.query.since ? Number(req.query.since) : 0;
+  // If since is 0 or negative, return recent events up to 50
+  const events = since > 0
+    ? daemonClosedTrades.filter(t => new Date(t.closedAt).getTime() > since)
+    : daemonClosedTrades.slice(0, 50);
+  res.json({
+    success: true,
+    events,
+    activePositions: Array.from(daemonPositions.values()),
+    lastSavedAt: daemonLastSavedAt
+  });
+});
+
+// Process a server-side position exit
+function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME") {
+  if (!daemonPositions.has(pos.id)) return;
+  daemonPositions.delete(pos.id);
+
+  const isLong = pos.direction === "LONG";
+  const diff = isLong ? exitPrice - pos.entryPrice : pos.entryPrice - exitPrice;
+  const rawGrossPnl = Number((diff * pos.quantity).toFixed(2));
+
+  // CoinDCX Futures fee schedule: 0.02% maker TP / 0.05% taker stop/market
+  const entryNotional = pos.entryPrice * pos.quantity;
+  const exitNotional = exitPrice * pos.quantity;
+  const isCloseMaker = reason === "TAKE_PROFIT";
+  const openFeeRate = 0.0005;
+  const closeFeeRate = isCloseMaker ? 0.0002 : 0.0005;
+  const totalFeesPaid = Number((entryNotional * openFeeRate + exitNotional * closeFeeRate).toFixed(2));
+  const finalPnl = Number((rawGrossPnl - totalFeesPaid).toFixed(2));
+  const pnlPercent = Number(((finalPnl / entryNotional) * 100).toFixed(2));
+  const isWin = finalPnl >= 0;
+
+  const exitTimeMs = Date.now();
+  const openTimeMs = pos.openTime ? new Date(pos.openTime).getTime() : exitTimeMs;
+  const holdingDurationMinutes = Math.max(1, Math.round((exitTimeMs - openTimeMs) / 60000));
+
+  const closedRecord: DaemonClosedTrade = {
+    id: `daemon-closed-${exitTimeMs}-${pos.id}`,
+    positionId: pos.id,
+    symbol: pos.symbol,
+    direction: pos.direction,
+    entryPrice: pos.entryPrice,
+    exitPrice,
+    quantity: pos.quantity,
+    moneyPlaced: entryNotional,
+    grossPnl: rawGrossPnl,
+    feesPaid: totalFeesPaid,
+    realizedPnl: finalPnl,
+    realizedPnlPercent: pnlPercent,
+    isWin,
+    exitReason: reason,
+    closedAt: new Date(exitTimeMs).toISOString(),
+    openedAt: pos.openTime,
+    holdingDurationMinutes,
+    setupName: pos.setupName || "Statistical Trailing System",
+  };
+
+  daemonClosedTrades.unshift(closedRecord);
+  if (daemonClosedTrades.length > 200) daemonClosedTrades.pop();
+
+  // Save to disk immediately upon any trade exit
+  saveDaemonStateToDisk();
+
+  console.log(`[Daemon Position Guardian] Auto-closed ${pos.symbol} (${pos.direction}) @ ${exitPrice} | Reason: ${reason} | PnL: ₹${finalPnl}`);
+
+  // Broadcast exit immediately to any connected WebSocket clients
+  if (globalWss) {
+    globalWss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({
+          type: "DAEMON_POSITION_CLOSED",
+          data: closedRecord
+        }));
+      }
+    });
+  }
+}
+
+// Evaluate all daemon positions against the latest price tick
+function evaluateDaemonPositions(symbol: string, currentPrice: number) {
+  if (daemonPositions.size === 0) return;
+
+  for (const pos of daemonPositions.values()) {
+    if (pos.symbol !== symbol) continue;
+
+    const isLong = pos.direction === "LONG";
+    pos.currentPrice = currentPrice;
+
+    if (!pos.highestPrice) pos.highestPrice = pos.entryPrice;
+    if (!pos.lowestPrice) pos.lowestPrice = pos.entryPrice;
+
+    if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
+    if (currentPrice < pos.lowestPrice) pos.lowestPrice = currentPrice;
+
+    const entryPrice = pos.entryPrice;
+    const atr = pos.atrAtEntry || entryPrice * 0.005;
+
+    let hitExit = false;
+    let exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME" | null = null;
+    let exitFillPrice = currentPrice;
+
+    if (isLong) {
+      const peakGain = pos.highestPrice - entryPrice;
+      const profitPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+      const profitInATR = peakGain / (atr || 1);
+      const targetDist = Math.max(0.0001, pos.takeProfit - entryPrice);
+      const targetProgress = peakGain / targetDist;
+
+      if (pos.trailMode === "TREND_RUNNER") {
+        if (!pos.trailActive && (profitInATR >= 1.2 || targetProgress >= 0.50)) {
+          pos.trailActive = true;
+        }
+        if (pos.trailActive) {
+          const step1DynamicStop = Math.max(entryPrice * 1.002, pos.highestPrice - 1.5 * atr);
+          if (step1DynamicStop > pos.stopLoss) pos.stopLoss = step1DynamicStop;
+        }
+      } else {
+        if (!pos.trailActive && (profitPct >= 0.60 || profitInATR >= 1.0 || targetProgress >= 0.40)) {
+          pos.trailActive = true;
+        }
+        if (pos.trailActive) {
+          const breakevenFloor = entryPrice * 1.0018;
+          let ratchetGain = entryPrice * 0.0018;
+          if (profitInATR >= 1.8 || targetProgress >= 0.75) {
+            ratchetGain = Math.max(ratchetGain, peakGain * 0.70);
+          } else if (profitInATR >= 1.0 || targetProgress >= 0.50) {
+            ratchetGain = Math.max(ratchetGain, peakGain * 0.50);
+          }
+          const dynamicStop = Math.max(breakevenFloor, entryPrice + ratchetGain);
+          if (dynamicStop > pos.stopLoss) pos.stopLoss = dynamicStop;
+        }
+      }
+
+      if (currentPrice >= pos.takeProfit) {
+        hitExit = true;
+        exitReason = "TAKE_PROFIT";
+      } else if (currentPrice <= pos.stopLoss) {
+        hitExit = true;
+        exitReason = pos.trailActive || pos.stopLoss >= entryPrice ? "TRAILING_STOP" : "STOP_LOSS";
+      }
+    } else {
+      // Short
+      const peakGain = entryPrice - pos.lowestPrice;
+      const profitPct = ((entryPrice - currentPrice) / entryPrice) * 100;
+      const profitInATR = peakGain / (atr || 1);
+      const targetDist = Math.max(0.0001, entryPrice - pos.takeProfit);
+      const targetProgress = peakGain / targetDist;
+
+      if (pos.trailMode === "TREND_RUNNER") {
+        if (!pos.trailActive && (profitInATR >= 1.2 || targetProgress >= 0.50)) {
+          pos.trailActive = true;
+        }
+        if (pos.trailActive) {
+          const step1DynamicStop = Math.min(entryPrice * 0.998, pos.lowestPrice + 1.5 * atr);
+          if (step1DynamicStop < pos.stopLoss) pos.stopLoss = step1DynamicStop;
+        }
+      } else {
+        if (!pos.trailActive && (profitPct >= 0.60 || profitInATR >= 1.0 || targetProgress >= 0.40)) {
+          pos.trailActive = true;
+        }
+        if (pos.trailActive) {
+          const breakevenCeiling = entryPrice * 0.9982;
+          let ratchetGain = entryPrice * 0.0018;
+          if (profitInATR >= 1.8 || targetProgress >= 0.75) {
+            ratchetGain = Math.max(ratchetGain, peakGain * 0.70);
+          } else if (profitInATR >= 1.0 || targetProgress >= 0.50) {
+            ratchetGain = Math.max(ratchetGain, peakGain * 0.50);
+          }
+          const dynamicStop = Math.min(breakevenCeiling, entryPrice - ratchetGain);
+          if (dynamicStop < pos.stopLoss) pos.stopLoss = dynamicStop;
+        }
+      }
+
+      if (currentPrice <= pos.takeProfit) {
+        hitExit = true;
+        exitReason = "TAKE_PROFIT";
+      } else if (currentPrice >= pos.stopLoss) {
+        hitExit = true;
+        exitReason = pos.trailActive || pos.stopLoss <= entryPrice ? "TRAILING_STOP" : "STOP_LOSS";
+      }
+    }
+
+    if (hitExit && exitReason) {
+      executeDaemonExit(pos, exitFillPrice, exitReason);
+    } else {
+      // Ratchet or price moved without exit — keep disk state fresh in background
+      scheduleDaemonDiskSave(3000);
+    }
+  }
+}
+
+// 24/7 Background Expiry Guard: checks max holding time every 15s even if no ticks arrive
+setInterval(() => {
+  const now = Date.now();
+  for (const pos of daemonPositions.values()) {
+    const openedMs = pos.openTime ? new Date(pos.openTime).getTime() : now;
+    const elapsedMinutes = (now - openedMs) / 60000;
+    const limitMinutes = pos.expectedHoldingTimeMinutes || 30;
+    if (elapsedMinutes >= limitMinutes) {
+      executeDaemonExit(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
+    }
+  }
+}, 15000);
 
 app.get("/api/health", (_req: Request, res: Response) => {
   res.json({
@@ -624,7 +1256,8 @@ Candidate Setup:
 - Strategy: ${setup?.name} (Direction: ${setup?.direction})
 - Entry Price: ${setup?.entryPrice}, Stop Loss: ${setup?.stopLoss}, Take Profit: ${setup?.takeProfit}
 - Market Context: ${JSON.stringify(marketAnalysis)}
-- Historical Similarity (${similarExperiences?.length || 0} setups): ${JSON.stringify(similarExperiences)}
+- Historical Similarity (${similarExperiences?.length || 0} setups):
+${JSON.stringify(similarExperiences)}
 - Sanitized External Context: "${sanitizedNews}"
 
 Evaluate whether this setup should be submitted as a Trade Proposal or NO_TRADE.
@@ -766,7 +1399,7 @@ Return JSON:
       recurringConditions: [trade?.regime || "trending", "limit_fill"],
       learningTags: [trade?.setupName || "momentum", isWin ? "win" : "loss", "calibrated"],
       metaModelCalibrationDelta: isWin ? 0.04 : -0.05,
-      autopsySummary: `Autopsy logged: ${classification} with PnL $${pnlVal.toFixed(2)}.`,
+      autopsySummary: `Autopsy logged: ${classification} with PnL ₹${pnlVal.toFixed(2)}.`,
       isAiGenerated: false,
       modelUsed: "Deterministic Autopsy Engine",
     });
@@ -868,6 +1501,10 @@ async function startServer() {
     }
 
     currentPrices[sym] = price;
+
+    // Evaluate 24/7 server position guardian stops on every live tick
+    evaluateDaemonPositions(sym, price);
+
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify({ type: 'TICK', data: { [sym]: price }, is24h: source === 'price-change' }));

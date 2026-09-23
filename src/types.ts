@@ -188,6 +188,21 @@ export interface Order {
   feePaid: number;
 }
 
+export type TradingExecutionMode = "PAPER" | "LIVE_COINDCX";
+
+export interface CoinDcxAccountBalance {
+  totalInr: number;
+  availableInr: number;
+  lockedInr: number;
+  totalUsdt: number;
+  availableUsdt: number;
+  lockedUsdt: number;
+  loading: boolean;
+  error?: string;
+  lastUpdated?: string;
+  keyMasked?: string;
+}
+
 export interface Position {
   id: string;
   symbol: string;
@@ -212,6 +227,8 @@ export interface Position {
   family?: StrategyFamily;
   horizon?: "intraday" | "swing";
   trailMode?: "SCALP_TIGHT" | "TREND_RUNNER";
+  isLiveOrder?: boolean;
+  exchangeOrderId?: string;
 }
 
 export interface HistoricalTrade {
@@ -224,7 +241,9 @@ export interface HistoricalTrade {
   exitPrice: number;
   quantity: number;
   moneyPlaced: number; // Amount of money placed/allocated in the trade (₹)
-  realizedPnl: number; // Profit earned (positive) or money lost (negative)
+  grossPnl?: number; // Gross P&L before exchange fees
+  feesPaid?: number; // CoinDCX Futures fees (0.02% maker / 0.05% taker both open and close)
+  realizedPnl: number; // Net profit earned (positive) or money lost (negative) after fees
   realizedPnlPercent: number;
   isWin: boolean;
   exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL" | "EXPIRY_TIME";

@@ -12,6 +12,9 @@ import {
   StrategySetup,
   TradeProposal,
   PromotedLabModel,
+  TradingExecutionMode,
+  CoinDcxAccountBalance,
+  RiskCalculation,
 } from "./types";
 import {
   generateInitialBars,
@@ -117,6 +120,122 @@ export default function App() {
   const [allTimeRealizedPnl, setAllTimeRealizedPnl] = useState<number>(() => loadStoredCapital().allTimeRealizedPnl || 0);
   const [cash, setCash] = useState<number>(() => loadStoredCapital().cash);
   const [killSwitchActive, setKillSwitchActive] = useState<boolean>(false);
+
+  // CoinDCX Live Exchange Trading Mode & Account Balance State
+  const [tradingMode, setTradingMode] = useState<TradingExecutionMode>(() => {
+    return (localStorage.getItem("nexus_trading_mode") as TradingExecutionMode) || "PAPER";
+  });
+  const [coinDcxKeys, setCoinDcxKeys] = useState<{ apiKey: string; apiSecret: string }>(() => {
+    return {
+      apiKey: localStorage.getItem("coindcx_api_key") || "",
+      apiSecret: localStorage.getItem("coindcx_api_secret") || "",
+    };
+  });
+  const [coinDcxBalance, setCoinDcxBalance] = useState<CoinDcxAccountBalance>({
+    totalInr: 0,
+    availableInr: 0,
+    lockedInr: 0,
+    totalUsdt: 0,
+    availableUsdt: 0,
+    lockedUsdt: 0,
+    loading: false,
+  });
+
+  const fetchCoinDcxBalance = useCallback(
+    async (keysOverride?: { apiKey: string; apiSecret: string }) => {
+      const activeKeys = keysOverride || coinDcxKeys;
+      setCoinDcxBalance((prev) => ({ ...prev, loading: true, error: undefined }));
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (activeKeys.apiKey) headers["x-coindcx-apikey"] = activeKeys.apiKey;
+        if (activeKeys.apiSecret) headers["x-coindcx-apisecret"] = activeKeys.apiSecret;
+
+        const res = await fetch("/api/coindcx/balances", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            apiKey: activeKeys.apiKey,
+            apiSecret: activeKeys.apiSecret,
+          }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setCoinDcxBalance({
+            totalInr: Number(data.totalInr || 0),
+            availableInr: Number(data.availableInr || 0),
+            lockedInr: Number(data.lockedInr || 0),
+            totalUsdt: Number(data.totalUsdt || 0),
+            availableUsdt: Number(data.availableUsdt || 0),
+            lockedUsdt: Number(data.lockedUsdt || 0),
+            loading: false,
+            keyMasked: data.keyMasked,
+            lastUpdated: new Date().toLocaleTimeString(),
+          });
+          return { success: true, data };
+        } else {
+          setCoinDcxBalance((prev) => ({
+            ...prev,
+            loading: false,
+            error: data.error || "Failed to fetch balances from CoinDCX",
+          }));
+          return { success: false, error: data.error };
+        }
+      } catch (err: any) {
+        setCoinDcxBalance((prev) => ({
+          ...prev,
+          loading: false,
+          error: err.message || "Network error fetching CoinDCX balance",
+        }));
+        return { success: false, error: err.message };
+      }
+    },
+    [coinDcxKeys]
+  );
+
+  const handleSaveCoinDcxKeys = useCallback(
+    async (newKeys: { apiKey: string; apiSecret: string }) => {
+      setCoinDcxKeys(newKeys);
+      localStorage.setItem("coindcx_api_key", newKeys.apiKey);
+      localStorage.setItem("coindcx_api_secret", newKeys.apiSecret);
+      await fetchCoinDcxBalance(newKeys);
+    },
+    [fetchCoinDcxBalance]
+  );
+
+  const handleToggleTradingMode = useCallback(
+    (newMode: TradingExecutionMode) => {
+      setTradingMode(newMode);
+      localStorage.setItem("nexus_trading_mode", newMode);
+      if (newMode === "LIVE_COINDCX") {
+        fetchCoinDcxBalance();
+        setExecutionToast({
+          id: `toast-${Date.now()}`,
+          title: "⚡ LIVE COINDCX MODE ENGAGED",
+          message:
+            "Live exchange order routing activated. Polling real account balances from CoinDCX API (/exchange/v1/users/balances).",
+          type: "WARNING",
+          timestamp: new Date().toLocaleTimeString(),
+        });
+      } else {
+        setExecutionToast({
+          id: `toast-${Date.now()}`,
+          title: "🛡️ PAPER SIMULATION MODE ACTIVE",
+          message:
+            "Switched to Paper Trading. Orders execute against the local book with simulated slippage and fees.",
+          type: "SUCCESS",
+          timestamp: new Date().toLocaleTimeString(),
+        });
+      }
+    },
+    [fetchCoinDcxBalance]
+  );
+
+  // Poll CoinDCX balance once on mount if in live mode
+  useEffect(() => {
+    if (tradingMode === "LIVE_COINDCX") {
+      fetchCoinDcxBalance();
+    }
+  }, []);
 
   // Persist Stats & Capital changes to Browser LocalStorage
   useEffect(() => {
@@ -294,6 +413,57 @@ export default function App() {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        if (msg.type === "DAEMON_POSITION_CLOSED") {
+          const daemonEvent = msg.data;
+          console.log("[Daemon Position Guardian] Server closed trade event received:", daemonEvent);
+          if (daemonEvent && daemonEvent.positionId) {
+            // Remove from active positions immediately
+            setActivePositions((prev) => prev.filter((p) => p.id !== daemonEvent.positionId));
+
+            // Record to closed trades if not already added
+            setClosedTrades((prev) => {
+              if (prev.some((t) => t.id === daemonEvent.id || (t as any).positionId === daemonEvent.positionId)) {
+                return prev;
+              }
+              const histTrade: HistoricalTrade = {
+                id: daemonEvent.id,
+                positionId: daemonEvent.positionId,
+                symbol: daemonEvent.symbol,
+                direction: daemonEvent.direction,
+                setupName: daemonEvent.setupName || "Statistical Trailing System",
+                entryPrice: daemonEvent.entryPrice,
+                exitPrice: daemonEvent.exitPrice,
+                quantity: daemonEvent.quantity,
+                moneyPlaced: daemonEvent.moneyPlaced,
+                grossPnl: daemonEvent.grossPnl,
+                feesPaid: daemonEvent.feesPaid,
+                realizedPnl: daemonEvent.realizedPnl,
+                realizedPnlPercent: daemonEvent.realizedPnlPercent,
+                isWin: daemonEvent.isWin,
+                exitReason: daemonEvent.exitReason,
+                closedAt: daemonEvent.closedAt,
+                openedAt: daemonEvent.openedAt,
+                isSelfApproved: true,
+              };
+              return [histTrade, ...prev];
+            });
+
+            // Update capital & daily PnL
+            setEquity((prev) => Number((prev + daemonEvent.realizedPnl).toFixed(2)));
+            setCash((prev) => Number((prev + daemonEvent.moneyPlaced + daemonEvent.realizedPnl).toFixed(2)));
+            setDailyRealizedPnl((prev) => Number((prev + daemonEvent.realizedPnl).toFixed(2)));
+
+            setExecutionToast({
+              id: `toast-daemon-${Date.now()}`,
+              title: `■ [24/7 DAEMON GUARDIAN] ${daemonEvent.symbol} Auto-Closed`,
+              message: `Server-side guardian closed ${daemonEvent.symbol} (${daemonEvent.direction}) @ ₹${daemonEvent.exitPrice} [${daemonEvent.exitReason}]. Net P&L: ₹${daemonEvent.realizedPnl >= 0 ? '+' : ''}${daemonEvent.realizedPnl}`,
+              type: daemonEvent.isWin ? "SUCCESS" : "WARNING",
+              timestamp: new Date().toLocaleTimeString(),
+            });
+          }
+          return;
+        }
+
         if (msg.type === "TICK") {
           console.log("TICK received", msg.data);
           const newPrices = msg.data;
@@ -391,40 +561,38 @@ export default function App() {
                 const targetProgress = peakGain / targetDist;
 
                 if (isTrendRunner) {
-                  // --- TREND RUNNER MODE: Breathing room for pullbacks + Fixed Target Lock + Extended Profit Margin ---
-                  // Activate once firmly established (>=0.40% gain, 0.7 ATR, or 40% to target)
-                  if (!pos.trailActive && (profitPct >= 0.40 || profitInATR >= 0.7 || targetProgress >= 0.40)) {
+                  // --- TREND RUNNER MODE (LONG) ---
+                  // Activate trail once solidly established (at least 0.8% gain, 1.2 ATR, or 50% towards target)
+                  if (!pos.trailActive && (profitPct >= 0.80 || profitInATR >= 1.2 || targetProgress >= 0.50)) {
                     pos.trailActive = true;
                   }
 
                   if (pos.trailActive) {
                     // When price reaches or exceeds the initial target:
                     if (realINRPrice >= initialTP) {
-                      // 1. FIXED PROFIT GUARANTEE: Lock in the full initial target price as the unbreakable stop floor!
                       const targetLockPrice = initialTP;
                       if (targetLockPrice > pos.stopLoss) {
                         pos.stopLoss = targetLockPrice;
                         changed = true;
                       }
 
-                      // 2. EXTENDED PROFIT MARGIN: Expand target to runner stage (e.g. +1.5x target distance)
+                      // Expand target to runner stage
                       const extendedTarget = initialTP + targetDist * 1.5;
                       if (pos.takeProfit < extendedTarget) {
                         pos.takeProfit = extendedTarget;
                         changed = true;
                       }
 
-                      // 3. Trail behind highest peak at 1.2 ATR distance, never falling below targetLockPrice
-                      const runnerTrailStop = Math.max(targetLockPrice, pos.highestPrice - (atr * 1.2));
+                      // Trail behind highest peak at 1.5 ATR distance, never falling below targetLockPrice
+                      const runnerTrailStop = Math.max(targetLockPrice, pos.highestPrice - (atr * 1.5));
                       if (runnerTrailStop > pos.stopLoss) {
                         pos.stopLoss = runnerTrailStop;
                         changed = true;
                       }
                     } else {
-                      // Pre-target phase: Give breathing room through structural pullback distance (1.4 ATR)
-                      // with guaranteed break-even floor once trail is active
+                      // Pre-target phase: Breathing room with break-even floor once trail is active
                       const breakevenFloor = pos.entryPrice * 1.002;
-                      const structuralTrail = pos.highestPrice - (atr * 1.4);
+                      const structuralTrail = pos.highestPrice - (atr * 1.5);
                       const dynamicStop = Math.max(breakevenFloor, structuralTrail);
 
                       if (dynamicStop > pos.stopLoss) {
@@ -434,34 +602,37 @@ export default function App() {
                     }
                   }
 
-                  // Exit Evaluation for Trend Runner
+                  // Exit Evaluation for Long Trend Runner
                   if (realINRPrice >= pos.takeProfit) {
                     hitExit = true;
                     exitReason = "TAKE_PROFIT";
-                    exitFillPrice = Math.max(realINRPrice, pos.takeProfit);
+                    exitFillPrice = realINRPrice;
                   } else if (realINRPrice <= pos.stopLoss) {
                     hitExit = true;
                     if (pos.trailActive || pos.stopLoss >= pos.entryPrice) {
                       exitReason = "TRAILING_STOP";
-                      exitFillPrice = Math.max(realINRPrice, pos.stopLoss, pos.entryPrice * 1.001);
+                      exitFillPrice = realINRPrice;
                     } else {
                       exitReason = "STOP_LOSS";
                       exitFillPrice = realINRPrice;
                     }
                   }
                 } else {
-                  // --- SCALP TIGHT MODE: Quick fixed profit / tight high-watermark lock for mean reversion ---
-                  if (!pos.trailActive && (profitPct >= 0.25 || profitInATR >= 0.5 || targetProgress >= 0.35)) {
+                  // --- SCALP MODE (LONG) ---
+                  // Require meaningful progress: at least 0.60% profit, 1.0 ATR, or 40% towards TP
+                  // to prevent cutting trades prematurely on random 0.15% bid-ask spread flickers.
+                  if (!pos.trailActive && (profitPct >= 0.60 || profitInATR >= 1.0 || targetProgress >= 0.40)) {
                     pos.trailActive = true;
                   }
 
                   if (pos.trailActive) {
-                    const breakevenFloor = pos.entryPrice * 1.002;
-                    let ratchetGain = pos.entryPrice * 0.002;
-                    if (profitInATR >= 1.5 || targetProgress >= 0.70) {
-                      ratchetGain = Math.max(ratchetGain, peakGain * 0.75);
-                    } else if (profitInATR >= 0.8 || targetProgress >= 0.45) {
-                      ratchetGain = Math.max(ratchetGain, peakGain * 0.60);
+                    // Pre-target scalp breakeven: +0.18% covers 0.10% CoinDCX round-trip fees + micro spread
+                    const breakevenFloor = pos.entryPrice * 1.0018;
+                    let ratchetGain = pos.entryPrice * 0.0018;
+                    if (profitInATR >= 1.8 || targetProgress >= 0.75) {
+                      ratchetGain = Math.max(ratchetGain, peakGain * 0.70);
+                    } else if (profitInATR >= 1.0 || targetProgress >= 0.50) {
+                      ratchetGain = Math.max(ratchetGain, peakGain * 0.50);
                     }
 
                     const dynamicStop = Math.max(breakevenFloor, pos.entryPrice + ratchetGain);
@@ -471,16 +642,16 @@ export default function App() {
                     }
                   }
 
-                  // Strict Target Exit for Scalpers
+                  // Exit Evaluation for Long Scalpers
                   if (realINRPrice >= pos.takeProfit) {
                     hitExit = true;
                     exitReason = "TAKE_PROFIT";
-                    exitFillPrice = Math.max(realINRPrice, pos.takeProfit);
+                    exitFillPrice = realINRPrice;
                   } else if (realINRPrice <= pos.stopLoss) {
                     hitExit = true;
                     if (pos.trailActive || pos.stopLoss >= pos.entryPrice) {
                       exitReason = "TRAILING_STOP";
-                      exitFillPrice = Math.max(realINRPrice, pos.stopLoss, pos.entryPrice * 1.001);
+                      exitFillPrice = realINRPrice;
                     } else {
                       exitReason = "STOP_LOSS";
                       exitFillPrice = realINRPrice;
@@ -499,28 +670,28 @@ export default function App() {
 
                 if (isTrendRunner) {
                   // --- TREND RUNNER MODE (SHORT) ---
-                  if (!pos.trailActive && (profitPct >= 0.40 || profitInATR >= 0.7 || targetProgress >= 0.40)) {
+                  // Activate trail once solidly established (at least 0.8% gain, 1.2 ATR, or 50% towards target)
+                  if (!pos.trailActive && (profitPct >= 0.80 || profitInATR >= 1.2 || targetProgress >= 0.50)) {
                     pos.trailActive = true;
                   }
 
                   if (pos.trailActive) {
                     if (realINRPrice <= initialTP) {
-                      // 1. FIXED PROFIT GUARANTEE: Lock in full target price as unbreakable stop ceiling
                       const targetLockPrice = initialTP;
                       if (targetLockPrice < pos.stopLoss) {
                         pos.stopLoss = targetLockPrice;
                         changed = true;
                       }
 
-                      // 2. EXTENDED PROFIT MARGIN: Expand target to runner stage
+                      // Expand target to runner stage
                       const extendedTarget = initialTP - targetDist * 1.5;
                       if (pos.takeProfit > extendedTarget) {
                         pos.takeProfit = extendedTarget;
                         changed = true;
                       }
 
-                      // 3. Trail behind lowest trough at 1.2 ATR distance, never rising above targetLockPrice
-                      const runnerTrailStop = Math.min(targetLockPrice, pos.lowestPrice + (atr * 1.2));
+                      // Trail behind lowest trough at 1.5 ATR distance, never rising above targetLockPrice
+                      const runnerTrailStop = Math.min(targetLockPrice, pos.lowestPrice + (atr * 1.5));
                       if (runnerTrailStop < pos.stopLoss) {
                         pos.stopLoss = runnerTrailStop;
                         changed = true;
@@ -528,7 +699,7 @@ export default function App() {
                     } else {
                       // Pre-target phase: Breathing room for structural trend pullbacks
                       const breakevenCeiling = pos.entryPrice * 0.998;
-                      const structuralTrail = pos.lowestPrice + (atr * 1.4);
+                      const structuralTrail = pos.lowestPrice + (atr * 1.5);
                       const dynamicStop = Math.min(breakevenCeiling, structuralTrail);
 
                       if (dynamicStop < pos.stopLoss) {
@@ -542,30 +713,33 @@ export default function App() {
                   if (realINRPrice <= pos.takeProfit) {
                     hitExit = true;
                     exitReason = "TAKE_PROFIT";
-                    exitFillPrice = Math.min(realINRPrice, pos.takeProfit);
+                    exitFillPrice = realINRPrice;
                   } else if (realINRPrice >= pos.stopLoss) {
                     hitExit = true;
                     if (pos.trailActive || pos.stopLoss <= pos.entryPrice) {
                       exitReason = "TRAILING_STOP";
-                      exitFillPrice = Math.min(realINRPrice, pos.stopLoss, pos.entryPrice * 0.999);
+                      exitFillPrice = realINRPrice;
                     } else {
                       exitReason = "STOP_LOSS";
                       exitFillPrice = realINRPrice;
                     }
                   }
                 } else {
-                  // --- SCALP TIGHT MODE (SHORT) ---
-                  if (!pos.trailActive && (profitPct >= 0.25 || profitInATR >= 0.5 || targetProgress >= 0.35)) {
+                  // --- SCALP MODE (SHORT) ---
+                  // Require meaningful progress: at least 0.60% profit, 1.0 ATR, or 40% towards TP
+                  // to prevent closing short positions on micro 0.05-paise noise.
+                  if (!pos.trailActive && (profitPct >= 0.60 || profitInATR >= 1.0 || targetProgress >= 0.40)) {
                     pos.trailActive = true;
                   }
 
                   if (pos.trailActive) {
-                    const breakevenCeiling = pos.entryPrice * 0.998;
-                    let ratchetGain = pos.entryPrice * 0.002;
-                    if (profitInATR >= 1.5 || targetProgress >= 0.70) {
-                      ratchetGain = Math.max(ratchetGain, peakGain * 0.75);
-                    } else if (profitInATR >= 0.8 || targetProgress >= 0.45) {
-                      ratchetGain = Math.max(ratchetGain, peakGain * 0.60);
+                    // Pre-target scalp breakeven ceiling: -0.18% covers 0.10% CoinDCX round-trip fees + micro spread
+                    const breakevenCeiling = pos.entryPrice * 0.9982;
+                    let ratchetGain = pos.entryPrice * 0.0018;
+                    if (profitInATR >= 1.8 || targetProgress >= 0.75) {
+                      ratchetGain = Math.max(ratchetGain, peakGain * 0.70);
+                    } else if (profitInATR >= 1.0 || targetProgress >= 0.50) {
+                      ratchetGain = Math.max(ratchetGain, peakGain * 0.50);
                     }
 
                     const dynamicStop = Math.min(breakevenCeiling, pos.entryPrice - ratchetGain);
@@ -575,16 +749,16 @@ export default function App() {
                     }
                   }
 
-                  // Strict Target Exit for Short Scalpers
+                  // Exit Evaluation for Short Scalpers
                   if (realINRPrice <= pos.takeProfit) {
                     hitExit = true;
                     exitReason = "TAKE_PROFIT";
-                    exitFillPrice = Math.min(realINRPrice, pos.takeProfit);
+                    exitFillPrice = realINRPrice;
                   } else if (realINRPrice >= pos.stopLoss) {
                     hitExit = true;
                     if (pos.trailActive || pos.stopLoss <= pos.entryPrice) {
                       exitReason = "TRAILING_STOP";
-                      exitFillPrice = Math.min(realINRPrice, pos.stopLoss, pos.entryPrice * 0.999);
+                      exitFillPrice = realINRPrice;
                     } else {
                       exitReason = "STOP_LOSS";
                       exitFillPrice = realINRPrice;
@@ -696,6 +870,164 @@ export default function App() {
     saveStoredClosedTrades(closedTrades);
   }, [closedTrades]);
 
+  // ==========================================
+  // SERVER DAEMON SYNC & WEB WORKER BACKGROUND TIMER
+  // ==========================================
+
+  // 1. Sync active positions to Server Daemon whenever positions change
+  useEffect(() => {
+    const syncWithServerDaemon = async () => {
+      try {
+        const res = await fetch("/api/daemon/sync-positions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ positions: activePositions }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // If server daemon rejected resurrections (already closed by guardian), remove them from client active positions
+          if (data.rejectedResurrections && data.rejectedResurrections.length > 0) {
+            const rejectedSet = new Set(data.rejectedResurrections);
+            setActivePositions((prev) => prev.filter((p) => !rejectedSet.has(p.id)));
+          }
+        }
+      } catch (err) {
+        console.warn("[DaemonSync] Failed to sync positions to server:", err);
+      }
+    };
+    syncWithServerDaemon();
+  }, [activePositions]);
+
+  // 2. Poll server daemon for closed trade events that happened while tab was asleep or backgrounded
+  useEffect(() => {
+    let lastCheckedTime = 0;
+    try {
+      const stored = localStorage.getItem("nexus_last_daemon_poll");
+      if (stored) lastCheckedTime = Number(stored) || 0;
+    } catch {}
+
+    const reconcileServerCloses = async () => {
+      try {
+        const res = await fetch(`/api/daemon/closed-events?since=${lastCheckedTime}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        lastCheckedTime = Date.now();
+        try {
+          localStorage.setItem("nexus_last_daemon_poll", String(lastCheckedTime));
+        } catch {}
+
+        // If local active positions are empty on initial mount, but daemon restored positions from crash recovery, restore them to UI
+        if (data.activePositions && data.activePositions.length > 0) {
+          setActivePositions((prev) => {
+            if (prev.length === 0) {
+              return data.activePositions;
+            }
+            return prev;
+          });
+        }
+
+        if (data.events && data.events.length > 0) {
+          for (const ev of data.events) {
+            setActivePositions((prev) => prev.filter((p) => p.id !== ev.positionId));
+            setClosedTrades((prev) => {
+              if (prev.some((t) => t.id === ev.id || (t as any).positionId === ev.positionId)) return prev;
+              const newTrade: HistoricalTrade = {
+                id: ev.id,
+                positionId: ev.positionId,
+                symbol: ev.symbol,
+                direction: ev.direction,
+                setupName: ev.setupName || "Statistical Trailing System",
+                entryPrice: ev.entryPrice,
+                exitPrice: ev.exitPrice,
+                quantity: ev.quantity,
+                moneyPlaced: ev.moneyPlaced,
+                grossPnl: ev.grossPnl,
+                feesPaid: ev.feesPaid,
+                realizedPnl: ev.realizedPnl,
+                realizedPnlPercent: ev.realizedPnlPercent,
+                isWin: ev.isWin,
+                exitReason: ev.exitReason,
+                closedAt: ev.closedAt,
+                openedAt: ev.openedAt,
+                holdingDurationMinutes: ev.holdingDurationMinutes,
+                isSelfApproved: true,
+              };
+              return [newTrade, ...prev];
+            });
+
+            setEquity((prev) => Number((prev + ev.realizedPnl).toFixed(2)));
+            setCash((prev) => Number((prev + ev.moneyPlaced + ev.realizedPnl).toFixed(2)));
+            setDailyRealizedPnl((prev) => Number((prev + ev.realizedPnl).toFixed(2)));
+          }
+        }
+      } catch (err) {
+        console.warn("[DaemonSync] Error reconciling daemon events:", err);
+      }
+    };
+
+    // Check immediately on mount, on window focus (waking up), and every 10s
+    reconcileServerCloses();
+    const reconcileInterval = setInterval(reconcileServerCloses, 10000);
+    window.addEventListener("focus", reconcileServerCloses);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reconcileServerCloses();
+    });
+
+    return () => {
+      clearInterval(reconcileInterval);
+      window.removeEventListener("focus", reconcileServerCloses);
+    };
+  }, []);
+
+  // 3. Web Worker un-throttled background heartbeat
+  useEffect(() => {
+    let worker: Worker | null = null;
+    try {
+      worker = new Worker(new URL("./workers/ticker.worker.ts", import.meta.url), { type: "module" });
+      worker.postMessage({ command: "START" });
+
+      worker.onmessage = (e) => {
+        if (e.data?.type === "TICK") {
+          // Re-evaluate pending state without OS throttling
+        }
+      };
+    } catch (e) {
+      console.warn("Web Worker background timer not supported:", e);
+    }
+
+    return () => {
+      if (worker) {
+        worker.postMessage({ command: "STOP" });
+        worker.terminate();
+      }
+    };
+  }, []);
+
+  // 4. Screen Wake Lock API (keeps mobile / laptop awake while monitoring active positions)
+  useEffect(() => {
+    let wakeLock: any = null;
+    const requestWakeLock = async () => {
+      try {
+        if ("wakeLock" in navigator && activePositions.length > 0) {
+          wakeLock = await (navigator as any).wakeLock.request("screen");
+        }
+      } catch (err) {
+        console.debug("Wake lock could not be acquired:", err);
+      }
+    };
+
+    if (activePositions.length > 0) {
+      requestWakeLock();
+    } else if (wakeLock) {
+      wakeLock.release().catch(() => {});
+      wakeLock = null;
+    }
+
+    return () => {
+      if (wakeLock) wakeLock.release().catch(() => {});
+    };
+  }, [activePositions.length]);
+
   // Models State for Lab
   const { champion: initialChampion, challenger: initialChallenger } = useMemo(
     () => getBaselineModels(),
@@ -741,6 +1073,35 @@ export default function App() {
     simulateOrderBookThinLiquidity: false,
     simulateConflictingSignals: false,
   });
+
+  const currentRiskCalculation = useMemo<RiskCalculation>(() => {
+    const isLive = tradingMode === "LIVE_COINDCX";
+    const effectiveEquity = isLive && coinDcxBalance.totalInr > 0 ? coinDcxBalance.totalInr : equity;
+    const currentExposure = activePositions.reduce((acc, p) => acc + (p.entryPrice * p.quantity), 0);
+    const exposureFraction = effectiveEquity > 0 ? currentExposure / effectiveEquity : 0;
+    const passed = !killSwitchActive && !failureState.globalKillSwitchActive && dailyRealizedPnl > -DEFAULT_RISK_POLICY.hardDailyLossLimit;
+
+    return {
+      equity: effectiveEquity,
+      maxRiskPerTradeFraction: DEFAULT_RISK_POLICY.maxRiskFraction,
+      hardDailyLossLimit: DEFAULT_RISK_POLICY.hardDailyLossLimit,
+      currentDailyLoss: Math.abs(Math.min(0, dailyRealizedPnl)),
+      portfolioExposureFraction: exposureFraction,
+      maxAllowedExposureFraction: DEFAULT_RISK_POLICY.maxAllowedExposureFraction,
+      openPositionCount: activePositions.length,
+      maxSimultaneousPositions: DEFAULT_RISK_POLICY.maxSimultaneousPositions,
+      fractionalKellyFraction: 0.25,
+      recommendedPositionSizeUnits: 0,
+      recommendedDollarExposure: 0,
+      riskDollars: effectiveEquity * DEFAULT_RISK_POLICY.maxRiskFraction,
+      passedAllChecks: passed,
+      rejectionReason: !passed
+        ? (killSwitchActive || failureState.globalKillSwitchActive)
+          ? "Global Kill Switch Active"
+          : "Daily Loss Limit Exceeded"
+        : undefined,
+    };
+  }, [tradingMode, coinDcxBalance.totalInr, equity, activePositions, killSwitchActive, failureState.globalKillSwitchActive, dailyRealizedPnl]);
 
   // Trade Proposal Queue matching Screenshot 4 & 6
   const [proposalQueue, setProposalQueue] = useState<TradeProposal[]>([]);
@@ -843,8 +1204,21 @@ export default function App() {
       const diff = isLong
         ? exitPrice - pos.entryPrice
         : pos.entryPrice - exitPrice;
-      const finalPnl = Number((diff * pos.quantity).toFixed(2));
-      const pnlPercent = Number(((diff / pos.entryPrice) * 100).toFixed(2));
+      const rawGrossPnl = Number((diff * pos.quantity).toFixed(2));
+
+      // CoinDCX INR-Margin Futures Fee calculation:
+      // 0.02% maker / 0.05% taker, applied to both open (entry notional) and close (exit notional).
+      // Standard market/stop exits are takers (0.05%); limit take-profits are makers (0.02%).
+      // Entry orders submitted by autopilot / human market tickets are takers (0.05%).
+      const entryNotional = pos.entryPrice * pos.quantity;
+      const exitNotional = exitPrice * pos.quantity;
+      const isCloseMaker = reason === "TAKE_PROFIT";
+      const openFeeRate = 0.0005; // 0.05% taker on entry
+      const closeFeeRate = isCloseMaker ? 0.0002 : 0.0005; // 0.02% maker if limit TP, 0.05% taker if stop/market
+      const totalFeesPaid = Number((entryNotional * openFeeRate + exitNotional * closeFeeRate).toFixed(2));
+
+      const finalPnl = Number((rawGrossPnl - totalFeesPaid).toFixed(2));
+      const pnlPercent = Number(((finalPnl / entryNotional) * 100).toFixed(2));
       const isWin = finalPnl >= 0;
 
       // Remove from active positions & update capital
@@ -854,8 +1228,40 @@ export default function App() {
       setEquity((prev) => Number((prev + finalPnl).toFixed(2)));
       setCash((prev) => Number((prev + finalPnl).toFixed(2)));
 
+      // If position was a live order on CoinDCX, dispatch the exit order to the exchange
+      if (pos.isLiveOrder) {
+        fetch("/api/execute-trade", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(coinDcxKeys.apiKey ? { "x-coindcx-apikey": coinDcxKeys.apiKey } : {}),
+            ...(coinDcxKeys.apiSecret ? { "x-coindcx-apisecret": coinDcxKeys.apiSecret } : {}),
+          },
+          body: JSON.stringify({
+            symbol: pos.symbol,
+            side: pos.direction === "LONG" ? "SHORT" : "LONG",
+            quantity: pos.quantity,
+            price: exitPrice,
+            orderType: "MARKET",
+            isPaperTrade: false,
+            confirmLiveOrder: true,
+            apiKey: coinDcxKeys.apiKey,
+            apiSecret: coinDcxKeys.apiSecret,
+          }),
+        })
+          .then((res) => res.json())
+          .then((exitData) => {
+            if (exitData.success) {
+              fetchCoinDcxBalance();
+            }
+          })
+          .catch((err) => {
+            console.error("Failed to dispatch live exit order to CoinDCX:", err);
+          });
+      }
+
       // Audio & Alert notification
-      if (reason === "TAKE_PROFIT" || reason === "TRAILING_STOP" || isWin) {
+      if (isWin) {
         playProfitTargetSound();
         const alertTitle =
           reason === "TRAILING_STOP"
@@ -868,7 +1274,11 @@ export default function App() {
         });
       } else {
         playStopLossSound();
-        if (reason === "STOP_LOSS") {
+        if (reason === "TRAILING_STOP") {
+          sendAlertNotification(`■ [Nexus Desk] Trailing Stop Hit: ${pos.symbol}`, {
+            body: `${pos.direction} stopped at ₹${exitPrice.toFixed(2)} (-₹${Math.abs(finalPnl).toFixed(2)} net after fees). Capital protected at breakeven.`,
+          });
+        } else if (reason === "STOP_LOSS") {
           sendAlertNotification(`■ [Nexus Desk] Stop-Loss Hit: ${pos.symbol}`, {
             body: `${pos.direction} stopped at ₹${exitPrice.toFixed(2)} (-₹${Math.abs(finalPnl).toFixed(2)}). Capital safeguarded.`,
           });
@@ -886,7 +1296,9 @@ export default function App() {
           reason === "TAKE_PROFIT"
             ? `Target Hit: ${pos.symbol} (+₹${finalPnl.toFixed(2)})`
             : reason === "TRAILING_STOP"
-            ? `Trailing Profit Captured: ${pos.symbol} (+₹${finalPnl.toFixed(2)})`
+            ? isWin
+              ? `Trailing Profit Captured: ${pos.symbol} (+₹${finalPnl.toFixed(2)})`
+              : `Trailing Breakeven Stop: ${pos.symbol} (-₹${Math.abs(finalPnl).toFixed(2)})`
             : reason === "STOP_LOSS"
             ? `Stop-Loss Executed: ${pos.symbol} (-₹${Math.abs(finalPnl).toFixed(2)})`
             : reason === "EXPIRY_TIME"
@@ -940,6 +1352,8 @@ export default function App() {
         exitPrice,
         quantity: pos.quantity,
         moneyPlaced,
+        grossPnl: rawGrossPnl,
+        feesPaid: totalFeesPaid,
         realizedPnl: finalPnl,
         realizedPnlPercent: pnlPercent,
         isWin,
@@ -954,9 +1368,10 @@ export default function App() {
 
       setClosedTrades((prev) => [newHistoricalTrade, ...prev]);
 
-      // Per-Symbol Quarantine Check:
-      // If a trade closes with a loss (or 3 consecutive losses for this symbol),
-      // quarantine the symbol for 2 hours (120 minutes) to prevent immediate churn and repeat losses.
+      // Per-Symbol Cooldown & Quarantine:
+      // 1. If a trade closes with a loss (or 3 consecutive losses), embargo for 120 minutes.
+      // 2. If a trade closes with a win or break-even, impose a mandatory 15-minute re-entry cooldown
+      // to eliminate rapid churn on the same asset.
       if (!isWin) {
         const symbolClosedTrades = [newHistoricalTrade, ...closedTradesRef.current.filter((t) => t.symbol === pos.symbol)];
         const consecutiveSymbolLosses = symbolClosedTrades.slice(0, 3).filter((t) => !t.isWin).length;
@@ -1005,6 +1420,21 @@ export default function App() {
             body: "3 consecutive losses detected. Autopilot self-approval disabled. Manual intervention required.",
           });
         }
+      } else {
+        // 5-minute cooldown (1 full 5m bar) following a win/exit to prevent immediate micro-churn
+        // while allowing the bot to catch continuation legs in strong trends.
+        const winCooldownMs = 5 * 60 * 1000;
+        const quarantinedUntilMs = Date.now() + winCooldownMs;
+        setSymbolQuarantines((prev) => ({
+          ...prev,
+          [pos.symbol]: {
+            symbol: pos.symbol,
+            quarantinedUntilMs,
+            quarantineReason: `Post-trade cooldown on ${pos.symbol} (5m pause)`,
+            consecutiveLosses: 0,
+            lastLossTimestamp: new Date().toISOString(),
+          },
+        }));
       }
 
       // Update self-approval learning statistics
@@ -1150,6 +1580,22 @@ export default function App() {
         proposal.setup.family === "breakout_confirmation" ||
         proposal.setup.horizon === "swing";
 
+      const isLiveExecution = tradingMode === "LIVE_COINDCX";
+
+      // If in live mode, ensure we have credentials configured
+      if (isLiveExecution && (!coinDcxKeys.apiKey || !coinDcxKeys.apiSecret)) {
+        inFlightProposalIds.current.delete(proposal.id);
+        setExecutionToast({
+          id: `toast-${Date.now()}`,
+          title: "CoinDCX API Credentials Required",
+          message:
+            "Live exchange routing requires an API Key and Secret. Configure your credentials in the Risk & Safety Console.",
+          type: "WARNING",
+          timestamp: new Date().toLocaleTimeString(),
+        });
+        return;
+      }
+
       const newPosition: Position = {
         id: `pos-${Date.now().toString().slice(-6)}`,
         symbol: proposal.symbol,
@@ -1174,7 +1620,60 @@ export default function App() {
         family: proposal.setup.family,
         horizon: proposal.setup.horizon,
         trailMode: isTrendOrSwing ? "TREND_RUNNER" : "SCALP_TIGHT",
+        isLiveOrder: isLiveExecution,
       };
+
+      // Dispatch order to backend (either simulated paper with slippage or live CoinDCX HMAC order)
+      fetch("/api/execute-trade", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(coinDcxKeys.apiKey ? { "x-coindcx-apikey": coinDcxKeys.apiKey } : {}),
+          ...(coinDcxKeys.apiSecret ? { "x-coindcx-apisecret": coinDcxKeys.apiSecret } : {}),
+        },
+        body: JSON.stringify({
+          symbol: proposal.symbol,
+          side: proposal.setup.direction,
+          quantity: units,
+          price: proposal.setup.entryPrice,
+          orderType: "MARKET",
+          isPaperTrade: !isLiveExecution,
+          confirmLiveOrder: isLiveExecution,
+          apiKey: coinDcxKeys.apiKey,
+          apiSecret: coinDcxKeys.apiSecret,
+        }),
+      })
+        .then((res) => res.json())
+        .then((tradeData) => {
+          if (isLiveExecution) {
+            if (tradeData.success) {
+              if (tradeData.orderId) {
+                setActivePositions((prev) =>
+                  prev.map((p) =>
+                    p.id === newPosition.id
+                      ? { ...p, exchangeOrderId: tradeData.orderId }
+                      : p
+                  )
+                );
+              }
+              // Immediately fetch updated account balances
+              fetchCoinDcxBalance();
+            } else {
+              // Rollback local position if rejected by CoinDCX
+              setActivePositions((prev) => prev.filter((p) => p.id !== newPosition.id));
+              setExecutionToast({
+                id: `toast-${Date.now()}`,
+                title: "❌ CoinDCX Live Order Rejected",
+                message: tradeData.error || "Order rejected by exchange.",
+                type: "WARNING",
+                timestamp: new Date().toLocaleTimeString(),
+              });
+            }
+          }
+        })
+        .catch((err) => {
+          console.error("Order dispatch error:", err);
+        });
 
       // Add to active positions
       setActivePositions((prev) => [newPosition, ...prev]);
@@ -1233,7 +1732,7 @@ export default function App() {
         setActiveTab("book");
       }
     },
-    [killSwitchActive, userRole, logSecurityAudit]
+    [killSwitchActive, userRole, logSecurityAudit, tradingMode, coinDcxKeys, fetchCoinDcxBalance]
   );
 
   // Batch Auto-Approval Engine:
@@ -1830,6 +2329,10 @@ export default function App() {
         backgroundStatus={backgroundStatus}
         isPlaying={isPlaying}
         onOpenBackgroundModal={() => setIsBackgroundModalOpen(true)}
+        tradingMode={tradingMode}
+        onToggleTradingMode={handleToggleTradingMode}
+        coinDcxBalance={coinDcxBalance}
+        onRefreshCoinDcxBalance={fetchCoinDcxBalance}
       />
 
       {/* Main Content Area */}
@@ -1953,6 +2456,28 @@ export default function App() {
                 timestamp: new Date().toLocaleTimeString(),
               });
             }}
+            tradingMode={tradingMode}
+            onToggleTradingMode={handleToggleTradingMode}
+            coinDcxBalance={coinDcxBalance}
+            coinDcxKeys={coinDcxKeys}
+            onSaveCoinDcxKeys={handleSaveCoinDcxKeys}
+            onRefreshBalance={fetchCoinDcxBalance}
+            riskCalc={currentRiskCalculation}
+            failureState={failureState}
+            onUpdateFailureState={(key, val) =>
+              setFailureState((prev) => ({ ...prev, [key]: val }))
+            }
+            onResetFailures={() =>
+              setFailureState({
+                globalKillSwitchActive: false,
+                simulateAgentTimeout: false,
+                simulateStaleMarketData: false,
+                simulateDailyLossBreach: false,
+                simulateOrderBookThinLiquidity: false,
+                simulateConflictingSignals: false,
+              })
+            }
+            toggleKillSwitch={handleToggleKillSwitch}
           />
         )}
 

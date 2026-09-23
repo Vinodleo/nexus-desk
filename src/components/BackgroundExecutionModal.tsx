@@ -119,7 +119,7 @@ export const BackgroundExecutionModal: React.FC<BackgroundExecutionModalProps> =
 
           <div className="flex items-center justify-between pt-1">
             <p className="text-xs text-stone-300 font-sans leading-relaxed">
-              When enabled, a background Web Worker continuously drives market bars, radar scanning, position stop-losses, and autonomous limit order approvals.
+              When enabled, a background Web Worker continuously drives market bars, radar scanning, position stop-losses, and autonomous limit order approvals without OS timer throttling.
             </p>
             <button
               onClick={onTogglePlay}
@@ -132,6 +132,34 @@ export const BackgroundExecutionModal: React.FC<BackgroundExecutionModalProps> =
               <Power className="w-3.5 h-3.5" />
               <span>{isPlaying ? 'Pause Desk' : 'Start Desk'}</span>
             </button>
+          </div>
+        </div>
+
+        {/* Server-Side Position Guardian (24/7 Cloud Daemon & Crash Recovery) */}
+        <div className="p-4 rounded-xl bg-[#0d1726] border border-cyan-800/60 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
+                Server-Side 24/7 Position Guardian
+              </span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full bg-cyan-950 border border-cyan-700 text-cyan-300 text-[10px] font-mono flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />
+              SERVER DAEMON ACTIVE
+            </span>
+          </div>
+          <p className="text-xs text-stone-300 font-sans leading-relaxed">
+            Your open positions are mirrored to the Node.js server daemon. The daemon continuously evaluates CoinDCX live ticks against trailing stops, take-profit, stop-loss, and max holding times even if this browser tab is completely closed or your phone loses internet connection.
+          </p>
+          <div className="pt-1 border-t border-cyan-900/50 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-cyan-400/90">
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>Crash Recovery: Atomic Disk Store Active</span>
+            </span>
+            <span className="text-stone-400">
+              State Flushed on Ratchet & Restart
+            </span>
           </div>
         </div>
 

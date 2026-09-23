@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from "react";
-import { Position, HistoricalTrade } from "../types";
+import { Position, HistoricalTrade, TradingExecutionMode, CoinDcxAccountBalance, RiskCalculation, FailureInjectionState } from "../types";
 
 import { TradeAutopsyCard } from "./TradeAutopsyCard";
+import { RiskAndSafetyConsole } from "./RiskAndSafetyConsole";
 import {
   ArrowUpRight,
   ArrowDownRight,
@@ -17,6 +18,8 @@ import {
   CheckCircle2,
   AlertOctagon,
   Percent,
+  Zap,
+  Sliders,
 } from "lucide-react";
 
 interface BookTabProps {
@@ -27,6 +30,17 @@ interface BookTabProps {
   onSelectPosition?: (symbol: string) => void;
   onResetTradesToBaseline?: () => void;
   onUpdateTrade?: (trade: HistoricalTrade) => void;
+  tradingMode?: TradingExecutionMode;
+  onToggleTradingMode?: (mode: TradingExecutionMode) => void;
+  coinDcxBalance?: CoinDcxAccountBalance;
+  coinDcxKeys?: { apiKey: string; apiSecret: string };
+  onSaveCoinDcxKeys?: (keys: { apiKey: string; apiSecret: string }) => Promise<void>;
+  onRefreshBalance?: () => Promise<any>;
+  riskCalc?: RiskCalculation;
+  failureState?: FailureInjectionState;
+  onUpdateFailureState?: (key: keyof FailureInjectionState, val: boolean) => void;
+  onResetFailures?: () => void;
+  toggleKillSwitch?: () => void;
 }
 
 export const BookTab: React.FC<BookTabProps> = ({
@@ -37,8 +51,19 @@ export const BookTab: React.FC<BookTabProps> = ({
   onSelectPosition,
   onResetTradesToBaseline,
   onUpdateTrade,
+  tradingMode = "PAPER",
+  onToggleTradingMode,
+  coinDcxBalance,
+  coinDcxKeys,
+  onSaveCoinDcxKeys,
+  onRefreshBalance,
+  riskCalc,
+  failureState,
+  onUpdateFailureState,
+  onResetFailures,
+  toggleKillSwitch,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<"all" | "open" | "closed">("all");
+  const [activeSubTab, setActiveSubTab] = useState<"all" | "open" | "closed" | "risk">("all");
   const [closedFilter, setClosedFilter] = useState<"ALL" | "WINS" | "LOSSES">("ALL");
 
   // Open positions calculation
@@ -164,8 +189,83 @@ export const BookTab: React.FC<BookTabProps> = ({
             <History className="w-3.5 h-3.5" />
             <span>Latest Trades ({totalClosedTrades})</span>
           </button>
+          <button
+            onClick={() => setActiveSubTab("risk")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium font-mono transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeSubTab === "risk"
+                ? "bg-amber-600/30 text-amber-200 shadow-sm border border-amber-500/50"
+                : "text-stone-400 hover:text-stone-200"
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+            <span>Risk & Exchange</span>
+          </button>
         </div>
+
+        {/* Quick Mode Toggle in Book tab */}
+        {onToggleTradingMode && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onToggleTradingMode(tradingMode === "PAPER" ? "LIVE_COINDCX" : "PAPER")}
+              className={`px-2.5 py-1 rounded-md text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                tradingMode === "LIVE_COINDCX"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/50 hover:bg-amber-500/30"
+                  : "bg-emerald-950/60 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-900/50"
+              }`}
+              title="Click to toggle Paper Simulation vs Live CoinDCX Exchange"
+            >
+              {tradingMode === "LIVE_COINDCX" ? (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                  <span>LIVE COINDCX</span>
+                </>
+              ) : (
+                <>
+                  <span>🛡️ PAPER</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* RISK & EXCHANGE CONSOLE SECTION */}
+      {activeSubTab === "risk" && (
+        <section className="space-y-4">
+          <RiskAndSafetyConsole
+            riskCalc={riskCalc || {
+              equity: 2500000,
+              maxRiskPerTradeFraction: 0.01,
+              hardDailyLossLimit: 26000,
+              currentDailyLoss: 0,
+              portfolioExposureFraction: 0,
+              maxAllowedExposureFraction: 0.15,
+              openPositionCount: positions.length,
+              maxSimultaneousPositions: maxPositions,
+              fractionalKellyFraction: 0.25,
+              recommendedPositionSizeUnits: 0,
+              recommendedDollarExposure: 0,
+              riskDollars: 0,
+              passedAllChecks: true,
+            }}
+            failureState={failureState || {
+              simulateStaleMarketData: false,
+              simulateDailyLossBreach: false,
+              simulateOrderBookThinLiquidity: false,
+              globalKillSwitchActive: false,
+            }}
+            onUpdateFailureState={onUpdateFailureState || (() => {})}
+            onResetFailures={onResetFailures || (() => {})}
+            toggleKillSwitch={toggleKillSwitch || (() => {})}
+            tradingMode={tradingMode}
+            onToggleTradingMode={onToggleTradingMode}
+            coinDcxBalance={coinDcxBalance}
+            coinDcxKeys={coinDcxKeys}
+            onSaveCoinDcxKeys={onSaveCoinDcxKeys}
+            onRefreshBalance={onRefreshBalance}
+          />
+        </section>
+      )}
 
       {/* 1. OPEN POSITIONS SECTION */}
       {(activeSubTab === "all" || activeSubTab === "open") && (
@@ -233,6 +333,16 @@ export const BookTab: React.FC<BookTabProps> = ({
                         <span className="text-xs font-mono text-stone-400">
                           {pos.setupName}
                         </span>
+                        {pos.isLiveOrder ? (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[9px] font-mono flex items-center gap-1 font-semibold">
+                            <Zap className="w-2.5 h-2.5" />
+                            LIVE COINDCX
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40 text-emerald-300 text-[9px] font-mono">
+                            PAPER
+                          </span>
+                        )}
                         {pos.isSelfApproved && (
                           <span className="px-1.5 py-0.5 rounded bg-blue-950/60 border border-blue-800/50 text-blue-300 text-[9px] font-mono flex items-center gap-1">
                             <Sparkles className="w-2.5 h-2.5" />
@@ -494,16 +604,43 @@ export const BookTab: React.FC<BookTabProps> = ({
               {filteredClosedTrades.map((trade) => {
                 const isLong = trade.direction === "LONG";
                 const isWin = trade.isWin || trade.realizedPnl >= 0;
+                const isBreakeven =
+                  !isWin &&
+                  (trade.exitReason === "TRAILING_STOP" ||
+                    Math.abs(trade.entryPrice - trade.exitPrice) / (trade.entryPrice || 1) < 0.002);
+
                 const exitReasonLabel =
                   trade.exitReason === "TAKE_PROFIT"
                     ? "Target Hit"
                     : trade.exitReason === "TRAILING_STOP"
-                    ? "Trailing Profit Locked"
+                    ? isWin
+                      ? "Trailing Profit Locked"
+                      : isBreakeven
+                      ? "Breakeven Stop"
+                      : "Trailing Stop Hit"
                     : trade.exitReason === "STOP_LOSS"
                     ? "Stop-Loss Hit"
                     : trade.exitReason === "EXPIRY_TIME"
                     ? "Time Horizon"
                     : "Manual Exit";
+
+                // Precise holding duration calculation
+                let displayHoldingTime = "1 min";
+                if (typeof trade.holdingDurationMinutes === "number" && trade.holdingDurationMinutes > 0) {
+                  displayHoldingTime = trade.holdingDurationMinutes === 1 ? "1 min" : `${trade.holdingDurationMinutes} mins`;
+                } else if (trade.openedAt && trade.closedAt) {
+                  const openMs = new Date(trade.openedAt).getTime();
+                  const closeMs = new Date(trade.closedAt).getTime();
+                  if (!isNaN(openMs) && !isNaN(closeMs) && closeMs >= openMs) {
+                    const diffSec = Math.round((closeMs - openMs) / 1000);
+                    if (diffSec < 60) {
+                      displayHoldingTime = "< 1 min";
+                    } else {
+                      const mins = Math.round(diffSec / 60);
+                      displayHoldingTime = mins === 1 ? "1 min" : `${mins} mins`;
+                    }
+                  }
+                }
 
                 return (
                   <div
@@ -541,6 +678,8 @@ export const BookTab: React.FC<BookTabProps> = ({
                           className={`px-2 py-0.5 rounded text-[10px] font-mono font-medium ${
                             isWin
                               ? "bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"
+                              : isBreakeven
+                              ? "bg-amber-950/70 text-amber-300 border border-amber-800/60"
                               : "bg-rose-950/70 text-rose-300 border border-rose-800/60"
                           }`}
                         >
@@ -579,31 +718,45 @@ export const BookTab: React.FC<BookTabProps> = ({
                         </div>
                       </div>
 
-                      {/* Block 2: PROFIT EARNED IF WON or MONEY LOST IF LOSS */}
+                      {/* Block 2: PROFIT EARNED IF WON or MONEY LOST IF LOSS / BREAKEVEN */}
                       <div
                         className={`rounded-xl border p-3 flex flex-col justify-between ${
                           isWin
                             ? "bg-emerald-950/30 border-emerald-800/60"
+                            : isBreakeven
+                            ? "bg-amber-950/25 border-amber-800/50"
                             : "bg-rose-950/30 border-rose-800/60"
                         }`}
                       >
                         <div className="flex items-center justify-between">
                           <span
                             className={`text-[10px] font-mono uppercase tracking-wider font-semibold flex items-center gap-1.5 ${
-                              isWin ? "text-emerald-300" : "text-rose-300"
+                              isWin
+                                ? "text-emerald-300"
+                                : isBreakeven
+                                ? "text-amber-300"
+                                : "text-rose-300"
                             }`}
                           >
                             {isWin ? (
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : isBreakeven ? (
+                              <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
                             ) : (
                               <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
                             )}
-                            {isWin ? "Amount Won" : "Money Lost"}
+                            {isWin
+                              ? "Amount Won"
+                              : isBreakeven
+                              ? "Capital Protected"
+                              : "Money Lost"}
                           </span>
                           <span
                             className={`text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded ${
                               isWin
                                 ? "bg-emerald-900/60 text-emerald-300"
+                                : isBreakeven
+                                ? "bg-amber-900/60 text-amber-300"
                                 : "bg-rose-900/60 text-rose-300"
                             }`}
                           >
@@ -612,10 +765,14 @@ export const BookTab: React.FC<BookTabProps> = ({
                           </span>
                         </div>
 
-                        <div className="my-1.5">
+                        <div className="my-1.5 flex items-baseline justify-between">
                           <div
                             className={`text-lg font-mono font-bold tracking-tight ${
-                              isWin ? "text-emerald-400" : "text-rose-400"
+                              isWin
+                                ? "text-emerald-400"
+                                : isBreakeven
+                                ? "text-amber-300"
+                                : "text-rose-400"
                             }`}
                           >
                             {isWin ? "+" : "-"}₹
@@ -624,20 +781,31 @@ export const BookTab: React.FC<BookTabProps> = ({
                               maximumFractionDigits: 2,
                             })}
                           </div>
+                          {trade.feesPaid !== undefined && (
+                            <span className="text-[10px] font-mono text-stone-500">
+                              (Fee: ₹{trade.feesPaid.toFixed(2)})
+                            </span>
+                          )}
                         </div>
 
                         <div className="text-[11px] font-mono text-stone-400 flex items-center justify-between">
                           <span>
                             {isWin
                               ? "Captured into account capital"
+                              : isBreakeven
+                              ? "Stopped at entry; exchange fee deducted"
                               : "Deducted from account equity"}
                           </span>
                           <span
                             className={`font-semibold ${
-                              isWin ? "text-emerald-400" : "text-rose-400"
+                              isWin
+                                ? "text-emerald-400"
+                                : isBreakeven
+                                ? "text-amber-400"
+                                : "text-rose-400"
                             }`}
                           >
-                            {isWin ? "WIN" : "LOSS"}
+                            {isWin ? "WIN" : isBreakeven ? "BREAKEVEN" : "LOSS"}
                           </span>
                         </div>
                       </div>
@@ -671,8 +839,8 @@ export const BookTab: React.FC<BookTabProps> = ({
                         <div className="text-[9px] uppercase tracking-wider text-stone-400">
                           Holding Time
                         </div>
-                        <div className="text-stone-300 mt-0.5">
-                          {trade.holdingDurationMinutes || 30} mins
+                        <div className="text-stone-300 mt-0.5 font-mono">
+                          {displayHoldingTime}
                         </div>
                       </div>
                     </div>
