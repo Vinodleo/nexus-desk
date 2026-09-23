@@ -44,7 +44,7 @@ const MAX_EXIT_ATTEMPTS = 10;
 const RETRY_BASE_MS = 5000;
 const RETRY_MAX_MS = 5 * 60 * 1000;
 
-const DIR = path.join(process.cwd(), "data");
+const DIR = process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 const FILE = path.join(DIR, "live_positions.json");
 
 function load(): Record<string, LivePositionRecord> {
@@ -255,6 +255,10 @@ async function processPendingExits() {
   }
 }
 
+export const PENDING_EXIT_INTERVAL_MS = 5000;
 setInterval(() => {
   processPendingExits().catch((err) => console.error("[LiveExecution] Pending-exit loop error:", err));
-}, 5000);
+}, PENDING_EXIT_INTERVAL_MS).unref();
+
+// Exposed for tests; the interval above drives it in production.
+export { processPendingExits };

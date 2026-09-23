@@ -81,6 +81,7 @@ import {
   playStopLossSound,
 } from "./utils/audioFeedback";
 import { apiFetch, authenticateSocket } from "./services/apiClient";
+import { computeClosedTradePnl } from "./shared/tradeMath";
 
 export interface ExecutionToast {
   id: string;
@@ -1217,26 +1218,14 @@ export default function App() {
       }
       closingPositionIds.current.add(pos.id);
 
-      const isLong = pos.direction === "LONG";
-      const diff = isLong
-        ? exitPrice - pos.entryPrice
-        : pos.entryPrice - exitPrice;
-      const rawGrossPnl = Number((diff * pos.quantity).toFixed(2));
-
-      // CoinDCX INR-Margin Futures Fee calculation:
-      // 0.02% maker / 0.05% taker, applied to both open (entry notional) and close (exit notional).
-      // Standard market/stop exits are takers (0.05%); limit take-profits are makers (0.02%).
-      // Entry orders submitted by autopilot / human market tickets are takers (0.05%).
-      const entryNotional = pos.entryPrice * pos.quantity;
-      const exitNotional = exitPrice * pos.quantity;
-      const isCloseMaker = reason === "TAKE_PROFIT";
-      const openFeeRate = 0.0005; // 0.05% taker on entry
-      const closeFeeRate = isCloseMaker ? 0.0002 : 0.0005; // 0.02% maker if limit TP, 0.05% taker if stop/market
-      const totalFeesPaid = Number((entryNotional * openFeeRate + exitNotional * closeFeeRate).toFixed(2));
-
-      const finalPnl = Number((rawGrossPnl - totalFeesPaid).toFixed(2));
-      const pnlPercent = Number(((finalPnl / entryNotional) * 100).toFixed(2));
-      const isWin = finalPnl >= 0;
+      const {
+        grossPnl: rawGrossPnl,
+        feesPaid: totalFeesPaid,
+        realizedPnl: finalPnl,
+        realizedPnlPercent: pnlPercent,
+        entryNotional,
+        isWin,
+      } = computeClosedTradePnl(pos.direction, pos.entryPrice, exitPrice, pos.quantity, reason);
 
       // Remove from active positions & update capital
       setActivePositions((prev) => prev.filter((p) => p.id !== pos.id));

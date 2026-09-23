@@ -80,6 +80,17 @@ Type-check:
 npm run lint
 ```
 
+### Tests
+
+```bash
+npm test            # unit tests (Vitest): risk engine, fees/P&L, guardian stops,
+                    # live-order limits, live exits (fake CoinDCX), auth
+npm run test:rules  # Firestore rules against the emulator (needs Java 11+)
+```
+
+CI (`.github/workflows/ci.yml`) runs typecheck, unit tests and the build, plus
+the rules suite, on every pull request and on pushes to `main`.
+
 ### Environment variables
 
 See `.env.example` for the full list. At minimum you need:

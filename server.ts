@@ -18,6 +18,7 @@ import {
   recordLiveOrder,
   liveRiskSnapshot,
   withLiveOrderLock,
+  isLiveOrderRequest,
 } from "./server/liveOrderGuard";
 import {
   clientOrderId,
@@ -30,6 +31,8 @@ import {
   requestLiveExit,
   setLiveExitListener,
 } from "./server/liveExecution";
+import { applyGuardianTick, isPastHoldingTime } from "./server/guardianLogic";
+import { computeClosedTradePnl } from "./src/shared/tradeMath";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -652,14 +655,11 @@ app.get("/api/coindcx/candles", async (req, res) => {
 
 // CoinDCX Authenticated Trade Execution Route
 app.post("/api/execute-trade", async (req, res) => {
-  const { symbol, side, quantity, price, isPaperTrade, confirmLiveOrder, positionId } = req.body;
+  const { symbol, side, quantity, price, positionId } = req.body;
   const { apiKey, apiSecret } = getCoinDcxCredentials(req);
 
-  // Fail-safe default: a request only goes live if isPaperTrade is exactly
-  // `false` AND confirmLiveOrder is exactly `true`. Anything else — missing,
-  // undefined, malformed — stays paper. Ambiguous input should never resolve
-  // to "spend real money," following the fail-closed principle.
-  const wantsLiveOrder = isPaperTrade === false && confirmLiveOrder === true;
+  // Ambiguous input never resolves to "spend real money" (see isLiveOrderRequest).
+  const wantsLiveOrder = isLiveOrderRequest(req.body);
 
   if (!wantsLiveOrder) {
     // Model realistic paper trading slippage (0.02% to 0.08%) against the order book
@@ -858,7 +858,7 @@ interface DaemonPersistedState {
 }
 
 // Persistent daemon state configuration on disk
-const DAEMON_STORAGE_DIR = path.join(process.cwd(), "data");
+const DAEMON_STORAGE_DIR = process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 const DAEMON_STORAGE_FILE = path.join(DAEMON_STORAGE_DIR, "daemon_positions_state.json");
 const DAEMON_STORAGE_TMP = path.join(DAEMON_STORAGE_DIR, "daemon_positions_state.json.tmp");
 
@@ -909,10 +909,7 @@ function loadDaemonStateFromDisk(): void {
           for (const pos of state.positions) {
             if (pos && pos.id && pos.symbol && pos.entryPrice) {
               // Sanity check: Check if position holding time expired during downtime
-              const openedMs = pos.openTime ? new Date(pos.openTime).getTime() : now;
-              const elapsedMinutes = (now - openedMs) / 60000;
-              const limitMinutes = pos.expectedHoldingTimeMinutes || 30;
-              if (elapsedMinutes >= limitMinutes) {
+              if (isPastHoldingTime(pos, now)) {
                 console.log(`[Daemon Crash Recovery] Restored position ${pos.id} (${pos.symbol}) expired during downtime. Auto-closing on recovery.`);
                 daemonPositions.set(pos.id, pos);
                 executeDaemonExit(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
@@ -1072,20 +1069,14 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
   if (!daemonPositions.has(pos.id)) return;
   daemonPositions.delete(pos.id);
 
-  const isLong = pos.direction === "LONG";
-  const diff = isLong ? exitPrice - pos.entryPrice : pos.entryPrice - exitPrice;
-  const rawGrossPnl = Number((diff * pos.quantity).toFixed(2));
-
-  // CoinDCX Futures fee schedule: 0.02% maker TP / 0.05% taker stop/market
-  const entryNotional = pos.entryPrice * pos.quantity;
-  const exitNotional = exitPrice * pos.quantity;
-  const isCloseMaker = reason === "TAKE_PROFIT";
-  const openFeeRate = 0.0005;
-  const closeFeeRate = isCloseMaker ? 0.0002 : 0.0005;
-  const totalFeesPaid = Number((entryNotional * openFeeRate + exitNotional * closeFeeRate).toFixed(2));
-  const finalPnl = Number((rawGrossPnl - totalFeesPaid).toFixed(2));
-  const pnlPercent = Number(((finalPnl / entryNotional) * 100).toFixed(2));
-  const isWin = finalPnl >= 0;
+  const {
+    grossPnl: rawGrossPnl,
+    feesPaid: totalFeesPaid,
+    realizedPnl: finalPnl,
+    realizedPnlPercent: pnlPercent,
+    entryNotional,
+    isWin,
+  } = computeClosedTradePnl(pos.direction, pos.entryPrice, exitPrice, pos.quantity, reason);
 
   const exitTimeMs = Date.now();
   const openTimeMs = pos.openTime ? new Date(pos.openTime).getTime() : exitTimeMs;
@@ -1143,105 +1134,9 @@ function evaluateDaemonPositions(symbol: string, currentPrice: number) {
   for (const pos of daemonPositions.values()) {
     if (pos.symbol !== symbol) continue;
 
-    const isLong = pos.direction === "LONG";
-    pos.currentPrice = currentPrice;
-
-    if (!pos.highestPrice) pos.highestPrice = pos.entryPrice;
-    if (!pos.lowestPrice) pos.lowestPrice = pos.entryPrice;
-
-    if (currentPrice > pos.highestPrice) pos.highestPrice = currentPrice;
-    if (currentPrice < pos.lowestPrice) pos.lowestPrice = currentPrice;
-
-    const entryPrice = pos.entryPrice;
-    const atr = pos.atrAtEntry || entryPrice * 0.005;
-
-    let hitExit = false;
-    let exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME" | null = null;
-    let exitFillPrice = currentPrice;
-
-    if (isLong) {
-      const peakGain = pos.highestPrice - entryPrice;
-      const profitPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-      const profitInATR = peakGain / (atr || 1);
-      const targetDist = Math.max(0.0001, pos.takeProfit - entryPrice);
-      const targetProgress = peakGain / targetDist;
-
-      if (pos.trailMode === "TREND_RUNNER") {
-        if (!pos.trailActive && (profitInATR >= 1.2 || targetProgress >= 0.50)) {
-          pos.trailActive = true;
-        }
-        if (pos.trailActive) {
-          const step1DynamicStop = Math.max(entryPrice * 1.002, pos.highestPrice - 1.5 * atr);
-          if (step1DynamicStop > pos.stopLoss) pos.stopLoss = step1DynamicStop;
-        }
-      } else {
-        if (!pos.trailActive && (profitPct >= 0.60 || profitInATR >= 1.0 || targetProgress >= 0.40)) {
-          pos.trailActive = true;
-        }
-        if (pos.trailActive) {
-          const breakevenFloor = entryPrice * 1.0018;
-          let ratchetGain = entryPrice * 0.0018;
-          if (profitInATR >= 1.8 || targetProgress >= 0.75) {
-            ratchetGain = Math.max(ratchetGain, peakGain * 0.70);
-          } else if (profitInATR >= 1.0 || targetProgress >= 0.50) {
-            ratchetGain = Math.max(ratchetGain, peakGain * 0.50);
-          }
-          const dynamicStop = Math.max(breakevenFloor, entryPrice + ratchetGain);
-          if (dynamicStop > pos.stopLoss) pos.stopLoss = dynamicStop;
-        }
-      }
-
-      if (currentPrice >= pos.takeProfit) {
-        hitExit = true;
-        exitReason = "TAKE_PROFIT";
-      } else if (currentPrice <= pos.stopLoss) {
-        hitExit = true;
-        exitReason = pos.trailActive || pos.stopLoss >= entryPrice ? "TRAILING_STOP" : "STOP_LOSS";
-      }
-    } else {
-      // Short
-      const peakGain = entryPrice - pos.lowestPrice;
-      const profitPct = ((entryPrice - currentPrice) / entryPrice) * 100;
-      const profitInATR = peakGain / (atr || 1);
-      const targetDist = Math.max(0.0001, entryPrice - pos.takeProfit);
-      const targetProgress = peakGain / targetDist;
-
-      if (pos.trailMode === "TREND_RUNNER") {
-        if (!pos.trailActive && (profitInATR >= 1.2 || targetProgress >= 0.50)) {
-          pos.trailActive = true;
-        }
-        if (pos.trailActive) {
-          const step1DynamicStop = Math.min(entryPrice * 0.998, pos.lowestPrice + 1.5 * atr);
-          if (step1DynamicStop < pos.stopLoss) pos.stopLoss = step1DynamicStop;
-        }
-      } else {
-        if (!pos.trailActive && (profitPct >= 0.60 || profitInATR >= 1.0 || targetProgress >= 0.40)) {
-          pos.trailActive = true;
-        }
-        if (pos.trailActive) {
-          const breakevenCeiling = entryPrice * 0.9982;
-          let ratchetGain = entryPrice * 0.0018;
-          if (profitInATR >= 1.8 || targetProgress >= 0.75) {
-            ratchetGain = Math.max(ratchetGain, peakGain * 0.70);
-          } else if (profitInATR >= 1.0 || targetProgress >= 0.50) {
-            ratchetGain = Math.max(ratchetGain, peakGain * 0.50);
-          }
-          const dynamicStop = Math.min(breakevenCeiling, entryPrice - ratchetGain);
-          if (dynamicStop < pos.stopLoss) pos.stopLoss = dynamicStop;
-        }
-      }
-
-      if (currentPrice <= pos.takeProfit) {
-        hitExit = true;
-        exitReason = "TAKE_PROFIT";
-      } else if (currentPrice >= pos.stopLoss) {
-        hitExit = true;
-        exitReason = pos.trailActive || pos.stopLoss <= entryPrice ? "TRAILING_STOP" : "STOP_LOSS";
-      }
-    }
-
-    if (hitExit && exitReason) {
-      executeDaemonExit(pos, exitFillPrice, exitReason);
+    const exitReason = applyGuardianTick(pos, currentPrice);
+    if (exitReason) {
+      executeDaemonExit(pos, currentPrice, exitReason);
     } else {
       // Ratchet or price moved without exit — keep disk state fresh in background
       scheduleDaemonDiskSave(3000);
@@ -1253,10 +1148,7 @@ function evaluateDaemonPositions(symbol: string, currentPrice: number) {
 setInterval(() => {
   const now = Date.now();
   for (const pos of daemonPositions.values()) {
-    const openedMs = pos.openTime ? new Date(pos.openTime).getTime() : now;
-    const elapsedMinutes = (now - openedMs) / 60000;
-    const limitMinutes = pos.expectedHoldingTimeMinutes || 30;
-    if (elapsedMinutes >= limitMinutes) {
+    if (isPastHoldingTime(pos, now)) {
       executeDaemonExit(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
     }
   }

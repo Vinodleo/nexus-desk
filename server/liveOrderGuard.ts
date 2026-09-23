@@ -11,6 +11,14 @@ import path from "path";
 // `netQty`) are always allowed through the caps, so an exit is never blocked
 // by the daily limits or the kill switch.
 
+// Fail-safe default: a request only goes live if isPaperTrade is exactly
+// `false` AND confirmLiveOrder is exactly `true`. Anything else — missing,
+// undefined, malformed, truthy strings — stays paper.
+export function isLiveOrderRequest(body: unknown): boolean {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  return b.isPaperTrade === false && b.confirmLiveOrder === true;
+}
+
 export interface LiveRiskConfig {
   enabled: boolean;
   allowedMarkets: Set<string>;
@@ -50,7 +58,7 @@ interface LedgerState {
   netQty: Record<string, number>; // signed base-asset quantity per market (+ long / - short)
 }
 
-const LEDGER_DIR = path.join(process.cwd(), "data");
+const LEDGER_DIR = process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 const LEDGER_FILE = path.join(LEDGER_DIR, "live_order_ledger.json");
 const EPSILON = 1e-9;
 
