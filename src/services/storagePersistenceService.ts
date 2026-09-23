@@ -474,10 +474,15 @@ export async function syncToFirebase(userId: string) {
     const promotedModel = loadStoredPromotedLabModel();
     const dailyTelemetry = loadDailySampleTelemetry();
 
+    // uid, email and createdAt are fixed once the profile exists (see
+    // firestore.rules), so only send them when creating it.
+    const existingProfile = await getDoc(userRef);
+    const identity = existingProfile.exists()
+      ? {}
+      : { uid: userId, email: auth.currentUser?.email ?? null, createdAt: new Date().toISOString() };
+
     await setDoc(userRef, {
-      uid: userId,
-      email: auth.currentUser?.email || "",
-      createdAt: new Date().toISOString(),
+      ...identity,
       ...stats,
       ...capital,
       accuracyPct: accuracy.accuracyPct || 0,
@@ -626,39 +631,6 @@ export async function syncFromFirebase(userId: string): Promise<boolean> {
   } catch (err) {
     console.error("Firebase load error", err);
     return false;
-  }
-}
-
-export async function fetchLeaderboard() {
-  try {
-    const usersRef = collection(db, "users");
-    const snapshot = await getDocs(usersRef);
-    const leaderboard: any[] = [];
-    snapshot.forEach(doc => {
-      const data = doc.data();
-
-      // Mask email for anonymity
-      const maskedEmail = data.email 
-        ? data.email.split('@')[0].slice(0, 3) + "***@" + data.email.split('@')[1] 
-        : "Anonymous";
-
-      leaderboard.push({
-        uid: data.uid,
-        maskedEmail: maskedEmail,
-        displayName: data.displayName || "Operator-" + data.uid.substring(0, 4),
-        accuracyPct: data.accuracyPct || 0,
-        equity: data.equity || 100000,
-        dailyRealizedPnl: data.dailyRealizedPnl || 0,
-        selfApprovedWins: data.selfApprovedWins || 0,
-        selfApprovedLosses: data.selfApprovedLosses || 0,
-      });
-    });
-
-    // Sort by equity descending
-    return leaderboard.sort((a, b) => b.equity - a.equity);
-  } catch (error) {
-    console.error("Failed to fetch leaderboard", error);
-    return [];
   }
 }
 

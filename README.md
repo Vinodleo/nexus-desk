@@ -94,6 +94,13 @@ See `.env.example` for the full list. At minimum you need:
 
 ### Firestore rules
 
-Deploy `firestore.rules` to your Firebase project. Clients can no longer write
-the `users/{uid}/credentials` documents. The Security Console → Exchange API
-tab can delete a legacy plain-text key document left by earlier builds.
+Deploy `firestore.rules` to your Firebase project (`firebase deploy --only firestore:rules`).
+- Profiles and everything under them can be read and written only by
+  their owner.
+- `uid`, `email` and `createdAt` are fixed once a profile exists, and
+  profile fields must be on an allow-list and have the right type.
+- Positions and audit logs have strict shapes. Audit logs are append-only
+  and time-stamped by the server.
+- Clients can't write `users/{uid}/credentials`. The Security Console →
+  Exchange API tab can delete a legacy plain-text key document left by
+  earlier builds.

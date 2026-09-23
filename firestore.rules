@@ -4,61 +4,125 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write: if false;
     }
-    
+
+    // ---------- helpers ----------
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
     function isSignedIn() { return request.auth != null; }
-    
-    function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
-             data.uid == request.auth.uid;
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+
+    function has(d, k) { return d.keys().hasAny([k]); }
+    function numOrAbsent(d, k) { return !has(d, k) || d[k] is number; }
+    function strOrAbsent(d, k, max) { return !has(d, k) || (d[k] is string && d[k].size() <= max); }
+    function mapOrNullOrAbsent(d, k) { return !has(d, k) || d[k] == null || d[k] is map; }
+
+    // ---------- users/{userId} ----------
+    // Profiles are private to their owner. uid, email and createdAt are fixed
+    // at creation. A new profile may only hold allow-listed keys; an update may
+    // only change allow-listed keys (so a legacy extra field can't wedge
+    // every future write), and all known fields must be well-typed.
+    function userImmutableKeys() { return ['uid', 'email', 'createdAt']; }
+    function userMutableKeys() {
+      return [
+        'displayName', 'role', 'lastLoginAt',
+        'equity', 'cash', 'dailyRealizedPnl', 'allTimeRealizedPnl', 'istDateString',
+        'selfApprovedCount', 'selfApprovedWins', 'selfApprovedLosses', 'lastUpdated',
+        'accuracyPct', 'promotedLabModel', 'dailyTelemetry'
+      ];
     }
-    
+    function isValidUserFields(d) {
+      return strOrAbsent(d, 'displayName', 100)
+        && (!has(d, 'role') || d.role in ['commander', 'trader', 'auditor'])
+        && strOrAbsent(d, 'lastLoginAt', 64)
+        && strOrAbsent(d, 'istDateString', 32)
+        && strOrAbsent(d, 'lastUpdated', 64)
+        && numOrAbsent(d, 'equity')
+        && numOrAbsent(d, 'cash')
+        && numOrAbsent(d, 'dailyRealizedPnl')
+        && numOrAbsent(d, 'allTimeRealizedPnl')
+        && numOrAbsent(d, 'selfApprovedCount')
+        && numOrAbsent(d, 'selfApprovedWins')
+        && numOrAbsent(d, 'selfApprovedLosses')
+        && numOrAbsent(d, 'accuracyPct')
+        && mapOrNullOrAbsent(d, 'promotedLabModel')
+        && mapOrNullOrAbsent(d, 'dailyTelemetry');
+    }
+
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUser(incoming());
-      allow update: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && 
-                    incoming().diff(existing()).affectedKeys().hasAny(['equity', 'cash', 'dailyRealizedPnl', 'selfApprovedCount', 'selfApprovedWins', 'selfApprovedLosses', 'lastUpdated', 'accuracyPct', 'promotedLabModel', 'dailyTelemetry', 'lastLoginAt']);
-      
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidId(userId)
+        && incoming().keys().hasAll(['uid', 'email', 'createdAt'])
+        && incoming().uid == request.auth.uid
+        && incoming().email == request.auth.token.get('email', null)
+        && incoming().createdAt is string
+        && incoming().keys().hasOnly(userImmutableKeys().concat(userMutableKeys()))
+        && isValidUserFields(incoming());
+      allow update: if isOwner(userId)
+        && incoming().diff(existing()).affectedKeys().hasOnly(userMutableKeys())
+        && isValidUserFields(incoming());
+      allow delete: if false;
+
+      // Owner-only learning data. Re-saving an existing record is allowed
+      // (cloud sync re-pushes them); the owner can already delete them.
       match /experiences/{experienceId} {
-        allow read: if isSignedIn() && request.auth.uid == userId;
-        allow create: if isSignedIn() && request.auth.uid == userId && isValidId(experienceId) &&
-                      incoming().keys().hasAll(['userId']) && incoming().userId == request.auth.uid;
-        allow update: if false;
-        allow delete: if isSignedIn() && request.auth.uid == userId;
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(experienceId)
+          && incoming().userId == request.auth.uid;
       }
-      
-      
+      match /closedTrades/{tradeId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(tradeId)
+          && incoming().userId == request.auth.uid;
+      }
+
       // Exchange keys are server-held only. Clients may read/delete the
       // legacy plain-text copy written by earlier builds, but never write one.
       match /credentials/{credentialId} {
-        allow read, delete: if isSignedIn() && request.auth.uid == userId;
+        allow read, delete: if isOwner(userId);
         allow create, update: if false;
       }
-      match /closedTrades/{tradeId} {
-        allow read: if isSignedIn() && request.auth.uid == userId;
-        allow create: if isSignedIn() && request.auth.uid == userId && isValidId(tradeId) &&
-                      incoming().keys().hasAll(['userId']) && incoming().userId == request.auth.uid;
-        allow update: if false;
-        allow delete: if isSignedIn() && request.auth.uid == userId;
-      }
+
       match /activePositions/{positionId} {
-        allow read: if isSignedIn() && request.auth.uid == userId;
-        allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(positionId) &&
-                              incoming().keys().hasAll(['userId']) && incoming().userId == request.auth.uid;
-        allow delete: if isSignedIn() && request.auth.uid == userId;
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(positionId)
+          && incoming().keys().hasOnly([
+               'id', 'userId', 'symbol', 'direction', 'entryPrice', 'currentPrice',
+               'stopLoss', 'takeProfit', 'quantity', 'moneyPlaced', 'trailActive',
+               'trailMode', 'highestPrice', 'lowestPrice', 'openTime', 'setupName'
+             ])
+          && incoming().id == positionId
+          && incoming().userId == request.auth.uid
+          && incoming().symbol is string && incoming().symbol.size() <= 32
+          && incoming().direction in ['LONG', 'SHORT']
+          && incoming().entryPrice is number
+          && incoming().quantity is number
+          && numOrAbsent(incoming(), 'currentPrice')
+          && numOrAbsent(incoming(), 'stopLoss')
+          && numOrAbsent(incoming(), 'takeProfit')
+          && numOrAbsent(incoming(), 'moneyPlaced')
+          && numOrAbsent(incoming(), 'highestPrice')
+          && numOrAbsent(incoming(), 'lowestPrice')
+          && (!has(incoming(), 'trailActive') || incoming().trailActive is bool);
       }
     }
-    
+
+    // ---------- auditLogs ----------
+    // Append-only, owner-readable, with a fixed shape.
     match /auditLogs/{logId} {
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidId(logId) && 
-                    incoming().keys().hasAll(['userId']) && incoming().userId == request.auth.uid;
-      allow update: if false;
-      allow delete: if false;
+      allow read: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(logId)
+        && incoming().keys().hasOnly(['id', 'action', 'details', 'userId', 'userEmail', 'timestamp', 'createdAt'])
+        && incoming().userId == request.auth.uid
+        && incoming().action is string && incoming().action.size() <= 64
+        && strOrAbsent(incoming(), 'details', 1000)
+        && strOrAbsent(incoming(), 'userEmail', 256)
+        && strOrAbsent(incoming(), 'timestamp', 64)
+        && strOrAbsent(incoming(), 'id', 128)
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
     }
   }
 }
