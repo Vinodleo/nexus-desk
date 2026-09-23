@@ -462,7 +462,7 @@ export function saveStoredClosedTrades(trades: HistoricalTrade[]): void {
 }
 
 import { auth, db } from "./firebase";
-import { doc, getDoc, setDoc, collection, getDocs, writeBatch } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs, writeBatch, deleteDoc } from "firebase/firestore";
 
 export async function syncToFirebase(userId: string) {
   try {
@@ -662,34 +662,25 @@ export async function fetchLeaderboard() {
   }
 }
 
-export async function saveExchangeKeys(userId: string, exchangeId: string, apiKey: string, apiSecret: string) {
+// Exchange keys are held only on the server now. Earlier builds wrote them to
+// users/{uid}/credentials/exchangeKeys in plain text; these helpers let the
+// user find and delete that legacy copy.
+export async function hasLegacyExchangeKeys(userId: string): Promise<boolean> {
   try {
-    const keysRef = doc(db, "users", userId, "credentials", "exchangeKeys");
-    const updatePayload = {
-      [exchangeId]: {
-        apiKey,
-        apiSecret,
-        updatedAt: new Date().toISOString()
-      }
-    };
-    await setDoc(keysRef, updatePayload, { merge: true });
-    return true;
+    const snap = await getDoc(doc(db, "users", userId, "credentials", "exchangeKeys"));
+    return snap.exists();
   } catch (err) {
-    console.error("Failed to save exchange keys to Firebase:", err);
+    console.error("Failed to check legacy exchange keys in Firebase:", err);
     return false;
   }
 }
 
-export async function loadExchangeKeys(userId: string) {
+export async function deleteLegacyExchangeKeys(userId: string): Promise<boolean> {
   try {
-    const keysRef = doc(db, "users", userId, "credentials", "exchangeKeys");
-    const snap = await getDoc(keysRef);
-    if (snap.exists()) {
-      return snap.data();
-    }
-    return null;
+    await deleteDoc(doc(db, "users", userId, "credentials", "exchangeKeys"));
+    return true;
   } catch (err) {
-    console.error("Failed to load exchange keys from Firebase:", err);
-    return null;
+    console.error("Failed to delete legacy exchange keys from Firebase:", err);
+    return false;
   }
 }

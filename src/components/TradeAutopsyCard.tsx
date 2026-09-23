@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { HistoricalTrade, TradeAutopsy } from "../types";
 import { BrainCircuit, CheckCircle2, Loader2, Target, AlertTriangle, TrendingUp, TrendingDown, RefreshCcw } from "lucide-react";
+import { apiFetch } from "../services/apiClient";
 
 interface TradeAutopsyCardProps {
   trade: HistoricalTrade;
@@ -15,7 +16,7 @@ export const TradeAutopsyCard: React.FC<TradeAutopsyCardProps> = ({ trade, onUpd
     setIsGenerating(true);
     setError(null);
     try {
-      const response = await fetch("/api/agent/trade-autopsy", {
+      const response = await apiFetch("/api/agent/trade-autopsy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trade }),

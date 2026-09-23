@@ -4,6 +4,7 @@ import {
   decorateBarsWithIndicators,
   classifyRegime,
 } from "./marketDataService";
+import { apiFetch, authenticateSocket } from "./apiClient";
 
 export class LiveMarketStreamService {
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -41,7 +42,7 @@ export class LiveMarketStreamService {
     console.log("Fetching initial live data for streaming...");
     try {
       // 1. Fetch current CoinDCX prices to base our initial chart
-      const res = await fetch("/api/coindcx/ticker");
+      const res = await apiFetch("/api/coindcx/ticker");
       const tickers = await res.json();
 
       const priceMap = new Map<string, number>();
@@ -129,13 +130,13 @@ export class LiveMarketStreamService {
         let res: Response;
         if (assetClass === "crypto") {
           const base = sym.split("/")[0];
-          res = await fetch(
+          res = await apiFetch(
             `/api/coindcx/candles?symbol=${base}&interval=1h&limit=100`
           );
         } else {
           // Zerodha's historical-candles endpoint needs an active login —
           // a 401 here just means "not connected yet", not a real failure.
-          res = await fetch(
+          res = await apiFetch(
             `/api/zerodha/candles?symbol=${sym}&interval=60minute`
           );
           if (res.status === 401) {
@@ -216,8 +217,10 @@ export class LiveMarketStreamService {
     const wsUrl = `${protocol}//${window.location.host}`;
     this.ws = new WebSocket(wsUrl);
 
+    const ws = this.ws;
     this.ws.onopen = () => {
       console.log("Connected to Backend Ticker Relay");
+      authenticateSocket(ws);
     };
 
     this.ws.onmessage = (event) => {

@@ -203,6 +203,25 @@ export interface CoinDcxAccountBalance {
   keyMasked?: string;
 }
 
+// Server-reported CoinDCX credential and live-risk status. Keys themselves
+// never leave the server.
+export interface CoinDcxServerStatus {
+  configured: boolean;
+  keyMasked: string | null;
+  liveRisk: {
+    enabled: boolean;
+    allowedMarkets: string[];
+    maxOrderNotionalInr: number;
+    maxDailyNotionalInr: number;
+    maxDailyOrders: number;
+    maxPriceDeviationPct: number;
+    day: string;
+    openedNotionalInrToday: number;
+    openedOrdersToday: number;
+    trackedNetQty: Record<string, number>;
+  };
+}
+
 export interface Position {
   id: string;
   symbol: string;

@@ -14,6 +14,7 @@ import {
   PromotedLabModel,
   TradingExecutionMode,
   CoinDcxAccountBalance,
+  CoinDcxServerStatus,
   RiskCalculation,
 } from "./types";
 import {
@@ -79,6 +80,7 @@ import {
   playProfitTargetSound,
   playStopLossSound,
 } from "./utils/audioFeedback";
+import { apiFetch, authenticateSocket } from "./services/apiClient";
 
 export interface ExecutionToast {
   id: string;
@@ -125,12 +127,8 @@ export default function App() {
   const [tradingMode, setTradingMode] = useState<TradingExecutionMode>(() => {
     return (localStorage.getItem("nexus_trading_mode") as TradingExecutionMode) || "PAPER";
   });
-  const [coinDcxKeys, setCoinDcxKeys] = useState<{ apiKey: string; apiSecret: string }>(() => {
-    return {
-      apiKey: localStorage.getItem("coindcx_api_key") || "",
-      apiSecret: localStorage.getItem("coindcx_api_secret") || "",
-    };
-  });
+  // CoinDCX keys live only on the server; the client just sees whether they're configured.
+  const [coinDcxStatus, setCoinDcxStatus] = useState<CoinDcxServerStatus | null>(null);
   const [coinDcxBalance, setCoinDcxBalance] = useState<CoinDcxAccountBalance>({
     totalInr: 0,
     availableInr: 0,
@@ -142,22 +140,10 @@ export default function App() {
   });
 
   const fetchCoinDcxBalance = useCallback(
-    async (keysOverride?: { apiKey: string; apiSecret: string }) => {
-      const activeKeys = keysOverride || coinDcxKeys;
+    async () => {
       setCoinDcxBalance((prev) => ({ ...prev, loading: true, error: undefined }));
       try {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (activeKeys.apiKey) headers["x-coindcx-apikey"] = activeKeys.apiKey;
-        if (activeKeys.apiSecret) headers["x-coindcx-apisecret"] = activeKeys.apiSecret;
-
-        const res = await fetch("/api/coindcx/balances", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            apiKey: activeKeys.apiKey,
-            apiSecret: activeKeys.apiSecret,
-          }),
-        });
+        const res = await apiFetch("/api/coindcx/balances", { method: "POST" });
         const data = await res.json();
         if (data.success) {
           setCoinDcxBalance({
@@ -189,18 +175,27 @@ export default function App() {
         return { success: false, error: err.message };
       }
     },
-    [coinDcxKeys]
+    []
   );
 
-  const handleSaveCoinDcxKeys = useCallback(
-    async (newKeys: { apiKey: string; apiSecret: string }) => {
-      setCoinDcxKeys(newKeys);
-      localStorage.setItem("coindcx_api_key", newKeys.apiKey);
-      localStorage.setItem("coindcx_api_secret", newKeys.apiSecret);
-      await fetchCoinDcxBalance(newKeys);
-    },
-    [fetchCoinDcxBalance]
-  );
+  const refreshCoinDcxStatus = useCallback(async () => {
+    try {
+      const res = await apiFetch("/api/coindcx/status");
+      const data = await res.json();
+      if (data.success) setCoinDcxStatus(data);
+    } catch (err) {
+      console.warn("[CoinDCX] Failed to load server credential status", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Earlier builds kept the CoinDCX key and secret in localStorage; purge them.
+    try {
+      localStorage.removeItem("coindcx_api_key");
+      localStorage.removeItem("coindcx_api_secret");
+    } catch {}
+    refreshCoinDcxStatus();
+  }, [refreshCoinDcxStatus]);
 
   const handleToggleTradingMode = useCallback(
     (newMode: TradingExecutionMode) => {
@@ -409,6 +404,9 @@ export default function App() {
     const wsUrl = `${protocol}//${window.location.host}`;
 
     const ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      authenticateSocket(ws);
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -811,7 +809,7 @@ export default function App() {
     // whose live stream isn't cooperating, just at coarser granularity.
     const pollRestPrices = async () => {
       try {
-        const res = await fetch('/api/coindcx/ticker');
+        const res = await apiFetch('/api/coindcx/ticker');
         const tickers = await res.json();
         const priceMap: Record<string, number> = {};
         tickers.forEach((t: any) => {
@@ -878,7 +876,7 @@ export default function App() {
   useEffect(() => {
     const syncWithServerDaemon = async () => {
       try {
-        const res = await fetch("/api/daemon/sync-positions", {
+        const res = await apiFetch("/api/daemon/sync-positions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ positions: activePositions }),
@@ -908,7 +906,7 @@ export default function App() {
 
     const reconcileServerCloses = async () => {
       try {
-        const res = await fetch(`/api/daemon/closed-events?since=${lastCheckedTime}`);
+        const res = await apiFetch(`/api/daemon/closed-events?since=${lastCheckedTime}`);
         if (!res.ok) return;
         const data = await res.json();
         lastCheckedTime = Date.now();
@@ -1230,13 +1228,9 @@ export default function App() {
 
       // If position was a live order on CoinDCX, dispatch the exit order to the exchange
       if (pos.isLiveOrder) {
-        fetch("/api/execute-trade", {
+        apiFetch("/api/execute-trade", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(coinDcxKeys.apiKey ? { "x-coindcx-apikey": coinDcxKeys.apiKey } : {}),
-            ...(coinDcxKeys.apiSecret ? { "x-coindcx-apisecret": coinDcxKeys.apiSecret } : {}),
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             symbol: pos.symbol,
             side: pos.direction === "LONG" ? "SHORT" : "LONG",
@@ -1245,8 +1239,6 @@ export default function App() {
             orderType: "MARKET",
             isPaperTrade: false,
             confirmLiveOrder: true,
-            apiKey: coinDcxKeys.apiKey,
-            apiSecret: coinDcxKeys.apiSecret,
           }),
         })
           .then((res) => res.json())
@@ -1485,7 +1477,7 @@ export default function App() {
 
       // Call Trade Autopsy Agent endpoint server-side
       try {
-        await fetch("/api/agent/trade-autopsy", {
+        await apiFetch("/api/agent/trade-autopsy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1583,13 +1575,13 @@ export default function App() {
       const isLiveExecution = tradingMode === "LIVE_COINDCX";
 
       // If in live mode, ensure we have credentials configured
-      if (isLiveExecution && (!coinDcxKeys.apiKey || !coinDcxKeys.apiSecret)) {
+      if (isLiveExecution && !coinDcxStatus?.configured) {
         inFlightProposalIds.current.delete(proposal.id);
         setExecutionToast({
           id: `toast-${Date.now()}`,
           title: "CoinDCX API Credentials Required",
           message:
-            "Live exchange routing requires an API Key and Secret. Configure your credentials in the Risk & Safety Console.",
+            "Live exchange routing requires COINDCX_API_KEY and COINDCX_API_SECRET to be set on the server.",
           type: "WARNING",
           timestamp: new Date().toLocaleTimeString(),
         });
@@ -1624,13 +1616,9 @@ export default function App() {
       };
 
       // Dispatch order to backend (either simulated paper with slippage or live CoinDCX HMAC order)
-      fetch("/api/execute-trade", {
+      apiFetch("/api/execute-trade", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(coinDcxKeys.apiKey ? { "x-coindcx-apikey": coinDcxKeys.apiKey } : {}),
-          ...(coinDcxKeys.apiSecret ? { "x-coindcx-apisecret": coinDcxKeys.apiSecret } : {}),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           symbol: proposal.symbol,
           side: proposal.setup.direction,
@@ -1639,8 +1627,6 @@ export default function App() {
           orderType: "MARKET",
           isPaperTrade: !isLiveExecution,
           confirmLiveOrder: isLiveExecution,
-          apiKey: coinDcxKeys.apiKey,
-          apiSecret: coinDcxKeys.apiSecret,
         }),
       })
         .then((res) => res.json())
@@ -1732,7 +1718,7 @@ export default function App() {
         setActiveTab("book");
       }
     },
-    [killSwitchActive, userRole, logSecurityAudit, tradingMode, coinDcxKeys, fetchCoinDcxBalance]
+    [killSwitchActive, userRole, logSecurityAudit, tradingMode, coinDcxStatus, fetchCoinDcxBalance]
   );
 
   // Batch Auto-Approval Engine:
@@ -2200,7 +2186,7 @@ export default function App() {
       const recentSwingHigh = recentBars.length > 0 ? Math.max(...recentBars.map((b) => b.high)) : undefined;
       const recentSwingLow = recentBars.length > 0 ? Math.min(...recentBars.map((b) => b.low)) : undefined;
 
-      const res = await fetch("/api/agent/market-analysis", {
+      const res = await apiFetch("/api/agent/market-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2459,8 +2445,8 @@ export default function App() {
             tradingMode={tradingMode}
             onToggleTradingMode={handleToggleTradingMode}
             coinDcxBalance={coinDcxBalance}
-            coinDcxKeys={coinDcxKeys}
-            onSaveCoinDcxKeys={handleSaveCoinDcxKeys}
+            coinDcxStatus={coinDcxStatus}
+            onRefreshCoinDcxStatus={refreshCoinDcxStatus}
             onRefreshBalance={fetchCoinDcxBalance}
             riskCalc={currentRiskCalculation}
             failureState={failureState}

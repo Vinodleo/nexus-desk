@@ -32,11 +32,11 @@ service cloud.firestore {
       }
       
       
+      // Exchange keys are server-held only. Clients may read/delete the
+      // legacy plain-text copy written by earlier builds, but never write one.
       match /credentials/{credentialId} {
-        allow read: if isSignedIn() && request.auth.uid == userId;
-        allow create: if isSignedIn() && request.auth.uid == userId && isValidId(credentialId);
-        allow update: if isSignedIn() && request.auth.uid == userId && isValidId(credentialId);
-        allow delete: if isSignedIn() && request.auth.uid == userId;
+        allow read, delete: if isSignedIn() && request.auth.uid == userId;
+        allow create, update: if false;
       }
       match /closedTrades/{tradeId} {
         allow read: if isSignedIn() && request.auth.uid == userId;
