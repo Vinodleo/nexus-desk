@@ -295,7 +295,9 @@ export class LiveMarketStreamService {
 
   subscribe(callback: () => void) {
     this.globalListeners.add(callback);
-    return () => this.globalListeners.delete(callback);
+    return () => {
+      this.globalListeners.delete(callback);
+    };
   }
 
   private notifyListeners() {

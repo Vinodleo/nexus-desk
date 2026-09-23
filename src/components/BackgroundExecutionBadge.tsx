@@ -50,10 +50,14 @@ export const BackgroundExecutionBadge: React.FC<BackgroundExecutionBadgeProps> =
       )}
 
       {status.isWakeLockActive && (
-        <Sun className="w-3 h-3 text-amber-400 ml-0.5" title="Screen Wake Lock Active" />
+        <span title="Screen Wake Lock Active">
+          <Sun className="w-3 h-3 text-amber-400 ml-0.5" aria-label="Screen Wake Lock Active" />
+        </span>
       )}
       {status.isAudioKeepAliveActive && (
-        <VolumeX className="w-3 h-3 text-emerald-400 ml-0.5" title="Lock-Screen Audio Guardian Active" />
+        <span title="Lock-Screen Audio Guardian Active">
+          <VolumeX className="w-3 h-3 text-emerald-400 ml-0.5" aria-label="Lock-Screen Audio Guardian Active" />
+        </span>
       )}
     </button>
   );

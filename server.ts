@@ -129,10 +129,11 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
 
   try {
     const response = await kiteInstance.generateSession(requestToken, apiSecret);
-    zerodhaAccessToken = response.access_token;
+    const accessToken: string = response.access_token;
+    zerodhaAccessToken = accessToken;
 
     // Set the access token in the instance for future API calls (orders, positions)
-    kiteInstance.setAccessToken(zerodhaAccessToken);
+    kiteInstance.setAccessToken(accessToken);
 
     // Resolve real instrument tokens for our target symbols from Zerodha's
     // own live instrument list, instead of trusting hardcoded numbers that
@@ -176,7 +177,7 @@ app.post("/api/zerodha/callback", async (req: Request, res: Response) => {
     // Use the api_key and newly minted access_token
     kiteTickerInstance = new KiteTicker({
       api_key: kiteInstance.api_key,
-      access_token: zerodhaAccessToken
+      access_token: accessToken
     });
 
     const instrumentMap = ZERODHA_INSTRUMENT_MAP;

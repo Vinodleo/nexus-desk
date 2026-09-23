@@ -249,6 +249,8 @@ export const BookTab: React.FC<BookTabProps> = ({
               passedAllChecks: true,
             }}
             failureState={failureState || {
+              simulateAgentTimeout: false,
+              simulateConflictingSignals: false,
               simulateStaleMarketData: false,
               simulateDailyLossBreach: false,
               simulateOrderBookThinLiquidity: false,

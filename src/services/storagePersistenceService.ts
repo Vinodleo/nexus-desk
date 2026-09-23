@@ -34,6 +34,7 @@ export interface SymbolQuarantineRecord {
   quarantinedUntilMs: number;
   reason: string;
   consecutiveLosses: number;
+  lastLossTimestamp?: string;
 }
 
 export function loadStoredQuarantines(): Record<string, SymbolQuarantineRecord> {

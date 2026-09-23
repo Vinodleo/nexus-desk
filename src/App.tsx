@@ -1385,7 +1385,7 @@ export default function App() {
             [pos.symbol]: {
               symbol: pos.symbol,
               quarantinedUntilMs,
-              quarantineReason: consecutiveSymbolLosses >= 3
+              reason: consecutiveSymbolLosses >= 3
                 ? `3 consecutive losses recorded on ${pos.symbol}`
                 : `Loss recorded on ${pos.symbol}`,
               consecutiveLosses: consecutiveSymbolLosses,
@@ -1405,7 +1405,7 @@ export default function App() {
         const globalConsecutiveLosses = recentGlobalTrades.length === 3 && recentGlobalTrades.every((t) => !t.isWin);
         if (globalConsecutiveLosses) {
           setKillSwitchActive(true);
-          setDecisionMode("MANUAL_ONLY");
+          setDecisionMode("MANUAL");
           setExecutionToast({
             id: `toast-killswitch-${Date.now()}`,
             title: "EMERGENCY SAFETY TRIP: 3 CONSECUTIVE LOSSES",
@@ -1415,7 +1415,7 @@ export default function App() {
           });
           logSecurityAudit(
             "KILL_SWITCH_TRIGGERED",
-            "Emergency Kill Switch tripped automatically due to 3 consecutive losses across portfolio. Autopilot reverted to MANUAL_ONLY."
+            "Emergency Kill Switch tripped automatically due to 3 consecutive losses across portfolio. Autopilot reverted to MANUAL."
           );
           sendAlertNotification("■ [Nexus Desk] KILL SWITCH AUTO-TRIPPED", {
             body: "3 consecutive losses detected. Autopilot self-approval disabled. Manual intervention required.",
@@ -1431,7 +1431,7 @@ export default function App() {
           [pos.symbol]: {
             symbol: pos.symbol,
             quarantinedUntilMs,
-            quarantineReason: `Post-trade cooldown on ${pos.symbol} (5m pause)`,
+            reason: `Post-trade cooldown on ${pos.symbol} (5m pause)`,
             consecutiveLosses: 0,
             lastLossTimestamp: new Date().toISOString(),
           },
@@ -2320,7 +2320,7 @@ export default function App() {
         }
         onOpenSecurityConsole={() => setIsSecurityModalOpen(true)}
         modelAccuracyPct={learnedAccuracy.accuracyPct}
-        isLabPromoted={learnedAccuracy.isPromoted}
+        isLabPromoted={Boolean(promotedLabModel)}
         promotedDatasetName={learnedAccuracy.datasetName}
         backgroundStatus={backgroundStatus}
         isPlaying={isPlaying}
@@ -2509,7 +2509,7 @@ export default function App() {
             onPromoteLabModel={(result) => {
               const promoted: PromotedLabModel = {
                 promotedAt: new Date().toISOString(),
-                datasetName: result.datasetName,
+                datasetName: result.datasetName || `${result.symbol} Custom`,
                 accuracyPct: result.learnedMetrics.accuracyPercent,
                 winRatePct: result.learnedMetrics.winRate,
                 sharpeRatio: result.learnedMetrics.sharpeRatio,
@@ -2531,7 +2531,6 @@ export default function App() {
                 totalCandlesEvaluated: result.totalCandles || result.candlesCount
               });
             }}
-            onUpdateModelAccuracy={handleUpdateModelAccuracy}
             isRunningWalkForward={isRunningWalkForward}
             onRerunWalkForward={() => {
               setIsRunningWalkForward(true);
