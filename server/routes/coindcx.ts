@@ -4,9 +4,8 @@ import { liveRiskSnapshot } from "../liveOrderGuard";
 import { currentPrices } from "../realtime";
 import { getCoinDcxTicker } from "../coindcxTicker";
 import { getMarketRules } from "../marketRules";
-import { aggregateMinuteCandles } from "../candles";
 import { getCoinUniverse } from "../coinUniverse";
-import { parseCoinDcxOrderBook, type RawBook } from "../../src/shared/orderBook";
+import { describeCandleError, fetchCoinCandles, fetchOrderBook } from "../coindcxMarketData";
 
 import { validate, cancelOrderBody, coinDcxCandlesQuery, coinDcxOrderBookQuery } from "../validation";
 
@@ -193,29 +192,22 @@ router.get("/api/coindcx/universe", async (_req, res) => {
 });
 
 // Real historical candles, proxied from CoinDCX's public candles API
-// (https://public.coindcx.com/market_data/candles) — used for the
-// higher-timeframe (1h) confluence check, so that check is grounded in
-// CoinDCX's own real historical data rather than synthetic backfill.
+// (https://public.coindcx.com/market_data/candles). 5-minute candles are
+// built from 1-minute ones.
 router.get("/api/coindcx/candles", validate({ query: coinDcxCandlesQuery }), async (req, res) => {
   try {
     const { symbol, interval, limit } = req.query;
     if (!symbol || typeof symbol !== "string") {
       return res.status(400).json({ error: "symbol query param required, e.g. XRP" });
     }
-    const pair = `I-${symbol}_INR`;
-    const requested = typeof interval === "string" ? interval : "1h";
-    const wanted = Math.min(1000, Math.max(1, Number(limit) || 100));
-
-    // CoinDCX has no 5-minute INR candles: build them from 1-minute ones.
-    if (requested === "5m") {
-      let result = await fetchCandles(pair, "1m", Math.min(1000, wanted * 5 + 5));
-      if (!result.list) result = await fetchCandles(pair, "1m", 500);
-      if (!result.list) return candleError(res, result);
-      return res.json(aggregateMinuteCandles(result.list, 5).slice(0, wanted));
+    const result = await fetchCoinCandles(symbol, typeof interval === "string" ? interval : "1h", Number(limit) || 100);
+    if (!result.list) {
+      // Pass CoinDCX's own answer through, so the app can show why there's
+      // no price data instead of failing silently.
+      const detail = describeCandleError(result);
+      console.warn(`[Candles] ${detail}`);
+      return res.status(502).json({ error: detail });
     }
-
-    const result = await fetchCandles(pair, requested, wanted);
-    if (!result.list) return candleError(res, result);
     res.json(result.list);
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to fetch candles from CoinDCX" });
@@ -223,69 +215,12 @@ router.get("/api/coindcx/candles", validate({ query: coinDcxCandlesQuery }), asy
 });
 
 // CoinDCX's live order book for an INR market, best levels first. The scanner
-// reads it for coins with a setup, to get the real spread and depth. Kept for
-// a couple of seconds so a burst of requests makes one call to CoinDCX.
-const BOOK_CACHE_MS = 2000;
-const bookCache = new Map<string, RawBook>();
-
+// reads it for coins with a setup, to get the real spread and depth.
 router.get("/api/coindcx/orderbook", validate({ query: coinDcxOrderBookQuery }), async (req, res) => {
-  const pair = `I-${req.query.symbol}_INR`;
-  const cached = bookCache.get(pair);
-  if (cached && Date.now() - cached.fetchedAt < BOOK_CACHE_MS) return res.json(cached);
-  try {
-    const response = await fetch(`https://public.coindcx.com/market_data/orderbook?pair=${encodeURIComponent(pair)}`);
-    const text = await response.text();
-    let data: unknown;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = undefined;
-    }
-    const book = response.ok ? parseCoinDcxOrderBook(data) : null;
-    if (!book) {
-      const detail = `CoinDCX order book (${pair}): HTTP ${response.status} ${text.slice(0, 160)}`;
-      console.warn(`[OrderBook] ${detail}`);
-      return res.status(502).json({ error: detail });
-    }
-    bookCache.set(pair, book);
-    res.json(book);
-  } catch (error: any) {
-    res.status(502).json({ error: error?.message || "Failed to fetch the order book from CoinDCX" });
+  const result = await fetchOrderBook(String(req.query.symbol));
+  if ("error" in result) {
+    console.warn(`[OrderBook] ${result.error}`);
+    return res.status(502).json({ error: result.error });
   }
+  res.json(result.book);
 });
-
-interface CandleFetchResult {
-  pair: string;
-  interval: string;
-  status: number;
-  text: string;
-  list: unknown[] | null;
-}
-
-async function fetchCandles(pair: string, interval: string, limit: number): Promise<CandleFetchResult> {
-  const params = new URLSearchParams({ pair, interval, limit: String(limit) });
-  const response = await fetch(`https://public.coindcx.com/market_data/candles?${params}`);
-  const text = await response.text();
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = undefined;
-  }
-  // Normally a bare array; accept { data: [...] } too.
-  const list = Array.isArray(data)
-    ? data
-    : data && typeof data === "object" && Array.isArray((data as { data?: unknown }).data)
-    ? (data as { data: unknown[] }).data
-    : null;
-  return { pair, interval, status: response.status, text, list: response.ok ? list : null };
-}
-
-// Pass CoinDCX's own answer through, so the app can show why there's no
-// price data instead of failing silently.
-function candleError(res: Response, r: CandleFetchResult) {
-  const detail = `CoinDCX candles (${r.pair}, ${r.interval}): HTTP ${r.status} ${r.text.slice(0, 160)}`;
-  console.warn(`[Candles] ${detail}`);
-  return res.status(502).json({ error: detail });
-}
-

@@ -142,6 +142,35 @@ export function summarizeShadows(list: ShadowSignal[]): ShadowSummaryRow[] {
     .sort((a, b) => (a.kind === "proposed" ? -1 : b.kind === "proposed" ? 1 : b.tracked - a.tracked));
 }
 
+/**
+ * Adds new signals to a list (one per setup per candle, so repeats of a
+ * known one are ignored), newest first, keeping at most `max`.
+ */
+export function mergeShadows(existing: ShadowSignal[], fresh: ShadowSignal[], max: number = MAX_KEPT): ShadowSignal[] {
+  const known = new Set(existing.map((s) => s.id));
+  const added = fresh.filter((s) => {
+    if (known.has(s.id)) return false;
+    known.add(s.id);
+    return true;
+  });
+  if (added.length === 0) return existing;
+  return [...added, ...existing].sort((a, b) => b.signalTime - a.signalTime).slice(0, max);
+}
+
+/** Resolves open signals against each coin's candles. Returns the same list when nothing changed. */
+export function resolveShadows(list: ShadowSignal[], getBars: (symbol: string) => MarketBar[] | null, nowMs: number = Date.now()): ShadowSignal[] {
+  let changed = false;
+  const next = list.map((s) => {
+    if (s.status !== "open") return s;
+    const bars = getBars(s.symbol);
+    if (!bars) return s;
+    const resolved = resolveShadow(s, bars, nowMs);
+    if (resolved !== s) changed = true;
+    return resolved;
+  });
+  return changed ? next : list;
+}
+
 // --- Store (this browser) ----------------------------------------------
 
 let signals: ShadowSignal[] = load();
@@ -169,29 +198,22 @@ export const shadowStore = {
   },
   /** Adds new signals (one per setup per candle), keeping the newest MAX_KEPT. */
   add(fresh: ShadowSignal[]) {
-    if (fresh.length === 0) return;
-    const known = new Set(signals.map((s) => s.id));
-    const added = fresh.filter((s) => {
-      if (known.has(s.id)) return false;
-      known.add(s.id);
-      return true;
-    });
-    if (added.length === 0) return;
-    signals = [...added, ...signals].sort((a, b) => b.signalTime - a.signalTime).slice(0, MAX_KEPT);
+    const next = mergeShadows(signals, fresh);
+    if (next === signals) return;
+    signals = next;
     save();
   },
   /** Resolves open signals against each coin's candles. */
   resolve(getBars: (symbol: string) => MarketBar[] | null, nowMs: number = Date.now()) {
-    let changed = false;
-    signals = signals.map((s) => {
-      if (s.status !== "open") return s;
-      const bars = getBars(s.symbol);
-      if (!bars) return s;
-      const next = resolveShadow(s, bars, nowMs);
-      if (next !== s) changed = true;
-      return next;
-    });
-    if (changed) save();
+    const next = resolveShadows(signals, getBars, nowMs);
+    if (next === signals) return;
+    signals = next;
+    save();
+  },
+  /** Takes the server scanner's list as this browser's copy. */
+  replaceAll(list: ShadowSignal[]) {
+    signals = list.slice(0, MAX_KEPT);
+    save();
   },
   subscribe(fn: () => void) {
     listeners.add(fn);

@@ -52,8 +52,8 @@ export function requiredMetaConfidence(promotedModel: PromotedLabModel | null | 
   return Math.max(DEFAULT_MIN_CONFIDENCE, promotedModel?.optimizedParameters?.minConfidence ?? 0);
 }
 
-function loadUsablePromotedModel() {
-  const model = loadStoredPromotedLabModel();
+function loadUsablePromotedModel(options?: Pick<ScanMarketOptions, "promotedModel">) {
+  const model = options && "promotedModel" in options ? options.promotedModel ?? null : loadStoredPromotedLabModel();
   if (model?.isSynthetic) {
     if (!warnedSyntheticPromotion) {
       warnedSyntheticPromotion = true;
@@ -97,6 +97,16 @@ export interface ScanMarketOptions {
    * it returns null, spread and depth are simulated.
    */
   getOrderBook?: (symbol: string, notional: number) => Promise<OrderBook | null>;
+  /**
+   * Set when scanning away from the browser (the server): the promoted Lab
+   * settings (null for none) instead of this browser's saved ones, the 1-hour
+   * trend per symbol, the crypto coins to scan, and whether to load the Lab's
+   * TensorFlow model (kept in the browser).
+   */
+  promotedModel?: PromotedLabModel | null;
+  macroRegimes?: Record<string, RegimeType | "neutral">;
+  cryptoSymbols?: string[];
+  useLabModel?: boolean;
   /** Win-chance calibration from shadow-tracked setups, per scorer. Without one, raw scores are used. */
   calibrators?: Partial<Record<ConfidenceScorer, Calibrator>>;
 }
@@ -149,7 +159,7 @@ export async function scanSingleMarket(
     options.failureState.simulateOrderBookThinLiquidity
   );
   const regime: RegimeType = classifyRegime(bars);
-  const promotedModel = loadUsablePromotedModel();
+  const promotedModel = loadUsablePromotedModel(options);
   // The latest candle closed at open time + interval. If that was more than
   // two intervals ago the feed has stalled, and the risk engine fails closed.
   const candleCloseMs = (currentBar?.timestampMs ?? Date.now()) + SIGNAL_INTERVAL_MS;
@@ -170,7 +180,7 @@ export async function scanSingleMarket(
       regime,
       eventWindowActive: false,
       promotedModel,
-      macroRegime: liveMarketStream.getMacroRegime(symbolConfig.symbol),
+      macroRegime: options.macroRegimes?.[symbolConfig.symbol] ?? liveMarketStream.getMacroRegime(symbolConfig.symbol),
     },
     (setup) => {
       const retrieval = retrieveSimilarExperiences(
@@ -202,7 +212,7 @@ export async function scanSingleMarket(
       regime,
       eventWindowActive: false,
       promotedModel,
-      macroRegime: liveMarketStream.getMacroRegime(symbolConfig.symbol),
+      macroRegime: options.macroRegimes?.[symbolConfig.symbol] ?? liveMarketStream.getMacroRegime(symbolConfig.symbol),
     },
     (setup) => {
       const retrieval = retrieveSimilarExperiences(
@@ -464,7 +474,7 @@ export async function scanAllMarkets(
   // The crypto coins come from the live stream's list (CoinDCX's most traded
   // INR coins); stocks from the fixed list.
   const universe = [
-    ...liveMarketStream.getCryptoSymbols().map(getSymbolConfig),
+    ...(options.cryptoSymbols ?? liveMarketStream.getCryptoSymbols()).map(getSymbolConfig),
     ...SUPPORTED_SYMBOLS.filter((s) => s.assetClass === "equity"),
   ];
   const targetSymbols = options.symbols
@@ -477,7 +487,7 @@ export async function scanAllMarkets(
   const newProposals: TradeProposal[] = [];
   let totalSetupsEvaluated = 0;
 
-  const promotedModel = loadUsablePromotedModel();
+  const promotedModel = loadUsablePromotedModel(options);
   let tfjsModel: tf.LayersModel | undefined = undefined;
 
   // A model trained on another version of the inputs would be fed numbers
@@ -487,7 +497,7 @@ export async function scanAllMarkets(
       warnedStaleModelFeatures = true;
       console.warn(`[Scanner] The promoted Lab model uses older inputs; retrain it in the Lab to use it live.`);
     }
-  } else if (promotedModel?.hasTrainedModel) {
+  } else if (promotedModel?.hasTrainedModel && options.useLabModel !== false) {
     const loaded = await loadMetaModel();
     if (loaded) {
       tfjsModel = loaded;

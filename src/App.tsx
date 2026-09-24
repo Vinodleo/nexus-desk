@@ -86,6 +86,7 @@ import {
 } from "./services/positionTick";
 import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 import { fetchLiveOrderBook } from "./services/orderBookService";
+import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanner";
 import { buildCalibrator } from "./services/calibration";
 
 // ATR recorded on a position for its trailing-stop rules. The indicator used
@@ -289,7 +290,12 @@ export default function App() {
   );
   const tickSeq = useRef(0);
 
+  // Server scan reports pushed over the socket; wired up below, once the
+  // server-scanner hook exists.
+  const liveScanReportRef = useRef<(r: ServerScanReport) => void>(() => {});
+
   useLiveFeed({
+    onScanReport: (r) => liveScanReportRef.current(r),
     onTick: (prices) => {
       const seq = ++tickSeq.current;
       setLivePrices((prev) => ({ ...prev, ...prices }));
@@ -1430,7 +1436,7 @@ export default function App() {
   // Trigger Universe Scan
   // Adds a scan's results to the queue: new proposals in, expired ones out,
   // no duplicates of a queued proposal or an open position, best first.
-  const mergeScanIntoQueue = useCallback((report: FullScanReport) => {
+  const mergeScanIntoQueue = useCallback((report: Pick<FullScanReport, "newProposals">) => {
     const now = Date.now();
     setProposalQueue((prev) => {
       const live = prev.filter(
@@ -1453,7 +1459,7 @@ export default function App() {
   }, []);
 
   const recordScan = useCallback(
-    (report: FullScanReport) => {
+    (report: Pick<FullScanReport, "outcomes">) => {
       const proposed = report.outcomes.filter((o) => o.proposed).length;
       setSampleTelemetry((prev) => ({
         ...prev,
@@ -1491,11 +1497,40 @@ export default function App() {
   const runScanRef = useRef(runScan);
   runScanRef.current = runScan;
 
+  // The server scans after every candle close, even with the app closed; its
+  // results arrive here. This browser scans by itself only when the server
+  // isn't scanning.
+  const serverScanner = useServerScanner(
+    {
+      equity: effectiveEquity,
+      riskLimits,
+      dailyRealizedPnl,
+      autopilot: decisionMode === "AUTO_WITHIN_LIMITS",
+      killSwitch: killSwitchActive,
+      scanning: isContinuousScanActive,
+      failureState,
+      quarantines: Object.fromEntries(
+        Object.entries(symbolQuarantines).map(([sym, q]) => [sym, { quarantinedUntilMs: q.quarantinedUntilMs }])
+      ),
+      promotedModel: promotedLabModel,
+    },
+    (report) => {
+      const now = Date.now();
+      recordScan(report);
+      // Scans from while the app was closed may hold proposals that have since expired.
+      mergeScanIntoQueue({ newProposals: report.newProposals.filter((p) => p.expiresAt === undefined || p.expiresAt > now) });
+    }
+  );
+  liveScanReportRef.current = serverScanner.handleLiveReport;
+  const scanLocationRef = useRef(serverScanner.location);
+  scanLocationRef.current = serverScanner.location;
+
   // "Scan now": every coin, including ones already scanned this candle.
   const handleTriggerScanner = async () => {
     setIsScanningMarkets(true);
     try {
-      const report = await runScanRef.current(undefined, false);
+      const fromServer = scanLocationRef.current === "server" ? await serverScanner.scanNow() : null;
+      const report = fromServer ?? (await runScanRef.current(undefined, false));
       setExecutionToast({
         id: `toast-${Date.now()}`,
         title: "Scan finished",
@@ -1522,6 +1557,8 @@ export default function App() {
     const scanNew = (symbols?: string[]) => {
       // Wait for the first candles; until then every coin would count as "no data".
       if (!liveMarketStream.isReady) return;
+      // The server is scanning (or we're still asking whether it is).
+      if (scanLocationRef.current !== "browser") return;
       runScanRef.current(symbols, true).catch((err) => console.error("Scanner Error:", err));
     };
     const unsubscribe = liveMarketStream.onCandleClose((symbols) => scanNew(symbols));
@@ -1724,6 +1761,7 @@ export default function App() {
 
         {activeTab === "floor" && (
           <LedgerFloor
+            scanLocation={serverScanner.location}
             isLive={tradingMode === "LIVE_COINDCX"}
             equity={currentRiskCalculation.equity}
             dailyPnl={dailyRealizedPnl}
