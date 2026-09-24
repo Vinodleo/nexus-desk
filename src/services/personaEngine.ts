@@ -259,6 +259,8 @@ export interface PanelResult {
   filteredByHigherTimeframe?: number;
   /** Those setups, for shadow tracking. */
   trendFilteredSetups?: StrategySetup[];
+  /** Short setups set aside because only longs can be placed (ctx.longOnly), for shadow tracking. */
+  shortOnlySetups?: StrategySetup[];
   dissentingPersonas: string[];
   totalVotesCast: number; // personas that QUALIFIED (voted) — most scans, this is 0
   totalPersonasRun: number; // personas actually EVALUATED this cycle, qualified or not — the real "analysed" count
@@ -351,6 +353,7 @@ export function runPersonaPanel(
   const ballots: PersonaBallot[] = [];
   let filteredByHigherTimeframe = 0;
   const trendFilteredSetups: StrategySetup[] = [];
+  const shortOnlySetups: StrategySetup[] = [];
   for (const persona of roster) {
     const setup = persona.evaluate(ctx);
     const setupHorizon = setup?.horizon || "intraday";
@@ -361,6 +364,10 @@ export function runPersonaPanel(
     // becomes a ballot. A neutral/ranging/choppy higher timeframe — or no
     // higher-timeframe data yet — expresses no opinion and never blocks a
     // trade; this only filters genuine conflict, not absence of agreement.
+    if (ctx.longOnly && setup.direction === "SHORT") {
+      shortOnlySetups.push(setup);
+      continue;
+    }
     const macro = ctx.macroRegime || "neutral";
     const fightsHigherTimeframe =
       (macro === "trending_bullish" && setup.direction === "SHORT") ||
@@ -392,6 +399,7 @@ export function runPersonaPanel(
         SUPPRESSOR_PERSONAS.length + roster.length,
       filteredByHigherTimeframe,
       trendFilteredSetups,
+      shortOnlySetups,
     };
   }
 
@@ -439,5 +447,8 @@ export function runPersonaPanel(
     totalVotesCast: ballots.length,
     totalPersonasRun:
       SUPPRESSOR_PERSONAS.length + roster.length,
+    filteredByHigherTimeframe,
+    trendFilteredSetups,
+    shortOnlySetups,
   };
 }

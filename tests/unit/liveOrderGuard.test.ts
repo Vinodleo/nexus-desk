@@ -85,10 +85,11 @@ describe("evaluateLiveOrder", () => {
     expect(d).toMatchObject({ status: "accepted", isReducing: true });
   });
 
-  it("does not treat an exit larger than the holding as reducing", () => {
+  it("refuses to sell more than is held: that would be a short on a spot market", () => {
     guard.recordLiveOrder("BTCINR", "buy", 1, 1000, false);
-    vi.stubEnv("LIVE_TRADING_ENABLED", "false");
-    expect(guard.evaluateLiveOrder(order({ side: "sell", quantity: 2 }))).toMatchObject({ code: "LIVE_DISABLED" });
+    expect(guard.evaluateLiveOrder(order({ side: "sell", quantity: 2 }))).toMatchObject({ code: "NO_SPOT_SHORT" });
+    guard.recordLiveOrder("BTCINR", "sell", 1, 1000, true);
+    expect(guard.evaluateLiveOrder(order({ side: "sell", quantity: 1 }))).toMatchObject({ code: "NO_SPOT_SHORT" });
   });
 
   it("resets daily caps at IST midnight but keeps open quantity", () => {

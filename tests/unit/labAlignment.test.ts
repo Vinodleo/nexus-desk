@@ -116,7 +116,7 @@ describe("online learning", () => {
   it("learns from finished intraday setups with recorded inputs from the last 30 days", () => {
     const now = T0 + 40 * 24 * 60 * 60 * 1000;
     const done = (signalTime: number, r: number, extra = {}) => ({
-      ...shadowFromSetup(setup, "proposed", signalTime, 0.5, "heuristic", [1, 0.2, 0.5, 0.1, 0.5, 0.3]), status: "target" as const, r, ...extra,
+      ...shadowFromSetup(setup, "proposed", signalTime, { confidence: 0.5, scorer: "heuristic", features: [1, 0.2, 0.5, 0.1, 0.5, 0.3] }), status: "target" as const, r, ...extra,
     });
     const set = onlineTrainingSet(
       [
@@ -125,7 +125,7 @@ describe("online learning", () => {
         done(now - 31 * 24 * 60 * 60 * 1000, 1), // too old
         done(now - 3000, 1, { features: undefined }), // no inputs recorded
         done(now - 4000, 1, { horizon: "swing" }),
-        { ...shadowFromSetup(setup, "proposed", now - 5000, 0.5, "heuristic", [1, 1, 1, 1, 1, 1]) }, // still open
+        { ...shadowFromSetup(setup, "proposed", now - 5000, { confidence: 0.5, scorer: "heuristic", features: [1, 1, 1, 1, 1, 1] }) }, // still open
       ],
       now
     );

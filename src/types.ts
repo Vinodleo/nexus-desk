@@ -95,6 +95,8 @@ export interface ExperienceVector {
   symbol: string;
   setupName: string;
   family: StrategyFamily;
+  /** Long or short; absent on older records. The memory only matches the same direction. */
+  direction?: TradeDirection;
   regime: RegimeType;
   features: {
     adx: number;

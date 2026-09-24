@@ -1,5 +1,6 @@
 import { ExperienceVector, StrategySetup, RegimeType, TradeAutopsy } from "../types";
 import { seededShare } from "./dataProvenance";
+import type { ShadowSignal } from "./shadowTracker";
 
 // Seed historical experiences
 export function generateInitialExperienceDatabase(): ExperienceVector[] {
@@ -96,7 +97,9 @@ export function retrieveSimilarExperiences(
 
   // Filter or prioritize matching family & symbol
   const scored = database
-    .filter((e) => e.family === setup.family)
+    // Same family, and the same direction when known: a short that paid off
+    // when the price fell says nothing good about a long.
+    .filter((e) => e.family === setup.family && (!e.direction || e.direction === setup.direction))
     .map((item) => {
       // Euclidean distance in normalized feature space
       const dAdx = (item.features.adx - targetFeatures.adx) / 30;
@@ -133,4 +136,42 @@ export function retrieveSimilarExperiences(
     similarityScore: Number(avgSimilarity.toFixed(2)),
     seededShare: seededShare(topK.map((s) => s.item)),
   };
+}
+
+/**
+ * The trade memory from real results: every shadow-tracked setup that has
+ * finished (taken or not), with its indicator readings and regime at the
+ * signal, as a WIN when it made money after fees.
+ */
+export function experiencesFromShadows(shadows: ShadowSignal[]): ExperienceVector[] {
+  const out: ExperienceVector[] = [];
+  for (const s of shadows) {
+    if (s.status === "open" || s.r === undefined || !s.setupFeatures || !s.regime || s.exitPrice === undefined) continue;
+    const win = s.r > 0;
+    const movePct = ((s.direction === "LONG" ? s.exitPrice - s.entryPrice : s.entryPrice - s.exitPrice) / s.entryPrice) * 100;
+    out.push({
+      id: `shadow-${s.id}`,
+      timestamp: new Date(s.signalTime).toISOString(),
+      symbol: s.symbol,
+      setupName: s.setupName,
+      family: s.family as ExperienceVector["family"],
+      direction: s.direction,
+      regime: s.regime,
+      features: {
+        adx: s.setupFeatures.adx,
+        rsi: s.setupFeatures.rsi,
+        volatilityRatio: 1,
+        volumeSurgeRatio: s.setupFeatures.volumeSurgeRatio,
+        vwapDist: s.setupFeatures.vwapDistancePercent,
+      },
+      metaConfidence: s.confidence ?? 0.5,
+      decision: s.kind === "proposed" ? "TRADE" : "NO_TRADE",
+      outcome: win ? "WIN" : "LOSS",
+      // In units of the scanner's standard ₹300 risk.
+      pnl: Number((s.r * 300).toFixed(2)),
+      pnlPercent: Number(movePct.toFixed(2)),
+      tags: [s.regime, s.family, win ? "win" : "loss", "tracked"],
+    });
+  }
+  return out;
 }

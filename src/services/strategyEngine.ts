@@ -10,6 +10,11 @@ export interface CandidateEvaluationContext {
   promotedModel?: PromotedLabModel | null;
   /** Optional higher-timeframe / broad-index regime, for macro-aware personas. Defaults to neutral when omitted. */
   macroRegime?: RegimeType | "neutral";
+  /**
+   * Only long trades can be placed (CoinDCX's INR markets are spot: selling
+   * a coin you don't hold isn't possible). Short setups sit out the vote.
+   */
+  longOnly?: boolean;
 }
 
 /**

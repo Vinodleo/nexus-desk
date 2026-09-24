@@ -89,6 +89,7 @@ import { fetchLiveOrderBook } from "./services/orderBookService";
 import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanner";
 import { useServerStatus } from "./hooks/useServerStatus";
 import { buildCalibrator } from "./services/calibration";
+import { experiencesFromShadows } from "./services/experienceMemory";
 
 // ATR recorded on a position for its trailing-stop rules. The indicator used
 // to be floored at 0.3% of price, and the exit rules were tuned with that
@@ -1480,7 +1481,9 @@ export default function App() {
       activePositions: activePositionsRef.current,
       dailyRealizedPnl,
       failureState,
-      experiences,
+      // Real results only: tracked setups and your closed trades, not the
+      // generated starter memory.
+      experiences: [...experiencesFromShadows(shadowStore.all()), ...experiences.filter((e) => !e.isSeeded)],
       riskPolicy,
       quarantines: symbolQuarantinesRef.current,
       getOrderBook: fetchLiveOrderBook,

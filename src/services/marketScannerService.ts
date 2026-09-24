@@ -23,16 +23,13 @@ import {
 } from "./marketDataService";
 import { runPersonaPanel } from "./personaEngine";
 import { liveMarketStream } from "./liveMarketStreamService";
-import {
-  generateInitialExperienceDatabase,
-  retrieveSimilarExperiences,
-} from "./experienceMemory";
+import { retrieveSimilarExperiences } from "./experienceMemory";
 import { computeMetaLabelScore } from "./metaLabeling";
 import { syntheticBarShare } from "./dataProvenance";
 import { MIN_SIGNAL_BARS, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
 import { skipReasonForRisk, type SkipReason, type SymbolScanOutcome } from "./scanOutcome";
 import { shadowFromSetup, type ShadowSignal } from "./shadowTracker";
-import { DEFAULT_MIN_CONFIDENCE, MIN_EDGE_R, type Calibrator, type ConfidenceScorer } from "./calibration";
+import { DEFAULT_MIN_CONFIDENCE, HEURISTIC_SCORE_VERSION, MIN_EDGE_R, type Calibrator, type ConfidenceScorer } from "./calibration";
 import { META_FEATURE_VERSION, metaFeatures } from "./metaFeatures";
 
 // A Lab model trained on generated candles says nothing about the real
@@ -150,6 +147,8 @@ export async function scanSingleMarket(
   tfjsModel?: tf.LayersModel
 ): Promise<MarketScanResult> {
   const policy = options.riskPolicy || DEFAULT_RISK_POLICY;
+  // CoinDCX's INR markets are spot: only long trades can be placed there.
+  const longOnly = symbolConfig.assetClass === "crypto";
   const currentBar =
     bars && bars.length > 0 ? bars[bars.length - 1] : undefined;
   const price = currentBar ? currentBar.close : symbolConfig.basePrice;
@@ -164,8 +163,9 @@ export async function scanSingleMarket(
   // two intervals ago the feed has stalled, and the risk engine fails closed.
   const candleCloseMs = (currentBar?.timestampMs ?? Date.now()) + SIGNAL_INTERVAL_MS;
   const isDataStale = Date.now() - candleCloseMs > 2 * SIGNAL_INTERVAL_MS;
-  const experiences =
-    options.experiences || generateInitialExperienceDatabase();
+  // No generated starter trades: without a memory, each trader's own
+  // estimate stands (see computeMetaLabelScore).
+  const experiences = options.experiences ?? [];
   const proposals: TradeProposal[] = [];
 
   // Run the full trader panel: multiple differentiated personas vote,
@@ -179,6 +179,7 @@ export async function scanSingleMarket(
       bars,
       regime,
       eventWindowActive: false,
+      longOnly,
       promotedModel,
       macroRegime: options.macroRegimes?.[symbolConfig.symbol] ?? liveMarketStream.getMacroRegime(symbolConfig.symbol),
     },
@@ -211,6 +212,7 @@ export async function scanSingleMarket(
       bars,
       regime,
       eventWindowActive: false,
+      longOnly,
       promotedModel,
       macroRegime: options.macroRegimes?.[symbolConfig.symbol] ?? liveMarketStream.getMacroRegime(symbolConfig.symbol),
     },
@@ -357,9 +359,13 @@ export async function scanSingleMarket(
         setup,
         candidateSkips.length > skipsBefore ? candidateSkips[candidateSkips.length - 1] : "proposed",
         candleCloseMs,
-        metaScore.confidence,
-        scorer,
-        signalFeatures
+        {
+          confidence: metaScore.confidence,
+          scorer,
+          scoreVersion: scorer === "heuristic" ? HEURISTIC_SCORE_VERSION : undefined,
+          features: signalFeatures,
+          regime,
+        }
       )
     );
 
@@ -416,6 +422,7 @@ export async function scanSingleMarket(
   }
 
   const trendFiltered = (panel.filteredByHigherTimeframe ?? 0) + (swingPanel.filteredByHigherTimeframe ?? 0);
+  const shortOnly = [...(panel.shortOnlySetups ?? []), ...(swingPanel.shortOnlySetups ?? [])];
   const outcome: SymbolScanOutcome =
     proposals.length > 0
       ? { symbol: symbolConfig.symbol, proposed: true }
@@ -424,11 +431,22 @@ export async function scanSingleMarket(
           proposed: false,
           reason:
             candidateSkips[0] ??
-            (panel.vetoed || swingPanel.vetoed ? "vetoed" : trendFiltered > 0 ? "against_trend" : "no_setup"),
+            (panel.vetoed || swingPanel.vetoed
+              ? "vetoed"
+              : trendFiltered > 0
+              ? "against_trend"
+              : shortOnly.length > 0
+              ? "no_shorting"
+              : "no_setup"),
         };
 
   for (const setup of [...(panel.trendFilteredSetups ?? []), ...(swingPanel.trendFilteredSetups ?? [])]) {
-    shadows.push(shadowFromSetup(setup, "against_trend", candleCloseMs));
+    shadows.push(shadowFromSetup(setup, "against_trend", candleCloseMs, { features: signalFeatures, regime }));
+  }
+  // Shorts can't be placed here, but following them shows what they'd have
+  // done (for exits, and for when shorting becomes possible).
+  for (const setup of shortOnly) {
+    shadows.push(shadowFromSetup(setup, "no_shorting", candleCloseMs, { features: signalFeatures, regime }));
   }
 
   return {

@@ -14,6 +14,13 @@ import type { ShadowSignal } from "./shadowTracker";
 export const DEFAULT_MIN_CONFIDENCE = 0.58;
 /** With measured win chances, a trade must expect at least this share of its risk back after costs. */
 export const MIN_EDGE_R = 0.05;
+/**
+ * Version of the rule-based score (computeMetaLabelScore). Version 2 leans on
+ * each trader's own estimate until real results of similar setups exist,
+ * instead of a memory of generated trades. Scores from another version mean
+ * something different, so calibration only uses setups scored with this one.
+ */
+export const HEURISTIC_SCORE_VERSION = 2;
 /** Resolved setups needed before measured chances replace the built-in estimate. */
 export const MIN_CALIBRATION_SAMPLES = 40;
 /** Each band starts as if it had this many setups at its own score, so thin bands stay close to it. */
@@ -87,6 +94,7 @@ export function buildCalibrator(
   for (const s of shadows) {
     if (s.horizon !== "intraday" || s.confidence === undefined) continue;
     if ((s.scorer ?? "heuristic") !== scorer) continue;
+    if (scorer === "heuristic" && s.scoreVersion !== HEURISTIC_SCORE_VERSION) continue;
     const y = outcomeScore(s);
     if (y !== null) points.push({ score: s.confidence, y });
   }
