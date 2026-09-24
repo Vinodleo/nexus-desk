@@ -50,9 +50,14 @@ describe("experience provenance", () => {
       family: "trend_following",
       features: { adx: 30, rsi: 55, volumeSurgeRatio: 1.5, vwapDistancePercent: 0.2 },
     } as unknown as StrategySetup;
-    expect(retrieveSimilarExperiences(setup, "trending_bullish", bank).seededShare).toBe(1);
+    const seededOnly = retrieveSimilarExperiences(setup, "trending_bullish", bank);
+    expect(seededOnly.seededShare).toBe(1);
 
-    const realTwins: ExperienceVector[] = bank.slice(0, 60).map((e, i) => ({ ...e, id: `exp-live-${i}`, isSeeded: undefined }));
+    // Real trades identical to five of the nearest seeded ones must land in the
+    // neighbourhood. (The bank is random, so copying arbitrary entries didn't.)
+    const realTwins: ExperienceVector[] = seededOnly.neighbors
+      .slice(0, 5)
+      .map((e, i) => ({ ...e, id: `exp-live-${i}`, isSeeded: undefined }));
     const mixed = retrieveSimilarExperiences(setup, "trending_bullish", [...realTwins, ...bank]);
     expect(mixed.seededShare).toBeGreaterThan(0);
     expect(mixed.seededShare).toBeLessThan(1);

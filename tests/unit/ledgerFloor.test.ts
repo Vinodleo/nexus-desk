@@ -1,0 +1,100 @@
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { createElement } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { LedgerFloor, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
+import { formatMoney, formatPct, formatPrice } from "../../src/components/ledger/format";
+import type { Position } from "../../src/types";
+
+afterEach(cleanup);
+
+describe("ledger number formatting", () => {
+  it("uses Indian grouping, a real minus sign and optional plus", () => {
+    expect(formatMoney(94483.96)).toBe("₹94,483.96");
+    expect(formatMoney(-5688.13)).toBe("−₹5,688.13");
+    expect(formatMoney(23.04, { signed: true })).toBe("+₹23.04");
+    expect(formatMoney(0, { signed: true })).toBe("₹0.00");
+    expect(formatMoney(2500, { decimals: 0 })).toBe("₹2,500");
+  });
+
+  it("drops decimals on large prices and keeps them on small ones", () => {
+    expect(formatPrice(5842100.4)).toBe("58,42,100");
+    expect(formatPrice(211.2)).toBe("211.20");
+    expect(formatPrice(0.12345)).toBe("0.1235");
+    expect(formatPct(0.333)).toBe("+0.33%");
+    expect(formatPct(-1.2)).toBe("−1.20%");
+  });
+});
+
+const btc: Position = {
+  id: "p1", symbol: "BTC/INR", direction: "LONG", setupName: "t", entryPrice: 5842100, currentPrice: 5861300,
+  quantity: 0.0012, stopLoss: 5851900, takeProfit: 5920000, unrealizedPnl: 23.04, unrealizedPnlPercent: 0.33,
+  openTime: new Date().toISOString(), expectedHoldingTimeMinutes: 30, metaConfidence: 0.6, trailActive: true,
+};
+
+function props(over: Partial<LedgerFloorProps> = {}): LedgerFloorProps {
+  return {
+    isLive: false, equity: 94483.96, dailyPnl: 0, allTimePnl: -5688.13,
+    autopilotOn: true, onAutopilotChange: vi.fn(), exposureFraction: 0.099, dailyLossLeft: 2500,
+    stopped: false, onToggleStop: vi.fn(), positions: [btc], onClosePosition: vi.fn(),
+    guardianOnline: true, liveTradingEnabled: false, ticker: { symbol: "ETH/INR", price: 265922.4, changePercent: 0.56 },
+    pendingProposals: 0, scan: { analyzed: 42, selected: 6, rejected: 36 }, onOpenQueue: vi.fn(), onOpenSettings: vi.fn(),
+    ...over,
+  };
+}
+
+describe("LedgerFloor", () => {
+  it("shows the account, limits and positions from its props", () => {
+    const { container } = render(createElement(LedgerFloor, props()));
+    const text = container.textContent ?? "";
+    expect(text).toContain("₹94,483.96");
+    expect(text).toContain("−₹5,688.13");
+    expect(text).toContain("9.9%");
+    expect(text).toContain("₹2,500");
+    expect(text).toContain("Trailing stop active · locked above entry");
+    expect(text).toContain("Guardian online · live trading off · ETH 2,65,922");
+  });
+
+  it("closes a position only on the second tap", () => {
+    const p = props();
+    render(createElement(LedgerFloor, p));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(p.onClosePosition).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Tap again to close" }));
+    expect(p.onClosePosition).toHaveBeenCalledWith(btc);
+  });
+
+  it("forgets a half-finished close after a few seconds", () => {
+    vi.useFakeTimers();
+    try {
+      render(createElement(LedgerFloor, props()));
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      act(() => {
+        vi.advanceTimersByTime(4500);
+      });
+      expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("toggles autopilot, and locks it while everything is stopped", () => {
+    const p = props();
+    const { rerender } = render(createElement(LedgerFloor, p));
+    fireEvent.click(screen.getByRole("switch", { name: "Autopilot" }));
+    expect(p.onAutopilotChange).toHaveBeenCalledWith(false);
+
+    rerender(createElement(LedgerFloor, { ...p, stopped: true }));
+    expect((screen.getByRole("switch", { name: "Autopilot" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /Resume/ }));
+    expect(p.onToggleStop).toHaveBeenCalled();
+  });
+
+  it("links to the queue when proposals are waiting", () => {
+    const p = props({ pendingProposals: 2, positions: [] });
+    const { container } = render(createElement(LedgerFloor, p));
+    expect(container.textContent).toContain("No open positions");
+    fireEvent.click(screen.getByRole("button", { name: /2 proposals waiting/ }));
+    expect(p.onOpenQueue).toHaveBeenCalled();
+  });
+});

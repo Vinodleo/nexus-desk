@@ -4,6 +4,49 @@
   --font-serif: "Instrument Serif", Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-display: "Fraunces", Georgia, serif;
+  --font-ui: "Instrument Sans", system-ui, -apple-system, sans-serif;
+}
+
+/* Private Ledger design tokens. Components use these through the Tailwind
+   colours below (bg-canvas, text-ink, border-line, ...), so another theme
+   is just another block of these variables. */
+:root {
+  --nx-canvas: #F6F3EE;
+  --nx-surface: #FFFFFF;
+  --nx-inset: #F6F3EE;
+  --nx-line: #E4DED3;
+  --nx-ink: #1C1B18;
+  --nx-muted: #66615A;
+  --nx-gain: #1E6B47;
+  --nx-loss: #A33A2C;
+  --nx-accent: #1F4E79;
+  --nx-on-accent: #FFFFFF;
+  --nx-accent-soft: #E6EDF4;
+  --nx-warn: #8A5A12;
+  --nx-warn-soft: #FBF3E4;
+  --nx-warn-ink: #5E3F0C;
+  --nx-danger-soft: #FBEFEC;
+  --nx-danger-line: #E7C5BE;
+}
+
+@theme inline {
+  --color-canvas: var(--nx-canvas);
+  --color-surface: var(--nx-surface);
+  --color-inset: var(--nx-inset);
+  --color-line: var(--nx-line);
+  --color-ink: var(--nx-ink);
+  --color-muted: var(--nx-muted);
+  --color-gain: var(--nx-gain);
+  --color-loss: var(--nx-loss);
+  --color-accent: var(--nx-accent);
+  --color-on-accent: var(--nx-on-accent);
+  --color-accent-soft: var(--nx-accent-soft);
+  --color-warn: var(--nx-warn);
+  --color-warn-soft: var(--nx-warn-soft);
+  --color-warn-ink: var(--nx-warn-ink);
+  --color-danger-soft: var(--nx-danger-soft);
+  --color-danger-line: var(--nx-danger-line);
 }
 
 html, body {
