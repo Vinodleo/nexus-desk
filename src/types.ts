@@ -267,6 +267,13 @@ export interface Position {
   stopLoss: number;
   takeProfit: number;
   initialTakeProfit?: number;
+  /** The stop at open; +1R is measured from it. */
+  initialStopLoss?: number;
+  /** How much to bank at +1R (paper positions), fitted to CoinDCX's quantity step. */
+  partialQuantity?: number;
+  /** How much was banked early and at what price; `quantity` stays the full size. */
+  bankedQuantity?: number;
+  bankedPrice?: number;
   unrealizedPnl: number;
   unrealizedPnlPercent: number;
   openTime: string;

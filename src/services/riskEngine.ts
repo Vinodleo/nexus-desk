@@ -7,6 +7,7 @@ import {
   FailureInjectionState,
 } from "../types";
 import { fitQuantity } from "../shared/marketRules";
+import { openQuantity } from "../shared/exitRules";
 import { ruleFor } from "./marketRulesStore";
 import type { RiskRejectionCode } from "./scanOutcome";
 
@@ -259,7 +260,7 @@ export function evaluateRiskEngine(
 
   // Current total exposure
   const currentExposure = activePositions.reduce(
-    (acc, p) => acc + p.quantity * p.currentPrice,
+    (acc, p) => acc + openQuantity(p) * p.currentPrice,
     0
   );
   const currentExposureFraction = currentExposure / equity;

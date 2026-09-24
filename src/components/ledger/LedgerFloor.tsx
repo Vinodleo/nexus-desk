@@ -71,6 +71,7 @@ export interface LedgerFloorProps {
 
 function positionNote(p: Position): string {
   if (p.isLiveOrder) return "Live order on CoinDCX · guarded on the server";
+  if (p.bankedQuantity) return `Half banked at +1R · ${Number((p.quantity - p.bankedQuantity).toFixed(8))} left on the trailing stop`;
   const isLong = p.direction === "LONG";
   const lockedIn = isLong ? p.stopLoss > p.entryPrice : p.stopLoss < p.entryPrice;
   if (p.trailActive && lockedIn) return `Trailing stop active · locked ${isLong ? "above" : "below"} entry`;

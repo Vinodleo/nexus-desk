@@ -58,6 +58,12 @@ describe("LedgerFloor", () => {
     expect(text).toContain("BTC 58,61,300 +0.31% · ETH 2,65,922 \u22123.04% in 24h");
   });
 
+  it("says when half a position has been banked", () => {
+    const banked = { ...btc, quantity: 0.002, bankedQuantity: 0.001, bankedPrice: 5852000 };
+    const { container } = render(createElement(LedgerFloor, props({ positions: [banked] })));
+    expect(container.textContent).toContain("Half banked at +1R · 0.001 left on the trailing stop");
+  });
+
   it("says how many coins the scanner is watching", () => {
     const { container, rerender } = render(createElement(LedgerFloor, props({ watching: { count: 25, fallback: false } })));
     expect(container.textContent).toContain("Watching CoinDCX's 25 most-traded coins, updated hourly");

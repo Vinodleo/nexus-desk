@@ -14,15 +14,17 @@ describe("entry at the live price", () => {
   it("keeps the signal's stop and target and shrinks size if the stop is further away", () => {
     const p = priceEntry(setup, 9990, 10, 300); // 20 to the stop now, budget ₹300 -> 15 units, capped at 10
     expect(p).toMatchObject({ ok: true, entryPrice: 9990, units: 10 });
-    const q = priceEntry(setup, 10010, 10, 300); // 40 to the stop -> 7.5 units, floored to the step
-    expect(q.ok && q.units).toBe(7.5);
+    const q = priceEntry(setup, 10005, 10, 300); // 35 to the stop -> 8.57 units, floored to the step
+    expect(q.ok && q.units).toBe(8.571);
   });
 
   it("skips a trade that has already run or already failed", () => {
     expect(priceEntry(setup, 9960, 10, 300)).toMatchObject({ ok: false, reason: expect.stringMatching(/past the stop/) });
     expect(priceEntry(setup, 10070, 10, 300)).toMatchObject({ ok: false, reason: expect.stringMatching(/reached the target/) });
-    // 10040: 70 to the stop, 26 to the target = 0.37R left
-    expect(priceEntry(setup, 10040, 10, 300)).toMatchObject({ ok: false, reason: expect.stringMatching(/only 0.37R/) });
+    // 10040: 70 to the stop, 26 to the target; ₹10.04 of fees -> 15.96 / 80.04 = 0.20R
+    expect(priceEntry(setup, 10040, 10, 300)).toMatchObject({ ok: false, reason: expect.stringMatching(/only 0.20R of reward is left after fees/) });
+    // 10010 looks like 1.4R before fees but is 0.92R after them.
+    expect(priceEntry(setup, 10010, 10, 300)).toMatchObject({ ok: false, reason: expect.stringMatching(/only 0.92R/) });
   });
 
   it("uses the signal price when there's no live price", () => {

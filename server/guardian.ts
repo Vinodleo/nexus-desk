@@ -6,6 +6,7 @@ import { applyGuardianTick, isPastHoldingTime, mergeSyncedGuardState } from "./g
 import { getLivePosition, isOpenLivePosition, requestLiveExit } from "./liveExecution";
 import { broadcastToUser } from "./realtime";
 import { computeClosedTradePnl } from "../src/shared/tradeMath";
+import { blendedExitPrice } from "../src/shared/exitRules";
 
 import { validate, syncPositionsBody, closedEventsQuery } from "./validation";
 
@@ -33,6 +34,10 @@ export interface DaemonPosition {
   trailMode?: "SCALP_TIGHT" | "TREND_RUNNER";
   openTime: string;
   expectedHoldingTimeMinutes?: number;
+  initialStopLoss?: number;
+  partialQuantity?: number;
+  bankedQuantity?: number;
+  bankedPrice?: number;
   isSelfApproved?: boolean;
   setupName?: string;
   userId?: string;
@@ -273,7 +278,14 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     realizedPnlPercent: pnlPercent,
     entryNotional,
     isWin,
-  } = computeClosedTradePnl(pos.direction, pos.entryPrice, exitPrice, pos.quantity, reason);
+  } = computeClosedTradePnl(
+    pos.direction,
+    pos.entryPrice,
+    exitPrice,
+    pos.quantity,
+    reason,
+    pos.bankedQuantity && pos.bankedPrice !== undefined ? { quantity: pos.bankedQuantity, price: pos.bankedPrice } : undefined
+  );
 
   const exitTimeMs = Date.now();
   const openTimeMs = pos.openTime ? new Date(pos.openTime).getTime() : exitTimeMs;
@@ -285,7 +297,8 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     symbol: pos.symbol,
     direction: pos.direction,
     entryPrice: pos.entryPrice,
-    exitPrice,
+    // Averaged over the half banked at +1R, if any.
+    exitPrice: Number(blendedExitPrice(pos, exitPrice).toFixed(8)),
     quantity: pos.quantity,
     moneyPlaced: entryNotional,
     grossPnl: rawGrossPnl,
