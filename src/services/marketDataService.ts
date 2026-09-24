@@ -196,13 +196,36 @@ export function isIndianEquityMarketOpen(): boolean {
   return minutesSinceMidnight >= marketOpen && minutesSinceMidnight <= marketClose;
 }
 
+// Configs for INR coins outside SUPPORTED_SYMBOLS, which the scanner picks up
+// from CoinDCX's most-traded list.
+const dynamicConfigs = new Map<string, SymbolConfig>();
+
+/** True for a CoinDCX INR coin symbol like "PEPE/INR". */
+export function isCryptoInrSymbol(symbol: string): boolean {
+  return /^[A-Z0-9]{1,15}\/INR$/.test(symbol);
+}
+
 export function getSymbolConfig(symbolOrCfg: SymbolConfig | string): SymbolConfig {
   if (typeof symbolOrCfg !== "string") return symbolOrCfg;
   const normalized = symbolOrCfg === "XPR/INR" ? "XRP/INR" : symbolOrCfg;
-  return (
-    SUPPORTED_SYMBOLS.find((s) => s.symbol === normalized) ||
-    SUPPORTED_SYMBOLS[0]
-  );
+  const known = SUPPORTED_SYMBOLS.find((s) => s.symbol === normalized);
+  if (known) return known;
+  if (!isCryptoInrSymbol(normalized)) return SUPPORTED_SYMBOLS[0];
+  let cfg = dynamicConfigs.get(normalized);
+  if (!cfg) {
+    const base = normalized.split("/")[0];
+    cfg = {
+      symbol: normalized,
+      name: `${base} / INR`,
+      basePrice: 0,
+      tickSize: 0.01,
+      volatility: 0.75,
+      correlatedGroup: "CRYPTO_ALT",
+      assetClass: "crypto",
+    };
+    dynamicConfigs.set(normalized, cfg);
+  }
+  return cfg;
 }
 
 // Helper: Calculate EMA array
