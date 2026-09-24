@@ -21,6 +21,13 @@ export async function loadMarketRules(): Promise<number> {
   }
 }
 
+/** Sets the rules directly (the server, which reads CoinDCX's list itself). */
+export function setMarketRules(list: MarketRule[]): void {
+  if (list.length === 0) return;
+  rules.clear();
+  for (const r of list) rules.set(r.symbol, r);
+}
+
 /** Order rules for a symbol: CoinDCX's own when loaded, otherwise an estimate. */
 export function ruleFor(symbol: string, price: number): MarketRule {
   const real = rules.get(symbol);

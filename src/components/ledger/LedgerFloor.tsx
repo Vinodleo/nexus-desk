@@ -63,6 +63,8 @@ export interface LedgerFloorProps {
   candleStatus?: CandleStatus[];
   /** How many coins the scanner covers, and whether it's the default list. Omit to follow the live stream. */
   watching?: CoinCoverage;
+  /** Where scanning runs: on the server (even with the app closed) or in this browser. */
+  scanLocation?: "checking" | "server" | "browser";
   pendingProposals: number;
   scan: FloorScanSummary;
   onOpenQueue: () => void;
@@ -131,16 +133,22 @@ const LiveCandleWarning: React.FC = () => {
   return <CandleWarning status={status} />;
 };
 
-const Coverage: React.FC<{ watching: CoinCoverage }> = ({ watching }) => (
+const WHERE: Record<string, string> = {
+  server: " · scanned on the server, even with the app closed",
+  browser: " · scanned in this browser while it's open",
+};
+
+const Coverage: React.FC<{ watching: CoinCoverage; scanLocation?: string }> = ({ watching, scanLocation }) => (
   <div>
     {watching.fallback
       ? `Watching ${watching.count} default coins until CoinDCX's most-traded list loads`
       : `Watching CoinDCX's ${watching.count} most-traded coins, updated hourly`}
+    {scanLocation ? WHERE[scanLocation] ?? "" : ""}
   </div>
 );
 
 // Holds the count and flag as plain values so price ticks don't re-render it.
-const LiveCoverage: React.FC = () => {
+const LiveCoverage: React.FC<{ scanLocation?: string }> = ({ scanLocation }) => {
   const read = () => liveMarketStream.getUniverseInfo();
   const [count, setCount] = useState(() => read().count);
   const [fallback, setFallback] = useState(() => read().fallback);
@@ -153,7 +161,7 @@ const LiveCoverage: React.FC = () => {
       }),
     []
   );
-  return <Coverage watching={{ count, fallback }} />;
+  return <Coverage watching={{ count, fallback }} scanLocation={scanLocation} />;
 };
 
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void }> = ({ position: p, onClose }) => {
@@ -350,7 +358,11 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
       {props.candleStatus !== undefined ? <CandleWarning status={props.candleStatus} /> : <LiveCandleWarning />}
 
       <section aria-label="Scanner today" className="flex flex-col gap-1.5 text-xs text-muted tabular-nums">
-        {props.watching !== undefined ? <Coverage watching={props.watching} /> : <LiveCoverage />}
+        {props.watching !== undefined ? (
+          <Coverage watching={props.watching} scanLocation={props.scanLocation} />
+        ) : (
+          <LiveCoverage scanLocation={props.scanLocation} />
+        )}
         <div>
           Scanner today: {props.scan.analyzed} checked · {props.scan.selected} proposed · {props.scan.rejected} skipped
         </div>

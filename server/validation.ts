@@ -107,6 +107,52 @@ export const coinDcxOrderBookQuery = z.object({
   symbol: z.string().regex(/^[A-Z0-9]{1,15}$/, "base asset like BTC"),
 });
 
+// ---------- server scanner ----------
+
+const promotedModel = z
+  .object({
+    datasetName: z.string().max(300),
+    winRatePct: z.number().finite(),
+    isSynthetic: z.boolean().optional(),
+    optimizedParameters: z
+      .object({
+        slMultiplier: positiveNumber,
+        tpMultiplier: positiveNumber,
+        volSurgeThreshold: positiveNumber,
+        rsiThreshold: z.number().finite(),
+        minConfidence: z.number().finite().min(0).max(1),
+      })
+      .optional(),
+  })
+  // Display fields (dates, lessons, metrics) ride along unchanged.
+  .passthrough();
+
+export const deskStateBody = z.object({
+  equity: z.number().finite(),
+  riskLimits: z.object({
+    maxOrderValueInr: positiveNumber.max(10_000_000),
+    maxAllowedExposureFraction: z.number().finite().positive().max(1),
+  }),
+  dailyRealizedPnl: z.number().finite(),
+  autopilot: z.boolean(),
+  killSwitch: z.boolean(),
+  scanning: z.boolean(),
+  failureState: z.object({
+    simulateAgentTimeout: z.boolean(),
+    simulateStaleMarketData: z.boolean(),
+    simulateDailyLossBreach: z.boolean(),
+    simulateOrderBookThinLiquidity: z.boolean(),
+    simulateConflictingSignals: z.boolean(),
+    globalKillSwitchActive: z.boolean(),
+  }),
+  quarantines: z.record(z.string().max(32), z.object({ quarantinedUntilMs: z.number().finite() })),
+  promotedModel: promotedModel.nullable(),
+});
+
+export const scannerReportsQuery = z.object({
+  since: z.coerce.number().finite().nonnegative().optional(),
+});
+
 export const zerodhaCallbackBody = z.object({
   requestToken: z.string().min(1).max(256),
 });

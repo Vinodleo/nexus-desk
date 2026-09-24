@@ -17,6 +17,9 @@ import { router as zerodhaRouter } from "./server/routes/zerodha";
 import { router as coindcxRouter } from "./server/routes/coindcx";
 import { router as tradingRouter } from "./server/routes/trading";
 import { router as agentsRouter } from "./server/routes/agents";
+import { router as scannerRouter } from "./server/routes/scanner";
+import { loadDeskStates } from "./server/scanner/deskState";
+import { startServerScanner } from "./server/scanner/scannerService";
 
 // Entry point: builds the Express app, mounts the route modules behind
 // Firebase auth, and starts the WebSocket fan-out, the CoinDCX price relay and
@@ -45,6 +48,7 @@ app.use(coindcxRouter);
 app.use(tradingRouter);
 app.use(guardianRouter);
 app.use(agentsRouter);
+app.use(scannerRouter);
 
 // Unknown API paths get a JSON 404 instead of falling through to the SPA's
 // index.html (which answered 200 with a web page).
@@ -54,6 +58,7 @@ app.use("/api", (_req: Request, res: Response) => {
 
 // Restore guardian state before anything can tick, and flush it on shutdown.
 loadDaemonStateFromDisk();
+loadDeskStates();
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
     console.log(`[Daemon] ${signal} received. Flushing state to disk...`);
@@ -86,6 +91,7 @@ async function startServer() {
   attachWebSocketServer(server);
   startCoinDcxRelay();
   startExpiryGuard();
+  startServerScanner();
 }
 
 startServer();
