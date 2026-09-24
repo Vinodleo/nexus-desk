@@ -14,6 +14,8 @@ import { getCoinUniverse } from "../coinUniverse";
 import { currentEventWindow } from "../eventCalendar";
 import { getMarketRules } from "../marketRules";
 import { fetchOrderBook } from "../coindcxMarketData";
+import { angelConfigured, fetchStockDepth } from "../angelOne";
+import { NSE_SYMBOLS, isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
 import { broadcastToUser, currentPrices } from "../realtime";
 import { dailyPnlToday, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
@@ -25,7 +27,8 @@ import { ServerMarketData } from "./marketData";
 // app would (their limits, equity, open positions, quarantines and promoted
 // Lab settings, synced from the app), follows every setup it finds (shadow
 // tracking) and keeps the results for the app to pick up: live over the
-// WebSocket when it's open, and on its next visit when it isn't.
+// WebSocket when it's open, and on its next visit when it isn't. With Angel
+// One set up, Nifty 50 stocks are scanned too while NSE is open.
 
 /** One scan's results, as the app receives them. */
 export interface ServerScanReport {
@@ -108,8 +111,22 @@ function asPosition(p: DaemonPosition): Position {
 }
 
 async function getOrderBook(symbol: string, notional: number) {
+  if (isNseSymbol(symbol)) {
+    const book = await fetchStockDepth(symbol).catch(() => null);
+    return book ? toOrderBook(book, notional, "angelone") : null;
+  }
   const result = await fetchOrderBook(symbol.split("/")[0]);
   return "book" in result ? toOrderBook(result.book, notional) : null;
+}
+
+/** Stocks the scanner covers: the Nifty 50 when Angel One is set up. */
+export function stockUniverse(): string[] {
+  return angelConfigured() ? NSE_SYMBOLS : [];
+}
+
+/** The coins, plus the stocks while NSE is open. */
+function scanList(now: number): string[] {
+  return isNseOpen(now) ? [...universe, ...stockUniverse()] : universe;
 }
 
 /**
@@ -144,6 +161,8 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
   const report = await scanAllMarkets({
     symbols,
     cryptoSymbols: universe,
+    equitySymbols: stockUniverse(),
+    now,
     barsMap,
     activePositions: [...daemonPositions.values()].filter((p) => p.userId === uid).map(asPosition),
     dailyRealizedPnl: serverDailyPnl(uid, desk, now),
@@ -180,10 +199,12 @@ async function refreshMarket(now: number): Promise<void> {
   setMarketRules([...rules.values()]);
   // Coins with setups still being followed keep their candles too.
   const followed = [...users.values()].flatMap((u) => u.shadows.filter((s) => s.status === "open").map((s) => s.symbol));
-  const symbols = [...new Set([...universe, ...followed])];
-  market.keepOnly(symbols);
+  const open = isNseOpen(now);
+  // Stocks keep their candles overnight; they're fetched only while NSE is open.
+  market.keepOnly([...new Set([...universe, ...stockUniverse(), ...followed])]);
+  const symbols = [...new Set([...scanList(now), ...followed])].filter((sym) => open || !isNseSymbol(sym));
   await market.refresh(symbols, now);
-  await market.refreshMacro(universe, now);
+  await market.refreshMacro(scanList(now), now);
 }
 
 /** One cycle: fresh candles, then every scanning user's scan and shadow tracking. */
@@ -197,7 +218,7 @@ export async function runScanCycle(now: number = Date.now()): Promise<void> {
   }
   for (const [uid, desk] of desks) {
     try {
-      await scanForUser(uid, desk, universe, now);
+      await scanForUser(uid, desk, scanList(now), now);
     } catch (err) {
       console.error(`[ServerScanner] Scan failed for ${uid}:`, err);
     }
@@ -206,7 +227,7 @@ export async function runScanCycle(now: number = Date.now()): Promise<void> {
 
   // Coins whose just-closed candle wasn't out yet get one retry.
   const justClosedOpen = Math.floor(now / SIGNAL_INTERVAL_MS) * SIGNAL_INTERVAL_MS - SIGNAL_INTERVAL_MS;
-  const late = universe.filter((s) => (market.getBars(s)?.at(-1)?.timestampMs ?? 0) < justClosedOpen);
+  const late = scanList(now).filter((s) => (market.getBars(s)?.at(-1)?.timestampMs ?? 0) < justClosedOpen);
   if (late.length > 0) {
     setTimeout(async () => {
       const retryAt = Date.now();
@@ -226,7 +247,7 @@ export async function scanNow(uid: string): Promise<ServerScanReport | null> {
   if (!desk) return null;
   const now = Date.now();
   await refreshMarket(now);
-  const record = await scanForUser(uid, desk, universe, now);
+  const record = await scanForUser(uid, desk, scanList(now), now);
   saveScannerState();
   return record;
 }
@@ -239,7 +260,8 @@ export function scannerStatus(uid: string, now: number = Date.now()) {
     running: Boolean(desk?.scanning) && now - lastScanAt < SERVER_SCAN_FRESH_MS,
     lastScanAt,
     coins: universe.length,
-    problems: market.problems(universe),
+    stocks: stockUniverse().length,
+    problems: market.problems(scanList(now)),
   };
 }
 

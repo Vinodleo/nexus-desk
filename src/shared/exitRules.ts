@@ -10,16 +10,26 @@
 //   stop, up to HOLD_EXTENSION_MULTIPLE times the limit.
 
 import { floorToStep, type MarketRule } from "./marketRules";
+import { isNseSymbol, nseSquareOffDue } from "./nse";
 
 /** Gain, in multiples of the initial risk, at which half the position is banked. */
 export const PARTIAL_AT_R = 1;
 /** Fees both ways (0.10%) plus a typical spread: the least a "locked" stop must be past entry. */
 export const BREAKEVEN_BUFFER = 0.0018;
+/** The same for Indian stocks, whose costs are higher (brokerage per order, STT, GST). */
+export const NSE_BREAKEVEN_BUFFER = 0.003;
+
+/** The least a "locked" stop must be past entry for this symbol. */
+export function breakevenBuffer(symbol?: string): number {
+  return isNseSymbol(symbol) ? NSE_BREAKEVEN_BUFFER : BREAKEVEN_BUFFER;
+}
 /** A winner may run to this many times its time limit before it's closed regardless. */
 export const HOLD_EXTENSION_MULTIPLE = 3;
 export const DEFAULT_HOLD_MINUTES = 30;
 
 export interface ExitState {
+  /** Decides the market's rules: NSE stocks close by 3:20 IST and cost more to trade. */
+  symbol?: string;
   direction: "LONG" | "SHORT";
   entryPrice: number;
   stopLoss: number;
@@ -42,10 +52,11 @@ export function openQuantity(p: Pick<ExitState, "quantity" | "bankedQuantity">):
 }
 
 /** The stop already guarantees a profit after fees. */
-export function stopLocksProfit(p: Pick<ExitState, "direction" | "entryPrice" | "stopLoss">): boolean {
+export function stopLocksProfit(p: Pick<ExitState, "symbol" | "direction" | "entryPrice" | "stopLoss">): boolean {
+  const buffer = breakevenBuffer(p.symbol);
   return p.direction === "LONG"
-    ? p.stopLoss >= p.entryPrice * (1 + BREAKEVEN_BUFFER) - 1e-9
-    : p.stopLoss <= p.entryPrice * (1 - BREAKEVEN_BUFFER) + 1e-9;
+    ? p.stopLoss >= p.entryPrice * (1 + buffer) - 1e-9
+    : p.stopLoss <= p.entryPrice * (1 - buffer) + 1e-9;
 }
 
 /**
@@ -53,6 +64,8 @@ export function stopLocksProfit(p: Pick<ExitState, "direction" | "entryPrice" | 
  * let one that has keep running, up to the extended limit.
  */
 export function holdingDecision(p: ExitState, nowMs: number = Date.now()): "hold" | "expire" {
+  // Stock positions are intraday: closed at 3:20 IST whatever else holds.
+  if (isNseSymbol(p.symbol) && nseSquareOffDue(p.openTime, nowMs)) return "expire";
   const openedMs = p.openTime ? new Date(p.openTime).getTime() : nowMs;
   const elapsed = (nowMs - openedMs) / 60000;
   const limit = p.expectedHoldingTimeMinutes || DEFAULT_HOLD_MINUTES;
@@ -73,7 +86,8 @@ export function partialDue(p: ExitState, price: number): boolean {
 
 /** The fields that change when half is banked at `price`: the banked part, and a stop past break-even. */
 export function bankPartial(p: ExitState, price: number): Pick<ExitState, "bankedQuantity" | "bankedPrice" | "stopLoss"> {
-  const lock = p.direction === "LONG" ? p.entryPrice * (1 + BREAKEVEN_BUFFER) : p.entryPrice * (1 - BREAKEVEN_BUFFER);
+  const buffer = breakevenBuffer(p.symbol);
+  const lock = p.direction === "LONG" ? p.entryPrice * (1 + buffer) : p.entryPrice * (1 - buffer);
   return {
     bankedQuantity: p.partialQuantity,
     bankedPrice: price,

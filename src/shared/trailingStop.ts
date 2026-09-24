@@ -1,3 +1,6 @@
+import { isNseSymbol } from "./nse";
+import { NSE_BREAKEVEN_BUFFER } from "./exitRules";
+
 // Trailing stops, shared by the browser book (positionTick) and the server
 // guardian (guardianLogic), so a position is trailed the same way whichever
 // side sees a price first. (They used to be two copies that had drifted: the
@@ -14,6 +17,8 @@
 //   target extends 1.5x further, so a strong move keeps running.
 
 export interface TrailState {
+  /** NSE stocks cost more to trade, so their trailing stops sit further past entry. */
+  symbol?: string;
   direction: "LONG" | "SHORT";
   entryPrice: number;
   stopLoss: number;
@@ -132,7 +137,11 @@ export function isTrendRunner(p: Pick<TrailState, "trailMode" | "family" | "expe
  * Stops only ever tighten. Mutates `p`; returns true if the stop or target moved.
  */
 export function updateTrailingStop(p: TrailState, price: number): boolean {
-  const cfg = trailProfile(p.trailProfile);
+  const base = trailProfile(p.trailProfile);
+  // Stocks: a trailing stop never sits closer to entry than their costs.
+  const cfg = isNseSymbol(p.symbol) && !base.fixed
+    ? { ...base, scalpFloor: Math.max(base.scalpFloor, NSE_BREAKEVEN_BUFFER), runnerFloor: Math.max(base.runnerFloor, NSE_BREAKEVEN_BUFFER) }
+    : base;
   const isLong = p.direction === "LONG";
   const entry = p.entryPrice;
   const atr = p.atrAtEntry || entry * 0.005;

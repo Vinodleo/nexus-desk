@@ -141,8 +141,10 @@ describe("evaluateExpectedValue", () => {
     expect(thin.estimatedSlippageCost).toBeGreaterThan(deep.estimatedSlippageCost);
   });
 
-  it("uses the flat ₹40 brokerage for equities", () => {
+  it("charges stocks Angel One's intraday costs, not the crypto fee", () => {
     const ev = evaluateExpectedValue(setup({ symbol: "RELIANCE" }), meta(0.6), 0.5, 80);
-    expect(ev.estimatedBrokerageFee).toBe(40);
+    const crypto = evaluateExpectedValue(setup({ symbol: "BTC/INR" }), meta(0.6), 0.5, 80);
+    // Per-order brokerage plus STT, stamp duty and GST: more than CoinDCX's 0.1% round trip.
+    expect(ev.estimatedBrokerageFee).toBeGreaterThan(crypto.estimatedBrokerageFee);
   });
 });

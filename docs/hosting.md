@@ -133,8 +133,13 @@ an https address. `fly.toml` holds the settings. The GitHub Action
      LIVE_TRADING_ENABLED="false" \
      GEMINI_API_KEY="..." \
      COINDCX_API_KEY="..." COINDCX_API_SECRET="..." \
-     ZERODHA_API_KEY="..." ZERODHA_API_SECRET="..."
+     ANGEL_API_KEY="..." ANGEL_CLIENT_CODE="..." ANGEL_PIN="..." ANGEL_TOTP_SECRET="..."
    ```
+
+   The `ANGEL_*` settings turn on Indian stocks (see `.env.example`): the
+   server scans the Nifty 50 from 9:15 to 3:00 IST and closes stock
+   positions at 3:20. Settings → Server → Angel One shows whether it's
+   connected.
 
    `GEMINI_API_KEY` comes from [AI Studio → Get API key](https://aistudio.google.com/apikey).
    Without it, the agents use their rule-based fallbacks. The other

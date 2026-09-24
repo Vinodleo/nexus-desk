@@ -18,7 +18,7 @@ function levels(side: BookLevel[]) {
 }
 
 /** Builds the scanner's order book from CoinDCX's, for a trade worth `notional` rupees. */
-export function toOrderBook(book: RawBook, notional: number): OrderBook {
+export function toOrderBook(book: RawBook, notional: number, source: "coindcx" | "angelone" = "coindcx"): OrderBook {
   const s = bookStats(book, notional);
   return {
     bids: levels(book.bids),
@@ -26,7 +26,7 @@ export function toOrderBook(book: RawBook, notional: number): OrderBook {
     spread: s.spread,
     midPrice: s.mid,
     depthScore: s.depthScore,
-    source: "coindcx",
+    source,
     spreadPct: s.spreadPct,
     roundTripSlippage: s.roundTripSlippage,
     depthInr: s.depthInr,
