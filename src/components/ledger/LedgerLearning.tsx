@@ -11,6 +11,7 @@ import {
 import { Card, RoundIconButton, StatTile } from "./ui";
 import { shadowStore, summarizeShadows, type ShadowSignal } from "../../services/shadowTracker";
 import { SKIP_REASON_LABEL, type SkipReason } from "../../services/scanOutcome";
+import { DEFAULT_MIN_CONFIDENCE, MIN_CALIBRATION_SAMPLES, MIN_EDGE_R, buildCalibrator } from "../../services/calibration";
 
 export interface LedgerLearningProps {
   experiences: ExperienceVector[];
@@ -85,10 +86,61 @@ export const SkippedSetups: React.FC<{ shadows: ShadowSignal[] }> = ({ shadows }
   );
 };
 
+/**
+ * How often setups at each confidence score actually worked out, and the win
+ * chance the scanner now uses for them.
+ */
+export const WinChanceCalibration: React.FC<{ shadows: ShadowSignal[] }> = ({ shadows }) => {
+  const cal = useMemo(() => buildCalibrator(shadows), [shadows]);
+  const bands = cal.bands.filter((b) => b.samples > 0);
+  return (
+    <Card aria-label="How accurate the win chance is" className="flex flex-col gap-3">
+      <div>
+        <div className="text-sm font-semibold">How accurate the win chance is</div>
+        <div className="text-xs text-muted mt-0.5 leading-relaxed">
+          {cal.ready
+            ? `Measured from ${cal.samples} finished setups. The scanner uses the measured chance, and takes a trade when it expects at least ${MIN_EDGE_R}R back after costs.`
+            : `${cal.samples} of ${MIN_CALIBRATION_SAMPLES} setups finished. Until then the scanner uses its built-in estimate and the ${Math.round(DEFAULT_MIN_CONFIDENCE * 100)}% bar.`}
+        </div>
+      </div>
+      {bands.length > 0 && (
+        <div className="flex flex-col" role="table" aria-label="Win chance by score">
+          <div role="row" className="grid grid-cols-[1fr_auto_auto] gap-3 text-[11px] text-muted pb-1.5 border-b border-line">
+            <span role="columnheader">Scanner's score</span>
+            <span role="columnheader" className="text-right w-16">Worked out</span>
+            <span role="columnheader" className="text-right w-16">Now uses</span>
+          </div>
+          {bands.map((b) => (
+            <div role="row" key={b.lo} className="grid grid-cols-[1fr_auto_auto] gap-3 items-baseline py-2 border-b border-line last:border-b-0 text-[13px] tabular-nums">
+              <span role="cell">
+                {Math.round(b.lo * 100)}–{Math.round(b.hi * 100)}%
+                <span className="block text-[11px] text-muted">{b.samples} setups</span>
+              </span>
+              <span role="cell" className="text-right w-16">
+                {b.samples >= MIN_SHADOW_SAMPLE && b.observed !== null ? `${Math.round(b.observed * 100)}%` : "—"}
+              </span>
+              <span role="cell" className="text-right w-16">{cal.ready ? `${Math.round(b.calibrated * 100)}%` : "—"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="m-0 text-xs text-muted leading-relaxed">
+        A setup that hit its target counts as a win, a stop as a loss, and one closed at the time limit counts part-way by how far it got.
+        Thin bands are pulled toward their own score until they have more setups.
+      </p>
+    </Card>
+  );
+};
+
 const LiveSkippedSetups: React.FC = () => {
   const [shadows, setShadows] = useState<ShadowSignal[]>(() => shadowStore.all());
   useEffect(() => shadowStore.subscribe(() => setShadows(shadowStore.all())), []);
-  return <SkippedSetups shadows={shadows} />;
+  return (
+    <>
+      <WinChanceCalibration shadows={shadows} />
+      <SkippedSetups shadows={shadows} />
+    </>
+  );
 };
 
 const FAMILY: Record<string, string> = {
@@ -265,7 +317,14 @@ export const LedgerLearning: React.FC<LedgerLearningProps> = (props) => {
         </Card>
       )}
 
-      {props.shadows !== undefined ? <SkippedSetups shadows={props.shadows} /> : <LiveSkippedSetups />}
+      {props.shadows !== undefined ? (
+        <>
+          <WinChanceCalibration shadows={props.shadows} />
+          <SkippedSetups shadows={props.shadows} />
+        </>
+      ) : (
+        <LiveSkippedSetups />
+      )}
 
       <Card className="flex flex-col py-1">
         <div className="flex items-center justify-between gap-3 min-h-12 py-2 border-b border-line text-sm">

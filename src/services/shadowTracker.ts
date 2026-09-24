@@ -19,7 +19,10 @@ export interface ShadowSignal {
   horizon: "intraday" | "swing";
   /** Why it wasn't proposed, or "proposed". */
   kind: ShadowKind;
+  /** The scanner's raw confidence score at the signal, before calibration. */
   confidence?: number;
+  /** What produced that score; absent on older records, which were all "heuristic". */
+  scorer?: "heuristic" | "tfjs";
   entryPrice: number;
   stopLoss: number;
   takeProfit: number;
@@ -38,10 +41,17 @@ export interface ShadowSignal {
 export const ROUND_TRIP_FEE = 0.001;
 const INTRADAY_LIMIT_MS = 30 * 60 * 1000;
 const SWING_LIMIT_MS = 3 * 24 * 60 * 60 * 1000;
-const MAX_KEPT = 600;
+/** Enough history for win-chance calibration, still small in localStorage. */
+const MAX_KEPT = 1500;
 const STORAGE_KEY = "nexus_shadow_signals_v1";
 
-export function shadowFromSetup(setup: StrategySetup, kind: ShadowKind, signalTime: number, confidence?: number): ShadowSignal {
+export function shadowFromSetup(
+  setup: StrategySetup,
+  kind: ShadowKind,
+  signalTime: number,
+  confidence?: number,
+  scorer?: "heuristic" | "tfjs"
+): ShadowSignal {
   const horizon = setup.horizon === "swing" ? "swing" : "intraday";
   return {
     id: `${setup.symbol}|${setup.name}|${signalTime}`,
@@ -52,6 +62,7 @@ export function shadowFromSetup(setup: StrategySetup, kind: ShadowKind, signalTi
     horizon,
     kind,
     confidence,
+    ...(scorer ? { scorer } : {}),
     entryPrice: setup.entryPrice,
     stopLoss: setup.stopLoss,
     takeProfit: setup.takeProfit,
