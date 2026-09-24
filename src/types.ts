@@ -327,24 +327,6 @@ export interface TradeAutopsy {
   timestamp: string;
 }
 
-export interface ModelVersion {
-  id: string;
-  name: string;
-  type: "CHAMPION" | "CHALLENGER";
-  version: string;
-  trainedDate: string;
-  sampleSizeTrades: number;
-  netExpectancy: number;
-  sharpeRatio: number;
-  deflatedSharpeRatio: number;
-  maxDrawdownPercent: number;
-  profitFactor: number;
-  winRate: number;
-  turnoverRatio: number;
-  status: "ACTIVE" | "EVALUATING" | "REJECTED";
-  regimePerformance: Record<RegimeType, { winRate: number; trades: number; expectancy: number }>;
-}
-
 export interface OptimizedParameters {
   slMultiplier: number;
   tpMultiplier: number;
@@ -368,43 +350,6 @@ export interface PromotedLabModel {
   hasTrainedModel?: boolean;
 }
 
-export interface WalkForwardFold {
-  foldIndex: number;
-  trainRange: string;
-  testRange: string;
-  purgedTradesCount: number;
-  embargoDays: number;
-  inSampleSharpe: number;
-  outOfSampleSharpe: number;
-  deflatedSharpe: number;
-  outOfSampleTradesCount: number;
-  passed: boolean;
-}
-
-export interface BacktestSummary {
-  strategyName: string;
-  totalTrades: number;
-  winRate: number;
-  profitFactor: number;
-  netPnl: number;
-  maxDrawdown: number;
-  sharpeRatio: number;
-  deflatedSharpeRatio: number;
-  minimumSampleSizePassed: boolean; // ≥30 per regime bucket, ≥100 total
-  holdsOutPerformancePositive: boolean;
-  folds: WalkForwardFold[];
-  equityCurve: { time: string; timestampMs?: number; equity: number }[];
-  candidateMeetsPromotionCriteria: boolean;
-  promotionChecklist: {
-    minimumSampleSizes: boolean;
-    purgedWalkForwardStable: boolean;
-    regimeIndependence: boolean;
-    multipleTestingCorrectionPassed: boolean;
-    holdoutPerformancePositive: boolean;
-    costSlippageAccounted: boolean;
-  };
-}
-
 export interface FailureInjectionState {
   simulateAgentTimeout: boolean;
   simulateStaleMarketData: boolean;
@@ -414,23 +359,3 @@ export interface FailureInjectionState {
   globalKillSwitchActive: boolean;
 }
 
-export interface AuditLogEntry {
-  id: string;
-  timestamp: string;
-  component:
-    | "MARKET_DATA"
-    | "MARKET_ANALYSIS_AGENT"
-    | "STRATEGY_AGENT"
-    | "EXPERIENCE_RETRIEVAL"
-    | "META_LABELING"
-    | "RISK_ENGINE"
-    | "SUPERVISOR_AGENT"
-    | "APPROVAL_SERVICE"
-    | "EXECUTION_SERVICE"
-    | "TRADE_AUTOPSY"
-    | "CHALLENGER_PIPELINE"
-    | "KILL_SWITCH";
-  severity: "INFO" | "WARN" | "ERROR" | "CRITICAL";
-  message: string;
-  details?: any;
-}
