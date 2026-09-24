@@ -1,4 +1,4 @@
-import { StrategySetup, TradeDirection, StrategyFamily, MetaLabelScore } from "../types";
+import { StrategySetup, TradeDirection, StrategyFamily, MetaLabelScore, PromotedLabModel } from "../types";
 import {
   CandidateEvaluationContext,
   buildTrendSetup,
@@ -178,6 +178,48 @@ export const TRADER_PERSONAS: TraderPersona[] = [
   },
 ];
 
+// --- The Lab's tuned trader --------------------------------------------
+// A promoted Lab model carries the breakout parameters its walk-forward test
+// found best (volume surge, stop and target in ATRs, RSI overextension
+// limit). They join the panel as one more breakout trader using exactly
+// those numbers, weighted a little higher because they were tested on
+// history the other voices weren't tuned on. Unpromoting removes it.
+export const LAB_PERSONA_ID = "lab-tuned-breakout";
+export const LAB_PERSONA_WEIGHT = 1.5;
+
+export function labTunedPersona(model: PromotedLabModel): TraderPersona | null {
+  const p = model.optimizedParameters;
+  if (!p || model.isSynthetic) return null;
+  // Its out-of-sample win rate, kept within the range the other voices use.
+  const baseProbability = Math.min(0.65, Math.max(0.45, (model.winRatePct || 50) / 100));
+  return {
+    id: LAB_PERSONA_ID,
+    name: "Lab — Tuned Breakout",
+    family: "breakout_confirmation",
+    riskPosture: "balanced",
+    bio: `Breakouts with the settings promoted from the Lab (${model.datasetName}).`,
+    weight: LAB_PERSONA_WEIGHT,
+    evaluate: (ctx) =>
+      buildBreakoutSetup(ctx, {
+        idSuffix: LAB_PERSONA_ID,
+        name: "Lab Tuned Breakout",
+        volSurgeThreshold: p.volSurgeThreshold,
+        stopAtrMult: p.slMultiplier,
+        stopPriceFloorPct: 0.0025,
+        targetAtrMult: p.tpMultiplier,
+        targetStopMultFloor: 1.0,
+        baseProbability,
+        rsiCeiling: p.rsiThreshold,
+      }),
+  };
+}
+
+/** The traders who vote: the fixed roster, plus the Lab's tuned trader when one is promoted. */
+export function panelRoster(promotedModel?: PromotedLabModel | null): TraderPersona[] {
+  const lab = promotedModel ? labTunedPersona(promotedModel) : null;
+  return lab ? [...TRADER_PERSONAS, lab] : TRADER_PERSONAS;
+}
+
 // Suppressor personas never propose a directional trade — they can only
 // veto the whole panel, the way a desk's risk or compliance officer can
 // kill a trade regardless of how bullish the traders are.
@@ -310,8 +352,9 @@ export function runPersonaPanel(
   // together with an intraday scalp's produces numbers that serve neither.
   // Each horizon gets its own independent panel; callers that want both
   // run this twice.
+  const roster = panelRoster(ctx.promotedModel);
   const ballots: PersonaBallot[] = [];
-  for (const persona of TRADER_PERSONAS) {
+  for (const persona of roster) {
     const setup = persona.evaluate(ctx);
     const setupHorizon = setup?.horizon || "intraday";
     if (!setup?.qualifies || setupHorizon !== horizon) continue;
@@ -347,7 +390,7 @@ export function runPersonaPanel(
       dissentingPersonas: [],
       totalVotesCast: 0,
       totalPersonasRun:
-        SUPPRESSOR_PERSONAS.length + TRADER_PERSONAS.length,
+        SUPPRESSOR_PERSONAS.length + roster.length,
     };
   }
 
@@ -394,6 +437,6 @@ export function runPersonaPanel(
     dissentingPersonas: losingSide.map((b) => b.personaName),
     totalVotesCast: ballots.length,
     totalPersonasRun:
-      SUPPRESSOR_PERSONAS.length + TRADER_PERSONAS.length,
+      SUPPRESSOR_PERSONAS.length + roster.length,
   };
 }

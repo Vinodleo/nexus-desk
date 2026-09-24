@@ -533,10 +533,8 @@ export async function runRealDataWalkForward(
     isSynthetic: candles[0]?.isSynthetic,
     totalCandles: n,
     datasetName: `${symbol} (1h, ${n} bars)`,
-    optimizedParameters: {
-      ...bestParams,
-      rsiThreshold: 65,
-    }
+    // Exactly the parameters the out-of-sample test ran with.
+    optimizedParameters: { ...bestParams },
   };
 }
 
