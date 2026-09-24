@@ -36,6 +36,8 @@ import {
   saveStoredPromotedLabModel,
   loadStoredQuarantines,
   saveStoredQuarantines,
+  loadLossStreakSince,
+  saveLossStreakSince,
   SymbolQuarantineRecord,
 } from "./services/storagePersistenceService";
 import { scanAllMarkets, type FullScanReport } from "./services/marketScannerService";
@@ -72,7 +74,8 @@ import { apiFetch } from "./services/apiClient";
 import { computeClosedTradePnl } from "./shared/tradeMath";
 import { blendedExitPrice, holdingDecision, openQuantity, planPartialQuantity } from "./shared/exitRules";
 import { ruleFor } from "./services/marketRulesStore";
-import type { DaemonCloseEvent } from "./services/daemonEvents";
+import { daemonEventToTrade, type DaemonCloseEvent } from "./services/daemonEvents";
+import { LOSS_STREAK_LIMIT, cooldownUntil, lossStreak } from "./services/lossGuards";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { adoptServerOpened, useGuardianSync } from "./hooks/useGuardianSync";
@@ -287,6 +290,63 @@ export default function App() {
     setAllTimeRealizedPnl,
   });
 
+  // After any close, in the app or by the server guardian, leave the coin
+  // alone for a while: 2 hours after a loss, 5 minutes after a win.
+  const lossGuardsRef = useRef<(trade: HistoricalTrade) => void>(() => {});
+  lossGuardsRef.current = (trade: HistoricalTrade) => {
+    const closedAtMs = trade.closedAtMs ?? Date.now();
+    setSymbolQuarantines((prev) => ({
+      ...prev,
+      [trade.symbol]: {
+        symbol: trade.symbol,
+        quarantinedUntilMs: cooldownUntil({ isWin: trade.isWin, closedAtMs }),
+        reason: trade.isWin ? `Post-trade cooldown on ${trade.symbol} (5m pause)` : `Loss recorded on ${trade.symbol}`,
+        consecutiveLosses: trade.isWin ? 0 : (prev[trade.symbol]?.consecutiveLosses ?? 0) + 1,
+        lastLossTimestamp: new Date(closedAtMs).toISOString(),
+      },
+    }));
+    if (!trade.isWin) {
+      logSecurityAudit("SYMBOL_QUARANTINED", `Symbol ${trade.symbol} quarantined for 120 minutes following loss (exit: ₹${trade.exitPrice}, PnL: ₹${trade.realizedPnl})`);
+    }
+  };
+
+  // When the kill switch was last turned off: losses before it don't count.
+  const lossStreakSinceRef = useRef<number>(loadLossStreakSince());
+
+  // Three losses in a row in the book, however they closed: trip the kill
+  // switch and turn autopilot off. Checked whenever the book changes, so a
+  // streak the server's closes built up while the app was shut is caught
+  // when it opens.
+  useEffect(() => {
+    if (killSwitchActive || lossStreak(closedTrades, lossStreakSinceRef.current) < LOSS_STREAK_LIMIT) return;
+    setKillSwitchActive(true);
+    setDecisionMode("MANUAL");
+    setExecutionToast({
+      id: `toast-killswitch-${Date.now()}`,
+      title: "EMERGENCY SAFETY TRIP: 3 CONSECUTIVE LOSSES",
+      message: "Kill Switch activated. Self-approval autopilot turned OFF. Trading halted to preserve capital.",
+      type: "WARNING",
+      timestamp: new Date().toLocaleTimeString(),
+    });
+    logSecurityAudit(
+      "KILL_SWITCH_TRIGGERED",
+      "Emergency Kill Switch tripped automatically due to 3 consecutive losses across portfolio. Autopilot reverted to MANUAL."
+    );
+    sendAlertNotification("■ [Nexus Desk] KILL SWITCH AUTO-TRIPPED", {
+      body: "3 consecutive losses detected. Autopilot self-approval disabled. Manual intervention required.",
+    });
+  }, [closedTrades, killSwitchActive, logSecurityAudit]);
+
+  // A close the server guardian made: credited once, then the same guards.
+  const handleServerClose = useCallback(
+    (ev: DaemonCloseEvent): boolean => {
+      const applied = applyServerClose(ev);
+      if (applied) lossGuardsRef.current(daemonEventToTrade(ev));
+      return applied;
+    },
+    [applyServerClose]
+  );
+
   // Positions this app has closed (or is closing): a server copy of one
   // mustn't come back before the guardian hears it's gone.
   const isClosedLocally = useCallback(
@@ -297,7 +357,8 @@ export default function App() {
   // A position the server's autopilot opened (the app may have been closed).
   const applyServerOpen = useCallback(
     (pos: Position) => {
-      if (activePositionsRef.current.some((p) => p.id === pos.id) || isClosedLocally(pos.id)) return;
+      // Already have it, closed it, or hold that coin (the same signal opened here too).
+      if (activePositionsRef.current.some((p) => p.id === pos.id || p.symbol === pos.symbol) || isClosedLocally(pos.id)) return;
       setActivePositions((prev) => adoptServerOpened(prev, [pos], isClosedLocally));
       setSelfApprovedCount((prev) => prev + 1);
       playTradeExecutionSound();
@@ -366,7 +427,7 @@ export default function App() {
     },
     onServerClose: (ev) => {
       console.log("[Daemon Position Guardian] Server closed trade event received:", ev);
-      if (applyServerClose(ev)) {
+      if (handleServerClose(ev)) {
         setExecutionToast({
           id: `toast-daemon-${Date.now()}`,
           title: `■ [24/7 DAEMON GUARDIAN] ${ev.symbol} Auto-Closed`,
@@ -420,7 +481,7 @@ export default function App() {
   // ==========================================
 
   // 1-2. Push position changes to the guardian; pull closes it made while asleep.
-  const guardianOnline = useGuardianSync(activePositions, setActivePositions, applyServerClose, isClosedLocally);
+  const guardianOnline = useGuardianSync(activePositions, setActivePositions, handleServerClose, isClosedLocally);
   const zerodha = useZerodhaConnection();
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
 
@@ -771,74 +832,8 @@ export default function App() {
 
       setClosedTrades((prev) => [newHistoricalTrade, ...prev]);
 
-      // Per-Symbol Cooldown & Quarantine:
-      // 1. If a trade closes with a loss (or 3 consecutive losses), embargo for 120 minutes.
-      // 2. If a trade closes with a win or break-even, impose a mandatory 15-minute re-entry cooldown
-      // to eliminate rapid churn on the same asset.
-      if (!isWin) {
-        const symbolClosedTrades = [newHistoricalTrade, ...closedTradesRef.current.filter((t) => t.symbol === pos.symbol)];
-        const consecutiveSymbolLosses = symbolClosedTrades.slice(0, 3).filter((t) => !t.isWin).length;
-        if (consecutiveSymbolLosses >= 3 || !isWin) {
-          // Embargo the symbol for 2 hours (120 minutes)
-          const embargoDurationMs = 120 * 60 * 1000;
-          const quarantinedUntilMs = Date.now() + embargoDurationMs;
-          setSymbolQuarantines((prev) => ({
-            ...prev,
-            [pos.symbol]: {
-              symbol: pos.symbol,
-              quarantinedUntilMs,
-              reason: consecutiveSymbolLosses >= 3
-                ? `3 consecutive losses recorded on ${pos.symbol}`
-                : `Loss recorded on ${pos.symbol}`,
-              consecutiveLosses: consecutiveSymbolLosses,
-              lastLossTimestamp: new Date().toISOString(),
-            },
-          }));
-          logSecurityAudit(
-            "SYMBOL_QUARANTINED",
-            `Symbol ${pos.symbol} quarantined for 120 minutes following loss (exit: ₹${exitPrice}, PnL: ₹${finalPnl})`
-          );
-        }
-
-        // Auto-Trip on 3 Consecutive Losses:
-        // Check global consecutive closed trades. If 3 consecutive losses occur,
-        // automatically activate the Emergency Kill Switch and turn off Self-Approval / Autopilot.
-        const recentGlobalTrades = [newHistoricalTrade, ...closedTradesRef.current].slice(0, 3);
-        const globalConsecutiveLosses = recentGlobalTrades.length === 3 && recentGlobalTrades.every((t) => !t.isWin);
-        if (globalConsecutiveLosses) {
-          setKillSwitchActive(true);
-          setDecisionMode("MANUAL");
-          setExecutionToast({
-            id: `toast-killswitch-${Date.now()}`,
-            title: "EMERGENCY SAFETY TRIP: 3 CONSECUTIVE LOSSES",
-            message: "Kill Switch activated. Self-approval autopilot turned OFF. Trading halted to preserve capital.",
-            type: "WARNING",
-            timestamp: new Date().toLocaleTimeString(),
-          });
-          logSecurityAudit(
-            "KILL_SWITCH_TRIGGERED",
-            "Emergency Kill Switch tripped automatically due to 3 consecutive losses across portfolio. Autopilot reverted to MANUAL."
-          );
-          sendAlertNotification("■ [Nexus Desk] KILL SWITCH AUTO-TRIPPED", {
-            body: "3 consecutive losses detected. Autopilot self-approval disabled. Manual intervention required.",
-          });
-        }
-      } else {
-        // 5-minute cooldown (1 full 5m bar) following a win/exit to prevent immediate micro-churn
-        // while allowing the bot to catch continuation legs in strong trends.
-        const winCooldownMs = 5 * 60 * 1000;
-        const quarantinedUntilMs = Date.now() + winCooldownMs;
-        setSymbolQuarantines((prev) => ({
-          ...prev,
-          [pos.symbol]: {
-            symbol: pos.symbol,
-            quarantinedUntilMs,
-            reason: `Post-trade cooldown on ${pos.symbol} (5m pause)`,
-            consecutiveLosses: 0,
-            lastLossTimestamp: new Date().toISOString(),
-          },
-        }));
-      }
+      // Coin cooldown and the loss-streak kill switch (shared with server closes).
+      lossGuardsRef.current(newHistoricalTrade);
 
       // Update self-approval learning statistics
       if (pos.isSelfApproved) {
@@ -1232,7 +1227,12 @@ export default function App() {
       );
 
       // Add only the accepted subset to active positions
-      setActivePositions((prev) => [...newPositions, ...prev]);
+      // The book as it is now: a position the server opened in one of these
+      // coins may have arrived since the checks above.
+      setActivePositions((prev) => {
+        const held = new Set(prev.map((p) => p.symbol));
+        return [...newPositions.filter((p) => !held.has(p.symbol)), ...prev];
+      });
 
       // Mark accepted proposals as APPROVED; deferred ones change to DEFERRED, carrying why
       const approvedIds = new Set(accepted.map((a) => a.proposal.id));
@@ -1413,6 +1413,7 @@ export default function App() {
       tradingMode,
       trailProfile: trailProfileId,
       killSwitch: killSwitchActive,
+      lossStreak: lossStreak(closedTrades, lossStreakSinceRef.current),
       scanning: isContinuousScanActive,
       failureState,
       quarantines: Object.fromEntries(
@@ -1578,6 +1579,11 @@ export default function App() {
 
     const nextState = !killSwitchActive;
     setKillSwitchActive(nextState);
+    // Turned off by you: losses before now no longer count toward the next trip.
+    if (!nextState) {
+      lossStreakSinceRef.current = Date.now();
+      saveLossStreakSince(lossStreakSinceRef.current);
+    }
     setFailureState((prev) => ({
       ...prev,
       globalKillSwitchActive: nextState,

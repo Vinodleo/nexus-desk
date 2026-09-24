@@ -10,6 +10,22 @@ const STORAGE_KEY_CLOSED_TRADES = "nexus_agent_closed_trades_inr_v4";
 const STORAGE_KEY_MODEL_ACCURACY = "nexus_agent_model_accuracy_inr_v4";
 const STORAGE_KEY_PROMOTED_LAB_MODEL = "nexus_agent_promoted_lab_model_inr_v4";
 const STORAGE_KEY_QUARANTINES = "nexus_agent_quarantines_inr_v1";
+const STORAGE_KEY_LOSS_STREAK_SINCE = "nexus_loss_streak_since_v1";
+
+/** When the kill switch was last turned off: losses before this don't count toward the next trip. */
+export function loadLossStreakSince(): number {
+  try {
+    return Number(localStorage.getItem(STORAGE_KEY_LOSS_STREAK_SINCE)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveLossStreakSince(ms: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_LOSS_STREAK_SINCE, String(ms));
+  } catch {}
+}
 export interface SymbolQuarantineRecord {
   symbol: string;
   quarantinedUntilMs: number;

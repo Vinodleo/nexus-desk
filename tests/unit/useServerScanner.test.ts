@@ -15,6 +15,7 @@ const desk: DeskSettings = {
   tradingMode: "PAPER",
   trailProfile: "tight",
   killSwitch: false,
+  lossStreak: 0,
   scanning: true,
   failureState: {
     simulateAgentTimeout: false, simulateStaleMarketData: false, simulateDailyLossBreach: false,
@@ -59,6 +60,15 @@ describe("useServerScanner", () => {
     await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => u === "/api/desk/state")).toBe(true), { timeout: 3000 });
     const [, init] = apiFetch.mock.calls.find(([u]) => u === "/api/desk/state")!;
     expect(JSON.parse(init.body)).toEqual(desk);
+  });
+
+  it("sends the settings again when the server says it doesn't have them", async () => {
+    apiFetch.mockImplementation(async (u: string) =>
+      u.startsWith("/api/scanner/reports") ? json({ status: { running: false, hasDesk: false }, reports: [] }) : json({ success: true, status: { running: true } })
+    );
+    renderHook(() => useServerScanner(desk, vi.fn()));
+    // Once from the poll's answer, straight away (not only after the 1s debounce).
+    await waitFor(() => expect(apiFetch.mock.calls.filter(([u]) => u === "/api/desk/state").length).toBeGreaterThanOrEqual(1), { timeout: 500 });
   });
 
   it("falls back to scanning in the browser when the server isn't scanning or can't be reached", async () => {

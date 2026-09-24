@@ -112,14 +112,23 @@ describe("adoptServerOpened", () => {
   const base = positionFromProposal({ proposal: proposal("SOL/INR"), entryPrice: 1000, units: 1 }, { id: "a", atr: 5, trailProfile: "tight" });
   it("adds server-opened positions the app hasn't seen, unless it closed them", () => {
     const server = [
-      { ...base, id: "s1", openedByServer: true, clientSeen: false },
-      { ...base, id: "s2", openedByServer: true, clientSeen: false },
-      { ...base, id: "s3", openedByServer: true, clientSeen: true },
-      { ...base, id: "s4" },
+      { ...base, id: "s1", symbol: "ETH/INR", openedByServer: true, clientSeen: false },
+      { ...base, id: "s2", symbol: "BTC/INR", openedByServer: true, clientSeen: false },
+      { ...base, id: "s3", symbol: "XRP/INR", openedByServer: true, clientSeen: true },
+      { ...base, id: "s4", symbol: "ADA/INR" },
     ];
     const next = adoptServerOpened([base], server, (id) => id === "s2");
     expect(next.map((p) => p.id)).toEqual(["s1", "a"]);
     const prev = [base];
-    expect(adoptServerOpened(prev, [{ ...base, openedByServer: true, clientSeen: false }], () => false)).toBe(prev);
+    expect(adoptServerOpened(prev, [{ ...base, id: "a", symbol: "ETH/INR", openedByServer: true, clientSeen: false }], () => false)).toBe(prev);
+  });
+
+  it("never adds a second position in a coin the book already holds", () => {
+    const prev = [base];
+    const dup = { ...base, id: "srv-dup", openedByServer: true, clientSeen: false };
+    expect(adoptServerOpened(prev, [dup], () => false)).toBe(prev);
+    // Nor two copies from the server in one go.
+    const other = { ...base, symbol: "ETH/INR", openedByServer: true, clientSeen: false };
+    expect(adoptServerOpened([], [{ ...other, id: "e1" }, { ...other, id: "e2" }], () => false).map((p) => p.id)).toEqual(["e1"]);
   });
 });

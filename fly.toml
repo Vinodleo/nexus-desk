@@ -1,4 +1,4 @@
-# Nexus Desk on Fly.io: one always-running machine in Mumbai, with a disk for
+# Nexus Desk on Fly.io: one always-running machine in Singapore, with a disk for
 # the state the server keeps (guardian positions, live-order records, desk
 # settings, tracked setups). See docs/hosting.md, "C. Fly.io".
 #
@@ -6,7 +6,7 @@
 # pick another and change it here and in the setup commands.
 
 app = "nexus-desk-vinodleo"
-primary_region = "bom"
+primary_region = "sin"
 
 [build]
   dockerfile = "Dockerfile"

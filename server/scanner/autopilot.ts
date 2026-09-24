@@ -8,6 +8,7 @@ import {
   selectAutopilotTrades,
 } from "../../src/services/autopilot";
 import { DEFAULT_TRAIL_PROFILE } from "../../src/shared/trailingStop";
+import { LOSS_STREAK_LIMIT, cooldownsFromCloses, lossStreak, mergeQuarantines } from "../../src/services/lossGuards";
 import { closedTradesFor, daemonPositions, openServerPosition } from "../guardian";
 import type { DeskState } from "./deskState";
 
@@ -29,6 +30,29 @@ export interface ServerAutopilotDeps {
   barAtr: (symbol: string) => number | undefined;
 }
 
+/** This user's guardian closes, newest first, for the loss guards. */
+function serverCloses(uid: string) {
+  return closedTradesFor(uid).map((t) => ({ symbol: t.symbol, isWin: t.isWin, closedAtMs: Date.parse(t.closedAt) }));
+}
+
+/**
+ * Coins to leave alone: the app's cooldowns plus those from trades the
+ * guardian closed (the app hears of those only when it's open).
+ */
+export function serverQuarantines(uid: string, desk: DeskState, now: number = Date.now()): Record<string, { quarantinedUntilMs: number }> {
+  return mergeQuarantines(desk.quarantines, cooldownsFromCloses(serverCloses(uid), now));
+}
+
+/**
+ * Losses in a row: the guardian's closes since the app last sent its desk
+ * settings, continuing the app's own count if every one of them lost.
+ */
+export function serverLossStreak(uid: string, desk: DeskState): number {
+  const since = serverCloses(uid).filter((c) => c.closedAtMs > desk.updatedAt);
+  const streak = lossStreak(since, desk.updatedAt);
+  return streak === since.length ? streak + (desk.lossStreak ?? 0) : streak;
+}
+
 /** Whether the server's autopilot may open trades for this desk now. */
 export function serverAutopilotOn(desk: DeskState): boolean {
   return desk.autopilot && !desk.killSwitch && !desk.failureState.globalKillSwitchActive && (desk.tradingMode ?? "PAPER") === "PAPER";
@@ -48,6 +72,12 @@ export function runServerAutopilot(
   now: number = Date.now()
 ): TradeProposal[] {
   if (!serverAutopilotOn(desk) || proposals.length === 0) return proposals;
+  // Three losses in a row: stop until you've looked (the app trips its kill
+  // switch when it hears of them; turning it off starts a fresh count).
+  if (serverLossStreak(uid, desk) >= LOSS_STREAK_LIMIT) {
+    const reason = `${LOSS_STREAK_LIMIT} losses in a row — autopilot is paused until you review them in the app.`;
+    return proposals.map((p) => ({ ...p, status: "DEFERRED" as const, deferralReason: reason }));
+  }
   const mine = [...daemonPositions.values()].filter((p) => p.userId === uid);
   const recent = (openings.get(uid) ?? []).filter((o) => o.at >= now - HOUR_MS);
   const { accepted, deferred } = selectAutopilotTrades(
@@ -60,7 +90,7 @@ export function runServerAutopilot(
         now,
         recent.map((o) => o.id)
       ),
-      quarantines: desk.quarantines,
+      quarantines: serverQuarantines(uid, desk, now),
     },
     policy,
     deps.livePrice,
