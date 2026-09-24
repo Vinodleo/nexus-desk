@@ -29,6 +29,22 @@ export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { 
   return changed ? next : prev;
 }
 
+/**
+ * The browser's positions plus any the server's autopilot opened that this
+ * book doesn't have yet (`isClosed`: ones this app already closed, whose
+ * removal the guardian may not have heard of yet). Returns `prev` itself
+ * when there's nothing to add.
+ */
+export function adoptServerOpened(
+  prev: Position[],
+  guardian: (Position & { openedByServer?: boolean; clientSeen?: boolean })[],
+  isClosed: (id: string) => boolean
+): Position[] {
+  const have = new Set(prev.map((p) => p.id));
+  const added = guardian.filter((g) => g.openedByServer && !g.clientSeen && !have.has(g.id) && !isClosed(g.id));
+  return added.length > 0 ? [...added, ...prev] : prev;
+}
+
 // Keeps the server's 24/7 position guardian in step with the browser book:
 // pushes every change to the open positions, and pulls closes the guardian
 // made while this tab was asleep (on mount, on focus/visibility, every 10s).
@@ -36,9 +52,12 @@ export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { 
 export function useGuardianSync(
   activePositions: Position[],
   setActivePositions: Dispatch<SetStateAction<Position[]>>,
-  applyServerClose: (ev: DaemonCloseEvent) => void
+  applyServerClose: (ev: DaemonCloseEvent) => void,
+  isClosedLocally: (id: string) => boolean = () => false
 ) {
   const [online, setOnline] = useState<boolean | null>(null);
+  const isClosedRef = useRef(isClosedLocally);
+  isClosedRef.current = isClosedLocally;
 
   // Pushes the book to the guardian: right away when a position opens or
   // closes, otherwise at most every SYNC_THROTTLE_MS (prices tick several
@@ -110,9 +129,14 @@ export function useGuardianSync(
 
         // Empty local book but the guardian restored positions after a crash:
         // show them. Otherwise take up whatever the guardian moved further
-        // while this tab slept: a tighter stop, a runner's extended target.
+        // while this tab slept (a tighter stop, a runner's extended target)
+        // and positions the server's autopilot opened meanwhile.
         if (data.activePositions?.length > 0) {
-          setActivePositions((prev) => (prev.length === 0 ? data.activePositions : adoptGuardianState(prev, data.activePositions)));
+          setActivePositions((prev) =>
+            prev.length === 0
+              ? data.activePositions.filter((p: Position) => !isClosedRef.current(p.id))
+              : adoptServerOpened(adoptGuardianState(prev, data.activePositions), data.activePositions, isClosedRef.current)
+          );
         }
         for (const ev of (data.events ?? []) as DaemonCloseEvent[]) {
           applyServerClose(ev);

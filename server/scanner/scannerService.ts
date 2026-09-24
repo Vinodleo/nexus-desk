@@ -14,9 +14,10 @@ import { getCoinUniverse } from "../coinUniverse";
 import { currentEventWindow } from "../eventCalendar";
 import { getMarketRules } from "../marketRules";
 import { fetchOrderBook } from "../coindcxMarketData";
-import { daemonPositions, type DaemonPosition } from "../guardian";
-import { broadcastToUser } from "../realtime";
-import { dailyPnlToday, scanningDesks, getDeskState, type DeskState } from "./deskState";
+import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
+import { broadcastToUser, currentPrices } from "../realtime";
+import { dailyPnlToday, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
+import { runServerAutopilot } from "./autopilot";
 import { ServerMarketData } from "./marketData";
 
 // The scanner, run on the server after every 5-minute candle close, so coins
@@ -111,6 +112,23 @@ async function getOrderBook(symbol: string, notional: number) {
   return "book" in result ? toOrderBook(result.book, notional) : null;
 }
 
+/**
+ * Today's realised P&L for the daily loss limit: what the app last sent,
+ * plus trades the guardian closed after that (the app counts those once it
+ * hears of them and sends a new total, but it may be closed).
+ */
+export function serverDailyPnl(uid: string, desk: DeskState, now: number = Date.now()): number {
+  const today = istDay(now);
+  const since = desk.pnlDay === today ? desk.updatedAt : 0;
+  const later = closedTradesFor(uid)
+    .filter((t) => {
+      const at = Date.parse(t.closedAt);
+      return at > since && istDay(at) === today;
+    })
+    .reduce((sum, t) => sum + t.realizedPnl, 0);
+  return Number((dailyPnlToday(desk, now) + later).toFixed(2));
+}
+
 /** Scans `symbols` for one user and records the results. */
 export async function scanForUser(uid: string, desk: DeskState, symbols: string[], now: number = Date.now()): Promise<ServerScanReport> {
   const state = userState(uid);
@@ -118,18 +136,19 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     const bars = market.getBars(s);
     return bars ? [[s, bars]] : [];
   }));
+  const riskPolicy = {
+    ...DEFAULT_RISK_POLICY,
+    ...desk.riskLimits,
+    equity: desk.equity > 0 ? desk.equity : DEFAULT_RISK_POLICY.equity,
+  };
   const report = await scanAllMarkets({
     symbols,
     cryptoSymbols: universe,
     barsMap,
     activePositions: [...daemonPositions.values()].filter((p) => p.userId === uid).map(asPosition),
-    dailyRealizedPnl: dailyPnlToday(desk, now),
+    dailyRealizedPnl: serverDailyPnl(uid, desk, now),
     failureState: desk.failureState,
-    riskPolicy: {
-      ...DEFAULT_RISK_POLICY,
-      ...desk.riskLimits,
-      equity: desk.equity > 0 ? desk.equity : DEFAULT_RISK_POLICY.equity,
-    },
+    riskPolicy,
     // The trade memory: this user's finished tracked setups (real results).
     experiences: experiencesFromShadows(state.shadows),
     quarantines: desk.quarantines,
@@ -141,7 +160,12 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     // The Lab's TensorFlow model lives in the browser.
     useLabModel: false,
   });
-  const record: ServerScanReport = { at: now, outcomes: report.outcomes, newProposals: report.newProposals };
+  // Self-Approve: opens what autopilot accepts and marks each proposal.
+  const newProposals = runServerAutopilot(uid, desk, report.newProposals, riskPolicy, {
+    livePrice: (s) => currentPrices[s] ?? market.getBars(s)?.at(-1)?.close,
+    barAtr: (s) => market.getBars(s)?.at(-1)?.atr,
+  }, now);
+  const record: ServerScanReport = { at: now, outcomes: report.outcomes, newProposals };
   state.reports = [...state.reports, record].slice(-MAX_REPORTS);
   state.shadows = mergeShadows(state.shadows, report.shadows);
   state.lastScanAt = now;

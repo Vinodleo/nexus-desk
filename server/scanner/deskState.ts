@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { FailureInjectionState, PromotedLabModel } from "../../src/types";
+import type { FailureInjectionState, PromotedLabModel, TradingExecutionMode } from "../../src/types";
 
 // What the server scanner needs to scan for a user the way the app would:
 // their equity and limits, today's P&L, the kill switch and drills, coin
@@ -14,6 +14,10 @@ export interface DeskState {
   /** Day (IST, YYYY-MM-DD) dailyRealizedPnl belongs to; it counts as 0 on a later day. */
   pnlDay: string;
   autopilot: boolean;
+  /** Paper or live. The server's autopilot opens paper trades only. */
+  tradingMode?: TradingExecutionMode;
+  /** Trailing-stop profile new positions carry (shared/trailingStop). */
+  trailProfile?: string;
   killSwitch: boolean;
   /** Continuous scanning switched on in the app. */
   scanning: boolean;

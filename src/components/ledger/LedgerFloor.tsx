@@ -308,7 +308,9 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
               {props.stopped
                 ? "Stopped · no new trades until you resume"
                 : props.autopilotOn
-                ? "Approves trades within your limits"
+                ? props.scanLocation === "server" && !props.isLive
+                  ? "Approves trades within your limits · runs on the server, even with the app closed"
+                  : "Approves trades within your limits"
                 : "Off · you approve every trade"}
             </div>
           </div>

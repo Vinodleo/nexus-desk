@@ -170,3 +170,99 @@ describe("server scanner", () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe("server autopilot", () => {
+  beforeEach(async () => {
+    (await import("../../server/scanner/autopilot"))._resetServerAutopilot();
+    (await import("../../server/guardian"))._resetGuardian();
+  });
+
+  const on = { ...desk, autopilot: true, tradingMode: "PAPER", trailProfile: "balanced" };
+
+  it("opens what autopilot accepts, for the guardian to guard and the app to pick up", async () => {
+    await post("/api/desk/state", on);
+    const { runScanCycle, reportsSince } = await import("../../server/scanner/scannerService");
+    await runScanCycle(now);
+    const proposal = reportsSince("owner", 0)[0].newProposals[0];
+    expect(proposal).toMatchObject({ symbol: "SOL/INR", status: "APPROVED" });
+
+    const { daemonPositions } = await import("../../server/guardian");
+    const opened = [...daemonPositions.values()];
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      userId: "owner",
+      symbol: "SOL/INR",
+      direction: "LONG",
+      stopLoss: proposal.setup.stopLoss,
+      takeProfit: proposal.setup.takeProfit,
+      isSelfApproved: true,
+      isLiveOrder: false,
+      openedByServer: true,
+      clientSeen: false,
+      trailProfile: "balanced",
+    });
+    // Entered at the latest price (with no live tick, the last candle's close), sized within limits.
+    expect(opened[0].entryPrice).toBe(proposal.setup.entryPrice);
+    expect(opened[0].quantity * opened[0].entryPrice).toBeLessThanOrEqual(10000);
+
+    // The next scan holds SOL already: nothing more is opened.
+    await runScanCycle(now + 5 * MIN);
+    expect(daemonPositions.size).toBe(1);
+  });
+
+  it("leaves proposals for the app when autopilot is off, stopped, or trading live", async () => {
+    const { runScanCycle, reportsSince, _resetServerScanner } = await import("../../server/scanner/scannerService");
+    const { daemonPositions } = await import("../../server/guardian");
+    for (const settings of [
+      { ...on, autopilot: false },
+      { ...on, killSwitch: true },
+      { ...on, failureState: { ...desk.failureState, globalKillSwitchActive: true } },
+      { ...on, tradingMode: "LIVE_COINDCX" },
+    ]) {
+      _resetServerScanner();
+      await post("/api/desk/state", settings);
+      await runScanCycle(now);
+      for (const p of reportsSince("owner", 0).flatMap((r) => r.newProposals)) expect(p.status).toBe("PENDING_APPROVAL");
+      expect(daemonPositions.size).toBe(0);
+    }
+  });
+
+  it("defers with the reason when a limit would be broken", async () => {
+    // Three autopilot trades already opened (and closed) this hour.
+    const guardian = await import("../../server/guardian");
+    for (const id of ["x1", "x2", "x3"]) {
+      guardian.daemonPositions.set(id, {
+        id, userId: "owner", symbol: "ETH/INR", direction: "LONG", entryPrice: 100, currentPrice: 100, isSelfApproved: true,
+        quantity: 1, stopLoss: 99, takeProfit: 101, openTime: new Date(now - 20 * MIN).toISOString(),
+      });
+    }
+    guardian.evaluateDaemonPositions("ETH/INR", 101);
+    expect(guardian.closedTradesFor("owner")).toHaveLength(3);
+
+    await post("/api/desk/state", on);
+    const { runScanCycle, reportsSince } = await import("../../server/scanner/scannerService");
+    await runScanCycle(now);
+    const proposal = reportsSince("owner", 0)[0].newProposals[0];
+    expect(proposal.status).toBe("DEFERRED");
+    expect(proposal.deferralReason).toMatch(/3 autonomous approvals\/hour/);
+    expect(guardian.daemonPositions.size).toBe(0);
+  });
+
+  it("counts the guardian's closes since the app's last update against the daily loss limit", async () => {
+    const { serverDailyPnl } = await import("../../server/scanner/scannerService");
+    const { setDeskState } = await import("../../server/scanner/deskState");
+    const guardian = await import("../../server/guardian");
+    const d = setDeskState("owner", { ...desk, dailyRealizedPnl: -100 }, now);
+    // A close the app already counted, and one it hasn't heard of.
+    guardian.daemonPositions.set("a", {
+      id: "a", userId: "owner", symbol: "SOL/INR", direction: "LONG", entryPrice: 100, currentPrice: 100,
+      quantity: 10, stopLoss: 95, takeProfit: 110, openTime: new Date(now - 10 * MIN).toISOString(),
+    });
+    guardian.evaluateDaemonPositions("SOL/INR", 94);
+    const closed = guardian.closedTradesFor("owner");
+    expect(closed).toHaveLength(1);
+    const later = Date.parse(closed[0].closedAt);
+    expect(serverDailyPnl("owner", { ...d, updatedAt: later - 1 }, later)).toBeCloseTo(-100 + closed[0].realizedPnl, 2);
+    expect(serverDailyPnl("owner", { ...d, updatedAt: later }, later)).toBe(-100);
+  });
+});

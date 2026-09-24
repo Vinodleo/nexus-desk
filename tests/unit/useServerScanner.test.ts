@@ -12,6 +12,8 @@ const desk: DeskSettings = {
   riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1 },
   dailyRealizedPnl: 0,
   autopilot: true,
+  tradingMode: "PAPER",
+  trailProfile: "tight",
   killSwitch: false,
   scanning: true,
   failureState: {

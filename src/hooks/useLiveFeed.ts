@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { apiFetch, authenticateSocket } from "../services/apiClient";
 import type { DaemonCloseEvent } from "../services/daemonEvents";
 import type { ServerScanReport } from "./useServerScanner";
+import type { Position } from "../types";
 
 export interface LiveExitUpdate {
   status: "OPEN" | "EXIT_PENDING" | "CLOSED" | "EXIT_FAILED";
@@ -20,6 +21,8 @@ export interface LiveFeedHandlers {
   onLiveExitUpdate: (rec: LiveExitUpdate) => void;
   /** The server scanner finished a scan. */
   onScanReport?: (report: ServerScanReport) => void;
+  /** The server's autopilot opened a position. */
+  onServerOpen?: (position: Position) => void;
 }
 
 const REST_BACKSTOP_MS = 6000;
@@ -51,6 +54,8 @@ export function useLiveFeed(handlers: LiveFeedHandlers) {
           handlersRef.current.onLiveExitUpdate(msg.data);
         } else if (msg.type === "SCAN_REPORT" && msg.data?.at) {
           handlersRef.current.onScanReport?.(msg.data);
+        } else if (msg.type === "POSITION_OPENED" && msg.data?.id) {
+          handlersRef.current.onServerOpen?.(msg.data);
         }
       } catch (err) {
         console.error("WS parse error", err);

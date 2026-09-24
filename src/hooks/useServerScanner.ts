@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../services/apiClient";
 import { shadowStore, type ShadowSignal } from "../services/shadowTracker";
-import type { FailureInjectionState, PromotedLabModel, TradeProposal } from "../types";
+import type { FailureInjectionState, PromotedLabModel, TradeProposal, TradingExecutionMode } from "../types";
 import type { SymbolScanOutcome } from "../services/scanOutcome";
 
 // The app's link to the server scanner. It sends the desk settings the
@@ -15,6 +15,8 @@ export interface DeskSettings {
   riskLimits: { maxOrderValueInr: number; maxAllowedExposureFraction: number };
   dailyRealizedPnl: number;
   autopilot: boolean;
+  tradingMode: TradingExecutionMode;
+  trailProfile: string;
   killSwitch: boolean;
   scanning: boolean;
   failureState: FailureInjectionState;

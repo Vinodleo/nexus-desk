@@ -45,6 +45,10 @@ export interface DaemonPosition {
   setupName?: string;
   userId?: string;
   isLiveOrder?: boolean; // set by the server from its live registry, never trusted from the client
+  /** Opened by the server's autopilot (set by the server, never trusted from the client). */
+  openedByServer?: boolean;
+  /** The app has synced it back at least once, so it knows about it. */
+  clientSeen?: boolean;
 }
 
 export interface DaemonClosedTrade {
@@ -68,6 +72,7 @@ export interface DaemonClosedTrade {
   setupName?: string;
   userId?: string;
   isLiveOrder?: boolean;
+  isSelfApproved?: boolean;
   stopAtExit?: number;
   fillAtExit?: number;
 }
@@ -211,8 +216,11 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
 
   // Remove this user's positions that the client explicitly closed. A LIVE
   // position is never dropped this way (e.g. by a client that lost its local
-  // state) — it leaves the guardian only through a real exchange exit.
+  // state) — it leaves the guardian only through a real exchange exit. Nor is
+  // one the server's autopilot opened that the app hasn't picked up yet: its
+  // absence from the app's book doesn't mean it was closed there.
   for (const [id, pos] of daemonPositions) {
+    if (pos.openedByServer && !pos.clientSeen) continue;
     if (pos.userId === uid && !incomingIds.has(id) && !isOpenLivePosition(id)) {
       daemonPositions.delete(id);
     }
@@ -239,6 +247,8 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
       isLiveOrder: isLive,
       ...(isLive ? { quantity: live!.quantity } : {}),
       ...mergeSyncedGuardState(p.direction, p.entryPrice, existing, p),
+      openedByServer: existing?.openedByServer,
+      clientSeen: existing?.openedByServer ? true : undefined,
     });
   }
 
@@ -318,6 +328,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     setupName: pos.setupName || "Statistical Trailing System",
     userId: pos.userId,
     isLiveOrder: !!pos.isLiveOrder,
+    isSelfApproved: pos.isSelfApproved,
     stopAtExit: pos.stopLoss,
     fillAtExit: exitPrice,
   };
@@ -342,6 +353,28 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
 
   // Tell the owner's connected clients immediately
   broadcastToUser(pos.userId, { type: "DAEMON_POSITION_CLOSED", data: closedRecord });
+}
+
+/** This user's trades the guardian closed (newest first). */
+export function closedTradesFor(uid: string): DaemonClosedTrade[] {
+  return daemonClosedTrades.filter((t) => t.userId === uid);
+}
+
+/**
+ * Starts guarding a position the server's autopilot opened, and tells the
+ * owner's open apps. It stays guarded until the app has it (see the sync).
+ */
+export function openServerPosition(uid: string, position: DaemonPosition): void {
+  const pos: DaemonPosition = { ...position, userId: uid, isLiveOrder: false, openedByServer: true, clientSeen: false };
+  daemonPositions.set(pos.id, pos);
+  saveDaemonStateToDisk();
+  broadcastToUser(uid, { type: "POSITION_OPENED", data: pos });
+}
+
+/** Test hook. */
+export function _resetGuardian(): void {
+  daemonPositions.clear();
+  daemonClosedTrades.length = 0;
 }
 
 /** What a restart would need to carry on guarding a position the same way. */
