@@ -1,5 +1,7 @@
 import io from "socket.io-client";
-import { evaluateDaemonPositions } from "./guardian";
+import { daemonPositions, evaluateDaemonPositions } from "./guardian";
+import { getCoinUniverse } from "./coinUniverse";
+import { DEFAULT_COINS } from "../src/shared/coinUniverse";
 import { broadcast, currentPrices } from "./realtime";
 
 // Streams live CoinDCX prices into currentPrices, the position guardian and
@@ -29,20 +31,39 @@ export function startCoinDcxRelay() {
     return sym;
   }
 
-  const TRACKED_COINS = ['BTC', 'ETH', 'SOL', 'AVAX', 'NEAR', 'JUP', 'XRP'];
+  // Coins we stream prices for: the scanner's universe (CoinDCX's most traded
+  // INR coins, refreshed hourly) plus any coin the guardian holds a position
+  // in. Channels are only ever added, so a coin that drops out of the top
+  // list keeps its stops guarded.
+  const tracked = new Set<string>(DEFAULT_COINS.map(c => `${c}/INR`));
 
   // Symbols we've had to fall back away from real data for — surfaced here
   // so it's obvious in the server log which pairs, if any, aren't actually
   // getting live CoinDCX data rather than failing silently.
-  const staleSymbols = new Set<string>(TRACKED_COINS.map(c => `${c}/INR`));
+  const staleSymbols = new Set<string>(tracked);
+
+  function joinChannels(symbol: string) {
+    const pair = `I-${symbol.split("/")[0]}_INR`;
+    dcxSocket.emit("join", { channelName: `${pair}@prices` });
+    dcxSocket.emit("join", { channelName: `${pair}@trades` });
+  }
+
+  async function refreshTracked() {
+    const universe = await getCoinUniverse();
+    const wanted = [...universe.coins.map(c => c.symbol), ...[...daemonPositions.values()].map(p => p.symbol)];
+    for (const sym of wanted) {
+      if (tracked.has(sym) || !/^[A-Z0-9]{1,15}\/INR$/.test(sym)) continue;
+      tracked.add(sym);
+      staleSymbols.add(sym);
+      if (dcxSocket.connected) joinChannels(sym);
+    }
+  }
+  setInterval(() => void refreshTracked(), 10 * 60 * 1000);
 
   dcxSocket.on("connect", () => {
     console.log("[CoinDCX WS] connected — joining channels");
-    TRACKED_COINS.forEach(sym => {
-      const pair = `I-${sym}_INR`;
-      dcxSocket.emit("join", { channelName: `${pair}@prices` });
-      dcxSocket.emit("join", { channelName: `${pair}@trades` });
-    });
+    tracked.forEach(joinChannels);
+    void refreshTracked();
 
     // Log once, 10s after connecting, which tracked symbols never received
     // a single real tick — the concrete symptom the "fix the currencies
@@ -64,7 +85,7 @@ export function startCoinDcxRelay() {
     const price = parseFloat(rawPrice);
     if (!rawSymbol || Number.isNaN(price)) return;
     const sym = normalizeCoinDCXSymbol(rawSymbol);
-    if (!TRACKED_COINS.some(c => sym.startsWith(c))) return; // ignore pairs we don't trade
+    if (!tracked.has(sym)) return; // ignore pairs we don't trade
 
     if (staleSymbols.has(sym)) {
       console.log(`[CoinDCX WS] First real tick for ${sym} via ${source}: ${price}`);

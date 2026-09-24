@@ -58,6 +58,13 @@ describe("LedgerFloor", () => {
     expect(text).toContain("BTC 58,61,300 +0.31% · ETH 2,65,922 \u22123.04% in 24h");
   });
 
+  it("says how many coins the scanner is watching", () => {
+    const { container, rerender } = render(createElement(LedgerFloor, props({ watching: { count: 25, fallback: false } })));
+    expect(container.textContent).toContain("Watching CoinDCX's 25 most-traded coins, updated hourly");
+    rerender(createElement(LedgerFloor, props({ watching: { count: 7, fallback: true } })));
+    expect(container.textContent).toContain("Watching 7 default coins until CoinDCX's most-traded list loads");
+  });
+
   it("closes a position only on the second tap", () => {
     const p = props();
     render(createElement(LedgerFloor, p));

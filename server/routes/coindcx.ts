@@ -5,6 +5,7 @@ import { currentPrices } from "../realtime";
 import { getCoinDcxTicker } from "../coindcxTicker";
 import { getMarketRules } from "../marketRules";
 import { aggregateMinuteCandles } from "../candles";
+import { getCoinUniverse } from "../coinUniverse";
 import { parseCoinDcxOrderBook, type RawBook } from "../../src/shared/orderBook";
 
 import { validate, cancelOrderBody, coinDcxCandlesQuery, coinDcxOrderBookQuery } from "../validation";
@@ -184,6 +185,11 @@ router.get("/api/coindcx/markets", async (_req, res) => {
   if (rules.size === 0) return res.status(503).json({ error: "CoinDCX market rules unavailable" });
   res.set("Cache-Control", "private, max-age=3600");
   res.json([...rules.values()]);
+});
+
+// The coins to scan: CoinDCX's most traded INR coins, refreshed hourly.
+router.get("/api/coindcx/universe", async (_req, res) => {
+  res.json(await getCoinUniverse());
 });
 
 // Real historical candles, proxied from CoinDCX's public candles API

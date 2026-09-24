@@ -18,6 +18,8 @@ import {
   classifyRegime,
   decorateBarsWithIndicators,
   generateOrderBook,
+  getSymbolConfig,
+  isCryptoInrSymbol,
 } from "./marketDataService";
 import { runPersonaPanel } from "./personaEngine";
 import { liveMarketStream } from "./liveMarketStreamService";
@@ -461,13 +463,17 @@ export function _resetScannedCandles() {
 export async function scanAllMarkets(
   options: ScanMarketOptions
 ): Promise<FullScanReport> {
+  // The crypto coins come from the live stream's list (CoinDCX's most traded
+  // INR coins); stocks from the fixed list.
+  const universe = [
+    ...liveMarketStream.getCryptoSymbols().map(getSymbolConfig),
+    ...SUPPORTED_SYMBOLS.filter((s) => s.assetClass === "equity"),
+  ];
   const targetSymbols = options.symbols
-    ? SUPPORTED_SYMBOLS.filter(
-        (s) =>
-          options.symbols!.includes(s.symbol) ||
-          (options.symbols!.includes("XPR/INR") && s.symbol === "XRP/INR")
-      )
-    : SUPPORTED_SYMBOLS;
+    ? [...new Set(options.symbols.map((s) => (s === "XPR/INR" ? "XRP/INR" : s)))]
+        .filter((s) => SUPPORTED_SYMBOLS.some((c) => c.symbol === s) || isCryptoInrSymbol(s))
+        .map(getSymbolConfig)
+    : universe;
 
   const resultsBySymbol: MarketScanResult[] = [];
   const newProposals: TradeProposal[] = [];

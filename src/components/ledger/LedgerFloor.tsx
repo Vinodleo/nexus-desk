@@ -25,6 +25,12 @@ export interface FloorTicker {
   changePercent: number;
 }
 
+export interface CoinCoverage {
+  count: number;
+  /** True while it's the default list, before CoinDCX's most-traded list loads. */
+  fallback: boolean;
+}
+
 export interface FloorScanSummary {
   analyzed: number;
   selected: number;
@@ -55,6 +61,8 @@ export interface LedgerFloorProps {
   market?: FloorTicker[];
   /** Whether the scanner has price candles for each coin. Omit to follow the live stream. */
   candleStatus?: CandleStatus[];
+  /** How many coins the scanner covers, and whether it's the default list. Omit to follow the live stream. */
+  watching?: CoinCoverage;
   pendingProposals: number;
   scan: FloorScanSummary;
   onOpenQueue: () => void;
@@ -120,6 +128,31 @@ const LiveCandleWarning: React.FC = () => {
   const [status, setStatus] = useState<CandleStatus[]>(() => liveMarketStream.getCandleStatus());
   useEffect(() => liveMarketStream.subscribe(() => setStatus(liveMarketStream.getCandleStatus())), []);
   return <CandleWarning status={status} />;
+};
+
+const Coverage: React.FC<{ watching: CoinCoverage }> = ({ watching }) => (
+  <div>
+    {watching.fallback
+      ? `Watching ${watching.count} default coins until CoinDCX's most-traded list loads`
+      : `Watching CoinDCX's ${watching.count} most-traded coins, updated hourly`}
+  </div>
+);
+
+// Holds the count and flag as plain values so price ticks don't re-render it.
+const LiveCoverage: React.FC = () => {
+  const read = () => liveMarketStream.getUniverseInfo();
+  const [count, setCount] = useState(() => read().count);
+  const [fallback, setFallback] = useState(() => read().fallback);
+  useEffect(
+    () =>
+      liveMarketStream.subscribe(() => {
+        const info = read();
+        setCount(info.count);
+        setFallback(info.fallback);
+      }),
+    []
+  );
+  return <Coverage watching={{ count, fallback }} />;
 };
 
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void }> = ({ position: p, onClose }) => {
@@ -316,6 +349,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
       {props.candleStatus !== undefined ? <CandleWarning status={props.candleStatus} /> : <LiveCandleWarning />}
 
       <section aria-label="Scanner today" className="flex flex-col gap-1.5 text-xs text-muted tabular-nums">
+        {props.watching !== undefined ? <Coverage watching={props.watching} /> : <LiveCoverage />}
         <div>
           Scanner today: {props.scan.analyzed} checked · {props.scan.selected} proposed · {props.scan.rejected} skipped
         </div>

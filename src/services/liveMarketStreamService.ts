@@ -1,5 +1,6 @@
 import { MarketBar, RegimeType } from "../types";
-import { SUPPORTED_SYMBOLS, decorateBarsWithIndicators, classifyRegime } from "./marketDataService";
+import { SUPPORTED_SYMBOLS, decorateBarsWithIndicators, classifyRegime, isCryptoInrSymbol } from "./marketDataService";
+import { DEFAULT_COINS, type CoinUniverse } from "../shared/coinUniverse";
 import { apiFetch, authenticateSocket } from "./apiClient";
 import { loadMarketRules } from "./marketRulesStore";
 
@@ -15,6 +16,11 @@ export const SIGNAL_INTERVAL = "5m";
 export const SIGNAL_INTERVAL_MS = 5 * 60 * 1000;
 /** ~25 hours of 5-minute candles: enough for EMA-200 and the 14-bar ADX/ATR. */
 const SIGNAL_CANDLES = 300;
+/** After the first load, fetch only this many recent candles and merge them in. */
+const RECENT_CANDLES = 24;
+/** Candle requests to CoinDCX at once. */
+const FETCH_CONCURRENCY = 6;
+const UNIVERSE_REFRESH_MS = 60 * 60 * 1000;
 /** Wait this long after a candle's close before fetching it, so CoinDCX has finalised it. */
 const CLOSE_GRACE_MS = 8000;
 /** Fewer closed candles than this and a symbol isn't scanned. */
@@ -72,6 +78,26 @@ export function nextCandleFetchAt(nowMs: number, intervalMs = SIGNAL_INTERVAL_MS
   return Math.floor(nowMs / intervalMs) * intervalMs + intervalMs + CLOSE_GRACE_MS;
 }
 
+/**
+ * Adds freshly fetched candles to the ones already held: a fetched candle
+ * replaces a held one with the same open time. Oldest first, at most `max`.
+ */
+export function mergeBars(held: MarketBar[], fresh: MarketBar[], max: number): MarketBar[] {
+  const byTime = new Map<number, MarketBar>();
+  for (const b of held) if (b.timestampMs !== undefined) byTime.set(b.timestampMs, b);
+  for (const b of fresh) if (b.timestampMs !== undefined) byTime.set(b.timestampMs, b);
+  return [...byTime.values()].sort((a, b) => (a.timestampMs as number) - (b.timestampMs as number)).slice(-max);
+}
+
+/** Runs `fn` over `items`, at most `limit` at a time. */
+async function forEachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 type CandleFetch = { bars: MarketBar[]; error?: string };
 
 async function fetchClosedCandles(symbol: string, interval: string, intervalMs: number, limit: number): Promise<CandleFetch> {
@@ -117,10 +143,14 @@ class LiveMarketStreamService {
 
   public isReady = false;
 
-  private cryptoSymbols = SUPPORTED_SYMBOLS.filter((s) => s.assetClass === "crypto").map((s) => s.symbol);
+  /** The coins the scanner covers: CoinDCX's most traded INR coins, from the server. */
+  private cryptoSymbols = DEFAULT_COINS.map((c) => `${c}/INR`);
   private equitySymbols = SUPPORTED_SYMBOLS.filter((s) => s.assetClass === "equity").map((s) => s.symbol);
+  private universeUpdatedAt = 0;
+  private universeIsFallback = true;
 
   async initialize() {
+    await this.refreshUniverse();
     await Promise.all([this.refreshTicker(), loadMarketRules(), this.refreshSignalCandles()]);
     this.isReady = true;
     this.notifyListeners();
@@ -128,12 +158,48 @@ class LiveMarketStreamService {
 
     this.scheduleNextCandleFetch();
     setInterval(() => this.refreshTicker(), 60 * 1000);
+    setInterval(() => void this.followUniverse(), UNIVERSE_REFRESH_MS);
 
     // 1-hour candles for the higher-timeframe trend; they change slowly.
     this.refreshHigherTimeframeData(this.cryptoSymbols, "crypto");
     this.refreshHigherTimeframeData(this.equitySymbols, "equity");
     setInterval(() => this.refreshHigherTimeframeData(this.cryptoSymbols, "crypto"), 5 * 60 * 1000);
     setInterval(() => this.refreshHigherTimeframeData(this.equitySymbols, "equity"), 5 * 60 * 1000);
+  }
+
+  /** Reads the coin list from the server. Returns the coins that are new to it. */
+  private async refreshUniverse(): Promise<string[]> {
+    try {
+      const res = await apiFetch("/api/coindcx/universe");
+      if (!res.ok) return [];
+      const u = (await res.json()) as CoinUniverse;
+      const symbols = Array.isArray(u?.coins) ? u.coins.map((c) => c?.symbol).filter((s): s is string => typeof s === "string" && isCryptoInrSymbol(s)) : [];
+      if (symbols.length === 0) return [];
+      const added = symbols.filter((s) => !this.cryptoSymbols.includes(s));
+      const dropped = this.cryptoSymbols.filter((s) => !symbols.includes(s));
+      this.cryptoSymbols = symbols;
+      this.universeUpdatedAt = u.updatedAt ?? Date.now();
+      this.universeIsFallback = Boolean(u.fallback);
+      for (const s of dropped) {
+        this.marketData.delete(s);
+        this.candleStatus.delete(s);
+        this.higherTimeframeData.delete(s);
+        this.macroRegimes.delete(s);
+      }
+      return added;
+    } catch (err) {
+      console.warn("[MarketStream] coin list refresh failed", err);
+      return [];
+    }
+  }
+
+  /** Hourly: picks up the new coin list and loads candles for coins new to it. */
+  private async followUniverse() {
+    const added = await this.refreshUniverse();
+    if (added.length === 0) return;
+    await this.refreshSignalCandles(added);
+    this.notifyListeners();
+    await this.refreshHigherTimeframeData(added, "crypto");
   }
 
   /** Last prices and 24-hour changes from CoinDCX's ticker. */
@@ -156,33 +222,40 @@ class LiveMarketStreamService {
     }
   }
 
-  /** Re-fetches the closed 5-minute candles for every crypto symbol. Returns the symbols that got a new candle. */
-  private async refreshSignalCandles(): Promise<string[]> {
+  /**
+   * Fetches closed 5-minute candles for each crypto symbol: the full history
+   * the first time, then only the latest few, merged into what's held.
+   * Returns the symbols that got a new candle.
+   */
+  private async refreshSignalCandles(symbols: string[] = this.cryptoSymbols): Promise<string[]> {
     const updated: string[] = [];
-    await Promise.all(
-      this.cryptoSymbols.map(async (sym) => {
-        let { bars, error } = await fetchClosedCandles(sym, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS, SIGNAL_CANDLES);
-        if (bars.length === 0) {
-          // One retry with a smaller request, in case the size was the problem.
-          const retry = await fetchClosedCandles(sym, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS, 120);
-          if (retry.bars.length > 0) ({ bars, error } = retry);
-        }
-        this.candleStatus.set(sym, {
-          symbol: sym,
-          bars: bars.length || this.marketData.get(sym)?.length || 0,
-          error,
-          checkedAt: Date.now(),
-        });
-        if (bars.length === 0) {
-          console.warn(`[MarketStream] ${sym}: ${error}`);
-          return;
-        }
-        const prevLast = this.getLatestClosedCandleMs(sym);
-        this.marketData.set(sym, decorateBarsWithIndicators(bars));
-        if (!this.lastPrices.has(sym)) this.lastPrices.set(sym, bars[bars.length - 1].close);
-        if (bars[bars.length - 1].timestampMs !== prevLast) updated.push(sym);
-      })
-    );
+    await forEachLimited(symbols, FETCH_CONCURRENCY, async (sym) => {
+      const held = this.marketData.get(sym);
+      const lastHeld = this.getLatestClosedCandleMs(sym);
+      const recentOnly =
+        !!held && held.length >= MIN_SIGNAL_BARS && lastHeld !== undefined && Date.now() - lastHeld < (RECENT_CANDLES - 4) * SIGNAL_INTERVAL_MS;
+      let { bars, error } = await fetchClosedCandles(sym, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS, recentOnly ? RECENT_CANDLES : SIGNAL_CANDLES);
+      if (bars.length === 0) {
+        // One retry with a smaller request, in case the size was the problem.
+        const retry = await fetchClosedCandles(sym, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS, 120);
+        if (retry.bars.length > 0) ({ bars, error } = retry);
+      }
+      if (bars.length > 0 && recentOnly) bars = mergeBars(held!, bars, SIGNAL_CANDLES);
+      this.candleStatus.set(sym, {
+        symbol: sym,
+        bars: bars.length || this.marketData.get(sym)?.length || 0,
+        error,
+        checkedAt: Date.now(),
+      });
+      if (bars.length === 0) {
+        console.warn(`[MarketStream] ${sym}: ${error}`);
+        return;
+      }
+      const prevLast = this.getLatestClosedCandleMs(sym);
+      this.marketData.set(sym, decorateBarsWithIndicators(bars));
+      if (!this.lastPrices.has(sym)) this.lastPrices.set(sym, bars[bars.length - 1].close);
+      if (bars[bars.length - 1].timestampMs !== prevLast) updated.push(sym);
+    });
     return updated;
   }
 
@@ -194,9 +267,10 @@ class LiveMarketStreamService {
       this.notifyListeners();
       if (updated.length > 0) this.candleListeners.forEach((cb) => cb(updated));
       // A candle that wasn't published yet gets one quick retry.
-      if (updated.length < this.cryptoSymbols.length) {
+      const pending = this.cryptoSymbols.filter((s) => !updated.includes(s));
+      if (pending.length > 0) {
         setTimeout(async () => {
-          const late = await this.refreshSignalCandles();
+          const late = await this.refreshSignalCandles(pending);
           if (late.length > 0) {
             this.notifyListeners();
             this.candleListeners.forEach((cb) => cb(late));
@@ -287,10 +361,19 @@ class LiveMarketStreamService {
     return bars && bars.length > 0 ? bars[bars.length - 1].timestampMs : undefined;
   }
 
+  /** Symbols with a price or candles: the scanned coins, then stocks. */
   getActiveSymbols(): string[] {
-    return Array.from(new Set([...this.marketData.keys(), ...this.lastPrices.keys()])).filter((s) =>
-      SUPPORTED_SYMBOLS.some((c) => c.symbol === s)
-    );
+    return [...this.cryptoSymbols, ...this.equitySymbols].filter((s) => this.marketData.has(s) || this.lastPrices.has(s));
+  }
+
+  /** The crypto coins the scanner covers, most traded first. */
+  getCryptoSymbols(): string[] {
+    return [...this.cryptoSymbols];
+  }
+
+  /** When the coin list was last picked, and whether it's the default list. */
+  getUniverseInfo(): { count: number; updatedAt: number; fallback: boolean } {
+    return { count: this.cryptoSymbols.length, updatedAt: this.universeUpdatedAt, fallback: this.universeIsFallback };
   }
 
   getHigherTimeframeBars(symbol: string): MarketBar[] | null {
