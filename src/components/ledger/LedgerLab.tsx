@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Check, X, Upload, Loader2, AlertTriangle } from "lucide-react";
-import type { PromotedLabModel } from "../../types";
+import type { OptimizedParameters, PromotedLabModel } from "../../types";
 import {
   fetchRealHistoricalCandles,
   parseCSVToCandles,
@@ -24,6 +24,11 @@ type Interval = "15m" | "1h" | "4h";
 
 /** Fewer test trades than this and the candidate's win rate is mostly noise. */
 export const MIN_TEST_TRADES = 10;
+
+/** Plain-language summary of the breakout settings a promotion puts on the panel. */
+export function describeTunedSettings(p: OptimizedParameters): string {
+  return `Volume at least ${p.volSurgeThreshold}× normal, stop ${p.slMultiplier} ATR, target ${p.tpMultiplier} ATR, skip if RSI is past ${p.rsiThreshold}`;
+}
 
 /** Whether this result is the model already in use. */
 export function isResultPromoted(result: RealDataLearningResult, promoted: PromotedLabModel | null): boolean {
@@ -146,6 +151,12 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
               {promoted.winRatePct.toFixed(0)}% win rate · {promoted.accuracyPct}% accuracy in testing · promoted{" "}
               {new Date(promoted.promotedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
             </div>
+            {promoted.optimizedParameters && (
+              <div className="text-[13px] leading-relaxed bg-inset rounded-[10px] px-3 py-2">
+                <strong>Votes on the panel as a tuned breakout trader.</strong>{" "}
+                {describeTunedSettings(promoted.optimizedParameters)}.
+              </div>
+            )}
             {confirmRevert ? (
               <div className="flex flex-wrap items-center gap-2 text-[13px]">
                 <span>Go back to the built-in rules?</span>
@@ -340,6 +351,13 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
             <div className="text-xs leading-relaxed text-warn-ink bg-warn-soft rounded-xl px-3 py-2.5">
               Only {l.tradesCount} test {l.tradesCount === 1 ? "trade" : "trades"}, too few to trust these numbers, so it
               can't be promoted. Train on more history or a longer candle.
+            </div>
+          )}
+
+          {result.optimizedParameters && !result.isSynthetic && !alreadyPromoted && (
+            <div className="text-xs text-muted leading-relaxed">
+              Promoting adds a breakout trader with these settings to the panel:{" "}
+              {describeTunedSettings(result.optimizedParameters)}.
             </div>
           )}
 

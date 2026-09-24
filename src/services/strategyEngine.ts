@@ -203,6 +203,11 @@ export interface BreakoutTuning {
   targetAtrMult: number;
   targetStopMultFloor: number;
   baseProbability: number;
+  /**
+   * Optional overextension filter, as the Lab's backtest applies it: longs
+   * only while RSI is below this, shorts only while it's above 100 minus it.
+   */
+  rsiCeiling?: number;
 }
 
 export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: BreakoutTuning): StrategySetup | null {
@@ -213,7 +218,10 @@ export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: Brea
   const isBullBreak = s.price > s.recentHigh && s.volumeSurgeRatio >= tuning.volSurgeThreshold;
   const isBearBreak = s.price < s.recentLow && s.volumeSurgeRatio >= tuning.volSurgeThreshold;
   const direction: TradeDirection = isBullBreak ? "LONG" : isBearBreak ? "SHORT" : (s.price >= (s.recentHigh + s.recentLow) / 2 ? "LONG" : "SHORT");
-  const qualifies = (isBullBreak || isBearBreak) && !eventWindowActive;
+  const overextended =
+    tuning.rsiCeiling !== undefined &&
+    ((isBullBreak && s.rsi >= tuning.rsiCeiling) || (isBearBreak && s.rsi <= 100 - tuning.rsiCeiling));
+  const qualifies = (isBullBreak || isBearBreak) && !overextended && !eventWindowActive;
 
   const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
   const targetDistance = Math.max(s.atr * tuning.targetAtrMult, stopDistance * tuning.targetStopMultFloor);
@@ -228,6 +236,8 @@ export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: Brea
     disqualificationReason = `Guardrail: Volume surge ${s.volumeSurgeRatio}x below ${tuning.volSurgeThreshold}x confirmation threshold`;
   else if (!isBullBreak && !isBearBreak)
     disqualificationReason = "Price within 15-bar range boundaries; no breakout present";
+  else if (overextended)
+    disqualificationReason = `RSI ${s.rsi.toFixed(0)} too stretched for a breakout entry (limit ${tuning.rsiCeiling})`;
 
   return {
     id: `setup-${tuning.idSuffix}-${symbol}`,

@@ -5,6 +5,7 @@ import {
   MetaLabelScore,
   OrderBook,
   Position,
+  PromotedLabModel,
   RegimeType,
   RiskCalculation,
   StrategySetup,
@@ -31,6 +32,19 @@ import { syntheticBarShare } from "./dataProvenance";
 // market, so the live desk ignores it (default hurdle, no persona tuning, no
 // TF.js model) even if an older build let it be promoted.
 let warnedSyntheticPromotion = false;
+/** The live desk's default bar for meta-label confidence. */
+export const DEFAULT_MIN_CONFIDENCE = 0.58;
+
+/**
+ * Confidence a setup needs to become a proposal. A promoted Lab model can
+ * raise it but never lower it: the Lab's minConfidence is measured on the
+ * backtester's own confidence heuristic, a different scale from the live
+ * meta-label score, so a lower Lab value would quietly loosen live trading.
+ */
+export function requiredMetaConfidence(promotedModel: PromotedLabModel | null | undefined): number {
+  return Math.max(DEFAULT_MIN_CONFIDENCE, promotedModel?.optimizedParameters?.minConfidence ?? 0);
+}
+
 function loadUsablePromotedModel() {
   const model = loadStoredPromotedLabModel();
   if (model?.isSynthetic) {
@@ -274,9 +288,8 @@ export async function scanSingleMarket(
       }
     );
 
-    // Must pass edge criteria, risk constraints, and dynamic confidence hurdle
-    const requiredConfidence =
-      promotedModel?.optimizedParameters?.minConfidence ?? 0.58;
+    // Must pass edge criteria, risk constraints, and the confidence hurdle.
+    const requiredConfidence = requiredMetaConfidence(promotedModel);
 
     if (
       evAssessment.isPositiveEdge &&
