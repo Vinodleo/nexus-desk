@@ -63,7 +63,11 @@ let server: Server;
 beforeAll(async () => {
   const realFetch = globalThis.fetch;
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
-    /coindcx\.com/.test(String(url)) ? Promise.resolve(fakeCoinDcx(String(url))) : realFetch(url, init)
+    /coindcx\.com/.test(String(url))
+      ? Promise.resolve(fakeCoinDcx(String(url)))
+      : /faireconomy/.test(String(url))
+      ? Promise.resolve(new Response("[]")) // no scheduled news this week
+      : realFetch(url, init)
   );
   const { router } = await import("../../server/routes/scanner");
   const app = express();

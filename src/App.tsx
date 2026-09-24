@@ -88,6 +88,7 @@ import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 import { fetchLiveOrderBook } from "./services/orderBookService";
 import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanner";
 import { useServerStatus } from "./hooks/useServerStatus";
+import { useEventWindow } from "./hooks/useEventWindow";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows } from "./services/experienceMemory";
 
@@ -1474,6 +1475,11 @@ export default function App() {
     [setSampleTelemetry]
   );
 
+  // Scheduled-news pauses (US CPI, Fed decisions...): no new trades around them.
+  const eventWindow = useEventWindow();
+  const eventWindowRef = useRef(eventWindow);
+  eventWindowRef.current = eventWindow;
+
   const runScan = async (symbols: string[] | undefined, onlyNewCandles: boolean) => {
     const report = await scanAllMarkets({
       symbols,
@@ -1487,6 +1493,7 @@ export default function App() {
       riskPolicy,
       quarantines: symbolQuarantinesRef.current,
       getOrderBook: fetchLiveOrderBook,
+      eventWindow: eventWindowRef.current,
       calibrators: {
         heuristic: buildCalibrator(shadowStore.all(), "heuristic"),
         tfjs: buildCalibrator(shadowStore.all(), "tfjs"),
@@ -1767,6 +1774,7 @@ export default function App() {
         {activeTab === "floor" && (
           <LedgerFloor
             scanLocation={serverScanner.location}
+            eventWindow={eventWindow}
             isLive={tradingMode === "LIVE_COINDCX"}
             equity={currentRiskCalculation.equity}
             dailyPnl={dailyRealizedPnl}

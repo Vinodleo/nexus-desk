@@ -7,7 +7,6 @@ import {
   buildMeanReversionSetup,
   buildVolatilitySuppressor,
   buildEventNewsSuppressor,
-  roundPrice,
 } from "./strategyEngine";
 import { arbitrateConflictingSetups } from "./riskEngine";
 
@@ -253,7 +252,14 @@ export interface PanelResult {
   vetoReason?: string;
   consensusDirection: TradeDirection | null;
   agreementScore: number; // 0..1 — weighted share of the winning direction among all qualifying ballots
-  setup: StrategySetup | null; // blended representative setup for the winning direction
+  /**
+   * Each trader's own setup on the winning side, strongest first (by voting
+   * weight, then the trader's own estimate). Each is judged on its own;
+   * nothing is averaged across traders.
+   */
+  candidates: StrategySetup[];
+  /** The strongest of those, or null when none. */
+  setup: StrategySetup | null;
   supportingPersonas: string[];
   /** Setups that qualified but were dropped for going against the 1-hour trend. */
   filteredByHigherTimeframe?: number;
@@ -261,113 +267,51 @@ export interface PanelResult {
   trendFilteredSetups?: StrategySetup[];
   /** Short setups set aside because only longs can be placed (ctx.longOnly), for shadow tracking. */
   shortOnlySetups?: StrategySetup[];
+  /** Setups on the side that lost a genuine long-vs-short conflict, for shadow tracking. */
+  outvotedSetups?: StrategySetup[];
+  /** Setups the traders put forward when a risk officer vetoed the symbol, for shadow tracking. */
+  vetoedSetups?: StrategySetup[];
   dissentingPersonas: string[];
   totalVotesCast: number; // personas that QUALIFIED (voted) — most scans, this is 0
   totalPersonasRun: number; // personas actually EVALUATED this cycle, qualified or not — the real "analysed" count
 }
 
-function blendSetups(
-  ballots: PersonaBallot[],
-  direction: TradeDirection
-): StrategySetup {
-  const totalWeight = ballots.reduce((acc, b) => acc + b.weight, 0) || 1;
-  const rep = ballots[0].setup;
-  const entryPrice = rep.entryPrice;
-  // Blend stop/target *distances*, never raw price levels, so direction stays correct.
-  const stopDist =
-    ballots.reduce(
-      (acc, b) =>
-        acc +
-        Math.abs(b.setup.entryPrice - b.setup.stopLoss) * b.weight,
-      0
-    ) / totalWeight;
-  const targetDist =
-    ballots.reduce(
-      (acc, b) =>
-        acc +
-        Math.abs(b.setup.takeProfit - b.setup.entryPrice) * b.weight,
-      0
-    ) / totalWeight;
-  const baseProbability =
-    ballots.reduce((acc, b) => acc + b.setup.baseProbability * b.weight, 0) /
-    totalWeight;
-
-  return {
-    ...rep,
-    id: `setup-panel-${direction}-${rep.symbol}`,
-    name: `Panel Consensus (${ballots
-      .map((b) => b.personaName.split(" — ")[0])
-      .join(", ")})`,
-    direction,
-    entryPrice,
-    stopLoss: roundPrice(direction === "LONG" ? entryPrice - stopDist : entryPrice + stopDist, entryPrice),
-    takeProfit: roundPrice(direction === "LONG" ? entryPrice + targetDist : entryPrice - targetDist, entryPrice),
-    riskRewardRatio: Number((targetDist / (stopDist || 1)).toFixed(2)),
-    baseProbability: Number(baseProbability.toFixed(3)),
-    qualifies: true,
-  };
-}
-
 /**
- * Runs the full trader panel for one symbol and returns a single resolved
- * consensus result. Directional personas vote; suppressor personas can
- * veto the whole symbol outright. When personas genuinely disagree (real
- * support on both sides), the panel calls arbitrateConflictingSetups() —
- * previously defined in riskEngine.ts but never actually called anywhere
- * — to pick a side by meta-labeled confidence, and reports a
- * correspondingly low agreement score so the risk/autopilot layer treats
- * the trade with appropriate caution.
+ * Runs the trader panel for one symbol. Each trader puts forward its own
+ * setup; suppressor personas (volatility, news) can veto the symbol. When
+ * traders genuinely disagree on direction, each side is represented by its
+ * best-scoring setup (arbitrateConflictingSetups) and the agreement score
+ * shows how split the panel was, so autopilot treats the trade cautiously.
  */
 export function runPersonaPanel(
   ctx: CandidateEvaluationContext,
   scoreForArbitration: (setup: StrategySetup) => MetaLabelScore,
   horizon: "intraday" | "swing" = "intraday"
 ): PanelResult {
-  for (const suppressor of SUPPRESSOR_PERSONAS) {
-    const verdict = suppressor.evaluate(ctx);
-    if (verdict?.qualifies) {
-      return {
-        vetoed: true,
-        vetoReason: `${suppressor.name}: ${
-          verdict.family === "volatility_filter"
-            ? "volatility outside tolerable bounds"
-            : "active event/news blackout"
-        }`,
-        consensusDirection: null,
-        agreementScore: 0,
-        setup: null,
-        supportingPersonas: [],
-        dissentingPersonas: [],
-        totalVotesCast: 0,
-        totalPersonasRun: SUPPRESSOR_PERSONAS.length,
-      };
-    }
-  }
-
-  // Swing (long-horizon) and intraday personas are never pooled into the
-  // same consensus vote — averaging a multi-day macro thesis's stop/target
-  // together with an intraday scalp's produces numbers that serve neither.
-  // Each horizon gets its own independent panel; callers that want both
-  // run this twice.
   const roster = panelRoster(ctx.promotedModel);
+  const totalPersonasRun = SUPPRESSOR_PERSONAS.length + roster.length;
   const ballots: PersonaBallot[] = [];
   let filteredByHigherTimeframe = 0;
   const trendFilteredSetups: StrategySetup[] = [];
   const shortOnlySetups: StrategySetup[] = [];
+  // Swing (long-horizon) and intraday personas are never pooled into the
+  // same vote; callers that want both run the panel twice.
+  // Traders judge the chart as if there were no news: the event officer's
+  // veto below handles a news pause, and this way what they would have
+  // traded is still known (and followed).
+  const traderCtx = { ...ctx, eventWindowActive: false };
   for (const persona of roster) {
-    const setup = persona.evaluate(ctx);
+    const setup = persona.evaluate(traderCtx);
     const setupHorizon = setup?.horizon || "intraday";
     if (!setup?.qualifies || setupHorizon !== horizon) continue;
 
-    // Multi-timeframe confluence: a setup that qualifies on the 5m view but
-    // directly fights a CLEAR 1h trend gets filtered here, before it ever
-    // becomes a ballot. A neutral/ranging/choppy higher timeframe — or no
-    // higher-timeframe data yet — expresses no opinion and never blocks a
-    // trade; this only filters genuine conflict, not absence of agreement.
     if (ctx.longOnly && setup.direction === "SHORT") {
       shortOnlySetups.push(setup);
       continue;
     }
+    // Multi-timeframe confluence: a setup that directly fights a CLEAR 1h
+    // trend is filtered before it becomes a ballot. A neutral/ranging/choppy
+    // higher timeframe, or none yet, never blocks a trade.
     const macro = ctx.macroRegime || "neutral";
     const fightsHigherTimeframe =
       (macro === "trending_bullish" && setup.direction === "SHORT") ||
@@ -378,77 +322,79 @@ export function runPersonaPanel(
       continue;
     }
 
-    ballots.push({
-      personaName: persona.name,
-      direction: setup.direction,
-      setup,
-      weight: persona.weight,
-    });
+    ballots.push({ personaName: persona.name, direction: setup.direction, setup, weight: persona.weight });
   }
 
-  if (ballots.length === 0) {
-    return {
-      vetoed: false,
-      consensusDirection: null,
-      agreementScore: 0,
-      setup: null,
-      supportingPersonas: [],
-      dissentingPersonas: [],
-      totalVotesCast: 0,
-      totalPersonasRun:
-        SUPPRESSOR_PERSONAS.length + roster.length,
-      filteredByHigherTimeframe,
-      trendFilteredSetups,
-      shortOnlySetups,
-    };
-  }
-
-  const longBallots = ballots.filter((b) => b.direction === "LONG");
-  const shortBallots = ballots.filter((b) => b.direction === "SHORT");
-  const longWeight = longBallots.reduce((a, b) => a + b.weight, 0);
-  const shortWeight = shortBallots.reduce((a, b) => a + b.weight, 0);
-  const totalWeight = longWeight + shortWeight;
-  const genuineConflict =
-    longBallots.length > 0 && shortBallots.length > 0;
-
-  let winningDirection: TradeDirection;
-  let winningSide: PersonaBallot[];
-  let losingSide: PersonaBallot[];
-
-  if (genuineConflict) {
-    const longSetup = blendSetups(longBallots, "LONG");
-    const shortSetup = blendSetups(shortBallots, "SHORT");
-    const arbitrated = arbitrateConflictingSetups([
-      { setup: longSetup, metaScore: scoreForArbitration(longSetup) },
-      { setup: shortSetup, metaScore: scoreForArbitration(shortSetup) },
-    ]);
-    winningDirection = arbitrated!.setup.direction;
-    winningSide = winningDirection === "LONG" ? longBallots : shortBallots;
-    losingSide = winningDirection === "LONG" ? shortBallots : longBallots;
-  } else {
-    winningDirection = longBallots.length > 0 ? "LONG" : "SHORT";
-    winningSide = longBallots.length > 0 ? longBallots : shortBallots;
-    losingSide = [];
-  }
-
-  const winningWeight = winningSide.reduce((a, b) => a + b.weight, 0);
-  const agreementScore =
-    totalWeight > 0
-      ? Number((winningWeight / totalWeight).toFixed(3))
-      : 0;
-
-  return {
-    vetoed: false,
-    consensusDirection: winningDirection,
-    agreementScore,
-    setup: blendSetups(winningSide, winningDirection),
-    supportingPersonas: winningSide.map((b) => b.personaName),
-    dissentingPersonas: losingSide.map((b) => b.personaName),
-    totalVotesCast: ballots.length,
-    totalPersonasRun:
-      SUPPRESSOR_PERSONAS.length + roster.length,
+  const empty = {
+    consensusDirection: null,
+    agreementScore: 0,
+    candidates: [],
+    setup: null,
+    supportingPersonas: [],
+    dissentingPersonas: [],
+    totalVotesCast: 0,
+    totalPersonasRun,
     filteredByHigherTimeframe,
     trendFilteredSetups,
     shortOnlySetups,
+  };
+
+  // Risk officers can veto the symbol outright. What the traders wanted is
+  // still reported, so tracking shows whether the veto saved or cost money.
+  for (const suppressor of SUPPRESSOR_PERSONAS) {
+    const verdict = suppressor.evaluate(ctx);
+    if (verdict?.qualifies) {
+      return {
+        ...empty,
+        vetoed: true,
+        vetoReason: `${suppressor.name}: ${
+          verdict.family === "volatility_filter"
+            ? "volatility outside tolerable bounds"
+            : `event/news blackout${ctx.eventHeadline ? ` (${ctx.eventHeadline})` : ""}`
+        }`,
+        vetoedSetups: ballots.map((b) => b.setup),
+      };
+    }
+  }
+
+  if (ballots.length === 0) return { ...empty, vetoed: false };
+
+  const longBallots = ballots.filter((b) => b.direction === "LONG");
+  const shortBallots = ballots.filter((b) => b.direction === "SHORT");
+  const totalWeight = ballots.reduce((a, b) => a + b.weight, 0);
+
+  let winningSide: PersonaBallot[];
+  let losingSide: PersonaBallot[];
+  if (longBallots.length > 0 && shortBallots.length > 0) {
+    // Each side is represented by its best-scoring setup.
+    const best = (side: PersonaBallot[]) =>
+      side
+        .map((b) => ({ setup: b.setup, metaScore: scoreForArbitration(b.setup) }))
+        .sort((a, b) => b.metaScore.confidence - a.metaScore.confidence)[0];
+    const arbitrated = arbitrateConflictingSetups([best(longBallots), best(shortBallots)]);
+    const longWins = arbitrated!.setup.direction === "LONG";
+    winningSide = longWins ? longBallots : shortBallots;
+    losingSide = longWins ? shortBallots : longBallots;
+  } else {
+    winningSide = ballots;
+    losingSide = [];
+  }
+
+  const candidates = [...winningSide]
+    .sort((a, b) => b.weight - a.weight || b.setup.baseProbability - a.setup.baseProbability)
+    .map((b) => b.setup);
+  const winningWeight = winningSide.reduce((a, b) => a + b.weight, 0);
+
+  return {
+    ...empty,
+    vetoed: false,
+    consensusDirection: winningSide[0].direction,
+    agreementScore: totalWeight > 0 ? Number((winningWeight / totalWeight).toFixed(3)) : 0,
+    candidates,
+    setup: candidates[0],
+    supportingPersonas: winningSide.map((b) => b.personaName),
+    dissentingPersonas: losingSide.map((b) => b.personaName),
+    totalVotesCast: ballots.length,
+    outvotedSetups: losingSide.map((b) => b.setup),
   };
 }

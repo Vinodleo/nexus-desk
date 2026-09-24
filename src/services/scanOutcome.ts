@@ -12,6 +12,8 @@ export type SkipReason =
   | "thin_market"
   | "wide_spread"
   | "no_shorting"
+  | "weaker_setup"
+  | "outvoted"
   | "risk_limits";
 
 export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
@@ -26,6 +28,8 @@ export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
   thin_market: "Too little on the order book",
   wide_spread: "Spread too wide for the stop",
   no_shorting: "Short setup: CoinDCX spot can't short",
+  weaker_setup: "A better setup on the same coin was chosen",
+  outvoted: "Outvoted by traders on the other side",
   risk_limits: "Blocked by a risk limit",
 };
 
