@@ -32,13 +32,13 @@ import { syntheticBarShare } from "./dataProvenance";
 import { MIN_SIGNAL_BARS, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
 import { skipReasonForRisk, type SkipReason, type SymbolScanOutcome } from "./scanOutcome";
 import { shadowFromSetup, type ShadowSignal } from "./shadowTracker";
+import { DEFAULT_MIN_CONFIDENCE, MIN_EDGE_R, type Calibrator, type ConfidenceScorer } from "./calibration";
 
 // A Lab model trained on generated candles says nothing about the real
 // market, so the live desk ignores it (default hurdle, no persona tuning, no
 // TF.js model) even if an older build let it be promoted.
 let warnedSyntheticPromotion = false;
-/** The live desk's default bar for meta-label confidence. */
-export const DEFAULT_MIN_CONFIDENCE = 0.58;
+export { DEFAULT_MIN_CONFIDENCE, MIN_EDGE_R };
 
 /**
  * Confidence a setup needs to become a proposal. A promoted Lab model can
@@ -95,6 +95,8 @@ export interface ScanMarketOptions {
    * it returns null, spread and depth are simulated.
    */
   getOrderBook?: (symbol: string, notional: number) => Promise<OrderBook | null>;
+  /** Win-chance calibration from shadow-tracked setups, per scorer. Without one, raw scores are used. */
+  calibrators?: Partial<Record<ConfidenceScorer, Calibrator>>;
 }
 
 export interface MarketScanResult {
@@ -298,10 +300,21 @@ export async function scanSingleMarket(
       similarityScore: retrieval.similarityScore,
     });
 
-    if (tfjsModel && predictions.length > i) {
+    const scorer: ConfidenceScorer = tfjsModel && predictions.length > i ? "tfjs" : "heuristic";
+    if (scorer === "tfjs") {
       metaScore.confidence = predictions[i];
       metaScore.confidenceRationale =
         "TensorFlow.js Neural Net Real-time Prediction";
+    }
+
+    // Once enough shadow-tracked setups have played out, the win chance used
+    // for the profit check and sizing is the one measured at this score.
+    const calibrator = setup.horizon === "swing" ? undefined : options.calibrators?.[scorer];
+    const calibrated = calibrator?.ready === true;
+    if (calibrated) {
+      const p = Number(calibrator.calibrate(metaScore.confidence).toFixed(3));
+      metaScore.calibratedWinProbability = p;
+      metaScore.confidenceRationale = `${metaScore.confidenceRationale} Measured win chance at this score: ${Math.round(p * 100)}% (from ${calibrator.samples} tracked setups).`;
     }
 
     // 3. Expected Value Assessment
@@ -334,7 +347,15 @@ export async function scanSingleMarket(
     );
 
     // Must pass edge criteria, risk constraints, and the confidence hurdle.
+    // With a measured win chance the hurdle is a real edge: at least
+    // MIN_EDGE_R of the risk expected back after costs. Before that, the
+    // raw score has to clear the fixed bar. A promoted Lab model's bar
+    // applies either way.
     const requiredConfidence = requiredMetaConfidence(promotedModel);
+    const passesConfidence = calibrated
+      ? evAssessment.expectedNetValue >= MIN_EDGE_R * evAssessment.avgLossDollars &&
+        metaScore.confidence >= (promotedModel?.optimizedParameters?.minConfidence ?? 0)
+      : metaScore.confidence >= requiredConfidence;
 
     const skipsBefore = candidateSkips.length;
     if (!riskCalc.passedAllChecks) {
@@ -343,7 +364,7 @@ export async function scanSingleMarket(
       candidateSkips.push("negative_ev");
     } else if (riskCalc.recommendedPositionSizeUnits <= 0) {
       candidateSkips.push("below_min_size");
-    } else if (metaScore.confidence < requiredConfidence) {
+    } else if (!passesConfidence) {
       candidateSkips.push("low_confidence");
     }
     shadows.push(
@@ -351,7 +372,8 @@ export async function scanSingleMarket(
         setup,
         candidateSkips.length > skipsBefore ? candidateSkips[candidateSkips.length - 1] : "proposed",
         candleCloseMs,
-        metaScore.confidence
+        metaScore.confidence,
+        scorer
       )
     );
 
@@ -359,7 +381,7 @@ export async function scanSingleMarket(
       evAssessment.isPositiveEdge &&
       riskCalc.passedAllChecks &&
       riskCalc.recommendedPositionSizeUnits > 0 &&
-      metaScore.confidence >= requiredConfidence
+      passesConfidence
     ) {
       const sanitizedId = symbolConfig.symbol
         .replace(/[^a-zA-Z0-9]/g, "")

@@ -83,6 +83,7 @@ import {
 } from "./services/positionTick";
 import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 import { fetchLiveOrderBook } from "./services/orderBookService";
+import { buildCalibrator } from "./services/calibration";
 
 // ATR recorded on a position for its trailing-stop rules. The indicator used
 // to be floored at 0.3% of price, and the exit rules were tuned with that
@@ -1448,6 +1449,10 @@ export default function App() {
       riskPolicy,
       quarantines: symbolQuarantinesRef.current,
       getOrderBook: fetchLiveOrderBook,
+      calibrators: {
+        heuristic: buildCalibrator(shadowStore.all(), "heuristic"),
+        tfjs: buildCalibrator(shadowStore.all(), "tfjs"),
+      },
     });
     recordScan(report);
     mergeScanIntoQueue(report);
