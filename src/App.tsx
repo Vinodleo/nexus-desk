@@ -89,6 +89,7 @@ import { fetchLiveOrderBook } from "./services/orderBookService";
 import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanner";
 import { useServerStatus } from "./hooks/useServerStatus";
 import { useEventWindow } from "./hooks/useEventWindow";
+import { useTrailProfile } from "./hooks/useTrailProfile";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows } from "./services/experienceMemory";
 
@@ -267,6 +268,10 @@ export default function App() {
     loadStoredClosedTrades()
   );
   const closedTradesRef = React.useRef<HistoricalTrade[]>([]);
+  // Trailing-stop profile for new positions (chosen in the Lab's exit comparison).
+  const { profile: trailProfileId, setProfile: setTrailProfileId } = useTrailProfile();
+  const trailProfileRef = React.useRef(trailProfileId);
+  trailProfileRef.current = trailProfileId;
   React.useEffect(() => { closedTradesRef.current = closedTrades; }, [closedTrades]);
 
   // Per-Symbol Quarantine (Embargo): prevents re-approving a symbol after consecutive losses
@@ -740,6 +745,8 @@ export default function App() {
         closedAtMs: nowMs,
         holdingDurationMinutes: durationMins,
         isSelfApproved: pos.isSelfApproved,
+        stopAtExit: pos.stopLoss,
+        fillAtExit: exitPrice,
       };
 
       setClosedTrades((prev) => [newHistoricalTrade, ...prev]);
@@ -1040,6 +1047,7 @@ export default function App() {
         family: proposal.setup.family,
         horizon: proposal.setup.horizon,
         trailMode: isTrendOrSwing ? "TREND_RUNNER" : "SCALP_TIGHT",
+        trailProfile: trailProfileRef.current,
         isLiveOrder: isLiveExecution,
       };
 
@@ -1342,6 +1350,7 @@ export default function App() {
           family: proposal.setup.family,
           horizon: proposal.setup.horizon,
           trailMode: isTrendOrSwing ? "TREND_RUNNER" : "SCALP_TIGHT",
+          trailProfile: trailProfileRef.current,
         };
       });
 
@@ -1885,6 +1894,8 @@ export default function App() {
         {activeTab === "lab" && (
           <LedgerLab
             promotedLabModel={promotedLabModel}
+            trailProfile={trailProfileId}
+            onTrailProfileChange={setTrailProfileId}
             onPromote={(result) => {
               if (result.isSynthetic) {
                 setExecutionToast({

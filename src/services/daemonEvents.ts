@@ -21,6 +21,8 @@ export interface DaemonCloseEvent {
   openedAt: string;
   holdingDurationMinutes?: number;
   setupName?: string;
+  stopAtExit?: number;
+  fillAtExit?: number;
 }
 
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -50,6 +52,8 @@ export function daemonEventToTrade(ev: DaemonCloseEvent): HistoricalTrade {
     ...(Number.isFinite(closedAtMs) ? { closedAtMs } : {}),
     ...(Number.isFinite(openedAtMs) ? { openedAtMs } : {}),
     holdingDurationMinutes: ev.holdingDurationMinutes,
+    ...(ev.stopAtExit !== undefined ? { stopAtExit: ev.stopAtExit } : {}),
+    ...(ev.fillAtExit !== undefined ? { fillAtExit: ev.fillAtExit } : {}),
     isSelfApproved: true,
   };
 }

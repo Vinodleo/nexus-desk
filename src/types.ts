@@ -289,6 +289,8 @@ export interface Position {
   family?: StrategyFamily;
   horizon?: "intraday" | "swing";
   trailMode?: "SCALP_TIGHT" | "TREND_RUNNER";
+  /** Trailing-stop profile (shared/trailingStop TRAIL_PROFILES) chosen when it opened. */
+  trailProfile?: string;
   isLiveOrder?: boolean;
   exchangeOrderId?: string;
 }
@@ -307,6 +309,9 @@ export interface HistoricalTrade {
   feesPaid?: number; // CoinDCX Futures fees (0.02% maker / 0.05% taker both open and close)
   realizedPnl: number; // Net profit earned (positive) or money lost (negative) after fees
   realizedPnlPercent: number;
+  /** Where the stop was when the trade closed, and the price the (rest of the) position actually sold at: a fast move can go past the stop between price checks. */
+  stopAtExit?: number;
+  fillAtExit?: number;
   isWin: boolean;
   exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL" | "EXPIRY_TIME";
   openedAt: string;

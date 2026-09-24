@@ -74,6 +74,7 @@ const syncedPosition = z
     initialStopLoss: positiveNumber.optional().catch(undefined),
     initialTakeProfit: positiveNumber.optional().catch(undefined),
     family: z.string().max(40).optional().catch(undefined),
+    trailProfile: z.enum(["tight", "balanced", "patient", "fixed"]).optional().catch(undefined),
     partialQuantity: positiveNumber.optional().catch(undefined),
     bankedQuantity: positiveNumber.optional().catch(undefined),
     bankedPrice: positiveNumber.optional().catch(undefined),
