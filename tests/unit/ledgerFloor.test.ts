@@ -37,7 +37,9 @@ function props(over: Partial<LedgerFloorProps> = {}): LedgerFloorProps {
     isLive: false, equity: 94483.96, dailyPnl: 0, allTimePnl: -5688.13,
     autopilotOn: true, onAutopilotChange: vi.fn(), exposureFraction: 0.099, dailyLossLeft: 2500,
     stopped: false, onToggleStop: vi.fn(), positions: [btc], onClosePosition: vi.fn(),
-    guardianOnline: true, liveTradingEnabled: false, ticker: { symbol: "ETH/INR", price: 265922.4, changePercent: 0.56 },
+    guardianOnline: true, liveTradingEnabled: false,
+    market: [{ symbol: "BTC/INR", price: 5861300, changePercent: 0.31 }, { symbol: "ETH/INR", price: 265922.4, changePercent: -3.04 }],
+    candleStatus: [],
     pendingProposals: 0, scan: { analyzed: 42, selected: 6, rejected: 36 }, onOpenQueue: vi.fn(), onOpenSettings: vi.fn(),
     ...over,
   };
@@ -52,7 +54,8 @@ describe("LedgerFloor", () => {
     expect(text).toContain("9.9%");
     expect(text).toContain("₹2,500");
     expect(text).toContain("Trailing stop active · locked above entry");
-    expect(text).toContain("Guardian online · live trading off · ETH 2,65,922");
+    expect(text).toContain("Guardian online · live trading off");
+    expect(text).toContain("BTC 58,61,300 +0.31% · ETH 2,65,922 \u22123.04% in 24h");
   });
 
   it("closes a position only on the second tap", () => {
@@ -88,6 +91,20 @@ describe("LedgerFloor", () => {
     expect((screen.getByRole("switch", { name: "Autopilot" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Resume/ }));
     expect(p.onToggleStop).toHaveBeenCalled();
+  });
+
+  it("warns when coins have no price candles, with CoinDCX's reason", () => {
+    const { container } = render(
+      createElement(LedgerFloor, props({
+        candleStatus: [
+          { symbol: "BTC/INR", bars: 0, checkedAt: 1, error: "CoinDCX candles (I-BTC_INR, 5m): HTTP 400 bad pair" },
+          { symbol: "ETH/INR", bars: 299, checkedAt: 1 },
+        ],
+      }))
+    );
+    expect(container.textContent).toContain("No price candles for 1 of 2 coins");
+    expect(container.textContent).toContain("(BTC)");
+    expect(container.textContent).toContain("HTTP 400 bad pair");
   });
 
   it("lists today's main reasons for skipping", () => {

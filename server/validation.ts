@@ -94,7 +94,8 @@ export const cancelOrderBody = z.object({
 
 export const coinDcxCandlesQuery = z.object({
   symbol: z.string().regex(/^[A-Z0-9]{1,15}$/, "base asset like BTC"),
-  interval: z.enum(["1m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "1d", "3d", "1w", "1M"]).optional(),
+  // What CoinDCX offers for INR markets, plus 5m, which the server builds from 1m.
+  interval: z.enum(["1m", "5m", "15m", "1h", "1d"]).optional(),
   limit: z.coerce.number().int().min(1).max(1000).optional(),
 });
 
