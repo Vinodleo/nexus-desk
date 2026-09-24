@@ -59,7 +59,7 @@ import { BottomNavBar, TabType } from "./components/BottomNavBar";
 import { LedgerFloor } from "./components/ledger/LedgerFloor";
 import { SettingsSheet } from "./components/ledger/SettingsSheet";
 import { useZerodhaConnection } from "./hooks/useZerodhaConnection";
-import { QueueTab } from "./components/QueueTab";
+import { LedgerQueue } from "./components/ledger/LedgerQueue";
 import { BookTab } from "./components/BookTab";
 import { LabTab } from "./components/LabTab";
 import { LearningTab } from "./components/LearningTab";
@@ -1695,7 +1695,7 @@ export default function App() {
   ).length;
 
   // Tabs already rebuilt in the Private Ledger design.
-  const isLedgerTab = activeTab === "floor";
+  const isLedgerTab = activeTab === "floor" || activeTab === "queue";
   // Match the browser chrome (status bar, overscroll) to the tab's design.
   useEffect(() => {
     const colour = isLedgerTab ? "#F6F3EE" : "#09090b";
@@ -1824,13 +1824,12 @@ export default function App() {
           />
         )}
 
-        {/* 2. Queue Tab View (Screenshots 3, 6) */}
         {activeTab === "queue" && (
-          <QueueTab
+          <LedgerQueue
             proposals={proposalQueue}
-            onApproveProposal={handleApproveProposal}
-            onRejectProposal={handleRejectProposal}
-            onApproveAllProposals={() => {
+            onApprove={handleApproveProposal}
+            onReject={handleRejectProposal}
+            onApproveAll={() => {
               const pendingProposals = proposalQueue.filter(
                 (p) => p.status === "PENDING_APPROVAL"
               );
@@ -1838,23 +1837,13 @@ export default function App() {
                 handleBatchApproveAllProposals(pendingProposals);
               }
             }}
-            onTriggerScanner={handleTriggerScanner}
+            onScan={handleTriggerScanner}
             isScanning={isScanningMarkets}
-            isContinuousScanActive={isContinuousScanActive}
-            onToggleContinuousScan={() =>
-              setIsContinuousScanActive((prev) => !prev)
-            }
-            isSelfApproveActive={decisionMode === "AUTO_WITHIN_LIMITS"}
-            onToggleSelfApprove={() =>
-              setDecisionMode(
-                decisionMode === "AUTO_WITHIN_LIMITS"
-                  ? "MANUAL"
-                  : "AUTO_WITHIN_LIMITS"
-              )
-            }
-            memoryVectorCount={experiences.length}
-            activePositionsCount={activePositions.length}
-            onSwitchToBook={() => setActiveTab("book")}
+            continuousScan={isContinuousScanActive}
+            onContinuousScanChange={setIsContinuousScanActive}
+            autopilotOn={decisionMode === "AUTO_WITHIN_LIMITS"}
+            memoryCount={experiences.length}
+            isLive={tradingMode === "LIVE_COINDCX"}
           />
         )}
 
