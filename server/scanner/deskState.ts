@@ -33,6 +33,13 @@ const DATA_DIR = process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 const FILE = path.join(DATA_DIR, "desk_state.json");
 
 const desks = new Map<string, DeskState>();
+/** When this server process first had each user's settings (from disk or the app). */
+const firstSeen = new Map<string, number>();
+
+/** When this server process first had `uid`'s settings. */
+export function deskFirstSeenAt(uid: string): number | undefined {
+  return firstSeen.get(uid);
+}
 
 export function istDay(ms: number = Date.now()): string {
   return new Date(ms + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -42,7 +49,10 @@ export function loadDeskStates(): void {
   try {
     if (!fs.existsSync(FILE)) return;
     const saved = JSON.parse(fs.readFileSync(FILE, "utf8"));
-    for (const [uid, desk] of Object.entries(saved ?? {})) desks.set(uid, desk as DeskState);
+    for (const [uid, desk] of Object.entries(saved ?? {})) {
+      desks.set(uid, desk as DeskState);
+      firstSeen.set(uid, Date.now());
+    }
   } catch (err) {
     console.warn("[Desk] Couldn't read saved desk state:", err);
   }
@@ -61,6 +71,7 @@ function save(): void {
 export function setDeskState(uid: string, state: Omit<DeskState, "updatedAt" | "pnlDay">, now: number = Date.now()): DeskState {
   const desk: DeskState = { ...state, pnlDay: istDay(now), updatedAt: now };
   desks.set(uid, desk);
+  if (!firstSeen.has(uid)) firstSeen.set(uid, now);
   save();
   return desk;
 }
@@ -83,4 +94,5 @@ export function dailyPnlToday(desk: DeskState, now: number = Date.now()): number
 /** Test hook. */
 export function _resetDeskStates(): void {
   desks.clear();
+  firstSeen.clear();
 }

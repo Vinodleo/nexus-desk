@@ -252,6 +252,18 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
     });
   }
 
+  // The server's autopilot and the app's opened the same coin from the same
+  // candle (each before it saw the other's): the app keeps its own, and the
+  // server drops the copy the app hasn't taken.
+  const appSymbols = new Map(positions.map((p: DaemonPosition) => [p.symbol, p.id]));
+  for (const [id, pos] of daemonPositions) {
+    if (pos.userId !== uid || !pos.openedByServer || pos.clientSeen || incomingIds.has(id)) continue;
+    if (appSymbols.has(pos.symbol)) {
+      daemonPositions.delete(id);
+      console.log(`[Daemon Position Guardian] Dropped server-opened ${pos.symbol} (${id}): the app already holds ${appSymbols.get(pos.symbol)}.`);
+    }
+  }
+
   // Persist updated positions immediately to disk
   saveDaemonStateToDisk();
 

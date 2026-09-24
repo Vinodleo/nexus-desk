@@ -32,8 +32,10 @@ export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { 
 /**
  * The browser's positions plus any the server's autopilot opened that this
  * book doesn't have yet (`isClosed`: ones this app already closed, whose
- * removal the guardian may not have heard of yet). Returns `prev` itself
- * when there's nothing to add.
+ * removal the guardian may not have heard of yet). Not one in a coin the
+ * book already holds: that's the same signal opened twice, and the server
+ * drops its copy on the next sync. Returns `prev` itself when there's
+ * nothing to add.
  */
 export function adoptServerOpened(
   prev: Position[],
@@ -41,7 +43,13 @@ export function adoptServerOpened(
   isClosed: (id: string) => boolean
 ): Position[] {
   const have = new Set(prev.map((p) => p.id));
-  const added = guardian.filter((g) => g.openedByServer && !g.clientSeen && !have.has(g.id) && !isClosed(g.id));
+  const held = new Set(prev.map((p) => p.symbol));
+  const added: Position[] = [];
+  for (const g of guardian) {
+    if (!g.openedByServer || g.clientSeen || have.has(g.id) || held.has(g.symbol) || isClosed(g.id)) continue;
+    added.push(g);
+    held.add(g.symbol);
+  }
   return added.length > 0 ? [...added, ...prev] : prev;
 }
 

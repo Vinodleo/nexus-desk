@@ -18,7 +18,7 @@ import { angelConfigured, fetchStockDepth } from "../angelOne";
 import { NSE_SYMBOLS, isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
 import { broadcastToUser, currentPrices } from "../realtime";
-import { dailyPnlToday, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
+import { dailyPnlToday, deskFirstSeenAt, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
 import { runServerAutopilot, serverQuarantines } from "./autopilot";
 import { ServerMarketData } from "./marketData";
 
@@ -252,12 +252,22 @@ export async function scanNow(uid: string): Promise<ServerScanReport | null> {
   return record;
 }
 
+/**
+ * Whether the server is scanning for this user: a recent scan, or (just after
+ * a restart, or the app's first settings) its candle loop alive and a scan
+ * due. The app scans by itself only when this is false, so it mustn't read
+ * false while the server is about to scan: both would trade the same candle.
+ */
 export function scannerStatus(uid: string, now: number = Date.now()) {
   const state = users.get(uid);
   const desk = getDeskState(uid);
   const lastScanAt = state?.lastScanAt ?? 0;
+  const firstSeen = deskFirstSeenAt(uid) ?? 0;
+  const starting = now - firstSeen < SERVER_SCAN_FRESH_MS && !scannerHeartbeat(now).stalled;
   return {
-    running: Boolean(desk?.scanning) && now - lastScanAt < SERVER_SCAN_FRESH_MS,
+    running: Boolean(desk?.scanning) && (now - lastScanAt < SERVER_SCAN_FRESH_MS || starting),
+    /** The server has this user's settings (it loses them if its disk doesn't survive a restart). */
+    hasDesk: Boolean(desk),
     lastScanAt,
     coins: universe.length,
     stocks: stockUniverse().length,

@@ -68,27 +68,47 @@ export function useServerScanner(desk: DeskSettings, onReport: (report: ServerSc
     }
   }, []);
 
-  const applyStatus = useCallback((status?: { running?: boolean; lastScanAt?: number }) => {
-    if (!status) return;
-    setLocation(status.running ? "server" : "browser");
-    setLastScanAt(status.lastScanAt ?? 0);
+  // Desk settings: sent whenever they change (debounced), and again whenever
+  // the server says it doesn't have them (a restart on a disk that isn't kept).
+  const deskJson = JSON.stringify(desk);
+  const deskJsonRef = useRef(deskJson);
+  deskJsonRef.current = deskJson;
+  const resending = useRef(false);
+
+  const sendDesk = useCallback(async () => {
+    try {
+      const res = await apiFetch("/api/desk/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: deskJsonRef.current,
+      });
+      if (res.ok) {
+        const status = (await res.json()).status;
+        if (status) {
+          setLocation(status.running ? "server" : "browser");
+          setLastScanAt(status.lastScanAt ?? 0);
+        }
+      }
+    } catch {}
   }, []);
 
-  // Desk settings: sent whenever they change (debounced).
-  const deskJson = JSON.stringify(desk);
+  const applyStatus = useCallback(
+    (status?: { running?: boolean; lastScanAt?: number; hasDesk?: boolean }) => {
+      if (!status) return;
+      setLocation(status.running ? "server" : "browser");
+      setLastScanAt(status.lastScanAt ?? 0);
+      if (status.hasDesk === false && !resending.current) {
+        resending.current = true;
+        void sendDesk().finally(() => (resending.current = false));
+      }
+    },
+    [sendDesk]
+  );
+
   useEffect(() => {
-    const t = setTimeout(async () => {
-      try {
-        const res = await apiFetch("/api/desk/state", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: deskJson,
-        });
-        if (res.ok) applyStatus((await res.json()).status);
-      } catch {}
-    }, 1000);
+    const t = setTimeout(() => void sendDesk(), 1000);
     return () => clearTimeout(t);
-  }, [deskJson, applyStatus]);
+  }, [deskJson, sendDesk]);
 
   // Scan reports: on open, on focus, and every 30s as a backstop to the WebSocket.
   useEffect(() => {

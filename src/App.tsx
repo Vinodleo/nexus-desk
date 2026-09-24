@@ -357,7 +357,8 @@ export default function App() {
   // A position the server's autopilot opened (the app may have been closed).
   const applyServerOpen = useCallback(
     (pos: Position) => {
-      if (activePositionsRef.current.some((p) => p.id === pos.id) || isClosedLocally(pos.id)) return;
+      // Already have it, closed it, or hold that coin (the same signal opened here too).
+      if (activePositionsRef.current.some((p) => p.id === pos.id || p.symbol === pos.symbol) || isClosedLocally(pos.id)) return;
       setActivePositions((prev) => adoptServerOpened(prev, [pos], isClosedLocally));
       setSelfApprovedCount((prev) => prev + 1);
       playTradeExecutionSound();
@@ -1226,7 +1227,12 @@ export default function App() {
       );
 
       // Add only the accepted subset to active positions
-      setActivePositions((prev) => [...newPositions, ...prev]);
+      // The book as it is now: a position the server opened in one of these
+      // coins may have arrived since the checks above.
+      setActivePositions((prev) => {
+        const held = new Set(prev.map((p) => p.symbol));
+        return [...newPositions.filter((p) => !held.has(p.symbol)), ...prev];
+      });
 
       // Mark accepted proposals as APPROVED; deferred ones change to DEFERRED, carrying why
       const approvedIds = new Set(accepted.map((a) => a.proposal.id));

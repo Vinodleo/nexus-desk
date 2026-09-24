@@ -148,6 +148,14 @@ describe("server scanner", () => {
     expect(outcome).toEqual({ symbol: "SOL/INR", proposed: false, reason: "already_open" });
   });
 
+  it("counts as scanning as soon as it has the settings, before its first scan", async () => {
+    const { scannerStatus } = await import("../../server/scanner/scannerService");
+    expect(scannerStatus("owner", now)).toMatchObject({ running: false, hasDesk: false });
+    await post("/api/desk/state", desk);
+    // No scan yet, but one is due: the app mustn't start scanning (and trading) the same candles.
+    expect(scannerStatus("owner", Date.now())).toMatchObject({ running: true, hasDesk: true, lastScanAt: 0 });
+  });
+
   it("doesn't scan for a user who switched scanning off, or who never sent settings", async () => {
     await post("/api/desk/state", { ...desk, scanning: false });
     const { runScanCycle, reportsSince, scannerStatus } = await import("../../server/scanner/scannerService");
