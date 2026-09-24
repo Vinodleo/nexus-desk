@@ -56,7 +56,9 @@ import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
 import { LoginScreen } from './components/LoginScreen';
 import { NexusHeader } from "./components/NexusHeader";
 import { BottomNavBar, TabType } from "./components/BottomNavBar";
-import { FloorTab } from "./components/FloorTab";
+import { LedgerFloor } from "./components/ledger/LedgerFloor";
+import { SettingsSheet } from "./components/ledger/SettingsSheet";
+import { useZerodhaConnection } from "./hooks/useZerodhaConnection";
 import { QueueTab } from "./components/QueueTab";
 import { BookTab } from "./components/BookTab";
 import { LabTab } from "./components/LabTab";
@@ -94,7 +96,7 @@ export default function App() {
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
 
   // Navigation: Floor, Queue, Book, Lab, Learning
-  const [activeTab, setActiveTab] = useState<TabType>("learning");
+  const [activeTab, setActiveTab] = useState<TabType>("floor");
   const [decisionMode, setDecisionMode] =
     useState<DecisionMode>("AUTO_WITHIN_LIMITS");
   const [tapeMode, setTapeMode] = useState<"SIMULATED TAPE" | "LIVE TAPE">(
@@ -393,7 +395,9 @@ export default function App() {
   // ==========================================
 
   // 1-2. Push position changes to the guardian; pull closes it made while asleep.
-  useGuardianSync(activePositions, setActivePositions, applyServerClose);
+  const guardianOnline = useGuardianSync(activePositions, setActivePositions, applyServerClose);
+  const zerodha = useZerodhaConnection();
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
 
   // 3. Web Worker un-throttled background heartbeat
   useEffect(() => {
@@ -1690,9 +1694,26 @@ export default function App() {
     (p) => p.status === "PENDING_APPROVAL"
   ).length;
 
+  // Tabs already rebuilt in the Private Ledger design.
+  const isLedgerTab = activeTab === "floor";
+  // Match the browser chrome (status bar, overscroll) to the tab's design.
+  useEffect(() => {
+    const colour = isLedgerTab ? "#F6F3EE" : "#09090b";
+    document.documentElement.style.backgroundColor = colour;
+    document.body.style.backgroundColor = colour;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", colour);
+  }, [isLedgerTab]);
+
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#09090b] text-stone-100 flex flex-col font-sans selection:bg-stone-800 selection:text-white pb-16">
-      {/* Nexus Desk Top Header (Screenshots 1-7) */}
+    <div
+      className={`min-h-screen w-full max-w-full overflow-x-hidden flex flex-col pb-20 ${
+        isLedgerTab
+          ? "bg-canvas text-ink font-ui"
+          : "bg-[#09090b] text-stone-100 font-sans selection:bg-stone-800 selection:text-white"
+      }`}
+    >
+      {/* Tabs not yet moved to the Private Ledger design keep the old header. */}
+      {!isLedgerTab && (
       <NexusHeader
         equity={equity}
         dailyPnl={dailyRealizedPnl}
@@ -1723,10 +1744,14 @@ export default function App() {
         onToggleTradingMode={handleToggleTradingMode}
         coinDcxBalance={coinDcxBalance}
         onRefreshCoinDcxBalance={fetchCoinDcxBalance}
+        zerodhaStatus={zerodha.status}
+        zerodhaError={zerodha.error}
+        onZerodhaConnect={zerodha.connect}
       />
+      )}
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-2xl w-full mx-auto p-4 sm:p-5 space-y-4">
+      <main className={`flex-1 max-w-2xl w-full mx-auto space-y-4 ${isLedgerTab ? "px-5 pt-4" : "p-4 sm:p-5"}`}>
         {/* Real-time Agent Execution Toast */}
         {executionToast && (
           <div
@@ -1772,19 +1797,30 @@ export default function App() {
           </div>
         )}
 
-        {/* 1. Floor Tab View (Screenshots 4, 5, 7) */}
         {activeTab === "floor" && (
-          <FloorTab
-            onOpenLab={() => setActiveTab("lab")}
-            onWakeCommander={handleWakeCommander}
-            takenCount={13 + (activePositions.length ? 1 : 0)}
-            skippedCount={sampleTelemetry.rejectedCount}
-            labEv="+0.37R"
-            analyzedCount={sampleTelemetry.analyzedCount}
-            selectedCount={sampleTelemetry.selectedCount}
-            rejectedCount={sampleTelemetry.rejectedCount}
-            rejectionBreakdown={sampleTelemetry.rejectionBreakdown}
-            dailyRealizedPnl={dailyRealizedPnl}
+          <LedgerFloor
+            isLive={tradingMode === "LIVE_COINDCX"}
+            equity={currentRiskCalculation.equity}
+            dailyPnl={dailyRealizedPnl}
+            allTimePnl={allTimeRealizedPnl}
+            autopilotOn={decisionMode === "AUTO_WITHIN_LIMITS"}
+            onAutopilotChange={(on) => handleDecisionModeChange(on ? "AUTO_WITHIN_LIMITS" : "MANUAL")}
+            exposureFraction={currentRiskCalculation.portfolioExposureFraction}
+            dailyLossLeft={currentRiskCalculation.hardDailyLossLimit - currentRiskCalculation.currentDailyLoss}
+            stopped={killSwitchActive}
+            onToggleStop={handleToggleKillSwitch}
+            positions={activePositions}
+            onClosePosition={handleClosePosition}
+            guardianOnline={guardianOnline}
+            liveTradingEnabled={coinDcxStatus?.liveRisk ? Boolean(coinDcxStatus.liveRisk.enabled) : null}
+            pendingProposals={pendingCount}
+            scan={{
+              analyzed: sampleTelemetry.analyzedCount,
+              selected: sampleTelemetry.selectedCount,
+              rejected: sampleTelemetry.rejectedCount,
+            }}
+            onOpenQueue={() => setActiveTab("queue")}
+            onOpenSettings={() => setIsSettingsOpen(true)}
           />
         )}
 
@@ -1975,6 +2011,35 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         pendingQueueCount={pendingCount}
+      />
+
+      <SettingsSheet
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        tradingMode={tradingMode}
+        onTradingModeChange={handleToggleTradingMode}
+        coinDcxStatus={coinDcxStatus}
+        coinDcxBalance={coinDcxBalance}
+        onRefreshBalance={fetchCoinDcxBalance}
+        zerodhaStatus={zerodha.status}
+        zerodhaError={zerodha.error}
+        onZerodhaConnect={zerodha.connect}
+        liveMarketData={tapeMode === "LIVE TAPE"}
+        onLiveMarketDataChange={(on) => setTapeMode(on ? "LIVE TAPE" : "SIMULATED TAPE")}
+        dailyLossLimit={DEFAULT_RISK_POLICY.hardDailyLossLimit}
+        maxOpenPositions={DEFAULT_RISK_POLICY.maxSimultaneousPositions}
+        onOpenDeskBrief={() => {
+          setIsSettingsOpen(false);
+          handleWakeCommander();
+        }}
+        onOpenBackground={() => {
+          setIsSettingsOpen(false);
+          setIsBackgroundModalOpen(true);
+        }}
+        onOpenSecurity={() => {
+          setIsSettingsOpen(false);
+          setIsSecurityModalOpen(true);
+        }}
       />
 
       {/* Commander Desk Brief Modal (Screenshot 6) */}

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -60,6 +60,9 @@ beforeAll(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
   Element.prototype.scrollIntoView = () => {};
+  // The first click arms an audio keep-alive; jsdom has no media playback.
+  HTMLMediaElement.prototype.play = () => Promise.resolve();
+  HTMLMediaElement.prototype.pause = () => {};
   URL.createObjectURL = () => "blob:stub";
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -82,6 +85,24 @@ describe("App smoke test", () => {
     });
 
     expect(document.body.textContent?.length).toBeGreaterThan(100);
+    // Opens on the Floor, in the Private Ledger design.
+    expect(document.body.textContent).toContain("Paper equity");
+    expect(document.body.textContent).toContain("Open positions");
+
+    // Settings opens over it, and every other tab still renders.
+    await act(async () => {
+      screen.getByRole("button", { name: "Settings" }).click();
+    });
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    await act(async () => {
+      screen.getByRole("button", { name: "Close settings" }).click();
+    });
+    for (const tab of ["Queue", "Book", "Learning", "Lab", "Floor"]) {
+      await act(async () => {
+        within(screen.getByRole("navigation", { name: "Main" })).getByRole("button", { name: new RegExp(`^${tab}`) }).click();
+      });
+    }
+    expect(document.body.textContent).toContain("Paper equity");
     const called = apiFetch.mock.calls.map(([u]) => u);
     expect(called).toContain("/api/coindcx/status");
     expect(called).toContain("/api/daemon/sync-positions");
