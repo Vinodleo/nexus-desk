@@ -344,6 +344,7 @@ export function generateOrderBook(
     spread,
     midPrice: currentPrice,
     depthScore,
+    source: "simulated",
   };
 }
 

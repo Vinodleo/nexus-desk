@@ -99,6 +99,10 @@ export const coinDcxCandlesQuery = z.object({
   limit: z.coerce.number().int().min(1).max(1000).optional(),
 });
 
+export const coinDcxOrderBookQuery = z.object({
+  symbol: z.string().regex(/^[A-Z0-9]{1,15}$/, "base asset like BTC"),
+});
+
 export const zerodhaCallbackBody = z.object({
   requestToken: z.string().min(1).max(256),
 });
