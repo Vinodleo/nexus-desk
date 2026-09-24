@@ -138,6 +138,8 @@ export const deskStateBody = z.object({
   }),
   dailyRealizedPnl: z.number().finite(),
   autopilot: z.boolean(),
+  tradingMode: z.enum(["PAPER", "LIVE_COINDCX"]).optional(),
+  trailProfile: z.enum(["tight", "balanced", "patient", "fixed"]).optional(),
   killSwitch: z.boolean(),
   scanning: z.boolean(),
   failureState: z.object({

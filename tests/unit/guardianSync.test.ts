@@ -85,3 +85,44 @@ describe("guardian sync keeps the most protective stop", () => {
     expect(["TRAILING_STOP", "STOP_LOSS"]).toContain(res.events[0].exitReason);
   });
 });
+
+describe("positions the server's autopilot opened", () => {
+  const syncAs = (positions: unknown[], uid = "u2") =>
+    fetch(`${base}/api/daemon/sync-positions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-uid": uid },
+      body: JSON.stringify({ positions }),
+    });
+  const opened = {
+    id: "srv-1",
+    symbol: "SOL/INR",
+    direction: "LONG" as const,
+    entryPrice: 100,
+    currentPrice: 100,
+    quantity: 2,
+    stopLoss: 98,
+    takeProfit: 104,
+    openTime: new Date().toISOString(),
+    isSelfApproved: true,
+  };
+
+  it("aren't dropped by a sync from an app that hasn't picked them up yet", async () => {
+    guardian.openServerPosition("u2", opened);
+    expect((await syncAs([])).status).toBe(200);
+    expect(guardian.daemonPositions.get("srv-1")).toMatchObject({ openedByServer: true, clientSeen: false });
+  });
+
+  it("are the app's once it syncs them back, and leave when it closes them", async () => {
+    await syncAs([{ ...opened, userId: "u2", openedByServer: true, clientSeen: false }]);
+    expect(guardian.daemonPositions.get("srv-1")).toMatchObject({ openedByServer: true, clientSeen: true });
+    await syncAs([]);
+    expect(guardian.daemonPositions.has("srv-1")).toBe(false);
+  });
+
+  it("can't be claimed by the app for a position the server didn't open", async () => {
+    await syncAs([{ ...opened, id: "fake-1", openedByServer: true, clientSeen: false }]);
+    expect(guardian.daemonPositions.get("fake-1")?.openedByServer).toBeUndefined();
+    await syncAs([]);
+    expect(guardian.daemonPositions.has("fake-1")).toBe(false);
+  });
+});

@@ -75,7 +75,7 @@ import { ruleFor } from "./services/marketRulesStore";
 import type { DaemonCloseEvent } from "./services/daemonEvents";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
-import { useGuardianSync } from "./hooks/useGuardianSync";
+import { adoptServerOpened, useGuardianSync } from "./hooks/useGuardianSync";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 import { useLiveFeed } from "./hooks/useLiveFeed";
 import {
@@ -90,21 +90,14 @@ import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanne
 import { useServerStatus } from "./hooks/useServerStatus";
 import { useEventWindow } from "./hooks/useEventWindow";
 import { useTrailProfile } from "./hooks/useTrailProfile";
+import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, newPositionId, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows } from "./services/experienceMemory";
 
-// ATR recorded on a position for its trailing-stop rules. The indicator used
-// to be floored at 0.3% of price, and the exit rules were tuned with that
-// floor, so it's kept here until the exits are reworked.
+// ATR recorded on a position for its trailing-stop rules.
 function atrForExits(proposal: TradeProposal): number {
   const bars = liveMarketStream.getBars(proposal.symbol);
-  const atr = bars && bars.length > 0 ? bars[bars.length - 1].atr : undefined;
-  return Math.max(atr ?? 0, proposal.setup.entryPrice * 0.003);
-}
-
-/** A position id that won't repeat (the old last-6-digits-of-the-clock ids could). */
-function newPositionId(): string {
-  return `pos-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return sharedAtrForExits(bars?.at(-1)?.atr, proposal.setup.entryPrice);
 }
 
 export default function App() {
@@ -294,6 +287,31 @@ export default function App() {
     setAllTimeRealizedPnl,
   });
 
+  // Positions this app has closed (or is closing): a server copy of one
+  // mustn't come back before the guardian hears it's gone.
+  const isClosedLocally = useCallback(
+    (id: string) => closingPositionIds.current.has(id) || closedTradesRef.current.some((t) => t.positionId === id),
+    []
+  );
+
+  // A position the server's autopilot opened (the app may have been closed).
+  const applyServerOpen = useCallback(
+    (pos: Position) => {
+      if (activePositionsRef.current.some((p) => p.id === pos.id) || isClosedLocally(pos.id)) return;
+      setActivePositions((prev) => adoptServerOpened(prev, [pos], isClosedLocally));
+      setSelfApprovedCount((prev) => prev + 1);
+      playTradeExecutionSound();
+      setExecutionToast({
+        id: `toast-${Date.now()}`,
+        title: `■ [SELF-APPROVE] ${pos.symbol} opened on the server`,
+        message: `${pos.direction} ${pos.quantity} @ ₹${pos.entryPrice} (${pos.setupName}). The server's autopilot opened it after its scan.`,
+        type: "SUCCESS",
+        timestamp: new Date().toLocaleTimeString(),
+      });
+    },
+    [isClosedLocally]
+  );
+
   // Live feed: prices, guardian closes and live-exit updates from the server.
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   // closePositionWithAutopsy is defined further down; the feed reaches it
@@ -309,6 +327,7 @@ export default function App() {
 
   useLiveFeed({
     onScanReport: (r) => liveScanReportRef.current(r),
+    onServerOpen: applyServerOpen,
     onTick: (prices) => {
       const seq = ++tickSeq.current;
       setLivePrices((prev) => ({ ...prev, ...prices }));
@@ -401,7 +420,7 @@ export default function App() {
   // ==========================================
 
   // 1-2. Push position changes to the guardian; pull closes it made while asleep.
-  const guardianOnline = useGuardianSync(activePositions, setActivePositions, applyServerClose);
+  const guardianOnline = useGuardianSync(activePositions, setActivePositions, applyServerClose, isClosedLocally);
   const zerodha = useZerodhaConnection();
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
 
@@ -1181,123 +1200,16 @@ export default function App() {
       claimable.forEach((p) => inFlightProposalIds.current.add(p.id));
       proposalsToApprove = claimable;
 
-      const policy = riskPolicy;
-      const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
-
-      // Seed running counters from the CURRENT live book, not the scan-time snapshot each
-      // proposal was individually checked against — several proposals from the same scan
-      // cycle could otherwise all "pass" independently and then collectively blow through
-      // maxSimultaneousPositions / maxAllowedExposureFraction when approved together.
-      let runningPositionCount = activePositions.length;
-      let runningExposure = activePositions.reduce(
-        (acc, p) => acc + openQuantity(p) * p.currentPrice,
-        0
+      const { accepted, deferred } = selectAutopilotTrades(
+        proposalsToApprove,
+        {
+          positions: activePositions,
+          openedLastHour: autopilotOpeningsLastHour(activePositions, closedTrades),
+          quarantines: symbolQuarantines,
+        },
+        riskPolicy,
+        (symbol) => liveMarketStream.getLastPrice(symbol)
       );
-      // Fix 1-Hour Cap Bug: Count ALL trades opened by autopilot within the rolling hour,
-      // including active positions AND closed trades. Previously only activePositions were counted,
-      // so if a trade hit stop-loss quickly, active positions dropped to 0, resetting the counter
-      // and allowing an infinite loss-whipsaw loop.
-      const activeHourlyAutopilot = activePositions.filter(
-        (p) => p.isSelfApproved && new Date(p.openTime).getTime() >= oneHourAgoMs
-      ).length;
-      const closedHourlyAutopilot = closedTrades.filter((t) => {
-        if (!t.isSelfApproved) return false;
-        const timeMs = t.openedAt ? new Date(t.openedAt).getTime() : 0;
-        return !isNaN(timeMs) && timeMs >= oneHourAgoMs;
-      }).length;
-      let runningHourlyAutopilotCount = activeHourlyAutopilot + closedHourlyAutopilot;
-      const heldSymbols = new Set(activePositions.map((p) => p.symbol));
-
-      const accepted: TradeProposal[] = [];
-      const deferred: { proposal: TradeProposal; reason: string }[] = [];
-      const pricedById = new Map<string, { entryPrice: number; units: number }>();
-
-      for (const proposal of proposalsToApprove) {
-        const units = proposal.riskCalc.recommendedPositionSizeUnits;
-        if (units <= 0) {
-           deferred.push({ proposal, reason: "Position size rounded to 0 after exchange lot-size snapping." });
-           continue;
-        }
-
-        // Per-Symbol Quarantine Gate: Check if symbol is currently embargoed due to recent losses
-        const quarantineRec = symbolQuarantines[proposal.symbol];
-        if (quarantineRec && quarantineRec.quarantinedUntilMs > Date.now()) {
-          const remainingMins = Math.ceil((quarantineRec.quarantinedUntilMs - Date.now()) / 60000);
-          deferred.push({
-            proposal,
-            reason: `Symbol is quarantined (${remainingMins}m remaining) due to consecutive loss guard.`,
-          });
-          continue;
-        }
-
-        // Swing/long-horizon setups (e.g. the macro trend-following persona)
-        // always go to manual review, regardless of consensus. These commit
-        // capital for days-to-weeks with much wider stops — a call that size
-        // and duration should get a human's eyes, not a quick-consensus vote
-        // tuned for intraday setups.
-        if (proposal.setup.horizon === "swing") {
-          deferred.push({ proposal, reason: "Swing/long-horizon setup — always requires manual approval, regardless of consensus." });
-          continue;
-        }
-
-        // Signals computed on generated price history aren't evidence about
-        // the real market. Autopilot never acts on them; a human can still
-        // approve one knowingly (it's badged in the queue).
-        if (isBuiltOnSyntheticPrices(proposal)) {
-          const pct = Math.round((proposal.dataQuality?.syntheticBarShare ?? 0) * 100);
-          deferred.push({ proposal, reason: `Built on generated price history (${pct}% of bars) — manual review only.` });
-          continue;
-        }
-
-        // Enter at the live price; skip it if price has already run too far.
-        const priced = priceEntry(
-          proposal.setup,
-          liveMarketStream.getLastPrice(proposal.symbol),
-          units,
-          proposal.riskCalc.riskDollars
-        );
-        if (!priced.ok) {
-          deferred.push({ proposal, reason: priced.reason });
-          continue;
-        }
-        const addedExposure = priced.units * priced.entryPrice;
-        const exposureFractionIfAdded = (runningExposure + addedExposure) / policy.equity;
-
-        const wouldExceedPositions =
-          runningPositionCount + 1 > policy.maxSimultaneousPositions;
-        const wouldExceedExposure =
-          exposureFractionIfAdded > policy.maxAllowedExposureFraction;
-        const alreadyHeld = heldSymbols.has(proposal.symbol);
-        const wouldExceedHourlyCap =
-          runningHourlyAutopilotCount + 1 > policy.autopilotMaxApprovalsPerHour;
-
-        // Trader-panel consensus gate: autopilot only fast-tracks a proposal
-        // the desk broadly agrees on. A contested/low-conviction call still
-        // clears risk/EV but is left for a human — a real desk escalates
-        // disagreement rather than auto-firing on a split vote.
-        const agreement = proposal.ensembleAgreement ?? 1;
-        const votes = proposal.personaVotesCast ?? 1;
-        const lacksConsensus =
-          agreement < policy.autopilotMinConsensus || votes < policy.autopilotMinPersonaVotes;
-
-        if (wouldExceedPositions || wouldExceedExposure || alreadyHeld || wouldExceedHourlyCap || lacksConsensus) {
-          const reasons: string[] = [];
-          if (wouldExceedPositions) reasons.push(`would exceed max ${policy.maxSimultaneousPositions} simultaneous positions`);
-          if (wouldExceedExposure) reasons.push(`would exceed max ${(policy.maxAllowedExposureFraction * 100).toFixed(0)}% portfolio exposure`);
-          if (alreadyHeld) reasons.push(`already holding a ${proposal.symbol} position`);
-          if (wouldExceedHourlyCap) reasons.push(`would exceed ${policy.autopilotMaxApprovalsPerHour} autonomous approvals/hour`);
-          if (lacksConsensus) reasons.push(`panel consensus ${(agreement * 100).toFixed(0)}% with ${votes} vote(s) — needs ${(policy.autopilotMinConsensus * 100).toFixed(0)}%/${policy.autopilotMinPersonaVotes}`);
-          deferred.push({ proposal, reason: reasons.join("; ") });
-          continue;
-        }
-
-        accepted.push(proposal);
-        pricedById.set(proposal.id, { entryPrice: priced.entryPrice, units: priced.units });
-        runningPositionCount += 1;
-        runningExposure += addedExposure;
-        runningHourlyAutopilotCount += 1;
-        heldSymbols.add(proposal.symbol);
-      }
 
       // Deferred means "revisit later," not "claimed forever" — release
       // these back so the next scan cycle or a human can still act on them.
@@ -1314,51 +1226,15 @@ export default function App() {
 
       if (accepted.length === 0) return;
 
-      const newPositions: Position[] = accepted.map((proposal, index) => {
-        const { entryPrice, units } = pricedById.get(proposal.id)!;
-
-        const currentAtr = atrForExits(proposal);
-
-        const isTrendOrSwing =
-          proposal.setup.family === "trend_following" ||
-          proposal.setup.family === "breakout_confirmation" ||
-          proposal.setup.horizon === "swing";
-
-        return {
-          id: newPositionId(),
-          symbol: proposal.symbol,
-          direction: proposal.setup.direction,
-          setupName: proposal.setup.name,
-          entryPrice,
-          currentPrice: entryPrice,
-          quantity: units,
-          stopLoss: proposal.setup.stopLoss,
-          takeProfit: proposal.setup.takeProfit,
-          initialTakeProfit: proposal.setup.takeProfit,
-          initialStopLoss: proposal.setup.stopLoss,
-          partialQuantity: planPartialQuantity(units, entryPrice, ruleFor(proposal.symbol, entryPrice)),
-          unrealizedPnl: 0,
-          unrealizedPnlPercent: 0,
-          openTime: new Date().toISOString(),
-          expectedHoldingTimeMinutes: proposal.setup.horizon === "swing" ? 4320 : 30,
-          metaConfidence: proposal.metaScore.confidence,
-          isSelfApproved: true,
-          highestPrice: entryPrice,
-          lowestPrice: entryPrice,
-          trailActive: false,
-          atrAtEntry: currentAtr,
-          family: proposal.setup.family,
-          horizon: proposal.setup.horizon,
-          trailMode: isTrendOrSwing ? "TREND_RUNNER" : "SCALP_TIGHT",
-          trailProfile: trailProfileRef.current,
-        };
-      });
+      const newPositions: Position[] = accepted.map((a) =>
+        positionFromProposal(a, { id: newPositionId(), atr: atrForExits(a.proposal), trailProfile: trailProfileRef.current })
+      );
 
       // Add only the accepted subset to active positions
       setActivePositions((prev) => [...newPositions, ...prev]);
 
       // Mark accepted proposals as APPROVED; deferred ones change to DEFERRED, carrying why
-      const approvedIds = new Set(accepted.map((p) => p.id));
+      const approvedIds = new Set(accepted.map((a) => a.proposal.id));
       const deferredReasonById = new Map(deferred.map((d) => [d.proposal.id, d.reason]));
       setProposalQueue((prev) =>
         prev.map((p) =>
@@ -1374,7 +1250,7 @@ export default function App() {
 
       playTradeExecutionSound();
 
-      const symbolsList = accepted.map((p) => p.symbol).join(", ");
+      const symbolsList = accepted.map((a) => a.proposal.symbol).join(", ");
       setExecutionToast({
         id: `toast-${Date.now()}`,
         title: `■ [SELF-APPROVE] ${accepted.length} Trade${
@@ -1533,6 +1409,8 @@ export default function App() {
       riskLimits,
       dailyRealizedPnl,
       autopilot: decisionMode === "AUTO_WITHIN_LIMITS",
+      tradingMode,
+      trailProfile: trailProfileId,
       killSwitch: killSwitchActive,
       scanning: isContinuousScanActive,
       failureState,

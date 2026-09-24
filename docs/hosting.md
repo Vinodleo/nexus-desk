@@ -1,7 +1,10 @@
 # Running Nexus Desk around the clock
 
 The market scanner and the position guardian run on the server. They work
-whenever the server is running, whether or not the app is open. So the
+whenever the server is running, whether or not the app is open. With
+Autopilot on in paper mode, the server also opens the trades Autopilot
+accepts (same limits as in the app), and the app shows them when you next
+open it. Live trades still need the app. So the
 server has to keep running, and what it saves has to survive a restart:
 
 - **Always running, exactly one copy.** One scanner and one guardian. Two
