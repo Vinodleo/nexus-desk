@@ -1,9 +1,33 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { mergeGuardState, type GuardFields } from "../shared/trailingStop";
 import { apiFetch } from "../services/apiClient";
 import type { DaemonCloseEvent } from "../services/daemonEvents";
 import type { Position } from "../types";
 
 const LAST_POLL_KEY = "nexus_last_daemon_poll";
+const SYNC_THROTTLE_MS = 1500;
+
+const idsOf = (positions: Position[]) => positions.map((p) => p.id).sort().join(",");
+
+/**
+ * The browser's positions with the guardian's progress folded in (the more
+ * protective stop, the further target, wider extremes, trailing, banked
+ * half). Returns `prev` itself when nothing changes.
+ */
+export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { id: string })[]): Position[] {
+  const byId = new Map(guardian.map((g) => [g.id, g]));
+  let changed = false;
+  const next = prev.map((p) => {
+    const g = byId.get(p.id);
+    if (!g) return p;
+    const merged = mergeGuardState(p.direction, p.entryPrice, g, p);
+    const differs = (Object.keys(merged) as (keyof GuardFields)[]).some((k) => merged[k] !== undefined && merged[k] !== p[k]);
+    if (!differs) return p;
+    changed = true;
+    return { ...p, ...Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) };
+  });
+  return changed ? next : prev;
+}
 
 // Keeps the server's 24/7 position guardian in step with the browser book:
 // pushes every change to the open positions, and pulls closes the guardian
@@ -16,13 +40,24 @@ export function useGuardianSync(
 ) {
   const [online, setOnline] = useState<boolean | null>(null);
 
+  // Pushes the book to the guardian: right away when a position opens or
+  // closes, otherwise at most every SYNC_THROTTLE_MS (prices tick several
+  // times a second; the guardian trails stops itself between syncs).
+  const latest = useRef(activePositions);
+  latest.current = activePositions;
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastIds = useRef<string | null>(null);
+
   useEffect(() => {
     const sync = async () => {
+      pending.current = null;
+      const positions = latest.current;
+      lastIds.current = idsOf(positions);
       try {
         const res = await apiFetch("/api/daemon/sync-positions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ positions: activePositions }),
+          body: JSON.stringify({ positions }),
         });
         if (res.ok) {
           const data = await res.json();
@@ -38,8 +73,20 @@ export function useGuardianSync(
         console.warn("[DaemonSync] Failed to sync positions to server:", err);
       }
     };
-    sync();
+    if (idsOf(activePositions) !== lastIds.current) {
+      if (pending.current) clearTimeout(pending.current);
+      void sync();
+    } else if (!pending.current) {
+      pending.current = setTimeout(() => void sync(), SYNC_THROTTLE_MS);
+    }
   }, [activePositions, setActivePositions]);
+
+  useEffect(
+    () => () => {
+      if (pending.current) clearTimeout(pending.current);
+    },
+    []
+  );
 
   useEffect(() => {
     let lastCheckedTime = 0;
@@ -62,9 +109,10 @@ export function useGuardianSync(
         } catch {}
 
         // Empty local book but the guardian restored positions after a crash:
-        // show them.
+        // show them. Otherwise take up whatever the guardian moved further
+        // while this tab slept: a tighter stop, a runner's extended target.
         if (data.activePositions?.length > 0) {
-          setActivePositions((prev) => (prev.length === 0 ? data.activePositions : prev));
+          setActivePositions((prev) => (prev.length === 0 ? data.activePositions : adoptGuardianState(prev, data.activePositions)));
         }
         for (const ev of (data.events ?? []) as DaemonCloseEvent[]) {
           applyServerClose(ev);

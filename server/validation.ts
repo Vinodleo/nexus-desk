@@ -72,6 +72,8 @@ const syncedPosition = z
     trailMode: z.enum(["SCALP_TIGHT", "TREND_RUNNER"]).optional().catch(undefined),
     expectedHoldingTimeMinutes: z.number().finite().nonnegative().optional().catch(undefined),
     initialStopLoss: positiveNumber.optional().catch(undefined),
+    initialTakeProfit: positiveNumber.optional().catch(undefined),
+    family: z.string().max(40).optional().catch(undefined),
     partialQuantity: positiveNumber.optional().catch(undefined),
     bankedQuantity: positiveNumber.optional().catch(undefined),
     bankedPrice: positiveNumber.optional().catch(undefined),

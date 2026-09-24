@@ -51,7 +51,7 @@ describe("applyGuardianTick — LONG", () => {
 
   it("uses the wider 1.5 ATR trail for trend runners", () => {
     const p = base({ trailMode: "TREND_RUNNER", takeProfit: 1200 });
-    applyGuardianTick(p, 1011); // 1.1 ATR: not yet active
+    applyGuardianTick(p, 1007); // 0.7%, 0.7 ATR: not yet active
     expect(p.trailActive).toBeFalsy();
     applyGuardianTick(p, 1030); // 3 ATR: active, stop = max(1002, 1030 - 15) = 1015
     expect(p.trailActive).toBe(true);
@@ -102,30 +102,31 @@ describe("isPastHoldingTime", () => {
 });
 
 describe("mergeSyncedGuardState", () => {
-  const server = { stopLoss: 1000, highestPrice: 1040, lowestPrice: 995, trailActive: true };
+  const TP = 1050;
+  const server = { stopLoss: 1000, takeProfit: 1050, highestPrice: 1040, lowestPrice: 995, trailActive: true };
 
   it("adopts the browser's tighter LONG stop", () => {
-    expect(mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 1020 }).stopLoss).toBe(1020);
+    expect(mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 1020, takeProfit: TP }).stopLoss).toBe(1020);
   });
 
   it("never loosens the guardian's LONG stop", () => {
-    expect(mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 990 }).stopLoss).toBe(1000);
+    expect(mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 990, takeProfit: TP }).stopLoss).toBe(1000);
   });
 
   it("mirrors for SHORT: the lower stop is tighter", () => {
-    const shortServer = { stopLoss: 1010 };
-    expect(mergeSyncedGuardState("SHORT", 1000, shortServer, { stopLoss: 1002 }).stopLoss).toBe(1002);
-    expect(mergeSyncedGuardState("SHORT", 1000, shortServer, { stopLoss: 1030 }).stopLoss).toBe(1010);
+    const shortServer = { stopLoss: 1010, takeProfit: 950 };
+    expect(mergeSyncedGuardState("SHORT", 1000, shortServer, { stopLoss: 1002, takeProfit: TP }).stopLoss).toBe(1002);
+    expect(mergeSyncedGuardState("SHORT", 1000, shortServer, { stopLoss: 1030, takeProfit: TP }).stopLoss).toBe(1010);
   });
 
   it("only widens price extremes and never switches trailing off", () => {
-    const r = mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 1000, highestPrice: 1030, lowestPrice: 990, trailActive: false });
+    const r = mergeSyncedGuardState("LONG", 1000, server, { stopLoss: 1000, takeProfit: TP, highestPrice: 1030, lowestPrice: 990, trailActive: false });
     expect(r).toMatchObject({ highestPrice: 1040, lowestPrice: 990, trailActive: true });
   });
 
   it("takes the browser's values for a position the guardian hasn't seen", () => {
-    expect(mergeSyncedGuardState("LONG", 1000, undefined, { stopLoss: 985 })).toEqual({
-      stopLoss: 985, highestPrice: 1000, lowestPrice: 1000, trailActive: false,
+    expect(mergeSyncedGuardState("LONG", 1000, undefined, { stopLoss: 985, takeProfit: TP })).toMatchObject({
+      stopLoss: 985, takeProfit: TP, highestPrice: 1000, lowestPrice: 1000, trailActive: false,
     });
   });
 });

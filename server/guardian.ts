@@ -34,6 +34,8 @@ export interface DaemonPosition {
   trailMode?: "SCALP_TIGHT" | "TREND_RUNNER";
   openTime: string;
   expectedHoldingTimeMinutes?: number;
+  initialTakeProfit?: number;
+  family?: string;
   initialStopLoss?: number;
   partialQuantity?: number;
   bankedQuantity?: number;
