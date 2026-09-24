@@ -20,20 +20,27 @@ export interface ClosedTradePnl {
   isWin: boolean;
 }
 
+/**
+ * @param banked part of the position closed earlier (at +1R, as a resting
+ *   limit, so at the maker rate); `exitPrice` and `reason` apply to the rest.
+ */
 export function computeClosedTradePnl(
   direction: "LONG" | "SHORT",
   entryPrice: number,
   exitPrice: number,
   quantity: number,
-  reason: ExitReason
+  reason: ExitReason,
+  banked?: { quantity: number; price: number }
 ): ClosedTradePnl {
-  const diff = direction === "LONG" ? exitPrice - entryPrice : entryPrice - exitPrice;
-  const grossPnl = Number((diff * quantity).toFixed(2));
+  const bankedQty = banked && banked.quantity > 0 && banked.quantity < quantity ? banked.quantity : 0;
+  const restQty = quantity - bankedQty;
+  const gain = (exit: number) => (direction === "LONG" ? exit - entryPrice : entryPrice - exit);
+  const grossPnl = Number((gain(exitPrice) * restQty + (bankedQty > 0 ? gain(banked!.price) * bankedQty : 0)).toFixed(2));
 
   const entryNotional = entryPrice * quantity;
-  const exitNotional = exitPrice * quantity;
   const closeFeeRate = reason === "TAKE_PROFIT" ? MAKER_FEE_RATE : TAKER_FEE_RATE;
-  const feesPaid = Number((entryNotional * TAKER_FEE_RATE + exitNotional * closeFeeRate).toFixed(2));
+  const exitFees = exitPrice * restQty * closeFeeRate + (bankedQty > 0 ? banked!.price * bankedQty * MAKER_FEE_RATE : 0);
+  const feesPaid = Number((entryNotional * TAKER_FEE_RATE + exitFees).toFixed(2));
 
   const realizedPnl = Number((grossPnl - feesPaid).toFixed(2));
   const realizedPnlPercent = Number(((realizedPnl / entryNotional) * 100).toFixed(2));

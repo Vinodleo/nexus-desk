@@ -1,4 +1,5 @@
 import type { Position } from "../types";
+import { bankPartial, blendedExitPrice, partialDue } from "../shared/exitRules";
 
 // The browser book's per-tick position logic: price-sanity guard, trailing
 // stop / profit lock (scalp and trend-runner modes, long and short), and
@@ -11,7 +12,8 @@ export type TickExitReason = "STOP_LOSS" | "TAKE_PROFIT" | "TRAILING_STOP";
 export type TickOutcome =
   | { kind: "unchanged"; position: Position }
   | { kind: "rejected"; position: Position }
-  | { kind: "updated"; position: Position; changed: boolean }
+  /** `banked` is set on the tick that closed half the position at +1R. */
+  | { kind: "updated"; position: Position; changed: boolean; banked?: boolean }
   | { kind: "exit"; position: Position; reason: TickExitReason; price: number };
 
 /** INR per USDT, used only if a pair's INR price is missing but its USDT price arrives. */
@@ -79,6 +81,13 @@ export function applyTickToPosition(
   const isLong = pos.direction === "LONG";
   let changed = false;
   let exitReason: TickExitReason | null = null;
+
+  // First reach of +1R on a paper position: bank half, stop past break-even.
+  const banked = partialDue(pos, price);
+  if (banked) {
+    Object.assign(pos, bankPartial(pos, price));
+    changed = true;
+  }
 
   const atr = pos.atrAtEntry || pos.entryPrice * 0.005;
   const isTrendRunner =
@@ -226,7 +235,7 @@ export function applyTickToPosition(
     return { kind: "exit", position: pos, reason: exitReason, price };
   }
 
-  const pnl = (price - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
+  const pnl = (blendedExitPrice(pos, price) - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
   const moneyPlaced = pos.entryPrice * pos.quantity;
   if (Math.abs(price - pos.currentPrice) > 0.0001) changed = true;
   // Trailing state must persist even on a tick that moves nothing else.
@@ -243,5 +252,6 @@ export function applyTickToPosition(
     kind: "updated",
     position: { ...pos, currentPrice: price, unrealizedPnl: pnl, unrealizedPnlPercent: (pnl / moneyPlaced) * 100 },
     changed,
+    ...(banked ? { banked: true } : {}),
   };
 }

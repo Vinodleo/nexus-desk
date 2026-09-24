@@ -69,6 +69,8 @@ import {
 } from "./utils/audioFeedback";
 import { apiFetch } from "./services/apiClient";
 import { computeClosedTradePnl } from "./shared/tradeMath";
+import { blendedExitPrice, holdingDecision, openQuantity, planPartialQuantity } from "./shared/exitRules";
+import { ruleFor } from "./services/marketRulesStore";
 import type { DaemonCloseEvent } from "./services/daemonEvents";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
@@ -304,6 +306,20 @@ export default function App() {
             continue;
           }
           if (out.kind === "updated" && out.changed) changed = true;
+          if (out.kind === "updated" && out.banked) {
+            const p = out.position;
+            setTimeout(
+              () =>
+                setExecutionToast({
+                  id: `toast-banked-${p.id}`,
+                  title: `Banked half of ${p.symbol}`,
+                  message: `${p.bankedQuantity} closed at ₹${p.bankedPrice} (+1R). The stop is past break-even; the rest runs on the trailing stop.`,
+                  type: "SUCCESS",
+                  timestamp: new Date().toLocaleTimeString(),
+                }),
+              10
+            );
+          }
           next.push(out.position);
         }
         return changed ? next : prev;
@@ -339,15 +355,14 @@ export default function App() {
     },
   });
 
-  // Enforce each position's max holding time (the UI's "Hard Limit
-  // Protected"): every 30s, close anything past its limit at the best known
-  // price.
+  // Enforce each position's holding time: every 30s, close anything past its
+  // limit that hasn't locked in profit (winners run on their trailing stop,
+  // up to the extended limit), at the best known price.
   useEffect(() => {
     const checkHoldingTimeExpiry = () => {
       const now = Date.now();
       for (const pos of activePositionsRef.current) {
-        const openedMs = pos.openTime ? new Date(pos.openTime).getTime() : now;
-        if ((now - openedMs) / 60000 >= (pos.expectedHoldingTimeMinutes || 30)) {
+        if (holdingDecision(pos, now) === "expire") {
           closePositionRef.current(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
         }
       }
@@ -461,7 +476,7 @@ export default function App() {
   const { policy: riskPolicy, limits: riskLimits, setLimits: setRiskLimits } = useRiskPolicy(effectiveEquity);
 
   const currentRiskCalculation = useMemo<RiskCalculation>(() => {
-    const currentExposure = activePositions.reduce((acc, p) => acc + (p.entryPrice * p.quantity), 0);
+    const currentExposure = activePositions.reduce((acc, p) => acc + (p.entryPrice * openQuantity(p)), 0);
     const exposureFraction = effectiveEquity > 0 ? currentExposure / effectiveEquity : 0;
     const passed = !killSwitchActive && !failureState.globalKillSwitchActive && dailyRealizedPnl > -riskPolicy.hardDailyLossLimit;
 
@@ -560,7 +575,14 @@ export default function App() {
         realizedPnlPercent: pnlPercent,
         entryNotional,
         isWin,
-      } = computeClosedTradePnl(pos.direction, pos.entryPrice, exitPrice, pos.quantity, reason);
+      } = computeClosedTradePnl(
+        pos.direction,
+        pos.entryPrice,
+        exitPrice,
+        pos.quantity,
+        reason,
+        pos.bankedQuantity && pos.bankedPrice !== undefined ? { quantity: pos.bankedQuantity, price: pos.bankedPrice } : undefined
+      );
 
       // Remove from active positions & update capital
       setActivePositions((prev) => prev.filter((p) => p.id !== pos.id));
@@ -685,7 +707,8 @@ export default function App() {
         direction: pos.direction,
         setupName: pos.setupName,
         entryPrice: pos.entryPrice,
-        exitPrice,
+        // Averaged over the half banked at +1R, if any.
+        exitPrice: Number(blendedExitPrice(pos, exitPrice).toFixed(8)),
         quantity: pos.quantity,
         moneyPlaced,
         grossPnl: rawGrossPnl,
@@ -985,6 +1008,8 @@ export default function App() {
         stopLoss: proposal.setup.stopLoss,
         takeProfit: proposal.setup.takeProfit,
         initialTakeProfit: proposal.setup.takeProfit,
+        initialStopLoss: proposal.setup.stopLoss,
+        partialQuantity: planPartialQuantity(quantity, entryPrice, ruleFor(proposal.symbol, entryPrice)),
         unrealizedPnl: 0,
         unrealizedPnlPercent: 0,
         openTime: new Date().toISOString(),
@@ -1140,7 +1165,7 @@ export default function App() {
       // maxSimultaneousPositions / maxAllowedExposureFraction when approved together.
       let runningPositionCount = activePositions.length;
       let runningExposure = activePositions.reduce(
-        (acc, p) => acc + p.quantity * p.currentPrice,
+        (acc, p) => acc + openQuantity(p) * p.currentPrice,
         0
       );
       // Fix 1-Hour Cap Bug: Count ALL trades opened by autopilot within the rolling hour,
@@ -1285,6 +1310,8 @@ export default function App() {
           stopLoss: proposal.setup.stopLoss,
           takeProfit: proposal.setup.takeProfit,
           initialTakeProfit: proposal.setup.takeProfit,
+          initialStopLoss: proposal.setup.stopLoss,
+          partialQuantity: planPartialQuantity(units, entryPrice, ruleFor(proposal.symbol, entryPrice)),
           unrealizedPnl: 0,
           unrealizedPnlPercent: 0,
           openTime: new Date().toISOString(),

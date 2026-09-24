@@ -71,6 +71,10 @@ const syncedPosition = z
     atrAtEntry: z.number().finite().nonnegative().optional().catch(undefined),
     trailMode: z.enum(["SCALP_TIGHT", "TREND_RUNNER"]).optional().catch(undefined),
     expectedHoldingTimeMinutes: z.number().finite().nonnegative().optional().catch(undefined),
+    initialStopLoss: positiveNumber.optional().catch(undefined),
+    partialQuantity: positiveNumber.optional().catch(undefined),
+    bankedQuantity: positiveNumber.optional().catch(undefined),
+    bankedPrice: positiveNumber.optional().catch(undefined),
     isSelfApproved: z.boolean().optional().catch(undefined),
     setupName: z.string().max(200).optional().catch(undefined),
   })

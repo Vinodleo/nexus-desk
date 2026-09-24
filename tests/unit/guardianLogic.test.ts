@@ -7,6 +7,7 @@ const base = (over: Partial<GuardedPosition> = {}): GuardedPosition => ({
   currentPrice: 1000,
   stopLoss: 990,
   takeProfit: 1050,
+  quantity: 1,
   atrAtEntry: 10,
   trailMode: "SCALP_TIGHT",
   openTime: new Date().toISOString(),
