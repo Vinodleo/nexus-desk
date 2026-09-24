@@ -1,4 +1,17 @@
-import { MarketBar, RegimeType } from "../types";
+import type { MarketBar, RegimeType } from "../types";
+import type * as tf from "@tensorflow/tfjs";
+import { CANDIDATE_MODEL_PATH, trainMetaModel } from "./mlService";
+import { META_FEATURE_VERSION } from "./metaFeatures";
+import {
+  LAB_INTERVAL,
+  LAB_INTERVAL_MS,
+  candleSpacingMs,
+  replayPanel,
+  simulateTunedBreakout,
+  toLabBars,
+  type LabParams,
+  type LabTrade,
+} from "./labSimulation";
 
 export interface HistoricalCandle {
   timestamp: number;
@@ -83,146 +96,121 @@ export interface RealDataLearningResult {
     volSurgeThreshold: number;
     minConfidence: number;
   };
+  /** Set when a confidence model was trained: the version of its inputs (metaFeatures). */
+  featureVersion?: number;
 }
 
 export type HistoricalSource = "BINANCE" | "COINBASE";
+export type LabInterval = "5m" | "15m" | "1h";
+
+const INTERVAL_MS: Record<LabInterval, number> = { "5m": 300_000, "15m": 900_000, "1h": 3_600_000 };
+/** Most candles fetched per coin. */
+export const MAX_LAB_BARS = 6000;
+
+/** "BTC/INR", "BTCINR" or "SOLUSDT" to the coin, e.g. "BTC". */
+export function coinOf(symbol: string): string {
+  return symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase().replace(/(INR|USDT|USD)$/, "");
+}
 
 /**
- * Fetch real historical OHLCV data from Binance or Coinbase Public REST APIs (Zero keys required)
- * If Coinbase is chosen or if Binance is throttled, it seamlessly queries the public endpoint.
+ * Real historical candles, oldest first, from Binance's or Coinbase's public
+ * APIs (coin priced in USDT / USD; its moves match the INR market's). When
+ * neither answers, generated candles marked isSynthetic come back instead,
+ * so the caller can refuse to promote anything built on them.
  */
 export async function fetchRealHistoricalCandles(
   symbol: string = "BTC/INR",
-  interval: "1m" | "15m" | "1h" | "4h" = "1h",
-  limit: number = 500,
+  interval: LabInterval = "5m",
+  limit: number = 3000,
   source: HistoricalSource = "BINANCE"
 ): Promise<HistoricalCandle[]> {
-  const cleanSymbol = symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const coin = coinOf(symbol);
+  const wanted = Math.min(MAX_LAB_BARS, Math.max(1, limit));
 
-  // Try Selected Source First
-  if (source === "COINBASE") {
-    const cbCandles = await fetchFromCoinbase(cleanSymbol, interval, limit);
-    if (cbCandles && cbCandles.length > 20) {
-      return cbCandles.map((c) => ({ ...c, isSynthetic: false, sourceExchange: "Coinbase Public API" }));
-    }
-  } else {
-    const binanceCandles = await fetchFromBinance(cleanSymbol, interval, limit);
-    if (binanceCandles && binanceCandles.length > 20) {
-      return binanceCandles.map((c) => ({ ...c, isSynthetic: false, sourceExchange: "Binance Public API" }));
-    }
-    // Try Coinbase as fallback
-    const cbCandles = await fetchFromCoinbase(cleanSymbol, interval, limit);
-    if (cbCandles && cbCandles.length > 20) {
-      return cbCandles.map((c) => ({ ...c, isSynthetic: false, sourceExchange: "Coinbase Public API (Fallback)" }));
-    }
+  if (source === "BINANCE") {
+    const binance = await fetchFromBinance(coin, interval, wanted);
+    if (binance && binance.length > 20) return binance.map((c) => ({ ...c, isSynthetic: false, sourceExchange: "Binance Public API" }));
+  }
+  const coinbase = await fetchFromCoinbase(coin, interval, wanted);
+  if (coinbase && coinbase.length > 20) {
+    const label = source === "BINANCE" ? "Coinbase Public API (Fallback)" : "Coinbase Public API";
+    return coinbase.map((c) => ({ ...c, isSynthetic: false, sourceExchange: label }));
   }
 
-  // Realistic market fallback generation if direct external fetch is temporarily throttled
-  const fallbackBars = generateDeterministicHistoricalBars(cleanSymbol, limit);
+  const fallbackBars = generateDeterministicHistoricalBars(coin, wanted, INTERVAL_MS[interval]);
   return fallbackBars.map((c) => ({ ...c, isSynthetic: true, sourceExchange: "Deterministic Fallback" }));
 }
 
-async function fetchFromBinance(
-  symbol: string,
-  interval: "1m" | "15m" | "1h" | "4h",
-  limit: number
-): Promise<HistoricalCandle[] | null> {
+const toDateStr = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0, 16);
+
+/** Binance klines for COINUSDT, paging back 1,000 at a time. */
+async function fetchFromBinance(coin: string, interval: LabInterval, limit: number): Promise<HistoricalCandle[] | null> {
   try {
-    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Binance API returned ${res.status}`);
-    }
-    const data = await res.json();
-    if (Array.isArray(data) && data.length > 20) {
-      return data.map((c: any) => ({
-        timestamp: c[0],
-        open: parseFloat(c[1]),
-        high: parseFloat(c[2]),
-        low: parseFloat(c[3]),
-        close: parseFloat(c[4]),
-        volume: parseFloat(c[5]),
-        dateStr: new Date(c[0]).toISOString().replace("T", " ").slice(0, 16),
-      }));
-    }
-  } catch (err) {
-    console.warn("Binance public fetch error:", err);
-  }
-  return null;
-}
-
-async function fetchFromCoinbase(
-  symbol: string,
-  interval: "1m" | "15m" | "1h" | "4h",
-  limit: number = 500
-): Promise<HistoricalCandle[] | null> {
-  try {
-    // Map symbol to Coinbase product ID (e.g. BTC/INR -> BTC-USD, SOLUSDT -> SOL-USD)
-    const base = symbol.replace(/USDT|USD|BUSD|INR/g, "");
-    const productId = `${base}-USD`;
-
-    // Coinbase Exchange API supported granularities (in seconds):
-    // 60 (1m), 300 (5m), 900 (15m), 3600 (1h), 21600 (6h), 86400 (1d).
-    // Note: 14400 (4h) is NOT supported by Coinbase and returns HTTP 400. We map 4h to 21600 (6h) or 3600.
-    const granularity = interval === "1m" ? 60 : interval === "15m" ? 900 : interval === "4h" ? 21600 : 3600;
-
-    // Coinbase limits each request to max 300 candles.
-    // We paginate backwards if more candles are requested.
-    const targetCount = Math.min(limit, 1000);
-    const candlesByTimestamp = new Map<number, any>();
-    let currentEndTime = new Date();
-
-    const maxBatches = Math.min(4, Math.ceil(targetCount / 280));
-    for (let batch = 0; batch < maxBatches; batch++) {
-      const startSec = Math.floor(currentEndTime.getTime() / 1000) - 280 * granularity;
-      const startTime = new Date(startSec * 1000);
-
-      const url = `https://api.exchange.coinbase.com/products/${productId}/candles?granularity=${granularity}&start=${startTime.toISOString()}&end=${currentEndTime.toISOString()}`;
+    const byTime = new Map<number, HistoricalCandle>();
+    let endTime: number | undefined;
+    while (byTime.size < limit) {
+      const n = Math.min(1000, limit - byTime.size);
+      const url = `https://api.binance.com/api/v3/klines?symbol=${coin}USDT&interval=${interval}&limit=${n}${endTime ? `&endTime=${endTime}` : ""}`;
       const res = await fetch(url);
-      if (!res.ok) {
-        // If query with start/end fails, try basic unconstrained endpoint for the most recent batch
-        if (batch === 0) {
-          const fallbackUrl = `https://api.exchange.coinbase.com/products/${productId}/candles?granularity=${granularity}`;
-          const fbRes = await fetch(fallbackUrl);
-          if (fbRes.ok) {
-            const fbData = await fbRes.json();
-            if (Array.isArray(fbData)) {
-              fbData.forEach((c: any) => candlesByTimestamp.set(c[0], c));
-            }
-          }
-        }
-        break;
-      }
-
+      if (!res.ok) throw new Error(`Binance API returned ${res.status}`);
       const data = await res.json();
       if (!Array.isArray(data) || data.length === 0) break;
-
-      data.forEach((c: any) => candlesByTimestamp.set(c[0], c));
-      if (candlesByTimestamp.size >= targetCount) break;
-
-      // Oldest candle in this batch becomes the end for the next historical batch
-      const oldestSec = Math.min(...data.map((c: any) => c[0]));
-      currentEndTime = new Date((oldestSec - 1) * 1000);
+      for (const c of data) {
+        byTime.set(c[0], {
+          timestamp: c[0],
+          open: parseFloat(c[1]),
+          high: parseFloat(c[2]),
+          low: parseFloat(c[3]),
+          close: parseFloat(c[4]),
+          volume: parseFloat(c[5]),
+          dateStr: toDateStr(c[0]),
+        });
+      }
+      if (data.length < n) break;
+      endTime = data[0][0] - 1;
     }
+    const list = [...byTime.values()].sort((a, b) => a.timestamp - b.timestamp);
+    return list.length > 20 ? list.slice(-limit) : null;
+  } catch (err) {
+    console.warn("Binance public fetch error:", err);
+    return null;
+  }
+}
 
-    const rawList = Array.from(candlesByTimestamp.values());
-    if (rawList.length > 20) {
+/** Coinbase candles for COIN-USD, paging back 300 at a time (its limit per request). */
+async function fetchFromCoinbase(coin: string, interval: LabInterval, limit: number): Promise<HistoricalCandle[] | null> {
+  try {
+    const granularity = INTERVAL_MS[interval] / 1000;
+    const byTime = new Map<number, HistoricalCandle>();
+    let end = Math.floor(Date.now() / 1000);
+    const batches = Math.min(25, Math.ceil(limit / 300));
+    for (let batch = 0; batch < batches && byTime.size < limit; batch++) {
+      const start = end - 300 * granularity;
+      const url = `https://api.exchange.coinbase.com/products/${coin}-USD/candles?granularity=${granularity}&start=${new Date(start * 1000).toISOString()}&end=${new Date(end * 1000).toISOString()}`;
+      const res = await fetch(url);
+      if (!res.ok) break;
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0) break;
       // Coinbase candle format: [ time, low, high, open, close, volume ]
-      const sorted = rawList.sort((a: any, b: any) => a[0] - b[0]);
-      return sorted.map((c: any) => ({
-        timestamp: c[0] * 1000,
-        low: parseFloat(c[1]),
-        high: parseFloat(c[2]),
-        open: parseFloat(c[3]),
-        close: parseFloat(c[4]),
-        volume: parseFloat(c[5]) || 1000,
-        dateStr: new Date(c[0] * 1000).toISOString().replace("T", " ").slice(0, 16),
-      }));
+      for (const c of data) {
+        byTime.set(c[0] * 1000, {
+          timestamp: c[0] * 1000,
+          low: parseFloat(c[1]),
+          high: parseFloat(c[2]),
+          open: parseFloat(c[3]),
+          close: parseFloat(c[4]),
+          volume: parseFloat(c[5]) || 0,
+          dateStr: toDateStr(c[0] * 1000),
+        });
+      }
+      end = start - 1;
     }
+    const list = [...byTime.values()].sort((a, b) => a.timestamp - b.timestamp);
+    return list.length > 20 ? list.slice(-limit) : null;
   } catch (err) {
     console.warn("Coinbase public fetch error:", err);
+    return null;
   }
-  return null;
 }
 
 /**
@@ -269,256 +257,112 @@ export function parseCSVToCandles(csvText: string): HistoricalCandle[] {
 }
 
 /**
- * Execute real historical Train & Test (Walk-Forward) Pipeline:
- * 1. Partitions data into In-Sample (70%) and Out-of-Sample (30%)
- * 2. Runs baseline breakout strategy on in-sample
- * 3. Extracts post-mortem autopsies and optimizes entry hurdles
- * 4. Evaluates challenger model on completely unseen out-of-sample data
- * 5. Computes resulting accuracy %, Sharpe, Drawdown, and Win-Rate improvements
+ * The Lab's train-and-test pipeline, on 5-minute candles like live trading:
+ * 1. Splits each coin's history 70% in-sample / 30% out-of-sample.
+ * 2. Grid-searches the Lab-tuned breakout trader's settings in-sample.
+ * 3. Trains the confidence model on every setup the live trader panel would
+ *    have put forward in-sample, with the same inputs the scanner scores.
+ * 4. Tests the tuned trader, with the model, on the unseen out-of-sample part.
+ * Trades resolve like live ones: target, stop or 30 minutes, after costs.
  */
-import * as tf from '@tensorflow/tfjs';
-import { predictConfidenceBatch } from './mlService';
-import { SUPPORTED_SYMBOLS } from './marketDataService';
 
-export async function runGlobalMarketTraining(
-  symbols: string[]
-): Promise<RealDataLearningResult> {
-  let allInSampleCandles: Record<string, HistoricalCandle[]> = {};
-  let allOutOfSampleCandles: Record<string, HistoricalCandle[]> = {};
-  let totalCandles = 0;
-  let allCandlesList: HistoricalCandle[] = [];
-
-  for (const sym of symbols) {
-    const candles = await fetchRealHistoricalCandles(sym, "1h", 1000, "BINANCE");
-    if (!candles || candles.length < 50) continue;
-    
-    totalCandles += candles.length;
-    allCandlesList = allCandlesList.concat(candles);
-    const splitIndex = Math.floor(candles.length * 0.7);
-    allInSampleCandles[sym] = candles.slice(0, splitIndex);
-    allOutOfSampleCandles[sym] = candles.slice(splitIndex);
-  }
-
-  const slMultipliers = [1.2, 1.4, 1.6, 1.8];
-  const tpMultipliers = [2.0, 2.4, 2.8, 3.2];
-  const volSurgeThresholds = [1.1, 1.25, 1.5];
-  const rsiThresholds = [40, 50, 60, 70];
-  
-  let bestParams = { slMultiplier: 1.4, tpMultiplier: 2.8, volSurgeThreshold: 1.25, rsiThreshold: 60, minConfidence: 0.45 };
-  let bestSharpe = -999;
-  
-  // Grid Search on Combined In-Sample Data
-  for (const sl of slMultipliers) {
-    for (const tp of tpMultipliers) {
-      for (const surge of volSurgeThresholds) {
-        for (const rsiT of rsiThresholds) {
-          const testParams = { slMultiplier: sl, tpMultiplier: tp, volSurgeThreshold: surge, rsiThreshold: rsiT, minConfidence: 0.48 };
-          let combinedInSampleTrades: RealDataBacktestTrade[] = [];
-          for (const sym of Object.keys(allInSampleCandles)) {
-            const trades = simulateBreakoutStrategy(allInSampleCandles[sym], sym, false, testParams);
-            combinedInSampleTrades = combinedInSampleTrades.concat(trades);
-          }
-          const metrics = computeTradeMetrics(combinedInSampleTrades);
-          
-          if (metrics.tradesCount > 30 && metrics.sharpeRatio > bestSharpe) {
-            bestSharpe = metrics.sharpeRatio;
-            bestParams = testParams;
-          }
-        }
-      }
-    }
-  }
-
-  // Baseline Combined
-  let combinedBaselineOosTrades: RealDataBacktestTrade[] = [];
-  for (const sym of Object.keys(allOutOfSampleCandles)) {
-    combinedBaselineOosTrades = combinedBaselineOosTrades.concat(
-      simulateBreakoutStrategy(allOutOfSampleCandles[sym], sym, false, {
-        slMultiplier: 1.4, tpMultiplier: 2.8, volSurgeThreshold: 1.2, rsiThreshold: 50, minConfidence: 0
-      })
-    );
-  }
-
-  // Raw In-Sample Trades (Best Params)
-  let combinedRawInSampleTrades: RealDataBacktestTrade[] = [];
-  for (const sym of Object.keys(allInSampleCandles)) {
-    combinedRawInSampleTrades = combinedRawInSampleTrades.concat(
-      simulateBreakoutStrategy(allInSampleCandles[sym], sym, false, bestParams)
-    );
-  }
-
-  const failureLessons = extractLessonsFromLosingTrades(combinedRawInSampleTrades, allCandlesList);
-  failureLessons.push({
-    id: "lesson-global-1",
-    rule: `Global Grid Search: SL=${bestParams.slMultiplier}x, TP=${bestParams.tpMultiplier}x, Vol=${bestParams.volSurgeThreshold}x`,
-    regime: "All Regimes",
-    action: "Global Parameter Optimization"
-  });
-
-  // TFJS: Train Client-Side ML Meta-Model on raw in-sample trades from ALL markets
-  let tfjsModel: tf.LayersModel | undefined = undefined;
-  const mlFeatures: number[][] = [];
-  const mlLabels: number[] = [];
-  for (const t of combinedRawInSampleTrades) {
-    if (t.features && t.features.length === 6) {
-      mlFeatures.push(t.features);
-      mlLabels.push(t.isWin ? 1 : 0);
-    }
-  }
-
-  const { trainMetaModel } = await import('./mlService');
-  const trainedModel = await trainMetaModel(mlFeatures, mlLabels);
-  if (trainedModel) {
-    tfjsModel = trainedModel as tf.LayersModel;
-    await tfjsModel.save('localstorage://meta-model');
-    failureLessons.push({
-      id: "lesson-global-ml-1",
-      rule: `Trained Neural Network on ${mlFeatures.length} global historical trades across ${Object.keys(allInSampleCandles).length} markets for unified confidence scoring.`,
-      regime: "All Regimes",
-      action: "Global TensorFlow.js Meta-Model"
-    });
-  }
-
-  // Test on Out-of-Sample AFTER learning
-  let combinedLearnedOosTrades: RealDataBacktestTrade[] = [];
-  for (const sym of Object.keys(allOutOfSampleCandles)) {
-    combinedLearnedOosTrades = combinedLearnedOosTrades.concat(
-      simulateBreakoutStrategy(allOutOfSampleCandles[sym], sym, true, bestParams, tfjsModel)
-    );
-  }
-
-  const baseMetrics = computeTradeMetrics(combinedBaselineOosTrades);
-  const learnedMetrics = computeTradeMetrics(combinedLearnedOosTrades);
-  
-  // Dummy folds for UI consistency, or we could aggregate them. Let's just use the first asset's folds as representation, or a generic mock.
-  const folds = computeWalkForwardFolds(allCandlesList, bestParams);
-
-  return {
-    symbol: "GLOBAL_MODEL",
-    timeframe: "1h",
-    candlesCount: totalCandles,
-    dateRange: {
-      start: allCandlesList[0]?.dateStr || "2024-01-01",
-      end: allCandlesList[allCandlesList.length - 1]?.dateStr || "2024-06-30",
-    },
-    baselineMetrics: baseMetrics,
-    learnedMetrics: {
-      ...learnedMetrics,
-      accuracyImprovementDelta: Number((learnedMetrics.accuracyPercent - baseMetrics.accuracyPercent).toFixed(1)),
-    },
-    inSampleTrades: combinedRawInSampleTrades.slice(-20),
-    outOfSampleTrades: combinedLearnedOosTrades,
-    distilledLessons: failureLessons,
-    folds,
-    sourceExchange: "Aggregated Global",
-    // Any market whose history couldn't be fetched fell back to generated
-    // bars; a result built on those must not be promotable.
-    isSynthetic: allCandlesList.some((c) => c.isSynthetic),
-    totalCandles: totalCandles,
-    datasetName: `Global Unified Model (${Object.keys(allInSampleCandles).length} Markets)`,
-    optimizedParameters: {
-      ...bestParams
-    }
-  };
+interface LabDataset {
+  symbol: string;
+  bars: MarketBar[];
 }
 
-export async function runRealDataWalkForward(
-  candles: HistoricalCandle[],
-  symbol: string = "BTC/INR"
-): Promise<RealDataLearningResult> {
-  const n = candles.length;
-  const splitIndex = Math.floor(n * 0.7); // 70% In-Sample Train, 30% Out-of-Sample Test
-  const inSampleCandles = candles.slice(0, splitIndex);
-  const outOfSampleCandles = candles.slice(splitIndex);
+const DEFAULT_PARAMS: LabParams = { slMultiplier: 1.4, tpMultiplier: 2.8, volSurgeThreshold: 1.2, rsiThreshold: 50, minConfidence: 0 };
+/** Panel setups needed before a confidence model is trained. */
+const MIN_MODEL_SAMPLES = 50;
 
-  // Grid Search Parameter Space
-  const slMultipliers = [1.2, 1.4, 1.6, 1.8, 2.0];
-  const tpMultipliers = [2.0, 2.4, 2.8, 3.2, 3.6];
-  const volSurgeThresholds = [1.1, 1.25, 1.4, 1.6];
-  const rsiThresholds = [30, 40, 50, 60, 70];
-  
-  let bestParams = { slMultiplier: 1.4, tpMultiplier: 2.8, volSurgeThreshold: 1.2, rsiThreshold: 60, minConfidence: 0.45 };
-  let bestSharpe = -999;
-  
-  // 1. Train on In-Sample: Grid Search Optimization
-  for (const sl of slMultipliers) {
-    for (const tp of tpMultipliers) {
-      for (const surge of volSurgeThresholds) {
-        for (const rsiT of rsiThresholds) {
-          const testParams = { slMultiplier: sl, tpMultiplier: tp, volSurgeThreshold: surge, rsiThreshold: rsiT, minConfidence: 0.48 };
-          const inSampleTrades = simulateBreakoutStrategy(inSampleCandles, symbol, false, testParams);
-          const metrics = computeTradeMetrics(inSampleTrades);
-          
-          if (metrics.tradesCount > 15 && metrics.sharpeRatio > bestSharpe) {
+function toBacktestTrades(trades: LabTrade[]): RealDataBacktestTrade[] {
+  return trades.map((t, k) => ({
+    id: `lab-${k + 1}`,
+    symbol: t.symbol,
+    direction: t.direction,
+    entryTime: t.entryTime,
+    exitTime: t.exitTime,
+    entryPrice: t.entryPrice,
+    exitPrice: t.exitPrice,
+    pnl: Number(((t.pnlPercent / 100) * 5000).toFixed(2)),
+    pnlPercent: Number(t.pnlPercent.toFixed(2)),
+    isWin: t.isWin,
+    exitReason: t.exitReason,
+    metaConfidence: t.metaConfidence,
+    regime: t.regime,
+    features: t.features,
+  }));
+}
+
+function simulateAll(sets: LabDataset[], params: LabParams, model?: tf.LayersModel): RealDataBacktestTrade[] {
+  return toBacktestTrades(sets.flatMap((d) => simulateTunedBreakout(d.symbol, d.bars, params, model)));
+}
+
+async function learnFrom(sets: LabDataset[], label: { symbol: string; datasetName: string }): Promise<RealDataLearningResult> {
+  const split = (d: LabDataset) => Math.floor(d.bars.length * 0.7);
+  const inSample = sets.map((d) => ({ symbol: d.symbol, bars: d.bars.slice(0, split(d)) }));
+  const outOfSample = sets.map((d) => ({ symbol: d.symbol, bars: d.bars.slice(split(d)) }));
+  const minTrades = Math.max(15, 5 * sets.length);
+
+  // 1. Grid search in-sample.
+  let bestParams: LabParams = { ...DEFAULT_PARAMS, rsiThreshold: 60, minConfidence: 0.48 };
+  let bestSharpe = -Infinity;
+  for (const sl of [1.2, 1.4, 1.6, 1.8]) {
+    for (const tp of [2.0, 2.4, 2.8, 3.2]) {
+      for (const surge of [1.1, 1.25, 1.5]) {
+        for (const rsiT of [50, 60, 70]) {
+          const params = { slMultiplier: sl, tpMultiplier: tp, volSurgeThreshold: surge, rsiThreshold: rsiT, minConfidence: 0.48 };
+          const metrics = computeTradeMetrics(simulateAll(inSample, params));
+          if (metrics.tradesCount >= minTrades && metrics.sharpeRatio > bestSharpe) {
             bestSharpe = metrics.sharpeRatio;
-            bestParams = testParams;
+            bestParams = params;
           }
         }
       }
     }
   }
-
-  // Generate baseline trades (default params without grid search)
-  const rawInSampleTrades = simulateBreakoutStrategy(inSampleCandles, symbol, false, {
-    slMultiplier: 1.4, tpMultiplier: 2.8, volSurgeThreshold: 1.2, rsiThreshold: 50, minConfidence: 0
-  });
-
-  // 2. Identify failure patterns in In-Sample and formulate meta-veto heuristics
-  const failureLessons = extractLessonsFromLosingTrades(rawInSampleTrades, inSampleCandles);
-  failureLessons.push({
+  const rawInSampleTrades = simulateAll(inSample, { ...bestParams, minConfidence: 0 });
+  const lessons = extractLessonsFromLosingTrades(rawInSampleTrades, []);
+  lessons.push({
     id: "lesson-grid-1",
-    rule: `Optimized Parameters via Grid Search: SL = ${bestParams.slMultiplier}x ATR, TP = ${bestParams.tpMultiplier}x ATR, Min Vol Surge = ${bestParams.volSurgeThreshold}x`,
+    rule: `Tuned on 5-minute candles: stop ${bestParams.slMultiplier}x ATR, target ${bestParams.tpMultiplier}x ATR, volume surge ${bestParams.volSurgeThreshold}x`,
     regime: "All Regimes",
-    action: "Quantitative Parameter Sweep"
+    action: "Quantitative Parameter Sweep",
   });
 
-  // TFJS: Train Client-Side ML Meta-Model on raw in-sample trades
-  let tfjsModel: tf.LayersModel | undefined = undefined;
-  const mlFeatures: number[][] = [];
-  const mlLabels: number[] = [];
-  for (const t of rawInSampleTrades) {
-    if (t.features && t.features.length === 6) {
-      mlFeatures.push(t.features);
-      mlLabels.push(t.isWin ? 1 : 0);
+  // 2. The confidence model, on what the live panel would have proposed.
+  const samples = inSample.flatMap((d) => replayPanel(d.symbol, d.bars));
+  let model: tf.LayersModel | undefined;
+  if (samples.length >= MIN_MODEL_SAMPLES) {
+    const trained = await trainMetaModel(samples.map((x) => x.features), samples.map((x) => (x.win ? 1 : 0)));
+    if (trained) {
+      model = trained as tf.LayersModel;
+      // Kept as a candidate; it only reaches the live scanner when promoted.
+      await model.save(CANDIDATE_MODEL_PATH);
+      lessons.push({
+        id: "lesson-ml-1",
+        rule: `Trained Neural Network on ${samples.length} trader-panel setups from ${sets.length} market${sets.length === 1 ? "" : "s"} (5-minute candles, the live scanner's inputs).`,
+        regime: "All Regimes",
+        action: "TensorFlow.js Meta-Model",
+      });
     }
   }
 
-  // Load mlService module dynamically if needed, or just use the imported trainMetaModel
-  const { trainMetaModel } = await import('./mlService');
-  const trainedModel = await trainMetaModel(mlFeatures, mlLabels);
-  if (trainedModel) {
-    tfjsModel = trainedModel as tf.LayersModel;
-    await tfjsModel.save('localstorage://meta-model');
-    failureLessons.push({
-      id: "lesson-ml-1",
-      rule: `Trained Neural Network on ${mlFeatures.length} historical trades for dynamic confidence scoring.`,
-      regime: "All Regimes",
-      action: "TensorFlow.js Meta-Model"
-    });
-  }
-
-  // 3. Test on Out-of-Sample BEFORE learning (Baseline)
-  const baselineOosTrades = simulateBreakoutStrategy(outOfSampleCandles, symbol, false, {
-    slMultiplier: 1.4, tpMultiplier: 2.8, volSurgeThreshold: 1.2, rsiThreshold: 50, minConfidence: 0
-  });
-
-  // 4. Test on Out-of-Sample AFTER learning (Challenger with Grid Searched params and TFJS Model)
-  const learnedOosTrades = simulateBreakoutStrategy(outOfSampleCandles, symbol, true, bestParams, tfjsModel);
-
-  // Calculate Metrics
+  // 3. Out-of-sample: default trader, then the tuned one with the model.
+  const baselineOosTrades = simulateAll(outOfSample, DEFAULT_PARAMS);
+  const learnedOosTrades = simulateAll(outOfSample, bestParams, model);
   const baseMetrics = computeTradeMetrics(baselineOosTrades);
   const learnedMetrics = computeTradeMetrics(learnedOosTrades);
 
-  // Compute 5-Fold Walk Forward validation splits across the historical dataset
-  const folds = computeWalkForwardFolds(candles, bestParams);
-
+  const first = sets[0].bars;
+  const candlesCount = sets.reduce((a, d) => a + d.bars.length, 0);
   return {
-    symbol,
-    timeframe: "1h",
-    candlesCount: n,
+    symbol: label.symbol,
+    timeframe: LAB_INTERVAL,
+    candlesCount,
     dateRange: {
-      start: candles[0]?.dateStr || "2024-01-01",
-      end: candles[n - 1]?.dateStr || "2024-06-30",
+      start: first[0]?.time.replace("T", " ").slice(0, 16) ?? "",
+      end: first[first.length - 1]?.time.replace("T", " ").slice(0, 16) ?? "",
     },
     baselineMetrics: baseMetrics,
     learnedMetrics: {
@@ -527,232 +371,48 @@ export async function runRealDataWalkForward(
     },
     inSampleTrades: rawInSampleTrades.slice(-20),
     outOfSampleTrades: learnedOosTrades,
-    distilledLessons: failureLessons,
-    folds,
-    sourceExchange: candles[0]?.sourceExchange,
-    isSynthetic: candles[0]?.isSynthetic,
-    totalCandles: n,
-    datasetName: `${symbol} (1h, ${n} bars)`,
+    distilledLessons: lessons,
+    folds: computeWalkForwardFolds(sets, bestParams),
+    isSynthetic: sets.some((d) => d.bars.some((b) => b.isSynthetic)),
+    totalCandles: candlesCount,
+    datasetName: label.datasetName,
     // Exactly the parameters the out-of-sample test ran with.
     optimizedParameters: { ...bestParams },
+    ...(model ? { featureVersion: META_FEATURE_VERSION } : {}),
   };
 }
 
-function simulateBreakoutStrategy(
-  candles: HistoricalCandle[],
-  symbol: string,
-  applyLearnedVeto: boolean,
-  customParams?: { slMultiplier: number; tpMultiplier: number; volSurgeThreshold: number; rsiThreshold: number; minConfidence: number },
-  tfjsModel?: tf.LayersModel
-): RealDataBacktestTrade[] {
-  const trades: RealDataBacktestTrade[] = [];
-  const lookback = 20;
-
-  // Use custom params from grid search, or fallback to the old hardcoded veto rules if none provided
-  const slMult = customParams ? customParams.slMultiplier : (applyLearnedVeto ? 1.8 : 1.4);
-  const tpMult = customParams ? customParams.tpMultiplier : (applyLearnedVeto ? 3.6 : 2.8);
-  const surgeReq = customParams ? customParams.volSurgeThreshold : 1.2;
-  const rsiLimit = customParams ? customParams.rsiThreshold : 65;
-  const minConfidenceVeto = customParams ? customParams.minConfidence : (applyLearnedVeto ? 0.48 : 0);
-
-  const candidateTrades: any[] = [];
-
-  for (let i = lookback; i < candles.length - 10; i++) {
-    const window = candles.slice(i - lookback, i);
-    const highestHigh = Math.max(...window.map((c) => c.high));
-    const lowestLow = Math.min(...window.map((c) => c.low));
-    const current = candles[i];
-    const avgVolume = window.reduce((s, c) => s + c.volume, 0) / lookback;
-    const volSurge = current.volume / (avgVolume || 1);
-
-    // ATR calculation for stops
-    let atrSum = 0;
-    for (let k = 1; k < window.length; k++) {
-      atrSum += Math.max(
-        window[k].high - window[k].low,
-        Math.abs(window[k].high - window[k - 1].close)
-      );
-    }
-    const atr = atrSum / (lookback - 1);
-
-    let direction: "LONG" | "SHORT" | null = null;
-    let entryPrice = current.close;
-    let stopLoss = 0;
-    let takeProfit = 0;
-
-    // Basic RSI calculation for the lookback window
-    let gains = 0;
-    let losses = 0;
-    for (let k = 1; k < window.length; k++) {
-      const diff = window[k].close - window[k - 1].close;
-      if (diff > 0) gains += diff;
-      else losses -= diff;
-    }
-    const rs = losses === 0 ? 100 : (gains / lookback) / (losses / lookback);
-    const rsi = 100 - (100 / (1 + rs));
-
-    if (current.close > highestHigh && volSurge >= surgeReq && rsi < rsiLimit) {
-      direction = "LONG";
-      stopLoss = entryPrice - (atr * slMult);
-      takeProfit = entryPrice + (atr * tpMult);
-    } else if (current.close < lowestLow && volSurge >= surgeReq && rsi > (100 - rsiLimit)) {
-      direction = "SHORT";
-      stopLoss = entryPrice + (atr * slMult);
-      takeProfit = entryPrice - (atr * tpMult);
-    }
-
-    if (!direction) continue;
-
-    // Classify Regime
-    const recentCloses = window.map((c) => c.close);
-    const slope = (recentCloses[recentCloses.length - 1] - recentCloses[0]) / recentCloses[0];
-    let regime: RegimeType = "ranging_tight";
-    if (slope > 0.03) regime = "trending_bullish";
-    else if (slope < -0.03) regime = "trending_bearish";
-    else if (volSurge > 2.0) regime = "high_volatility_choppy";
-
-    // Feature Extraction for TFJS: [atrScaled, volSurgeScaled, rsiScaled, vwapDist, timeOfDay, slope]
-    const date = new Date(current.timestamp);
-    const timeOfDay = date.getUTCHours() / 24; // 0-1
-    let cumVol = 0;
-    let cumVolPrice = 0;
-    for (let k = 0; k < window.length; k++) {
-       const typicalPrice = (window[k].high + window[k].low + window[k].close) / 3;
-       cumVol += window[k].volume;
-       cumVolPrice += typicalPrice * window[k].volume;
-    }
-    const vwap = cumVol > 0 ? cumVolPrice / cumVol : current.close;
-    const vwapDist = (current.close - vwap) / vwap; 
-    const rsiScaled = rsi / 100;
-    const volSurgeScaled = Math.min(volSurge / 5, 1);
-    const atrScaled = atr / current.close;
-    
-    const features = [atrScaled, volSurgeScaled, rsiScaled, vwapDist, timeOfDay, slope];
-
-    // Dynamic Meta-confidence scoring based on trend alignment and volume conviction (Fallback rules)
-    let metaConfidence = 0.50;
-    if (direction === "LONG" && slope > 0.01) metaConfidence += 0.12;
-    if (direction === "SHORT" && slope < -0.01) metaConfidence += 0.12;
-    if (volSurge > 1.5) metaConfidence += 0.08;
-    if (regime === "high_volatility_choppy") metaConfidence -= 0.14;
-
-    candidateTrades.push({
-      index: i,
-      direction,
-      entryPrice,
-      stopLoss,
-      takeProfit,
-      regime,
-      metaConfidence,
-      features,
-      current
-    });
+/** One coin's (or one CSV's) history. The candles must be 5 minutes apart, like live trading's. */
+export async function runRealDataWalkForward(candles: HistoricalCandle[], symbol: string = "BTC/INR"): Promise<RealDataLearningResult> {
+  const spacing = candleSpacingMs(candles.map((c) => c.timestamp));
+  if (Math.abs(spacing - LAB_INTERVAL_MS) > LAB_INTERVAL_MS * 0.1) {
+    throw new Error(
+      `The Lab trains on 5-minute candles, like the live scanner; these are ${Math.round(spacing / 60000)} minutes apart.`
+    );
   }
+  return learnFrom([{ symbol, bars: toLabBars(candles) }], { symbol, datasetName: `${symbol} (5m, ${candles.length} bars)` });
+}
 
-  // If TFJS model is provided, batch predict confidence
-  if (tfjsModel && candidateTrades.length > 0) {
-    const featuresBatch = candidateTrades.map(t => t.features);
-    const predictions = predictConfidenceBatch(tfjsModel, featuresBatch);
-    candidateTrades.forEach((t, idx) => {
-      t.metaConfidence = predictions[idx];
-    });
+/**
+ * Every coin that has real history (Binance, else Coinbase), trained
+ * together. Coins with no real history are left out, not generated.
+ */
+export async function runGlobalMarketTraining(symbols: string[], bars: number = 3000): Promise<RealDataLearningResult> {
+  const sets: LabDataset[] = [];
+  const sources = new Set<string>();
+  for (const sym of symbols) {
+    const candles = await fetchRealHistoricalCandles(sym, "5m", bars, "BINANCE");
+    if (candles.length < 200 || candles.some((c) => c.isSynthetic)) continue;
+    sets.push({ symbol: sym, bars: toLabBars(candles) });
+    if (candles[0].sourceExchange) sources.add(candles[0].sourceExchange);
   }
-
-  // Now resolve the trades
-  for (let c = 0; c < candidateTrades.length; c++) {
-    const tradeParams = candidateTrades[c];
-    let vetoed = false;
-
-    // Apply veto rules
-    if (tfjsModel) {
-      if (tradeParams.metaConfidence < minConfidenceVeto) vetoed = true;
-    } else if (customParams) {
-       if (tradeParams.regime === "high_volatility_choppy" && (tradeParams.features[1]*5) < surgeReq * 1.25) vetoed = true;
-       if (tradeParams.metaConfidence < minConfidenceVeto) vetoed = true;
-    } else if (applyLearnedVeto) {
-      if (tradeParams.regime === "high_volatility_choppy" && (tradeParams.features[1]*5) < 1.6) vetoed = true;
-      if ((tradeParams.features[1]*5) < 1.35) vetoed = true;
-      if (tradeParams.metaConfidence < 0.48) vetoed = true;
-    }
-
-    if (vetoed) continue;
-
-    // Step forward up to 24 bars to resolve trade
-    let exitPrice = tradeParams.entryPrice;
-    let exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TIMEOUT" = "TIMEOUT";
-    let exitTime = tradeParams.current.dateStr;
-
-    for (let j = tradeParams.index + 1; j < Math.min(candles.length, tradeParams.index + 25); j++) {
-      const bar = candles[j];
-      exitTime = bar.dateStr;
-
-      if (tradeParams.direction === "LONG") {
-        if (bar.low <= tradeParams.stopLoss) {
-          exitPrice = tradeParams.stopLoss;
-          exitReason = "STOP_LOSS";
-          break;
-        }
-        if (bar.high >= tradeParams.takeProfit) {
-          exitPrice = tradeParams.takeProfit;
-          exitReason = "TAKE_PROFIT";
-          break;
-        }
-      } else {
-        if (bar.high >= tradeParams.stopLoss) {
-          exitPrice = tradeParams.stopLoss;
-          exitReason = "STOP_LOSS";
-          break;
-        }
-        if (bar.low <= tradeParams.takeProfit) {
-          exitPrice = tradeParams.takeProfit;
-          exitReason = "TAKE_PROFIT";
-          break;
-        }
-      }
-
-      if (j === Math.min(candles.length - 1, tradeParams.index + 24)) {
-        exitPrice = bar.close;
-        exitReason = "TIMEOUT";
-      }
-    }
-
-    // Realistic Transaction Costs (0.1% Taker fee in/out = 0.2% total) + Slippage
-    const transactionCostPercent = 0.25; 
-    
-    let rawPnlPercent = tradeParams.direction === "LONG"
-      ? ((exitPrice - tradeParams.entryPrice) / tradeParams.entryPrice) * 100
-      : ((tradeParams.entryPrice - exitPrice) / tradeParams.entryPrice) * 100;
-      
-    const pnlPercent = rawPnlPercent - transactionCostPercent;
-    const isWin = pnlPercent > 0;
-    const pnl = Number(((pnlPercent / 100) * 5000).toFixed(2));
-
-    trades.push({
-      id: `real-${trades.length + 1}`,
-      symbol,
-      direction: tradeParams.direction,
-      entryTime: tradeParams.current.dateStr,
-      exitTime,
-      entryPrice: Number(tradeParams.entryPrice.toFixed(2)),
-      exitPrice: Number(exitPrice.toFixed(2)),
-      pnl,
-      pnlPercent: Number(pnlPercent.toFixed(2)),
-      isWin,
-      exitReason,
-      metaConfidence: tradeParams.metaConfidence,
-      regime: tradeParams.regime,
-      features: tradeParams.features
-    });
-
-    // Skip forward to prevent overlapping entries
-    // Since c is an index of candidateTrades, we should actually skip candidates that overlap.
-    // A simpler way is to skip remaining candidates whose index <= current candidate index + 4
-    while (c + 1 < candidateTrades.length && candidateTrades[c+1].index <= tradeParams.index + 4) {
-      c++;
-    }
-  }
-
-  return trades;
+  if (sets.length === 0) throw new Error("Couldn't load real 5-minute history for any coin from Binance or Coinbase. Try again later.");
+  const result = await learnFrom(sets, {
+    symbol: "GLOBAL_MODEL",
+    datasetName: `Global Unified Model (${sets.length} markets, 5m)`,
+  });
+  result.sourceExchange = [...sources].join(" + ") || "Aggregated Global";
+  return result;
 }
 
 function computeTradeMetrics(trades: RealDataBacktestTrade[]) {
@@ -863,55 +523,49 @@ function extractLessonsFromLosingTrades(
   return lessons;
 }
 
-function computeWalkForwardFolds(candles: HistoricalCandle[], customParams?: { slMultiplier: number; tpMultiplier: number; volSurgeThreshold: number; rsiThreshold: number; minConfidence: number }) {
+/** Five consecutive train/test windows over each coin's history, results pooled across coins. */
+function computeWalkForwardFolds(sets: LabDataset[], params: LabParams) {
   const foldCount = 5;
-  const foldSize = Math.floor(candles.length / foldCount);
+  const day = (b?: MarketBar) => b?.time.slice(0, 10) ?? "";
   const folds = [];
-
   for (let f = 0; f < foldCount; f++) {
-    const trainStart = Math.max(0, f * foldSize - foldSize);
-    const trainEnd = f * foldSize;
-    const testEnd = Math.min(candles.length, (f + 1) * foldSize);
-
-    const trainRange = `${candles[trainStart]?.dateStr?.slice(0, 10) || "2024-01-01"} - ${candles[trainEnd - 1]?.dateStr?.slice(0, 10) || "2024-03-01"}`;
-    const testRange = `${candles[trainEnd]?.dateStr?.slice(0, 10) || "2024-03-02"} - ${candles[testEnd - 1]?.dateStr?.slice(0, 10) || "2024-04-01"}`;
-
-    const inSampleSlice = candles.slice(trainStart, trainEnd);
-    const oosSlice = candles.slice(trainEnd, testEnd);
-
-    const inTrades = inSampleSlice.length > 25 ? simulateBreakoutStrategy(inSampleSlice, "WALK", false, customParams) : [];
-    const oosTrades = oosSlice.length > 25 ? simulateBreakoutStrategy(oosSlice, "WALK", true, customParams) : [];
-
-    let inSampleMetrics = computeTradeMetrics(inTrades);
-    let oosMetrics = computeTradeMetrics(oosTrades);
-
-    // Apply Walk-Forward Penalty for Curve Fitting:
-    // If out-of-sample Sharpe drops significantly vs in-sample, apply a degradation penalty to Sharpe/Accuracy
-    if (oosMetrics.sharpeRatio < inSampleMetrics.sharpeRatio - 0.5) {
-      oosMetrics.sharpeRatio = Math.max(0, oosMetrics.sharpeRatio - 0.3); // Curve-fitting penalty
+    const trainSets: LabDataset[] = [];
+    const testSets: LabDataset[] = [];
+    for (const d of sets) {
+      const size = Math.floor(d.bars.length / foldCount);
+      const trainStart = Math.max(0, (f - 1) * size);
+      const trainEnd = f * size;
+      trainSets.push({ symbol: d.symbol, bars: d.bars.slice(trainStart, trainEnd) });
+      testSets.push({ symbol: d.symbol, bars: d.bars.slice(trainEnd, (f + 1) * size) });
+    }
+    const inTrades = simulateAll(trainSets.filter((d) => d.bars.length > 40), { ...params, minConfidence: 0 });
+    const oosTrades = simulateAll(testSets.filter((d) => d.bars.length > 40), params);
+    const inMetrics = computeTradeMetrics(inTrades);
+    const oosMetrics = computeTradeMetrics(oosTrades);
+    // Curve-fitting penalty: out-of-sample Sharpe well below in-sample.
+    if (oosMetrics.sharpeRatio < inMetrics.sharpeRatio - 0.5) {
       oosMetrics.accuracyPercent = Math.max(0, oosMetrics.accuracyPercent - 5.0);
     }
-
-    const inSampleAcc = inTrades.length > 0 ? inSampleMetrics.accuracyPercent : Number((64 + (f % 3) * 2.5).toFixed(1));
-    const oosAcc = oosTrades.length > 0 ? oosMetrics.accuracyPercent : Number((68.5 + f * 1.5).toFixed(1));
-
+    const first = sets[0].bars;
+    const size = Math.floor(first.length / foldCount);
+    const inAcc = inTrades.length > 0 ? inMetrics.accuracyPercent : 0;
+    const oosAcc = oosTrades.length > 0 ? oosMetrics.accuracyPercent : 0;
     folds.push({
       fold: f + 1,
-      trainRange,
-      testRange,
-      inSampleAccuracy: inSampleAcc,
+      trainRange: f === 0 ? "—" : `${day(first[Math.max(0, (f - 1) * size)])} - ${day(first[f * size - 1])}`,
+      testRange: `${day(first[f * size])} - ${day(first[(f + 1) * size - 1])}`,
+      inSampleAccuracy: inAcc,
       outOfSampleAccuracy: oosAcc,
-      passed: oosAcc >= 52.0,
+      // A window with no trades tells us nothing, so it doesn't pass.
+      passed: oosTrades.length > 0 && oosAcc >= 52.0,
     });
   }
-
   return folds;
 }
 
-function generateDeterministicHistoricalBars(symbol: string, count: number): HistoricalCandle[] {
+function generateDeterministicHistoricalBars(symbol: string, count: number, intervalMs: number = 3_600_000): HistoricalCandle[] {
   const bars: HistoricalCandle[] = [];
-  const isINR = symbol.includes("INR");
-  const fx = isINR ? 85.5 : 1;
+  const fx = 85.5; // priced in rupees, like the markets the app trades
   let price = (symbol.includes("BTC") ? 64000 : symbol.includes("ETH") ? 2500 : symbol.includes("SOL") ? 145 : 1.0) * fx;
   const now = Date.now();
 
@@ -923,7 +577,7 @@ function generateDeterministicHistoricalBars(symbol: string, count: number): His
   }
 
   for (let i = count; i >= 0; i--) {
-    const timestamp = now - i * 3600000;
+    const timestamp = Math.floor(now / intervalMs) * intervalMs - i * intervalMs;
     // Multi-frequency oscillations + realistic market regime shifts (breakouts, fakeouts, whipsaws)
     const cycle1 = Math.sin(i / 18) * 0.012;
     const cycle2 = Math.cos(i / 7) * 0.009;

@@ -33,11 +33,13 @@ import { MIN_SIGNAL_BARS, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS } from "./liveMark
 import { skipReasonForRisk, type SkipReason, type SymbolScanOutcome } from "./scanOutcome";
 import { shadowFromSetup, type ShadowSignal } from "./shadowTracker";
 import { DEFAULT_MIN_CONFIDENCE, MIN_EDGE_R, type Calibrator, type ConfidenceScorer } from "./calibration";
+import { META_FEATURE_VERSION, metaFeatures } from "./metaFeatures";
 
 // A Lab model trained on generated candles says nothing about the real
 // market, so the live desk ignores it (default hurdle, no persona tuning, no
 // TF.js model) even if an older build let it be promoted.
 let warnedSyntheticPromotion = false;
+let warnedStaleModelFeatures = false;
 export { DEFAULT_MIN_CONFIDENCE, MIN_EDGE_R };
 
 /**
@@ -238,37 +240,10 @@ export async function scanSingleMarket(
     if (live) orderBook = live;
   }
 
-  // Batch Prediction Preparation
-  const candidateFeatures: number[][] = [];
-  if (tfjsModel) {
-    for (const setup of qualifiedSetups) {
-      // Build the same 6 features for TFJS Model (ATR, VolSurge, RSI, VWAP_Dist, TimeOfDay, Slope)
-      // Note: we can use setup.features values
-      const atrScaled = setup.features.atr / price;
-      const volSurgeScaled = Math.min(
-        setup.features.volumeSurgeRatio / 5,
-        1
-      );
-      const rsiScaled = setup.features.rsi / 100;
-      const vwapDist = setup.features.vwapDistancePercent / 100;
-      const date = new Date();
-      const timeOfDay = date.getUTCHours() / 24;
-
-      // estimate slope from regime
-      let slope = 0;
-      if (regime === "trending_bullish") slope = 0.05;
-      else if (regime === "trending_bearish") slope = -0.05;
-
-      candidateFeatures.push([
-        atrScaled,
-        volSurgeScaled,
-        rsiScaled,
-        vwapDist,
-        timeOfDay,
-        slope,
-      ]);
-    }
-  }
+  // The Lab model's inputs, read from the signal candle the same way the Lab
+  // and online learning compute them. Also kept on each shadow for training.
+  const signalFeatures = metaFeatures(bars);
+  const candidateFeatures: number[][] = tfjsModel ? qualifiedSetups.map(() => signalFeatures) : [];
 
   let predictions: number[] = [];
   if (tfjsModel && candidateFeatures.length > 0) {
@@ -373,7 +348,8 @@ export async function scanSingleMarket(
         candidateSkips.length > skipsBefore ? candidateSkips[candidateSkips.length - 1] : "proposed",
         candleCloseMs,
         metaScore.confidence,
-        scorer
+        scorer,
+        signalFeatures
       )
     );
 
@@ -504,7 +480,14 @@ export async function scanAllMarkets(
   const promotedModel = loadUsablePromotedModel();
   let tfjsModel: tf.LayersModel | undefined = undefined;
 
-  if (promotedModel?.hasTrainedModel) {
+  // A model trained on another version of the inputs would be fed numbers
+  // it doesn't understand, so it's left out until the Lab is rerun.
+  if (promotedModel?.hasTrainedModel && promotedModel.featureVersion !== META_FEATURE_VERSION) {
+    if (!warnedStaleModelFeatures) {
+      warnedStaleModelFeatures = true;
+      console.warn(`[Scanner] The promoted Lab model uses older inputs; retrain it in the Lab to use it live.`);
+    }
+  } else if (promotedModel?.hasTrainedModel) {
     const loaded = await loadMetaModel();
     if (loaded) {
       tfjsModel = loaded;

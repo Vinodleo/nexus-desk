@@ -9,7 +9,7 @@ import {
   type HistoricalSource,
   type RealDataLearningResult,
 } from "../../services/realDataBacktestService";
-import { SUPPORTED_SYMBOLS } from "../../services/marketDataService";
+import { liveMarketStream } from "../../services/liveMarketStreamService";
 import { Card } from "./ui";
 
 export interface LedgerLabProps {
@@ -18,9 +18,10 @@ export interface LedgerLabProps {
   onRevert: () => void;
 }
 
-const MARKETS = ["BTCINR", "ETHINR", "SOLINR", "BNBUSDT", "XRPUSDT", "AVAXUSDT"];
-const marketLabel = (m: string) => m.replace(/(INR|USDT)$/, "/$1");
-type Interval = "15m" | "1h" | "4h";
+const MARKETS = ["BTCINR", "ETHINR", "SOLINR", "XRPINR", "AVAXINR", "NEARINR", "BNBINR", "DOGEINR"];
+const marketLabel = (m: string) => m.replace(/INR$/, "/INR");
+/** Coins "Train on all coins" uses: the most traded ones the scanner watches. */
+const GLOBAL_TRAINING_COINS = 8;
 
 /** Fewer test trades than this and the candidate's win rate is mostly noise. */
 export const MIN_TEST_TRADES = 10;
@@ -67,8 +68,7 @@ const CompareRow: React.FC<{ label: string; before: string; after: string; bette
 export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted, onPromote, onRevert }) => {
   const [source, setSource] = useState<HistoricalSource>("BINANCE");
   const [market, setMarket] = useState("BTCINR");
-  const [candle, setCandle] = useState<Interval>("1h");
-  const [bars, setBars] = useState(500);
+  const [bars, setBars] = useState(3000);
   const [busy, setBusy] = useState<null | "one" | "all" | "csv">(null);
   const [result, setResult] = useState<RealDataLearningResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,17 +89,18 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
 
   const trainOne = () =>
     run("one", async () => {
-      const candles = await fetchRealHistoricalCandles(market, candle, bars, source);
+      const candles = await fetchRealHistoricalCandles(market, "5m", bars, source);
       const r = await runRealDataWalkForward(candles, market);
       const from = candles[0]?.sourceExchange || (source === "COINBASE" ? "Coinbase" : "Binance");
       r.sourceExchange = from;
       r.isSynthetic = candles.some((c) => c.isSynthetic);
       r.totalCandles = candles.length;
-      r.datasetName = `${marketLabel(market)} (${candle}, ${candles.length} bars via ${from})`;
+      r.datasetName = `${marketLabel(market)} (5m, ${candles.length} bars via ${from})`;
       return r;
     });
 
-  const trainAll = () => run("all", () => runGlobalMarketTraining(SUPPORTED_SYMBOLS.map((s) => s.symbol)));
+  const trainAll = () =>
+    run("all", () => runGlobalMarketTraining(liveMarketStream.getCryptoSymbols().slice(0, GLOBAL_TRAINING_COINS), bars));
 
   const onCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -190,7 +191,12 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
       </Card>
 
       <Card aria-label="Train" className="flex flex-col gap-3">
-        <div className="text-sm font-semibold">Train on price history</div>
+        <div>
+          <div className="text-sm font-semibold">Train on price history</div>
+          <div className="text-xs text-muted mt-0.5 leading-relaxed">
+            5-minute candles, like live trading. Trades are judged the live way: target, stop or 30 minutes, after fees.
+          </div>
+        </div>
         <div className="flex p-0.5 rounded-full bg-inset border border-line" role="group" aria-label="History source">
           {(["BINANCE", "COINBASE"] as const).map((s) => (
             <button
@@ -206,7 +212,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
             </button>
           ))}
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <Field label="Market">
             <select className={selectClass} value={market} onChange={(e) => setMarket(e.target.value)}>
               {MARKETS.map((m) => (
@@ -216,18 +222,11 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
               ))}
             </select>
           </Field>
-          <Field label="Candle">
-            <select className={selectClass} value={candle} onChange={(e) => setCandle(e.target.value as Interval)}>
-              <option value="15m">15 min</option>
-              <option value="1h">1 hour</option>
-              <option value="4h">4 hours</option>
-            </select>
-          </Field>
           <Field label="History">
             <select className={selectClass} value={bars} onChange={(e) => setBars(Number(e.target.value))}>
-              <option value={200}>200 bars</option>
-              <option value={500}>500 bars</option>
-              <option value={1000}>1,000 bars</option>
+              <option value={1000}>1,000 · 3½ days</option>
+              <option value={3000}>3,000 · 10 days</option>
+              <option value={6000}>6,000 · 3 weeks</option>
             </select>
           </Field>
         </div>
