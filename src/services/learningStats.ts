@@ -92,3 +92,53 @@ export function computeLearningStats(experiences: ExperienceVector[], startingEq
     maxDrawdownPct: Number((maxDd * 100).toFixed(2)),
   };
 }
+
+export interface WinRateBucket {
+  key: string;
+  trades: number;
+  wins: number;
+  winRatePct: number;
+}
+
+export interface LearningBreakdowns {
+  byFamily: WinRateBucket[];
+  byRegime: WinRateBucket[];
+  /** Real trades by their post-trade classification (decision quality × outcome). */
+  decisions: {
+    goodCallGoodResult: number;
+    goodCallBadLuck: number;
+    badCallLuckyWin: number;
+    badCallBadResult: number;
+  };
+}
+
+function buckets(real: ExperienceVector[], keyOf: (e: ExperienceVector) => string): WinRateBucket[] {
+  const map = new Map<string, { trades: number; wins: number }>();
+  for (const e of real) {
+    const k = keyOf(e);
+    const b = map.get(k) ?? { trades: 0, wins: 0 };
+    b.trades++;
+    if (e.outcome === "WIN") b.wins++;
+    map.set(k, b);
+  }
+  return [...map.entries()]
+    .map(([key, b]) => ({ key, ...b, winRatePct: Math.round((b.wins / b.trades) * 100) }))
+    .sort((a, b) => b.trades - a.trades || b.winRatePct - a.winRatePct);
+}
+
+/** Win rates by strategy family and market regime, real trades only. */
+export function computeLearningBreakdowns(experiences: ExperienceVector[]): LearningBreakdowns {
+  const real = experiences.filter((e) => !isSeededExperience(e) && (e.outcome === "WIN" || e.outcome === "LOSS"));
+  const count = (c: NonNullable<ExperienceVector["postClassification"]>) =>
+    real.filter((e) => e.postClassification === c).length;
+  return {
+    byFamily: buckets(real, (e) => e.family),
+    byRegime: buckets(real, (e) => e.regime),
+    decisions: {
+      goodCallGoodResult: count("good_decision_good_outcome"),
+      goodCallBadLuck: count("good_decision_bad_outcome"),
+      badCallLuckyWin: count("bad_decision_good_outcome"),
+      badCallBadResult: count("bad_decision_bad_outcome"),
+    },
+  };
+}

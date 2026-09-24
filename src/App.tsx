@@ -62,7 +62,7 @@ import { LedgerQueue } from "./components/ledger/LedgerQueue";
 import { LedgerBook } from "./components/ledger/LedgerBook";
 import { LedgerRisk } from "./components/ledger/LedgerRisk";
 import { LabTab } from "./components/LabTab";
-import { LearningTab } from "./components/LearningTab";
+import { LedgerLearning } from "./components/ledger/LedgerLearning";
 import { CommanderModal } from "./components/CommanderModal";
 import { AuthModal } from "./components/AuthModal";
 import { checkAndRunOnlineLearning } from "./services/onlineLearningService";
@@ -1695,7 +1695,7 @@ export default function App() {
   ).length;
 
   // Tabs already rebuilt in the Private Ledger design.
-  const isLedgerTab = activeTab === "floor" || activeTab === "queue" || activeTab === "book";
+  const isLedgerTab = activeTab !== "lab";
   // Match the browser chrome (status bar, overscroll) to the tab's design.
   useEffect(() => {
     const colour = isLedgerTab ? "#F6F3EE" : "#09090b";
@@ -1888,25 +1888,13 @@ export default function App() {
           />
         )}
 
-        {/* 4. Learning Tab View (AI Agent Self-Approval & Continuous Memory Synthesis) */}
         {activeTab === "learning" && (
-          <LearningTab
+          <LedgerLearning
             experiences={experiences}
-            decisionMode={decisionMode}
-            onDecisionModeChange={setDecisionMode}
-            selfApprovedCount={selfApprovedCount}
-            selfApprovedWins={selfApprovedWins}
-            selfApprovedLosses={selfApprovedLosses}
-            learnedAccuracy={learnedAccuracy}
-            onReindexMemory={() => {
-              setExecutionToast({
-                id: `toast-${Date.now()}`,
-                title: "Memory Vectors Re-indexed",
-                message: `${experiences.length} experience vectors re-clustered in normalized Euclidean feature space.`,
-                type: "SUCCESS",
-                timestamp: new Date().toLocaleTimeString(),
-              });
-            }}
+            autopilotTrades={selfApprovedWins + selfApprovedLosses}
+            autopilotWins={selfApprovedWins}
+            promotedLabModel={promotedLabModel}
+            onOpenLab={() => setActiveTab("lab")}
           />
         )}
 
