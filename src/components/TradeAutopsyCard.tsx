@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { HistoricalTrade, TradeAutopsy } from "../types";
-import { BrainCircuit, CheckCircle2, Loader2, Target, AlertTriangle, TrendingUp, TrendingDown, RefreshCcw } from "lucide-react";
+import { HistoricalTrade } from "../types";
+import { Sparkles, CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import { apiFetch } from "../services/apiClient";
 
 interface TradeAutopsyCardProps {
@@ -8,6 +8,8 @@ interface TradeAutopsyCardProps {
   onUpdateTrade?: (trade: HistoricalTrade) => void;
 }
 
+// AI post-mortem for a closed trade: generated on request by the server's
+// Gemini agent, then stored on the trade.
 export const TradeAutopsyCard: React.FC<TradeAutopsyCardProps> = ({ trade, onUpdateTrade }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,15 +29,7 @@ export const TradeAutopsyCard: React.FC<TradeAutopsyCardProps> = ({ trade, onUpd
       }
 
       const result = await response.json();
-      
-      const newTrade = {
-        ...trade,
-        autopsy: result.autopsy || result
-      };
-
-      if (onUpdateTrade) {
-        onUpdateTrade(newTrade);
-      }
+      onUpdateTrade?.({ ...trade, autopsy: result.autopsy || result });
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to generate autopsy");
@@ -46,77 +40,57 @@ export const TradeAutopsyCard: React.FC<TradeAutopsyCardProps> = ({ trade, onUpd
 
   if (!trade.autopsy) {
     return (
-      <div className="mt-3 pt-3 border-t border-[#22222a]">
+      <div className="flex flex-col gap-1">
         <button
+          type="button"
           onClick={handleGenerateAutopsy}
           disabled={isGenerating}
-          className="flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded-lg bg-[#14141d] border border-[#2c2c36] text-stone-300 hover:text-emerald-300 hover:border-emerald-900/50 hover:bg-[#15201d] transition-all disabled:opacity-50"
+          className="self-start min-h-10 px-4 rounded-full border border-line bg-surface text-[13px] font-semibold flex items-center gap-2 cursor-pointer disabled:opacity-60"
         >
-          {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BrainCircuit className="w-3.5 h-3.5" />}
-          {isGenerating ? "Analyzing Trade Patterns..." : "Generate AI Post-Mortem"}
+          {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-accent" />}
+          {isGenerating ? "Reviewing the trade…" : "Explain this trade"}
         </button>
-        {error && <div className="text-rose-400 text-[10px] mt-1 ml-1">{error}</div>}
+        {error && <div className="text-xs text-loss">{error}</div>}
       </div>
     );
   }
 
   const { autopsy } = trade;
-  
   const isGoodDecision = autopsy.classification.startsWith("good_decision");
-  const isGoodOutcome = autopsy.classification.endsWith("good_outcome");
+  const delta = autopsy.metaModelCalibrationDelta;
 
   return (
-    <div className="mt-3 pt-3 border-t border-[#22222a]">
-      <div className="bg-[#121217] rounded-xl border border-[#25252e] overflow-hidden">
-        <div className="flex items-center justify-between p-2.5 bg-[#181820] border-b border-[#25252e]">
-          <div className="flex items-center gap-2 text-stone-200 text-xs font-mono font-medium">
-            <BrainCircuit className="w-3.5 h-3.5 text-blue-400" />
-            AI Trade Autopsy
-          </div>
-          <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-semibold ${
-            isGoodDecision 
-              ? 'bg-emerald-950/50 text-emerald-300 border border-emerald-800/50' 
-              : 'bg-amber-950/50 text-amber-300 border border-amber-800/50'
-          }`}>
-            {isGoodDecision ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-            {isGoodDecision ? "Sound Process" : "Flawed Process"}
-          </div>
+    <div className="rounded-xl bg-inset p-3.5 flex flex-col gap-2.5 text-[13px] leading-relaxed">
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex items-center gap-1.5 font-semibold">
+          <Sparkles className="w-4 h-4 text-accent" />
+          Autopsy
+        </span>
+        <span className={`flex items-center gap-1 text-xs font-semibold ${isGoodDecision ? "text-gain" : "text-warn"}`}>
+          {isGoodDecision ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+          {isGoodDecision ? "Sound decision" : "Flawed decision"}
+        </span>
+      </div>
+      <p className="m-0">{autopsy.autopsySummary}</p>
+      <div>
+        <div className="text-xs text-muted">Root cause</div>
+        <p className="m-0">{autopsy.rootCause}</p>
+      </div>
+      {autopsy.learningTags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {autopsy.learningTags.map((tag, idx) => (
+            <span key={idx} className="px-2 py-0.5 rounded-full bg-surface border border-line text-xs text-muted">
+              {tag}
+            </span>
+          ))}
         </div>
-        
-        <div className="p-3 space-y-3">
-          <p className="text-xs font-sans text-stone-300 leading-relaxed italic">
-            "{autopsy.autopsySummary}"
-          </p>
-          
-          <div className="space-y-2">
-            <div>
-              <span className="text-[10px] font-mono text-stone-500 uppercase">Root Cause Analysis</span>
-              <p className="text-xs font-sans text-stone-300 mt-0.5">{autopsy.rootCause}</p>
-            </div>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-              <div>
-                <span className="text-[10px] font-mono text-stone-500 uppercase">Learning Tags</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {autopsy.learningTags.map((tag, idx) => (
-                    <span key={idx} className="px-1.5 py-0.5 rounded-sm bg-[#1e1e26] text-stone-400 text-[9px] font-mono">
-                      #{tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <span className="text-[10px] font-mono text-stone-500 uppercase">Condition Adjustments</span>
-                <div className="flex items-center gap-1.5 mt-1 text-xs font-mono">
-                  <RefreshCcw className="w-3.5 h-3.5 text-blue-400" />
-                  <span className={autopsy.metaModelCalibrationDelta > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                    {autopsy.metaModelCalibrationDelta > 0 ? '+' : ''}{(autopsy.metaModelCalibrationDelta * 100).toFixed(1)}% Confidence Delta
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+      )}
+      <div className="text-xs text-muted">
+        Confidence adjustment for similar setups:{" "}
+        <span className={`font-semibold ${delta > 0 ? "text-gain" : delta < 0 ? "text-loss" : ""}`}>
+          {delta > 0 ? "+" : ""}
+          {(delta * 100).toFixed(1)}%
+        </span>
       </div>
     </div>
   );

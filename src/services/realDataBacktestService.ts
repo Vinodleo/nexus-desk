@@ -411,7 +411,9 @@ export async function runGlobalMarketTraining(
     distilledLessons: failureLessons,
     folds,
     sourceExchange: "Aggregated Global",
-    isSynthetic: false,
+    // Any market whose history couldn't be fetched fell back to generated
+    // bars; a result built on those must not be promotable.
+    isSynthetic: allCandlesList.some((c) => c.isSynthetic),
     totalCandles: totalCandles,
     datasetName: `Global Unified Model (${Object.keys(allInSampleCandles).length} Markets)`,
     optimizedParameters: {
