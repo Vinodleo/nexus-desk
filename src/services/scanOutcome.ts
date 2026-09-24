@@ -14,6 +14,8 @@ export type SkipReason =
   | "no_shorting"
   | "weaker_setup"
   | "outvoted"
+  | "market_down"
+  | "no_exit_edge"
   | "risk_limits";
 
 export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
@@ -30,6 +32,8 @@ export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
   no_shorting: "Short setup: CoinDCX spot can't short",
   weaker_setup: "A better setup on the same coin was chosen",
   outvoted: "Outvoted by traders on the other side",
+  market_down: "Bitcoin is falling: no coin longs",
+  no_exit_edge: "This trader loses money with your exits lately",
   risk_limits: "Blocked by a risk limit",
 };
 

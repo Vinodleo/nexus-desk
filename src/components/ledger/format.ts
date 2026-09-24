@@ -1,7 +1,18 @@
 // Number formatting for the Private Ledger screens. Indian digit grouping
 // throughout, and a real minus sign (−) so negative amounts line up.
 
+import type { HistoricalTrade } from "../../types";
+
 const MINUS = "−";
+
+/** How a trade closed, in words. */
+export const EXIT_LABEL: Record<HistoricalTrade["exitReason"], string> = {
+  TAKE_PROFIT: "Take profit",
+  STOP_LOSS: "Stop loss",
+  TRAILING_STOP: "Trailing stop",
+  MANUAL: "Closed by you",
+  EXPIRY_TIME: "Time limit",
+};
 
 function grouped(value: number, decimals: number): string {
   return Math.abs(value).toLocaleString("en-IN", {

@@ -6,7 +6,7 @@ import { applyGuardianTick, isPastHoldingTime, mergeSyncedGuardState } from "./g
 import { getLivePosition, isOpenLivePosition, requestLiveExit } from "./liveExecution";
 import { broadcastToUser } from "./realtime";
 import { computeClosedTradePnl } from "../src/shared/tradeMath";
-import { blendedExitPrice } from "../src/shared/exitRules";
+import { blendedExitPrice, riskAtOpen } from "../src/shared/exitRules";
 
 import { validate, syncPositionsBody, closedEventsQuery } from "./validation";
 
@@ -73,6 +73,7 @@ export interface DaemonClosedTrade {
   userId?: string;
   isLiveOrder?: boolean;
   isSelfApproved?: boolean;
+  riskAtOpen?: number;
   stopAtExit?: number;
   fillAtExit?: number;
 }
@@ -342,6 +343,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     userId: pos.userId,
     isLiveOrder: !!pos.isLiveOrder,
     isSelfApproved: pos.isSelfApproved,
+    riskAtOpen: riskAtOpen(pos),
     stopAtExit: pos.stopLoss,
     fillAtExit: exitPrice,
   };

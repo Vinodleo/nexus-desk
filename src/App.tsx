@@ -72,10 +72,11 @@ import {
 } from "./utils/audioFeedback";
 import { apiFetch } from "./services/apiClient";
 import { computeClosedTradePnl } from "./shared/tradeMath";
-import { blendedExitPrice, holdingDecision, openQuantity, planPartialQuantity } from "./shared/exitRules";
+import { blendedExitPrice, holdingDecision, openQuantity, planPartialQuantity, riskAtOpen } from "./shared/exitRules";
 import { ruleFor } from "./services/marketRulesStore";
 import { daemonEventToTrade, type DaemonCloseEvent } from "./services/daemonEvents";
 import { LOSS_STREAK_LIMIT, cooldownUntil, lossStreak } from "./services/lossGuards";
+import { getExpectancyTable, marketTrendFrom } from "./services/exitExpectancy";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { adoptServerOpened, useGuardianSync } from "./hooks/useGuardianSync";
@@ -827,6 +828,7 @@ export default function App() {
         holdingDurationMinutes: durationMins,
         isSelfApproved: pos.isSelfApproved,
         stopAtExit: pos.stopLoss,
+        riskAtOpen: riskAtOpen(pos),
         fillAtExit: exitPrice,
       };
 
@@ -1387,6 +1389,13 @@ export default function App() {
       quarantines: symbolQuarantinesRef.current,
       getOrderBook: fetchLiveOrderBook,
       eventWindow: eventWindowRef.current,
+      // Each trader's last day with your exits (remeasured hourly), and Bitcoin's trend.
+      exitExpectancy: getExpectancyTable(
+        liveMarketStream.getCryptoSymbols(),
+        (s) => liveMarketStream.getBars(s),
+        trailProfileRef.current
+      ),
+      marketTrend: marketTrendFrom(liveMarketStream.getBars("BTC/INR"), liveMarketStream.getMacroRegime("BTC/INR")),
       calibrators: {
         heuristic: buildCalibrator(shadowStore.all(), "heuristic"),
         tfjs: buildCalibrator(shadowStore.all(), "tfjs"),

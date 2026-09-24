@@ -46,6 +46,13 @@ export interface ExitState {
   isLiveOrder?: boolean;
 }
 
+/** Rupees a position had at stake when it opened: 1R. Undefined without its first stop. */
+export function riskAtOpen(p: Pick<ExitState, "entryPrice" | "initialStopLoss" | "quantity">): number | undefined {
+  if (p.initialStopLoss === undefined) return undefined;
+  const risk = Math.abs(p.entryPrice - p.initialStopLoss) * p.quantity;
+  return risk > 0 ? Number(risk.toFixed(2)) : undefined;
+}
+
 /** Quantity still open. */
 export function openQuantity(p: Pick<ExitState, "quantity" | "bankedQuantity">): number {
   return Math.max(0, p.quantity - (p.bankedQuantity ?? 0));

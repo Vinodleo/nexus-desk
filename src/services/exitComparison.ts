@@ -2,6 +2,7 @@ import type { MarketBar, StrategySetup } from "../types";
 import { bankPartial, holdingDecision, partialDue, type ExitState } from "../shared/exitRules";
 import { TRAIL_PROFILES, isTrendRunner, updateTrailingStop, type TrailProfileId, type TrailState } from "../shared/trailingStop";
 import { panelSetupsOnHistory, LAB_INTERVAL_MS } from "./labSimulation";
+import { isNseSymbol, nseRoundTripRate } from "../shared/nse";
 
 // Which trailing-stop profile makes the most money: every setup the live
 // trader panel would have taken on history, played out candle by candle
@@ -12,8 +13,9 @@ import { panelSetupsOnHistory, LAB_INTERVAL_MS } from "./labSimulation";
 // a candle's dip is checked against the stop before its rise can help, and
 // a gap through the stop fills at the candle's open.
 
-/** Fees in and out, as a share of the entry price. */
+/** Fees in and out, as a share of the entry price: CoinDCX's, or Angel One's for a ₹10,000 stock trade. */
 const ROUND_TRIP_FEE = 0.001;
+const feeFor = (symbol: string) => (isNseSymbol(symbol) ? nseRoundTripRate(10_000) : ROUND_TRIP_FEE);
 
 export interface ExitResult {
   /** Net result in multiples of the initial risk, after fees. */
@@ -33,7 +35,9 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
   if (!(risk > 0)) return null;
   const dir = setup.direction === "LONG" ? 1 : -1;
   const openMs = (bars[i].timestampMs as number) + LAB_INTERVAL_MS;
+  const fee = feeFor(setup.symbol);
   const p: SimPosition = {
+    symbol: setup.symbol,
     direction: setup.direction,
     entryPrice: entry,
     stopLoss: setup.stopLoss,
@@ -58,7 +62,7 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
     const banked = p.bankedQuantity ?? 0;
     const gainPerUnit =
       ((banked > 0 && p.bankedPrice !== undefined ? (p.bankedPrice - entry) * banked : 0) + (exit - entry) * (p.quantity - banked)) * dir / p.quantity;
-    return { r: (gainPerUnit - entry * ROUND_TRIP_FEE) / risk, reason };
+    return { r: (gainPerUnit - entry * fee) / risk, reason };
   };
   const stopReason = (): ExitResult["reason"] => (p.trailActive || (p.stopLoss - entry) * dir >= 0 ? "TRAILING_STOP" : "STOP_LOSS");
 

@@ -20,6 +20,10 @@ import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardi
 import { broadcastToUser, currentPrices } from "../realtime";
 import { dailyPnlToday, deskFirstSeenAt, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
 import { runServerAutopilot, serverQuarantines } from "./autopilot";
+import { getExpectancyTable, marketTrendFrom } from "../../src/services/exitExpectancy";
+
+/** Bitcoin: its trend decides whether coin longs are taken, so its candles are always kept. */
+const MARKET_SYMBOL = "BTC/INR";
 import { ServerMarketData } from "./marketData";
 
 // The scanner, run on the server after every 5-minute candle close, so coins
@@ -124,6 +128,11 @@ export function stockUniverse(): string[] {
   return angelConfigured() ? NSE_SYMBOLS : [];
 }
 
+/** Everything with candles to measure traders on: coins, and stocks (whose candles are kept overnight). */
+function measuredSymbols(): string[] {
+  return [...universe, ...stockUniverse()];
+}
+
 /** The coins, plus the stocks while NSE is open. */
 function scanList(now: number): string[] {
   return isNseOpen(now) ? [...universe, ...stockUniverse()] : universe;
@@ -163,6 +172,9 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     cryptoSymbols: universe,
     equitySymbols: stockUniverse(),
     now,
+    // Each trader's last day with your exits; remeasured hourly.
+    exitExpectancy: getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk.trailProfile, now),
+    marketTrend: marketTrendFrom(market.getBars(MARKET_SYMBOL), market.macroRegimes()[MARKET_SYMBOL]),
     barsMap,
     activePositions: [...daemonPositions.values()].filter((p) => p.userId === uid).map(asPosition),
     dailyRealizedPnl: serverDailyPnl(uid, desk, now),
@@ -201,10 +213,10 @@ async function refreshMarket(now: number): Promise<void> {
   const followed = [...users.values()].flatMap((u) => u.shadows.filter((s) => s.status === "open").map((s) => s.symbol));
   const open = isNseOpen(now);
   // Stocks keep their candles overnight; they're fetched only while NSE is open.
-  market.keepOnly([...new Set([...universe, ...stockUniverse(), ...followed])]);
-  const symbols = [...new Set([...scanList(now), ...followed])].filter((sym) => open || !isNseSymbol(sym));
+  market.keepOnly([...new Set([...universe, ...stockUniverse(), ...followed, MARKET_SYMBOL])]);
+  const symbols = [...new Set([...scanList(now), ...followed, MARKET_SYMBOL])].filter((sym) => open || !isNseSymbol(sym));
   await market.refresh(symbols, now);
-  await market.refreshMacro(scanList(now), now);
+  await market.refreshMacro([...new Set([...scanList(now), MARKET_SYMBOL])], now);
 }
 
 /** One cycle: fresh candles, then every scanning user's scan and shadow tracking. */
@@ -277,6 +289,12 @@ export function scannerStatus(uid: string, now: number = Date.now()) {
 
 export function reportsSince(uid: string, since: number): ServerScanReport[] {
   return (users.get(uid)?.reports ?? []).filter((r) => r.at > since);
+}
+
+/** Each trader's recent results with this user's exits (measured on the next scan if not yet). */
+export function exitEdgeTable(uid: string, now: number = Date.now()) {
+  const desk = getDeskState(uid);
+  return universe.length > 0 ? getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk?.trailProfile, now) : null;
 }
 
 export function shadowsFor(uid: string): ShadowSignal[] {
