@@ -4,7 +4,6 @@ import {
   ExperienceVector,
   FailureInjectionState,
   MarketBar,
-  OrderBook,
   Position,
   HistoricalTrade,
   RegimeType,
@@ -14,12 +13,6 @@ import {
   ExecutionToast,
   RiskCalculation,
 } from "./types";
-import {
-  generateInitialBars,
-  generateNextBar,
-  generateOrderBook,
-  classifyRegime,
-} from "./services/marketDataService";
 import {
   generateInitialExperienceDatabase,
   retrieveSimilarExperiences,
@@ -45,8 +38,10 @@ import {
   saveStoredQuarantines,
   SymbolQuarantineRecord,
 } from "./services/storagePersistenceService";
-import { scanAllMarkets } from "./services/marketScannerService";
-import { DEFAULT_RISK_POLICY } from "./services/riskEngine";
+import { scanAllMarkets, type FullScanReport } from "./services/marketScannerService";
+import { addSkipCounts } from "./services/scanOutcome";
+import { priceEntry } from "./services/entryPricing";
+import { useRiskPolicy } from "./hooks/useRiskPolicy";
 import { liveMarketStream } from "./services/liveMarketStreamService";
 import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
 
@@ -87,6 +82,15 @@ import {
 } from "./services/positionTick";
 import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 
+// ATR recorded on a position for its trailing-stop rules. The indicator used
+// to be floored at 0.3% of price, and the exit rules were tuned with that
+// floor, so it's kept here until the exits are reworked.
+function atrForExits(proposal: TradeProposal): number {
+  const bars = liveMarketStream.getBars(proposal.symbol);
+  const atr = bars && bars.length > 0 ? bars[bars.length - 1].atr : undefined;
+  return Math.max(atr ?? 0, proposal.setup.entryPrice * 0.003);
+}
+
 export default function App() {
   const { userRole, logSecurityAudit, currentUser, loading } = useAuth();
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
@@ -95,9 +99,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("floor");
   const [decisionMode, setDecisionMode] =
     useState<DecisionMode>("AUTO_WITHIN_LIMITS");
-  const [tapeMode, setTapeMode] = useState<"SIMULATED TAPE" | "LIVE TAPE">(
-    "LIVE TAPE"
-  );
   const [executionToast, setExecutionToast] = useState<ExecutionToast | null>(
     null
   );
@@ -150,41 +151,12 @@ export default function App() {
 
   // Core Market State
   const [currentSymbol, setCurrentSymbol] = useState<string>("BTC/INR");
-  const [bars, setBars] = useState<MarketBar[]>([]);
-  const [orderBook, setOrderBook] = useState<OrderBook>(() =>
-    generateOrderBook(77344.98)
-  );
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
-  const [isStreamReady, setIsStreamReady] = useState<boolean>(false);
 
   useEffect(() => {
-    // Initialize Live Stream Once
-    if (!liveMarketStream.isReady) {
-      liveMarketStream.initialize().then(() => {
-        setIsStreamReady(true);
-      });
-    } else {
-      setIsStreamReady(true);
-    }
+    // Start the market data feed once (candles, prices, market rules).
+    if (!liveMarketStream.isReady) void liveMarketStream.initialize();
   }, []);
-
-  useEffect(() => {
-    if (!isStreamReady) return;
-
-    // Subscribe to stream updates
-    const unsubscribe = liveMarketStream.subscribe(() => {
-      const activeBars = liveMarketStream.getBars(currentSymbol);
-      if (activeBars) {
-        setBars([...activeBars]);
-      }
-    });
-
-    // Populate immediately
-    const initialBars = liveMarketStream.getBars(currentSymbol);
-    if (initialBars) setBars([...initialBars]);
-
-    return unsubscribe;
-  }, [isStreamReady, currentSymbol]);
 
   // Background Trading Loop & Web Worker Heartbeat Reference
   const lastStepTimeRef = useRef<number>(Date.now());
@@ -479,26 +451,30 @@ export default function App() {
     simulateConflictingSignals: false,
   });
 
+  // Equity the desk trades against: the CoinDCX balance in live mode, the
+  // paper book otherwise. Trade sizes and limits are worked out from it.
+  const effectiveEquity =
+    tradingMode === "LIVE_COINDCX" && coinDcxBalance.totalInr > 0 ? coinDcxBalance.totalInr : equity;
+  const { policy: riskPolicy, limits: riskLimits, setLimits: setRiskLimits } = useRiskPolicy(effectiveEquity);
+
   const currentRiskCalculation = useMemo<RiskCalculation>(() => {
-    const isLive = tradingMode === "LIVE_COINDCX";
-    const effectiveEquity = isLive && coinDcxBalance.totalInr > 0 ? coinDcxBalance.totalInr : equity;
     const currentExposure = activePositions.reduce((acc, p) => acc + (p.entryPrice * p.quantity), 0);
     const exposureFraction = effectiveEquity > 0 ? currentExposure / effectiveEquity : 0;
-    const passed = !killSwitchActive && !failureState.globalKillSwitchActive && dailyRealizedPnl > -DEFAULT_RISK_POLICY.hardDailyLossLimit;
+    const passed = !killSwitchActive && !failureState.globalKillSwitchActive && dailyRealizedPnl > -riskPolicy.hardDailyLossLimit;
 
     return {
       equity: effectiveEquity,
-      maxRiskPerTradeFraction: DEFAULT_RISK_POLICY.maxRiskFraction,
-      hardDailyLossLimit: DEFAULT_RISK_POLICY.hardDailyLossLimit,
+      maxRiskPerTradeFraction: riskPolicy.maxRiskFraction,
+      hardDailyLossLimit: riskPolicy.hardDailyLossLimit,
       currentDailyLoss: Math.abs(Math.min(0, dailyRealizedPnl)),
       portfolioExposureFraction: exposureFraction,
-      maxAllowedExposureFraction: DEFAULT_RISK_POLICY.maxAllowedExposureFraction,
+      maxAllowedExposureFraction: riskPolicy.maxAllowedExposureFraction,
       openPositionCount: activePositions.length,
-      maxSimultaneousPositions: DEFAULT_RISK_POLICY.maxSimultaneousPositions,
+      maxSimultaneousPositions: riskPolicy.maxSimultaneousPositions,
       fractionalKellyFraction: 0.25,
       recommendedPositionSizeUnits: 0,
       recommendedDollarExposure: 0,
-      riskDollars: effectiveEquity * DEFAULT_RISK_POLICY.maxRiskFraction,
+      riskDollars: effectiveEquity * riskPolicy.maxRiskFraction,
       passedAllChecks: passed,
       rejectionReason: !passed
         ? (killSwitchActive || failureState.globalKillSwitchActive)
@@ -506,7 +482,7 @@ export default function App() {
           : "Daily Loss Limit Exceeded"
         : undefined,
     };
-  }, [tradingMode, coinDcxBalance.totalInr, equity, activePositions, killSwitchActive, failureState.globalKillSwitchActive, dailyRealizedPnl]);
+  }, [effectiveEquity, riskPolicy, activePositions, killSwitchActive, failureState.globalKillSwitchActive, dailyRealizedPnl]);
 
   // Trade Proposal Queue matching Screenshot 4 & 6
   const [proposalQueue, setProposalQueue] = useState<TradeProposal[]>([]);
@@ -932,8 +908,7 @@ export default function App() {
         return;
       }
 
-      const bars = liveMarketStream.getBars(proposal.symbol);
-      const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
+      const currentAtr = atrForExits(proposal);
 
       const isTrendOrSwing =
         proposal.setup.family === "trend_following" ||
@@ -971,14 +946,39 @@ export default function App() {
         return;
       }
 
+      // Enter at the live price, not the (older) candle close the signal
+      // came from; skip it if price has already run too far.
+      const priced = priceEntry(
+        proposal.setup,
+        liveMarketStream.getLastPrice(proposal.symbol),
+        units,
+        proposal.riskCalc.riskDollars
+      );
+      if (!priced.ok) {
+        inFlightProposalIds.current.delete(proposal.id);
+        setProposalQueue((prev) =>
+          prev.map((p) => (p.id === proposal.id ? { ...p, status: "EXPIRED", deferralReason: priced.reason } : p))
+        );
+        setExecutionToast({
+          id: `toast-${Date.now()}`,
+          title: `${proposal.symbol} skipped: price moved`,
+          message: priced.reason,
+          type: "INFO",
+          timestamp: new Date().toLocaleTimeString(),
+        });
+        return;
+      }
+      const entryPrice = priced.entryPrice;
+      const quantity = priced.units;
+
       const newPosition: Position = {
         id: `pos-${Date.now().toString().slice(-6)}`,
         symbol: proposal.symbol,
         direction: proposal.setup.direction,
         setupName: proposal.setup.name,
-        entryPrice: proposal.setup.entryPrice,
-        currentPrice: proposal.setup.entryPrice,
-        quantity: units,
+        entryPrice,
+        currentPrice: entryPrice,
+        quantity,
         stopLoss: proposal.setup.stopLoss,
         takeProfit: proposal.setup.takeProfit,
         initialTakeProfit: proposal.setup.takeProfit,
@@ -988,8 +988,8 @@ export default function App() {
         expectedHoldingTimeMinutes: proposal.setup.horizon === "swing" ? 4320 : 30,
         metaConfidence: proposal.metaScore.confidence,
         isSelfApproved: isAutonomousSelfApproved,
-        highestPrice: proposal.setup.entryPrice,
-        lowestPrice: proposal.setup.entryPrice,
+        highestPrice: entryPrice,
+        lowestPrice: entryPrice,
         trailActive: false,
         atrAtEntry: currentAtr,
         family: proposal.setup.family,
@@ -1005,8 +1005,8 @@ export default function App() {
         body: JSON.stringify({
           symbol: proposal.symbol,
           side: proposal.setup.direction,
-          quantity: units,
-          price: proposal.setup.entryPrice,
+          quantity,
+          price: entryPrice,
           orderType: "MARKET",
           isPaperTrade: !isLiveExecution,
           confirmLiveOrder: isLiveExecution,
@@ -1018,10 +1018,16 @@ export default function App() {
           if (isLiveExecution) {
             if (tradeData.success) {
               if (tradeData.orderId) {
+                // The server may round the size to CoinDCX's quantity step.
+                const sentQty = Number(tradeData.executedQuantity);
                 setActivePositions((prev) =>
                   prev.map((p) =>
                     p.id === newPosition.id
-                      ? { ...p, exchangeOrderId: tradeData.orderId }
+                      ? {
+                          ...p,
+                          exchangeOrderId: tradeData.orderId,
+                          ...(sentQty > 0 ? { quantity: sentQty } : {}),
+                        }
                       : p
                   )
                 );
@@ -1075,31 +1081,26 @@ export default function App() {
         message: isAutonomousSelfApproved
           ? `Agent Swarm self-approved ${proposal.symbol} with ${Math.round(
               proposal.metaScore.calibratedWinProbability * 100
-            )}% P(Win) and +${(
-              proposal.evAssessment.expectedNetValue / 100
-            ).toFixed(2)}R EV. Executed into paper book.`
-          : `${proposal.setup.direction} ${units} units of ${
-              proposal.symbol
-            } @ ₹${proposal.setup.entryPrice.toFixed(
-              2
-            )}. Stop Loss & Take Profit limits active.`,
+            )}% P(Win). Entered at ₹${entryPrice} with ${priced.rewardToRisk.toFixed(2)}R to the target.`
+          : `${proposal.setup.direction} ${quantity} ${proposal.symbol} at ₹${entryPrice}. Stop and target are set.`,
         type: "SUCCESS",
         timestamp: new Date().toLocaleTimeString(),
       });
 
       logSecurityAudit(
         "ORDER_APPROVED",
-        `${isAutonomousSelfApproved ? "[AI SELF-APPROVED]" : "Operator Approved"} ${proposal.setup.direction} ${proposal.symbol} @ ₹${proposal.setup.entryPrice}`
+        `${isAutonomousSelfApproved ? "[AI SELF-APPROVED]" : "Operator Approved"} ${proposal.setup.direction} ${proposal.symbol} @ ₹${entryPrice}`
       );
 
       if (isAutonomousSelfApproved) {
         sendAlertNotification(`■ [Nexus Desk] Autonomous Trade: ${proposal.symbol}`, {
-          body: `${proposal.setup.direction} @ ₹${proposal.setup.entryPrice} (${Math.round(proposal.metaScore.calibratedWinProbability * 100)}% Win Probability).`,
+          body: `${proposal.setup.direction} @ ₹${entryPrice} (${Math.round(proposal.metaScore.calibratedWinProbability * 100)}% Win Probability).`,
         });
       }
 
       if (!isAutonomousSelfApproved) {
-        setActiveTab("book");
+        // Open positions live on the Floor.
+        setActiveTab("floor");
       }
     },
     [killSwitchActive, userRole, logSecurityAudit, tradingMode, coinDcxStatus, fetchCoinDcxBalance]
@@ -1127,7 +1128,7 @@ export default function App() {
       claimable.forEach((p) => inFlightProposalIds.current.add(p.id));
       proposalsToApprove = claimable;
 
-      const policy = DEFAULT_RISK_POLICY;
+      const policy = riskPolicy;
       const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
 
       // Seed running counters from the CURRENT live book, not the scan-time snapshot each
@@ -1156,6 +1157,7 @@ export default function App() {
 
       const accepted: TradeProposal[] = [];
       const deferred: { proposal: TradeProposal; reason: string }[] = [];
+      const pricedById = new Map<string, { entryPrice: number; units: number }>();
 
       for (const proposal of proposalsToApprove) {
         const units = proposal.riskCalc.recommendedPositionSizeUnits;
@@ -1194,8 +1196,19 @@ export default function App() {
           continue;
         }
 
-        const addedExposure = units * proposal.setup.entryPrice;
-        const exposureFractionIfAdded = (runningExposure + addedExposure) / equity;
+        // Enter at the live price; skip it if price has already run too far.
+        const priced = priceEntry(
+          proposal.setup,
+          liveMarketStream.getLastPrice(proposal.symbol),
+          units,
+          proposal.riskCalc.riskDollars
+        );
+        if (!priced.ok) {
+          deferred.push({ proposal, reason: priced.reason });
+          continue;
+        }
+        const addedExposure = priced.units * priced.entryPrice;
+        const exposureFractionIfAdded = (runningExposure + addedExposure) / policy.equity;
 
         const wouldExceedPositions =
           runningPositionCount + 1 > policy.maxSimultaneousPositions;
@@ -1226,6 +1239,7 @@ export default function App() {
         }
 
         accepted.push(proposal);
+        pricedById.set(proposal.id, { entryPrice: priced.entryPrice, units: priced.units });
         runningPositionCount += 1;
         runningExposure += addedExposure;
         runningHourlyAutopilotCount += 1;
@@ -1248,10 +1262,9 @@ export default function App() {
       if (accepted.length === 0) return;
 
       const newPositions: Position[] = accepted.map((proposal, index) => {
-        const units = proposal.riskCalc.recommendedPositionSizeUnits;
+        const { entryPrice, units } = pricedById.get(proposal.id)!;
 
-        const bars = liveMarketStream.getBars(proposal.symbol);
-        const currentAtr = (bars && bars.length > 0) ? (bars[bars.length - 1].atr || proposal.setup.entryPrice * 0.005) : proposal.setup.entryPrice * 0.005;
+        const currentAtr = atrForExits(proposal);
 
         const isTrendOrSwing =
           proposal.setup.family === "trend_following" ||
@@ -1263,8 +1276,8 @@ export default function App() {
           symbol: proposal.symbol,
           direction: proposal.setup.direction,
           setupName: proposal.setup.name,
-          entryPrice: proposal.setup.entryPrice,
-          currentPrice: proposal.setup.entryPrice,
+          entryPrice,
+          currentPrice: entryPrice,
           quantity: units,
           stopLoss: proposal.setup.stopLoss,
           takeProfit: proposal.setup.takeProfit,
@@ -1275,8 +1288,8 @@ export default function App() {
           expectedHoldingTimeMinutes: proposal.setup.horizon === "swing" ? 4320 : 30,
           metaConfidence: proposal.metaScore.confidence,
           isSelfApproved: true,
-          highestPrice: proposal.setup.entryPrice,
-          lowestPrice: proposal.setup.entryPrice,
+          highestPrice: entryPrice,
+          lowestPrice: entryPrice,
           trailActive: false,
           atrAtEntry: currentAtr,
           family: proposal.setup.family,
@@ -1301,12 +1314,6 @@ export default function App() {
         )
       );
 
-      // Update telemetry
-      setSampleTelemetry((prev) => ({
-        ...prev,
-        selectedCount: prev.selectedCount + accepted.length,
-      }));
-
       setSelfApprovedCount((prev) => prev + accepted.length);
 
       playTradeExecutionSound();
@@ -1325,7 +1332,7 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString(),
       });
     },
-    [killSwitchActive, activePositions, closedTrades, symbolQuarantines, equity, logSecurityAudit]
+    [killSwitchActive, activePositions, closedTrades, symbolQuarantines, riskPolicy, logSecurityAudit]
   );
 
   // Autonomous Self-Approval Engine:
@@ -1378,15 +1385,7 @@ export default function App() {
       )
     );
 
-    // Update Live Sample Rejected telemetry & supervisor veto count
-    setSampleTelemetry((prev) => ({
-      ...prev,
-      rejectedCount: prev.rejectedCount + 1,
-      rejectionBreakdown: {
-        ...prev.rejectionBreakdown,
-        supervisorVeto: prev.rejectionBreakdown.supervisorVeto + 1,
-      },
-    }));
+    setSampleTelemetry((prev) => ({ ...prev, skippedByYou: prev.skippedByYou + 1 }));
 
     setExecutionToast({
       id: `toast-${Date.now()}`,
@@ -1398,172 +1397,119 @@ export default function App() {
   };
 
   // Trigger Universe Scan
+  // Adds a scan's results to the queue: new proposals in, expired ones out,
+  // no duplicates of a queued proposal or an open position, best first.
+  const mergeScanIntoQueue = useCallback((report: FullScanReport) => {
+    const now = Date.now();
+    setProposalQueue((prev) => {
+      const live = prev.filter(
+        (p) => !((p.status === "PENDING_APPROVAL" || p.status === "DEFERRED") && p.expiresAt !== undefined && p.expiresAt < now)
+      );
+      const taken = new Set([
+        ...activePositionsRef.current.map((p) => `${p.symbol}-${p.setupName}`),
+        ...live.filter((p) => p.status === "PENDING_APPROVAL").map((p) => `${p.symbol}-${p.setup.name}`),
+      ]);
+      const fresh = report.newProposals.filter((p) => !taken.has(`${p.symbol}-${p.setup.name}`));
+      if (fresh.length === 0 && live.length === prev.length) return prev;
+      return [...fresh, ...live]
+        .sort(
+          (a, b) =>
+            b.metaScore.calibratedWinProbability - a.metaScore.calibratedWinProbability ||
+            b.evAssessment.expectedNetValue - a.evAssessment.expectedNetValue
+        )
+        .slice(0, 10);
+    });
+  }, []);
+
+  const recordScan = useCallback(
+    (report: FullScanReport) => {
+      const proposed = report.outcomes.filter((o) => o.proposed).length;
+      setSampleTelemetry((prev) => ({
+        ...prev,
+        analyzedCount: prev.analyzedCount + report.outcomes.length,
+        selectedCount: prev.selectedCount + proposed,
+        rejectedCount: prev.rejectedCount + (report.outcomes.length - proposed),
+        skipReasons: addSkipCounts(prev.skipReasons, report.outcomes),
+      }));
+    },
+    [setSampleTelemetry]
+  );
+
+  const runScan = async (symbols: string[] | undefined, onlyNewCandles: boolean) => {
+    const report = await scanAllMarkets({
+      symbols,
+      onlyNewCandles,
+      activePositions: activePositionsRef.current,
+      dailyRealizedPnl,
+      failureState,
+      experiences,
+      riskPolicy,
+      quarantines: symbolQuarantinesRef.current,
+    });
+    recordScan(report);
+    mergeScanIntoQueue(report);
+    return report;
+  };
+  // The candle-close listener below always calls the latest runScan.
+  const runScanRef = useRef(runScan);
+  runScanRef.current = runScan;
+
+  // "Scan now": every coin, including ones already scanned this candle.
   const handleTriggerScanner = async () => {
     setIsScanningMarkets(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      let barsMap: Record<string, MarketBar[]> | undefined;
-      if (tapeMode === "LIVE TAPE") {
-        barsMap = {};
-        const activeLive = liveMarketStream.getActiveSymbols();
-        activeLive.forEach(sym => {
-          const bars = liveMarketStream.getBars(sym);
-          if (bars) barsMap![sym] = bars;
-        });
-      }
-
-      // Prioritize Crypto Markets
-      const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR", "XRP/INR"];
-      const isCryptoFocus = Math.random() < 0.8;
-
-      const scanResult = await scanAllMarkets({
-        symbols: isCryptoFocus ? cryptoSymbols : undefined,
-        activePositions,
-        dailyRealizedPnl,
-        failureState,
-        experiences,
-        barsMap,
-        quarantines: symbolQuarantinesRef.current,
+      const report = await runScanRef.current(undefined, false);
+      setExecutionToast({
+        id: `toast-${Date.now()}`,
+        title: "Scan finished",
+        message:
+          report.newProposals.length > 0
+            ? `${report.newProposals.length} new proposal(s) from ${report.outcomes.length} coins.`
+            : `Checked ${report.outcomes.length} coins; nothing met the bar this time.`,
+        type: report.newProposals.length > 0 ? "SUCCESS" : "INFO",
+        timestamp: new Date().toLocaleTimeString(),
       });
-
-      // Update Live Sample Telemetry: What agents analysed, selected, and rejected
-      const evaluatedCount = scanResult.totalSetupsEvaluated || 12;
-      const newlySelected = scanResult.newProposals.length;
-      const newlyRejected = evaluatedCount - newlySelected;
-
-      setSampleTelemetry((prev) => {
-        const metaAdds = Math.round(newlyRejected * 0.55);
-        const riskAdds = Math.round(newlyRejected * 0.25);
-        const regimeAdds = Math.max(0, newlyRejected - metaAdds - riskAdds);
-        return {
-          ...prev,
-          analyzedCount: prev.analyzedCount + evaluatedCount,
-          selectedCount: prev.selectedCount + newlySelected,
-          rejectedCount: prev.rejectedCount + newlyRejected,
-          rejectionBreakdown: {
-            ...prev.rejectionBreakdown,
-            metaHurdle: prev.rejectionBreakdown.metaHurdle + metaAdds,
-            riskEngine: prev.rejectionBreakdown.riskEngine + riskAdds,
-            regimeFilter: prev.rejectionBreakdown.regimeFilter + regimeAdds,
-          },
-        };
-      });
-
-      if (scanResult.newProposals.length > 0) {
-        setProposalQueue((prev) => {
-          const existingKeys = new Set(
-            prev.map((p) => `${p.symbol}-${p.setup.name}`)
-          );
-          const fresh = scanResult.newProposals.filter(
-            (p) => !existingKeys.has(`${p.symbol}-${p.setup.name}`)
-          );
-          const combined = [...fresh, ...prev];
-          // Sort strictly by highest Calibrated Win Probability P(Win)
-          combined.sort(
-            (a, b) =>
-              b.metaScore.calibratedWinProbability -
-              a.metaScore.calibratedWinProbability ||
-              b.evAssessment.expectedNetValue - a.evAssessment.expectedNetValue
-          );
-          return combined.slice(0, 10);
-        });
-
-        setExecutionToast({
-          id: `toast-${Date.now()}`,
-          title: "Continuous Radar Scan Completed",
-          message: `Ranked top candidates by P(Win). Rank #1 setup with ${(
-            scanResult.newProposals[0].metaScore.calibratedWinProbability * 100
-          ).toFixed(0)}% win probability placed at top of queue.`,
-          type: "SUCCESS",
-          timestamp: new Date().toLocaleTimeString(),
-        });
-      }
+    } catch (err) {
+      console.error("Scanner Error:", err);
     } finally {
       setIsScanningMarkets(false);
     }
   };
 
-  // Autonomous Continuous Live Market Scanner:
-  // Scans live crypto markets continuously and surfaces highest probability setups
+  // Automatic scanning: each coin is scanned once, right after each of its
+  // 5-minute candles closes. A one-minute backstop picks up any candle the
+  // close event missed (and the first candles after start-up); coins whose
+  // latest candle was already scanned are skipped.
   useEffect(() => {
     if (!isContinuousScanActive) return;
+    const scanNew = (symbols?: string[]) => {
+      // Wait for the first candles; until then every coin would count as "no data".
+      if (!liveMarketStream.isReady) return;
+      runScanRef.current(symbols, true).catch((err) => console.error("Scanner Error:", err));
+    };
+    const unsubscribe = liveMarketStream.onCandleClose((symbols) => scanNew(symbols));
+    const backstop = setInterval(() => scanNew(undefined), 60 * 1000);
+    const first = setTimeout(() => scanNew(undefined), 3000);
+    return () => {
+      unsubscribe();
+      clearInterval(backstop);
+      clearTimeout(first);
+    };
+  }, [isContinuousScanActive]);
 
-    const continuousInterval = setInterval(async () => {
-      try {
-        // Prioritize Crypto Markets (80% of scans)
-        const isCryptoFocus = Math.random() < 0.8;
-        const cryptoSymbols = ["BTC/INR", "ETH/INR", "SOL/INR", "JUP/INR", "AVAX/INR", "NEAR/INR", "XRP/INR"];
-
-        const scanResult = await scanAllMarkets({
-          symbols: isCryptoFocus ? cryptoSymbols : undefined,
-          activePositions: activePositionsRef.current,
-          dailyRealizedPnl,
-          failureState,
-          experiences,
-          quarantines: symbolQuarantinesRef.current,
-        });
-
-        const evaluatedCount = scanResult.totalSetupsEvaluated || 12;
-        const newlySelected = scanResult.newProposals.length;
-        const newlyRejected = Math.max(0, evaluatedCount - newlySelected);
-
-        setSampleTelemetry((prev) => {
-          const metaAdds = Math.round(newlyRejected * 0.55);
-          const riskAdds = Math.round(newlyRejected * 0.25);
-          const regimeAdds = Math.max(0, newlyRejected - metaAdds - riskAdds);
-          return {
-            ...prev,
-            analyzedCount: prev.analyzedCount + evaluatedCount,
-            selectedCount: prev.selectedCount + newlySelected,
-            rejectedCount: prev.rejectedCount + newlyRejected,
-            rejectionBreakdown: {
-              ...prev.rejectionBreakdown,
-              metaHurdle: prev.rejectionBreakdown.metaHurdle + metaAdds,
-              riskEngine: prev.rejectionBreakdown.riskEngine + riskAdds,
-              regimeFilter: prev.rejectionBreakdown.regimeFilter + regimeAdds,
-            },
-          };
-        });
-
-        if (scanResult.newProposals.length > 0) {
-          setProposalQueue((prev) => {
-            const activeKeys = new Set(
-              activePositionsRef.current.map((p) => `${p.symbol}-${p.setupName}`)
-            );
-            const pendingKeys = new Set(
-              prev.filter((p) => p.status === "PENDING_APPROVAL").map((p) => `${p.symbol}-${p.setup.name}`)
-            );
-            const fresh = scanResult.newProposals.filter(
-              (p) => !activeKeys.has(`${p.symbol}-${p.setup.name}`) && !pendingKeys.has(`${p.symbol}-${p.setup.name}`)
-            );
-
-            if (fresh.length === 0) return prev;
-
-            const combined = [...fresh, ...prev];
-            // Rank strictly by highest win probability
-            combined.sort(
-              (a, b) =>
-                b.metaScore.calibratedWinProbability -
-                a.metaScore.calibratedWinProbability ||
-                b.evAssessment.expectedNetValue - a.evAssessment.expectedNetValue
-            );
-
-            return combined.slice(0, 10);
-          });
-        }
-      } catch (err) {
-        console.error("Scanner Error:", err);
-      }
-    }, 1500);
-
-    return () => clearInterval(continuousInterval);
-  }, [
-    isContinuousScanActive,
-    // activePositions removed to prevent interval reset loop
-    dailyRealizedPnl,
-    failureState,
-    experiences,
-  ]);
+  // Drop proposals whose signal has expired, even between scans.
+  useEffect(() => {
+    const sweep = setInterval(() => {
+      const now = Date.now();
+      setProposalQueue((prev) => {
+        const next = prev.filter(
+          (p) => !((p.status === "PENDING_APPROVAL" || p.status === "DEFERRED") && p.expiresAt !== undefined && p.expiresAt < now)
+        );
+        return next.length === prev.length ? prev : next;
+      });
+    }, 30 * 1000);
+    return () => clearInterval(sweep);
+  }, []);
 
   // Commander Modal Trigger & Server Analysis
   const handleWakeCommander = async () => {
@@ -1747,6 +1693,7 @@ export default function App() {
               analyzed: sampleTelemetry.analyzedCount,
               selected: sampleTelemetry.selectedCount,
               rejected: sampleTelemetry.rejectedCount,
+              skipReasons: sampleTelemetry.skipReasons,
             }}
             onOpenQueue={() => setActiveTab("queue")}
             onOpenSettings={() => setIsSettingsOpen(true)}
@@ -1898,10 +1845,10 @@ export default function App() {
         zerodhaStatus={zerodha.status}
         zerodhaError={zerodha.error}
         onZerodhaConnect={zerodha.connect}
-        liveMarketData={tapeMode === "LIVE TAPE"}
-        onLiveMarketDataChange={(on) => setTapeMode(on ? "LIVE TAPE" : "SIMULATED TAPE")}
-        dailyLossLimit={DEFAULT_RISK_POLICY.hardDailyLossLimit}
-        maxOpenPositions={DEFAULT_RISK_POLICY.maxSimultaneousPositions}
+        dailyLossLimit={riskPolicy.hardDailyLossLimit}
+        maxOpenPositions={riskPolicy.maxSimultaneousPositions}
+        riskLimits={riskLimits}
+        onRiskLimitsChange={setRiskLimits}
         onOpenDeskBrief={() => {
           setIsSettingsOpen(false);
           handleWakeCommander();

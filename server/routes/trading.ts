@@ -14,6 +14,8 @@ import {
 import { daemonPositions, scheduleDaemonDiskSave } from "../guardian";
 import { broadcastToUser } from "../realtime";
 import { getCoinDcxCredentials, getReferencePrice } from "./coindcx";
+import { getMarketRule } from "../marketRules";
+import { fitQuantity } from "../../src/shared/marketRules";
 
 import { validate, executeTradeBody, closePositionBody } from "../validation";
 
@@ -72,7 +74,7 @@ router.post("/api/execute-trade", validate({ body: executeTradeBody }), async (r
   const cleanMarket = symbol.replace(/^[A-Za-z]+-/, "").replace(/[\/_-]/g, "").toUpperCase();
   // CoinDCX side is "buy" or "sell"
   const orderSide: "buy" | "sell" = (side === "LONG" || side === "buy") ? "buy" : "sell";
-  const orderQty = Number(quantity);
+  let orderQty = Number(quantity);
 
   // This route only OPENS live positions; exits go through
   // /api/live/close-position so the server owns them.
@@ -83,12 +85,25 @@ router.post("/api/execute-trade", validate({ body: executeTradeBody }), async (r
     return res.json({ success: true, mode: "LIVE", orderId: existing.entryOrderId, duplicate: true, message: "Position already opened." });
   }
 
+  // Fit the size to CoinDCX's rules for this market (quantity step and
+  // minimums) so the exchange doesn't reject it, and so the guard below and
+  // the position record use the quantity actually sent.
+  const referencePrice = await getReferencePrice(cleanMarket);
+  const rule = await getMarketRule(cleanMarket);
+  if (rule && referencePrice) {
+    const fit = fitQuantity(orderQty, referencePrice, rule);
+    if (!fit.ok) {
+      return res.status(400).json({ success: false, error: fit.reason, code: "BELOW_EXCHANGE_MINIMUM" });
+    }
+    orderQty = fit.quantity;
+  }
+
   const decision = evaluateLiveOrder({
     market: cleanMarket,
     side: orderSide,
     quantity: orderQty,
     clientPrice: price === undefined || price === null ? undefined : Number(price),
-    referencePrice: await getReferencePrice(cleanMarket),
+    referencePrice,
   });
   if (decision.status === "rejected" || decision.isReducing) {
     const reason = decision.status === "rejected"
@@ -110,6 +125,7 @@ router.post("/api/execute-trade", validate({ body: executeTradeBody }), async (r
       message: "LIVE TRADE: Order dispatched & accepted by CoinDCX Exchange.",
       orderId,
       executedPrice: Number(data?.orders?.[0]?.price_per_unit || price),
+      executedQuantity: orderQty,
       cdcxResponse: data,
       timestamp: new Date().toISOString(),
     });

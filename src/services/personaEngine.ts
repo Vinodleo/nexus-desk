@@ -254,6 +254,8 @@ export interface PanelResult {
   agreementScore: number; // 0..1 — weighted share of the winning direction among all qualifying ballots
   setup: StrategySetup | null; // blended representative setup for the winning direction
   supportingPersonas: string[];
+  /** Setups that qualified but were dropped for going against the 1-hour trend. */
+  filteredByHigherTimeframe?: number;
   dissentingPersonas: string[];
   totalVotesCast: number; // personas that QUALIFIED (voted) — most scans, this is 0
   totalPersonasRun: number; // personas actually EVALUATED this cycle, qualified or not — the real "analysed" count
@@ -354,6 +356,7 @@ export function runPersonaPanel(
   // run this twice.
   const roster = panelRoster(ctx.promotedModel);
   const ballots: PersonaBallot[] = [];
+  let filteredByHigherTimeframe = 0;
   for (const persona of roster) {
     const setup = persona.evaluate(ctx);
     const setupHorizon = setup?.horizon || "intraday";
@@ -369,6 +372,7 @@ export function runPersonaPanel(
       (macro === "trending_bullish" && setup.direction === "SHORT") ||
       (macro === "trending_bearish" && setup.direction === "LONG");
     if (fightsHigherTimeframe) {
+      filteredByHigherTimeframe++;
       continue;
     }
 
@@ -391,6 +395,7 @@ export function runPersonaPanel(
       totalVotesCast: 0,
       totalPersonasRun:
         SUPPRESSOR_PERSONAS.length + roster.length,
+      filteredByHigherTimeframe,
     };
   }
 

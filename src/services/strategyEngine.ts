@@ -117,6 +117,9 @@ export function buildMacroTrendSetup(ctx: CandidateEvaluationContext, tuning: Ma
     baseProbability: tuning.baseProbability,
     qualifies,
     disqualificationReason,
+    // Multi-day holds on the 50/200 EMA structure: its own swing panel,
+    // manual approval only.
+    horizon: "swing",
     features: baseFeatures(s, isBullTrend || isBearTrend),
   };
 }
@@ -185,7 +188,6 @@ export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTu
     baseProbability: tuning.baseProbability,
     qualifies,
     disqualificationReason,
-    horizon: "swing",
     features: baseFeatures(s, isBullTrend || isBearTrend),
   };
 }

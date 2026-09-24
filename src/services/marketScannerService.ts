@@ -16,7 +16,7 @@ import {
   isIndianEquityMarketOpen,
   SymbolConfig,
   classifyRegime,
-  generateInitialBars,
+  decorateBarsWithIndicators,
   generateOrderBook,
 } from "./marketDataService";
 import { runPersonaPanel } from "./personaEngine";
@@ -27,6 +27,8 @@ import {
 } from "./experienceMemory";
 import { computeMetaLabelScore } from "./metaLabeling";
 import { syntheticBarShare } from "./dataProvenance";
+import { MIN_SIGNAL_BARS, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
+import { skipReasonForRisk, type SkipReason, type SymbolScanOutcome } from "./scanOutcome";
 
 // A Lab model trained on generated candles says nothing about the real
 // market, so the live desk ignores it (default hurdle, no persona tuning, no
@@ -77,6 +79,11 @@ export interface ScanMarketOptions {
   riskPolicy?: RiskPolicyConfig;
   experiences?: any[];
   quarantines?: Record<string, { quarantinedUntilMs: number }>;
+  /**
+   * Skip coins whose latest closed candle was already scanned (the automatic
+   * scan after each candle close). A manual scan leaves this off.
+   */
+  onlyNewCandles?: boolean;
 }
 
 export interface MarketScanResult {
@@ -89,6 +96,7 @@ export interface MarketScanResult {
   orderBook: OrderBook;
   proposals: TradeProposal[];
   summaryNote: string;
+  outcome: SymbolScanOutcome;
 }
 
 export interface FullScanReport {
@@ -98,6 +106,8 @@ export interface FullScanReport {
   totalProposalsPlacedInQueue: number;
   resultsBySymbol: MarketScanResult[];
   newProposals: TradeProposal[];
+  /** One entry per coin scanned: proposed, or why not. */
+  outcomes: SymbolScanOutcome[];
 }
 
 /**
@@ -122,6 +132,10 @@ export async function scanSingleMarket(
   );
   const regime: RegimeType = classifyRegime(bars);
   const promotedModel = loadUsablePromotedModel();
+  // The latest candle closed at open time + interval. If that was more than
+  // two intervals ago the feed has stalled, and the risk engine fails closed.
+  const candleCloseMs = (currentBar?.timestampMs ?? Date.now()) + SIGNAL_INTERVAL_MS;
+  const isDataStale = Date.now() - candleCloseMs > 2 * SIGNAL_INTERVAL_MS;
   const experiences =
     options.experiences || generateInitialExperienceDatabase();
   const proposals: TradeProposal[] = [];
@@ -133,7 +147,7 @@ export async function scanSingleMarket(
   const panel = runPersonaPanel(
     {
       symbol: symbolConfig.symbol,
-      timeframe: "5m",
+      timeframe: SIGNAL_INTERVAL,
       bars,
       regime,
       eventWindowActive: false,
@@ -165,7 +179,7 @@ export async function scanSingleMarket(
   const swingPanel = runPersonaPanel(
     {
       symbol: symbolConfig.symbol,
-      timeframe: "5m",
+      timeframe: SIGNAL_INTERVAL,
       bars,
       regime,
       eventWindowActive: false,
@@ -233,6 +247,9 @@ export async function scanSingleMarket(
     predictions = predictConfidenceBatch(tfjsModel, candidateFeatures);
   }
 
+  // Why each qualified setup didn't become a proposal, in panel order.
+  const candidateSkips: SkipReason[] = [];
+
   for (let i = 0; i < qualifiedSetups.length; i++) {
     const setup = qualifiedSetups[i];
     const sourcePanel = candidates[i].panel;
@@ -281,7 +298,7 @@ export async function scanSingleMarket(
       2,
       policy,
       options.failureState,
-      false,
+      isDataStale,
       {
         quarantinedUntilMs: symbolQuarantine?.quarantinedUntilMs,
         spread: orderBook.spread,
@@ -290,6 +307,16 @@ export async function scanSingleMarket(
 
     // Must pass edge criteria, risk constraints, and the confidence hurdle.
     const requiredConfidence = requiredMetaConfidence(promotedModel);
+
+    if (!riskCalc.passedAllChecks) {
+      candidateSkips.push(skipReasonForRisk(riskCalc.rejectionCode));
+    } else if (!evAssessment.isPositiveEdge) {
+      candidateSkips.push("negative_ev");
+    } else if (riskCalc.recommendedPositionSizeUnits <= 0) {
+      candidateSkips.push("below_min_size");
+    } else if (metaScore.confidence < requiredConfidence) {
+      candidateSkips.push("low_confidence");
+    }
 
     if (
       evAssessment.isPositiveEdge &&
@@ -305,7 +332,8 @@ export async function scanSingleMarket(
         .substring(2, 6)
         .toUpperCase();
       const now = Date.now();
-      const expiryMs = 60000; // 60s human approval window
+      // A signal is good until two more candles have closed after it.
+      const expiryMs = Math.max(60000, candleCloseMs + 2 * SIGNAL_INTERVAL_MS - now);
 
       const proposal: TradeProposal = {
         id: `PROP-${sanitizedId.toUpperCase()}-${uniqueSuffix}`,
@@ -343,7 +371,20 @@ export async function scanSingleMarket(
     }
   }
 
+  const trendFiltered = (panel.filteredByHigherTimeframe ?? 0) + (swingPanel.filteredByHigherTimeframe ?? 0);
+  const outcome: SymbolScanOutcome =
+    proposals.length > 0
+      ? { symbol: symbolConfig.symbol, proposed: true }
+      : {
+          symbol: symbolConfig.symbol,
+          proposed: false,
+          reason:
+            candidateSkips[0] ??
+            (panel.vetoed || swingPanel.vetoed ? "vetoed" : trendFiltered > 0 ? "against_trend" : "no_setup"),
+        };
+
   return {
+    outcome,
     symbol: symbolConfig.symbol,
     symbolName: symbolConfig.name,
     price,
@@ -367,6 +408,17 @@ export async function scanSingleMarket(
  * Scans all supported markets or a chosen subset and aggregates
  * all qualifying trade proposals into the queue.
  */
+/** Open time of the last candle scanned per symbol, for once-per-candle scanning. */
+const lastScannedCandle = new Map<string, number>();
+/** Candle period in which a coin was last counted as having no data. */
+const lastNoDataPeriod = new Map<string, number>();
+
+/** Test hook. */
+export function _resetScannedCandles() {
+  lastScannedCandle.clear();
+  lastNoDataPeriod.clear();
+}
+
 export async function scanAllMarkets(
   options: ScanMarketOptions
 ): Promise<FullScanReport> {
@@ -393,24 +445,42 @@ export async function scanAllMarkets(
   }
 
   const equityMarketOpen = isIndianEquityMarketOpen();
+  const outcomes: SymbolScanOutcome[] = [];
 
   for (const symbolConfig of targetSymbols) {
     // Equities only get analysed within NSE cash-market hours (9:15-3:30
-    // IST, Mon-Fri) — crypto is unaffected, it trades 24/7. Scanning
-    // RELIANCE at 2 AM IST isn't just pointless, it's actively wrong:
-    // there's no real market open to be reacting to.
+    // IST, Mon-Fri) — crypto is unaffected, it trades 24/7.
     if (symbolConfig.assetClass === "equity" && !equityMarketOpen) {
       continue;
     }
 
-    let bars =
-      options.barsMap && options.barsMap[symbolConfig.symbol]
-        ? options.barsMap[symbolConfig.symbol]
-        : liveMarketStream.getBars(symbolConfig.symbol);
+    const rawBars =
+      options.barsMap?.[symbolConfig.symbol] ?? liveMarketStream.getBars(symbolConfig.symbol);
+    // The stream's bars already carry indicators; add them if a caller's don't.
+    const bars =
+      rawBars && rawBars.length > 0 && rawBars[rawBars.length - 1].ema21 === undefined
+        ? decorateBarsWithIndicators(rawBars)
+        : rawBars;
 
-    if (!bars || bars.length === 0) {
-      bars = generateInitialBars(symbolConfig, 75);
+    // Only real, closed candles are scanned. Without enough of them there's
+    // nothing trustworthy to trade on, so the coin is skipped, not faked.
+    if (!bars || bars.length < MIN_SIGNAL_BARS || bars.some((b) => b.isSynthetic)) {
+      // Automatic scans count a coin without data once per candle, not every
+      // time the backstop runs.
+      const period = Math.floor(Date.now() / SIGNAL_INTERVAL_MS);
+      if (options.onlyNewCandles && lastNoDataPeriod.get(symbolConfig.symbol) === period) continue;
+      lastNoDataPeriod.set(symbolConfig.symbol, period);
+      outcomes.push({ symbol: symbolConfig.symbol, proposed: false, reason: "no_data" });
+      continue;
     }
+
+    // Once per candle: the automatic scan skips a coin whose latest closed
+    // candle it has already looked at.
+    const latestCandleMs = bars[bars.length - 1].timestampMs;
+    if (options.onlyNewCandles && latestCandleMs !== undefined && lastScannedCandle.get(symbolConfig.symbol) === latestCandleMs) {
+      continue;
+    }
+    if (latestCandleMs !== undefined) lastScannedCandle.set(symbolConfig.symbol, latestCandleMs);
 
     const scanResult = await scanSingleMarket(
       symbolConfig,
@@ -419,6 +489,7 @@ export async function scanAllMarkets(
       tfjsModel
     );
     resultsBySymbol.push(scanResult);
+    outcomes.push(scanResult.outcome);
     totalSetupsEvaluated += scanResult.evaluatedSetupsCount;
 
     for (const prop of scanResult.proposals) {
@@ -437,10 +508,11 @@ export async function scanAllMarkets(
 
   return {
     timestamp: new Date().toISOString(),
-    totalMarketsScanned: targetSymbols.length,
+    totalMarketsScanned: outcomes.length,
     totalSetupsEvaluated,
     totalProposalsPlacedInQueue: newProposals.length,
     resultsBySymbol,
     newProposals,
+    outcomes,
   };
 }

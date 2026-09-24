@@ -1,11 +1,11 @@
 import { MarketBar, OrderBook, RegimeType } from "../types";
+import { averageTrueRange, directionalIndex } from "./indicators";
 
 export interface SymbolConfig {
   symbol: string;
   name: string;
   basePrice: number;
   tickSize: number;
-  lotSize: number;
   volatility: number;
   correlatedGroup: string; // for correlation exposure checks
   assetClass: "crypto" | "equity"; // drives session-hours gating and fee model
@@ -18,7 +18,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Bitcoin / INR",
     basePrice: 5427250.0,
     tickSize: 50.0,
-    lotSize: 0.01,
     volatility: 0.45,
     correlatedGroup: "CRYPTO_MAJOR",
     assetClass: "crypto",
@@ -28,7 +27,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Ethereum / INR",
     basePrice: 210800.0,
     tickSize: 10.0,
-    lotSize: 0.1,
     volatility: 0.52,
     correlatedGroup: "CRYPTO_MAJOR",
     assetClass: "crypto",
@@ -38,7 +36,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Solana / INR",
     basePrice: 13107.0,
     tickSize: 1.0,
-    lotSize: 1,
     volatility: 0.65,
     correlatedGroup: "CRYPTO_ALT",
     assetClass: "crypto",
@@ -48,7 +45,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Jupiter / INR",
     basePrice: 23.55,
     tickSize: 0.01,
-    lotSize: 100,
     volatility: 0.72,
     correlatedGroup: "CRYPTO_ALT",
     assetClass: "crypto",
@@ -58,7 +54,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Avalanche / INR",
     basePrice: 2652.0,
     tickSize: 0.5,
-    lotSize: 10,
     volatility: 0.68,
     correlatedGroup: "CRYPTO_ALT",
     assetClass: "crypto",
@@ -68,7 +63,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Near Protocol / INR",
     basePrice: 459.0,
     tickSize: 0.1,
-    lotSize: 50,
     volatility: 0.68,
     correlatedGroup: "CRYPTO_ALT",
     assetClass: "crypto",
@@ -80,7 +74,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "XRP / INR",
     basePrice: 139.9,
     tickSize: 0.05,
-    lotSize: 20,
     volatility: 0.55,
     correlatedGroup: "CRYPTO_MAJOR",
     assetClass: "crypto",
@@ -94,7 +87,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "HDFC Bank",
     basePrice: 731.0,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.22,
     correlatedGroup: "EQUITY_BANK",
     assetClass: "equity",
@@ -104,7 +96,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Reliance Industries",
     basePrice: 1226.4,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.20,
     correlatedGroup: "EQUITY_ENERGY",
     assetClass: "equity",
@@ -114,7 +105,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Tata Consultancy Services",
     basePrice: 2105.0,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.18,
     correlatedGroup: "EQUITY_IT",
     assetClass: "equity",
@@ -124,7 +114,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "State Bank of India",
     basePrice: 996.2,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.24,
     correlatedGroup: "EQUITY_BANK",
     assetClass: "equity",
@@ -137,7 +126,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "ICICI Bank",
     basePrice: 1338.9,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.23,
     correlatedGroup: "EQUITY_BANK",
     assetClass: "equity",
@@ -147,7 +135,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Infosys",
     basePrice: 1036.9,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.19,
     correlatedGroup: "EQUITY_IT",
     assetClass: "equity",
@@ -157,7 +144,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Hindustan Unilever",
     basePrice: 1932.0,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.15,
     correlatedGroup: "EQUITY_FMCG",
     assetClass: "equity",
@@ -167,7 +153,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Tata Motors",
     basePrice: 780.0,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.28,
     correlatedGroup: "EQUITY_AUTO",
     assetClass: "equity",
@@ -177,7 +162,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Sun Pharmaceutical Industries",
     basePrice: 1946.0,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.19,
     correlatedGroup: "EQUITY_PHARMA",
     assetClass: "equity",
@@ -187,7 +171,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     name: "Bharti Airtel",
     basePrice: 1893.3,
     tickSize: 0.05,
-    lotSize: 1,
     volatility: 0.21,
     correlatedGroup: "EQUITY_TELECOM",
     assetClass: "equity",
@@ -313,108 +296,7 @@ export function generateInitialBars(
     currentPrice = close;
   }
 
-  // Compute indicators
-  const closes = bars.map((b) => b.close);
-  const ema9 = calculateEMA(closes, 9);
-  const ema21 = calculateEMA(closes, 21);
-  const ema50 = calculateEMA(closes, 50);
-  const ema200 = calculateEMA(closes, 200);
-  const rsi = calculateRSI(closes, 14);
-
-  return bars.map((bar, idx) => {
-    const c = bar.close;
-    const atr = Number((bar.high - bar.low).toFixed(2));
-    const dev = (ema21[idx] || c) * 0.012;
-    return {
-      ...bar,
-      ema9: Number(ema9[idx].toFixed(2)),
-      ema21: Number(ema21[idx].toFixed(2)),
-      ema50: Number(ema50[idx].toFixed(2)),
-      ema200: Number(ema200[idx].toFixed(2)),
-      rsi: Number(rsi[idx].toFixed(1)),
-      atr: Math.max(atr, Number((c * 0.003).toFixed(2))),
-      adx: Number((22 + Math.sin(idx * 0.3) * 12 + Math.random() * 4).toFixed(1)),
-      bbUpper: Number(((ema21[idx] || c) + dev * 2).toFixed(2)),
-      bbLower: Number(((ema21[idx] || c) - dev * 2).toFixed(2)),
-    };
-  });
-}
-
-// Generate the next single bar given prior history
-export function generateNextBar(
-  bars: MarketBar[],
-  symbolOrCfg: SymbolConfig | string
-): MarketBar {
-  const symbolCfg = getSymbolConfig(symbolOrCfg);
-  const prev = bars[bars.length - 1];
-  const prevClose = prev ? prev.close : symbolCfg.basePrice;
-  const drift = (Math.random() - 0.48) * 0.0035 * prevClose;
-  const open = prevClose;
-  const deltaH = Math.random() * 0.003 * prevClose;
-  const deltaL = Math.random() * 0.003 * prevClose;
-  const high = Number((Math.max(open, open + drift) + deltaH).toFixed(2));
-  const low = Number((Math.min(open, open + drift) - deltaL).toFixed(2));
-  const close = Number((open + drift).toFixed(2));
-  const volume = Math.floor(600 + Math.random() * 2400);
-  const prevVwap = prev?.vwap || close;
-  const vwap = Number((prevVwap * 0.95 + close * 0.05).toFixed(2));
-
-  // Fast indicator updates
-  const prevEma9 = prev?.ema9 || close;
-  const prevEma21 = prev?.ema21 || close;
-  const prevEma50 = prev?.ema50 || close;
-  const prevEma200 = prev?.ema200 || close;
-  const k9 = 2 / 10;
-  const k21 = 2 / 22;
-  const k50 = 2 / 51;
-  const k200 = 2 / 201;
-
-  const ema9 = Number((close * k9 + prevEma9 * (1 - k9)).toFixed(2));
-  const ema21 = Number((close * k21 + prevEma21 * (1 - k21)).toFixed(2));
-  const ema50 = Number((close * k50 + prevEma50 * (1 - k50)).toFixed(2));
-  const ema200 = Number((close * k200 + prevEma200 * (1 - k200)).toFixed(2));
-
-  const prevRsi = prev?.rsi || 50;
-  const change = close - open;
-  const rsi = Number(
-    Math.min(
-      85,
-      Math.max(15, prevRsi + (change > 0 ? 1.8 : -1.8) + (Math.random() - 0.5))
-    ).toFixed(1)
-  );
-  const atr = Number(Math.max(high - low, close * 0.0035).toFixed(2));
-  const dev = ema21 * 0.012;
-  const now = new Date();
-  const time = now.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-
-  return {
-    isSynthetic: true,
-    time,
-    open,
-    high,
-    low,
-    close,
-    volume,
-    vwap,
-    ema9,
-    ema21,
-    ema50,
-    ema200,
-    rsi,
-    adx: Number(
-      Math.min(
-        65,
-        Math.max(12, (prev?.adx || 22) + (Math.random() - 0.48) * 1.5)
-      ).toFixed(1)
-    ),
-    atr,
-    bbUpper: Number((ema21 + dev * 2).toFixed(2)),
-    bbLower: Number((ema21 - dev * 2).toFixed(2)),
-  };
+  return decorateBarsWithIndicators(bars);
 }
 
 // Generate active order book for symbol
@@ -491,6 +373,13 @@ export function classifyRegime(
   return "ranging_wide";
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Adds EMAs, RSI, ATR, ADX, Bollinger bands and VWAP to each bar. ATR and
+ * ADX are the standard 14-bar Wilder versions (see indicators.ts); VWAP
+ * restarts at each UTC day, so it doesn't depend on how many bars are loaded.
+ */
 export function decorateBarsWithIndicators(
   bars: MarketBar[]
 ): MarketBar[] {
@@ -501,35 +390,46 @@ export function decorateBarsWithIndicators(
   const ema50 = calculateEMA(closes, 50);
   const ema200 = calculateEMA(closes, 200);
   const rsi = calculateRSI(closes, 14);
+  const atr = averageTrueRange(bars);
+  const { adx } = directionalIndex(bars);
+  let vwapDay = -1;
   let cumulativeVolumeWeight = 0;
   let cumulativeVolume = 0;
 
   return bars.map((bar, idx) => {
     const c = bar.close;
-    const atr = Number((bar.high - bar.low).toFixed(2));
     const dev = (ema21[idx] || c) * 0.012;
+    const day = bar.timestampMs ? Math.floor(bar.timestampMs / DAY_MS) : 0;
+    if (day !== vwapDay) {
+      vwapDay = day;
+      cumulativeVolumeWeight = 0;
+      cumulativeVolume = 0;
+    }
     const typicalPrice = (bar.high + bar.low + bar.close) / 3;
     cumulativeVolumeWeight += typicalPrice * bar.volume;
     cumulativeVolume += bar.volume;
-    const vwap =
-      cumulativeVolume > 0
-        ? Number((cumulativeVolumeWeight / cumulativeVolume).toFixed(2))
-        : c;
+    const vwap = cumulativeVolume > 0 ? cumulativeVolumeWeight / cumulativeVolume : c;
+    const barAtr = atr[idx] ?? bar.high - bar.low;
 
     return {
       ...bar,
-      vwap,
-      ema9: Number(ema9[idx].toFixed(2)),
-      ema21: Number(ema21[idx].toFixed(2)),
-      ema50: Number(ema50[idx].toFixed(2)),
-      ema200: Number(ema200[idx].toFixed(2)),
+      vwap: round(vwap),
+      ema9: round(ema9[idx]),
+      ema21: round(ema21[idx]),
+      ema50: round(ema50[idx]),
+      ema200: round(ema200[idx]),
       rsi: Number(rsi[idx].toFixed(1)),
-      atr: Math.max(atr, Number((c * 0.003).toFixed(2))),
-      adx: Number(
-        (22 + Math.sin(idx * 0.3) * 12 + Math.random() * 4).toFixed(1)
-      ),
-      bbUpper: Number(((ema21[idx] || c) + dev * 2).toFixed(2)),
-      bbLower: Number(((ema21[idx] || c) - dev * 2).toFixed(2)),
+      atr: round(barAtr),
+      adx: adx[idx] === undefined ? undefined : Number((adx[idx] as number).toFixed(1)),
+      bbUpper: round((ema21[idx] || c) + dev * 2),
+      bbLower: round((ema21[idx] || c) - dev * 2),
     };
   });
+}
+
+/** Keeps enough significant digits for low-priced coins (e.g. ₹0.0123). */
+function round(v: number): number {
+  const abs = Math.abs(v);
+  const decimals = abs >= 100 ? 2 : abs >= 1 ? 4 : 8;
+  return Number(v.toFixed(decimals));
 }

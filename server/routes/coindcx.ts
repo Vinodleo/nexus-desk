@@ -3,6 +3,7 @@ import { Router, type Request, type Response } from "express";
 import { liveRiskSnapshot } from "../liveOrderGuard";
 import { currentPrices } from "../realtime";
 import { getCoinDcxTicker } from "../coindcxTicker";
+import { getMarketRules } from "../marketRules";
 
 import { validate, cancelOrderBody, coinDcxCandlesQuery } from "../validation";
 
@@ -172,6 +173,15 @@ router.get("/api/coindcx/ticker", async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch from CoinDCX" });
   }
+});
+
+// Order rules for every active INR market (minimum quantity, quantity step,
+// minimum order value), so the app sizes trades the way CoinDCX will accept.
+router.get("/api/coindcx/markets", async (_req, res) => {
+  const rules = await getMarketRules();
+  if (rules.size === 0) return res.status(503).json({ error: "CoinDCX market rules unavailable" });
+  res.set("Cache-Control", "private, max-age=3600");
+  res.json([...rules.values()]);
 });
 
 // Real historical candles, proxied from CoinDCX's public candles API
