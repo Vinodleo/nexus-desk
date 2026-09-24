@@ -25,10 +25,23 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: '20px', color: 'red', background: 'black', minHeight: '100vh', width: '100vw' }}>
-          <h2>Something went wrong.</h2>
-          <pre style={{ whiteSpace: 'pre-wrap', fontSize: '10px' }}>{this.state.error?.toString()}</pre>
-          <pre style={{ whiteSpace: 'pre-wrap', fontSize: '10px' }}>{this.state.errorInfo?.componentStack}</pre>
+        <div className="min-h-screen bg-canvas text-ink font-ui p-5 flex flex-col gap-4 max-w-lg mx-auto">
+          <h1 className="m-0 mt-8 font-display text-[28px] font-semibold">Something went wrong</h1>
+          <p className="m-0 text-[15px] text-muted leading-relaxed">
+            The desk hit an error and stopped drawing this screen. Open positions are still guarded on the server.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="self-start min-h-12 px-5 rounded-full bg-accent text-on-accent font-semibold cursor-pointer"
+          >
+            Reload
+          </button>
+          <details className="text-xs text-muted">
+            <summary className="cursor-pointer">Error details</summary>
+            <pre className="whitespace-pre-wrap mt-2">{this.state.error?.toString()}</pre>
+            <pre className="whitespace-pre-wrap">{this.state.errorInfo?.componentStack}</pre>
+          </details>
         </div>
       );
     }
