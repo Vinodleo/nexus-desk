@@ -5,8 +5,9 @@ import { currentPrices } from "../realtime";
 import { getCoinDcxTicker } from "../coindcxTicker";
 import { getMarketRules } from "../marketRules";
 import { aggregateMinuteCandles } from "../candles";
+import { parseCoinDcxOrderBook, type RawBook } from "../../src/shared/orderBook";
 
-import { validate, cancelOrderBody, coinDcxCandlesQuery } from "../validation";
+import { validate, cancelOrderBody, coinDcxCandlesQuery, coinDcxOrderBookQuery } from "../validation";
 
 export const router = Router();
 
@@ -212,6 +213,38 @@ router.get("/api/coindcx/candles", validate({ query: coinDcxCandlesQuery }), asy
     res.json(result.list);
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to fetch candles from CoinDCX" });
+  }
+});
+
+// CoinDCX's live order book for an INR market, best levels first. The scanner
+// reads it for coins with a setup, to get the real spread and depth. Kept for
+// a couple of seconds so a burst of requests makes one call to CoinDCX.
+const BOOK_CACHE_MS = 2000;
+const bookCache = new Map<string, RawBook>();
+
+router.get("/api/coindcx/orderbook", validate({ query: coinDcxOrderBookQuery }), async (req, res) => {
+  const pair = `I-${req.query.symbol}_INR`;
+  const cached = bookCache.get(pair);
+  if (cached && Date.now() - cached.fetchedAt < BOOK_CACHE_MS) return res.json(cached);
+  try {
+    const response = await fetch(`https://public.coindcx.com/market_data/orderbook?pair=${encodeURIComponent(pair)}`);
+    const text = await response.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = undefined;
+    }
+    const book = response.ok ? parseCoinDcxOrderBook(data) : null;
+    if (!book) {
+      const detail = `CoinDCX order book (${pair}): HTTP ${response.status} ${text.slice(0, 160)}`;
+      console.warn(`[OrderBook] ${detail}`);
+      return res.status(502).json({ error: detail });
+    }
+    bookCache.set(pair, book);
+    res.json(book);
+  } catch (error: any) {
+    res.status(502).json({ error: error?.message || "Failed to fetch the order book from CoinDCX" });
   }
 });
 

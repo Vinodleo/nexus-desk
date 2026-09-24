@@ -9,6 +9,8 @@ export type SkipReason =
   | "negative_ev"
   | "already_open"
   | "below_min_size"
+  | "thin_market"
+  | "wide_spread"
   | "risk_limits";
 
 export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
@@ -20,6 +22,8 @@ export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
   negative_ev: "Not worth it after fees",
   already_open: "Already holding this coin",
   below_min_size: "Size below exchange minimum",
+  thin_market: "Too little on the order book",
+  wide_spread: "Spread too wide for the stop",
   risk_limits: "Blocked by a risk limit",
 };
 
@@ -41,6 +45,8 @@ export function skipReasonForRisk(code: RiskRejectionCode | undefined): SkipReas
   if (code === "negative_ev") return "negative_ev";
   if (code === "size") return "below_min_size";
   if (code === "existing_position") return "already_open";
+  if (code === "liquidity") return "thin_market";
+  if (code === "spread") return "wide_spread";
   return "risk_limits";
 }
 

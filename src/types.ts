@@ -50,6 +50,15 @@ export interface OrderBook {
   spread: number;
   midPrice: number;
   depthScore: number; // 0..100 liquidity metric
+  /** "coindcx" when read from the exchange; otherwise it was simulated. */
+  source?: "coindcx" | "simulated";
+  /** Spread as a share of the mid price. */
+  spreadPct?: number;
+  /** Price moved past the best level to buy and then sell the trade size, as a share of price. */
+  roundTripSlippage?: number;
+  /** Rupees on offer near the price, on the thinner side. */
+  depthInr?: number;
+  fetchedAt?: number;
 }
 
 export interface StrategySetup {
@@ -155,7 +164,7 @@ export interface ProposalDataQuality {
   syntheticBarShare: number;
   /** Share (0-1) of the similar past trades behind the win rate that are seeded examples. */
   seededExperienceShare: number;
-  /** Order-book spread/depth used for costs and the liquidity check is simulated. */
+  /** Order-book spread/depth used for costs and the liquidity check is simulated, not CoinDCX's. */
   simulatedOrderBook: boolean;
 }
 

@@ -80,3 +80,48 @@ describe("GET /api/coindcx/candles", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("GET /api/coindcx/orderbook", () => {
+  let base: string;
+  let server: Server;
+  const upstream = vi.fn();
+
+  beforeAll(async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
+      String(url).startsWith("https://public.coindcx.com") ? upstream(String(url)) : realFetch(url, init)
+    );
+    const { router } = await import("../../server/routes/coindcx");
+    const app = express();
+    app.use(router);
+    server = app.listen(0);
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(() => {
+    server?.close();
+    vi.unstubAllGlobals();
+  });
+
+  it("reads the INR market's book, best levels first, and reuses it briefly", async () => {
+    upstream.mockResolvedValueOnce(
+      new Response(JSON.stringify({ bids: { "99": "2", "100": "1" }, asks: { "102": "1", "101": "3" } }))
+    );
+    const res = await fetch(`${base}/api/coindcx/orderbook?symbol=SOL`);
+    const body = await res.json();
+    expect(upstream.mock.calls[0][0]).toBe("https://public.coindcx.com/market_data/orderbook?pair=I-SOL_INR");
+    expect(body.bids).toEqual([[100, 1], [99, 2]]);
+    expect(body.asks).toEqual([[101, 3], [102, 1]]);
+    await fetch(`${base}/api/coindcx/orderbook?symbol=SOL`);
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes CoinDCX's error through and rejects bad symbols", async () => {
+    upstream.mockResolvedValueOnce(new Response("not found", { status: 404 }));
+    const res = await fetch(`${base}/api/coindcx/orderbook?symbol=NOPE`);
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toMatch(/I-NOPE_INR.*HTTP 404/);
+    expect((await fetch(`${base}/api/coindcx/orderbook?symbol=sol/inr`)).status).toBe(400);
+  });
+});

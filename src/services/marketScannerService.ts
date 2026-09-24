@@ -71,6 +71,8 @@ import { loadStoredPromotedLabModel } from "./storagePersistenceService";
 import { loadMetaModel, predictConfidenceBatch } from "./mlService";
 import * as tf from "@tensorflow/tfjs";
 
+const formatInr = (v: number) => `₹${Math.round(v).toLocaleString("en-IN")}`;
+
 export interface ScanMarketOptions {
   symbols?: string[];
   barsMap?: Record<string, MarketBar[]>;
@@ -85,6 +87,12 @@ export interface ScanMarketOptions {
    * scan after each candle close). A manual scan leaves this off.
    */
   onlyNewCandles?: boolean;
+  /**
+   * Reads CoinDCX's live order book for a crypto symbol, for a trade worth
+   * `notional` rupees. Called only for coins with a setup. Without it, or if
+   * it returns null, spread and depth are simulated.
+   */
+  getOrderBook?: (symbol: string, notional: number) => Promise<OrderBook | null>;
 }
 
 export interface MarketScanResult {
@@ -129,7 +137,7 @@ export async function scanSingleMarket(
   const currentBar =
     bars && bars.length > 0 ? bars[bars.length - 1] : undefined;
   const price = currentBar ? currentBar.close : symbolConfig.basePrice;
-  const orderBook = generateOrderBook(
+  let orderBook: OrderBook = generateOrderBook(
     price,
     symbolConfig.tickSize,
     options.failureState.simulateOrderBookThinLiquidity
@@ -214,6 +222,18 @@ export async function scanSingleMarket(
     candidates.push({ setup: swingPanel.setup, panel: swingPanel });
   const qualifiedSetups = candidates.map((c) => c.setup);
 
+  // Real spread and depth for coins with a setup. The thin-liquidity drill
+  // keeps the simulated book so it still exercises the liquidity check.
+  if (
+    qualifiedSetups.length > 0 &&
+    options.getOrderBook &&
+    symbolConfig.assetClass !== "equity" &&
+    !options.failureState.simulateOrderBookThinLiquidity
+  ) {
+    const live = await options.getOrderBook(symbolConfig.symbol, policy.maxOrderValueInr);
+    if (live) orderBook = live;
+  }
+
   // Batch Prediction Preparation
   const candidateFeatures: number[][] = [];
   if (tfjsModel) {
@@ -288,7 +308,8 @@ export async function scanSingleMarket(
       metaScore,
       orderBook.spread,
       orderBook.depthScore,
-      policy
+      policy,
+      orderBook.roundTripSlippage
     );
 
     // 4. Deterministic Risk Engine & Bounded Kelly Sizing
@@ -365,7 +386,7 @@ export async function scanSingleMarket(
           1000 + Math.random() * 9000
         )}`,
         supervisorNotes: `Trader panel (${sourcePanel.supportingPersonas.length}/${sourcePanel.totalVotesCast} personas, ${(sourcePanel.agreementScore * 100).toFixed(0)}% weighted agreement) detected ${setup.name} in ${regime.replace(/_/g, " ")}. Meta-confidence ${(metaScore.confidence * 100).toFixed(0)}%, net EV +₹${evAssessment.expectedNetValue.toFixed(2)}. Allocated ${riskCalc.recommendedPositionSizeUnits} units (₹${riskCalc.riskDollars.toFixed(0)} risk). Placed in Queue for human authorization.`,
-        marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. Spread is ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}% with depth score ${orderBook.depthScore}/100.`,
+        marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. ${orderBook.source === "coindcx" ? "CoinDCX order book: spread" : "Estimated spread"} ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}%, depth score ${orderBook.depthScore}/100${orderBook.depthInr !== undefined ? ` (${formatInr(orderBook.depthInr)} within 0.5% of the price)` : ""}.`,
         aiRecommendation:
           metaScore.confidence >= 0.60 ? "TRADE_FAVORED" : "CAUTION",
         modelUsed: "Multi-Agent Trader Panel v3.0",
@@ -377,8 +398,7 @@ export async function scanSingleMarket(
         dataQuality: {
           syntheticBarShare: syntheticBarShare(bars),
           seededExperienceShare: retrieval.seededShare,
-          // generateOrderBook() models spread/depth; there's no live book feed yet.
-          simulatedOrderBook: true,
+          simulatedOrderBook: orderBook.source !== "coindcx",
         },
       };
       proposals.push(proposal);

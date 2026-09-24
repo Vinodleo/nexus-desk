@@ -61,7 +61,12 @@ export function evaluateExpectedValue(
   metaScore: MetaLabelScore,
   spread: number,
   depthScore: number,
-  policy: RiskPolicyConfig = DEFAULT_RISK_POLICY
+  policy: RiskPolicyConfig = DEFAULT_RISK_POLICY,
+  /**
+   * Round-trip slippage (share of price) measured on CoinDCX's order book.
+   * Without it, slippage is estimated from the depth score.
+   */
+  measuredSlippage?: number
 ): ExpectedValueAssessment {
   const pWin = metaScore.calibratedWinProbability;
   const pLoss = 1 - pWin;
@@ -85,7 +90,10 @@ export function evaluateExpectedValue(
   const estimatedBrokerageFee = isEquity
     ? 40.0 // ~₹20/side, ₹40 round trip flat — Zerodha intraday equity brokerage
     : setup.entryPrice * units * policy.takerFeeRateRoundTrip;
-  const slippageRate = depthScore < 40 ? 0.0006 : 0.0002; // higher in thin liquidity
+  const estimatedRate = depthScore < 40 ? 0.0006 : 0.0002; // higher in thin liquidity
+  // A book too thin to fill the trade gets a punitive 1%; the liquidity check rejects it anyway.
+  const slippageRate =
+    measuredSlippage === undefined ? estimatedRate : Number.isFinite(measuredSlippage) ? measuredSlippage : 0.01;
 
   const estimatedSlippageCost = setup.entryPrice * units * slippageRate;
   const estimatedLatencyTax = 5.0; // buffer for micro-delays

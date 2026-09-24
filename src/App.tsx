@@ -82,6 +82,7 @@ import {
   type TickExitReason,
 } from "./services/positionTick";
 import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
+import { fetchLiveOrderBook } from "./services/orderBookService";
 
 // ATR recorded on a position for its trailing-stop rules. The indicator used
 // to be floored at 0.3% of price, and the exit rules were tuned with that
@@ -1446,6 +1447,7 @@ export default function App() {
       experiences,
       riskPolicy,
       quarantines: symbolQuarantinesRef.current,
+      getOrderBook: fetchLiveOrderBook,
     });
     recordScan(report);
     mergeScanIntoQueue(report);
