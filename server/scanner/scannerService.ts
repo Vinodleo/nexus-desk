@@ -70,7 +70,8 @@ export function loadScannerState(): void {
   }
 }
 
-function saveShadows(): void {
+/** Writes tracked setups to disk (also called on shutdown). */
+export function saveScannerState(): void {
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     const out = Object.fromEntries([...users.entries()].map(([uid, s]) => [uid, s.shadows]));
@@ -175,7 +176,7 @@ export async function runScanCycle(now: number = Date.now()): Promise<void> {
       console.error(`[ServerScanner] Scan failed for ${uid}:`, err);
     }
   }
-  saveShadows();
+  saveScannerState();
 
   // Coins whose just-closed candle wasn't out yet get one retry.
   const justClosedOpen = Math.floor(now / SIGNAL_INTERVAL_MS) * SIGNAL_INTERVAL_MS - SIGNAL_INTERVAL_MS;
@@ -188,7 +189,7 @@ export async function runScanCycle(now: number = Date.now()): Promise<void> {
       for (const [uid, desk] of scanningDesks(retryAt)) {
         await scanForUser(uid, desk, updated, retryAt).catch((err) => console.error(`[ServerScanner] Retry scan failed for ${uid}:`, err));
       }
-      saveShadows();
+      saveScannerState();
     }, LATE_CANDLE_RETRY_MS);
   }
 }
@@ -200,7 +201,7 @@ export async function scanNow(uid: string): Promise<ServerScanReport | null> {
   const now = Date.now();
   await refreshMarket(now);
   const record = await scanForUser(uid, desk, universe, now);
-  saveShadows();
+  saveScannerState();
   return record;
 }
 
@@ -224,21 +225,56 @@ export function shadowsFor(uid: string): ShadowSignal[] {
   return users.get(uid)?.shadows ?? [];
 }
 
-/** Runs a cycle just after each 5-minute candle closes. */
+/** A cycle stuck longer than this (it shouldn't be: requests time out) no longer blocks the next. */
+const STUCK_CYCLE_MS = 10 * 60 * 1000;
+let lastTickAt = Date.now();
+let lastCycleDoneAt = 0;
+let cycleStartedAt: number | null = null;
+
+/**
+ * Whether the candle-close loop is alive: when it last fired and last
+ * finished a cycle. `stalled` means it hasn't fired for three candles.
+ */
+export function scannerHeartbeat(now: number = Date.now()) {
+  return {
+    lastTickAt,
+    lastCycleDoneAt,
+    cycleRunning: cycleStartedAt !== null,
+    stalled: now - lastTickAt > 3 * SIGNAL_INTERVAL_MS,
+  };
+}
+
+/**
+ * Runs a cycle just after each 5-minute candle closes. The next candle is
+ * scheduled before this one's cycle runs, so a failed or slow cycle can't
+ * stop the loop; a cycle still running when the next candle closes makes
+ * that candle wait.
+ */
 export function startServerScanner(): void {
   loadScannerState();
   const schedule = () => {
     const delay = Math.max(1000, nextCandleFetchAt(Date.now()) - Date.now());
-    timer = setTimeout(async () => {
-      try {
-        await runScanCycle();
-      } catch (err) {
-        console.error("[ServerScanner] Cycle failed:", err);
-      } finally {
-        schedule();
-      }
-    }, delay);
+    timer = setTimeout(tick, delay);
   };
+  const tick = async () => {
+    const now = Date.now();
+    lastTickAt = now;
+    schedule();
+    if (cycleStartedAt !== null && now - cycleStartedAt < STUCK_CYCLE_MS) {
+      console.warn("[ServerScanner] Previous cycle still running; skipping this candle.");
+      return;
+    }
+    cycleStartedAt = now;
+    try {
+      await runScanCycle(now);
+    } catch (err) {
+      console.error("[ServerScanner] Cycle failed:", err);
+    } finally {
+      cycleStartedAt = null;
+      lastCycleDoneAt = Date.now();
+    }
+  };
+  lastTickAt = Date.now();
   schedule();
   console.log("[ServerScanner] Scanning after every 5-minute candle close.");
 }
@@ -246,6 +282,7 @@ export function startServerScanner(): void {
 /** Test hooks. */
 export function _resetServerScanner(): void {
   users.clear();
+  cycleStartedAt = null;
   universe = [];
   if (timer) clearTimeout(timer);
   timer = null;

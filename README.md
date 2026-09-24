@@ -74,6 +74,10 @@ Production build:
 npm run build && npm start
 ```
 
+Always-on hosting (so scanning and the position guardian keep running with
+the app closed): see [docs/hosting.md](docs/hosting.md). It covers Cloud Run
+(`scripts/cloudrun-always-on.sh`) or your own VM (`docker compose up -d`).
+
 Type-check:
 
 ```bash

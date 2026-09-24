@@ -87,6 +87,7 @@ import {
 import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 import { fetchLiveOrderBook } from "./services/orderBookService";
 import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanner";
+import { useServerStatus } from "./hooks/useServerStatus";
 import { buildCalibrator } from "./services/calibration";
 
 // ATR recorded on a position for its trailing-stop rules. The indicator used
@@ -1522,6 +1523,7 @@ export default function App() {
     }
   );
   liveScanReportRef.current = serverScanner.handleLiveReport;
+  const serverStatus = useServerStatus(isSettingsOpen);
   const scanLocationRef = useRef(serverScanner.location);
   scanLocationRef.current = serverScanner.location;
 
@@ -1932,6 +1934,9 @@ export default function App() {
 
       <SettingsSheet
         isOpen={isSettingsOpen}
+        serverStatus={serverStatus}
+        scanLocation={serverScanner.location}
+        lastServerScanAt={serverScanner.lastScanAt}
         onClose={() => setIsSettingsOpen(false)}
         tradingMode={tradingMode}
         onTradingModeChange={handleToggleTradingMode}

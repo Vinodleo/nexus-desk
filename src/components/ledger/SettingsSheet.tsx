@@ -7,6 +7,7 @@ import { usePWAInstall } from "../../hooks/usePWAInstall";
 import { RoundIconButton } from "./ui";
 import { EXPOSURE_CHOICES, ORDER_VALUE_CHOICES, type RiskLimits } from "../../hooks/useRiskPolicy";
 import { formatMoney } from "./format";
+import type { ServerStatus } from "../../hooks/useServerStatus";
 
 export interface SettingsSheetProps {
   isOpen: boolean;
@@ -26,6 +27,22 @@ export interface SettingsSheetProps {
   onOpenDeskBrief: () => void;
   onOpenBackground: () => void;
   onOpenSecurity: () => void;
+  /** The server's host status (null while loading or unreachable). */
+  serverStatus?: ServerStatus | null;
+  /** Where scanning runs, and when the server last scanned. */
+  scanLocation?: "checking" | "server" | "browser";
+  lastServerScanAt?: number;
+}
+
+/** "45 sec", "12 min", "3 h", "2 days". */
+export function formatSpan(ms: number): string {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  if (sec < 60) return `${sec} sec`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 48) return `${h} h`;
+  return `${Math.round(h / 24)} days`;
 }
 
 const selectClass =
@@ -237,6 +254,38 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                 {zerodhaLabel}
               </button>
             )}
+          </Row>
+        </Group>
+
+        <Label>Server</Label>
+        <Group>
+          <Row label="Running for" sub="A restart resets this. On an always-on host it keeps growing.">
+            <span>{props.serverStatus ? formatSpan(props.serverStatus.uptimeSec * 1000) : "—"}</span>
+          </Row>
+          <Row label="Saved state" sub={props.serverStatus?.storage.note ?? "Guardian positions, settings and tracked setups"}>
+            {props.serverStatus ? (
+              <span className={props.serverStatus.storage.kept ? "text-gain" : "text-warn"}>
+                {props.serverStatus.storage.kept ? "Kept" : "Lost on restart"}
+              </span>
+            ) : (
+              <span className="text-muted">—</span>
+            )}
+          </Row>
+          <Row
+            label="Scanning"
+            sub={
+              props.scanLocation === "server"
+                ? props.lastServerScanAt
+                  ? `Last scan ${formatSpan(Date.now() - props.lastServerScanAt)} ago`
+                  : "After every 5-minute candle"
+                : props.scanLocation === "browser"
+                ? "Only while this app is open"
+                : "Checking…"
+            }
+          >
+            <span className={props.scanLocation === "server" ? "text-gain" : "text-muted"}>
+              {props.scanLocation === "server" ? "On the server" : props.scanLocation === "browser" ? "In this browser" : "—"}
+            </span>
           </Row>
         </Group>
 
