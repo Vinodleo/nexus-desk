@@ -111,7 +111,7 @@ See `.env.example` for the full list. At minimum you need:
 
 ### Firestore rules
 
-Deploy `firestore.rules` with `npx firebase-tools deploy --only firestore:rules --project sustained-glyph-4lsxp`. `firebase.json` targets the app's named database (`ai-studio-selflearningtrad-…`), not `(default)`. You can also paste the file into the console: Firestore → that database → Security → Rules → Publish.
+The app uses its own Firebase project, `nexus-desk-21656` (sign-in and the `(default)` Firestore database; `firebase-applet-config.json`). Deploy `firestore.rules` with `npx firebase-tools deploy --only firestore:rules --project nexus-desk-21656`, or paste the file into the console: Firestore → Rules → Publish. Sign-in works only on addresses listed under Authentication → Settings → Authorised domains (add `nexus-desk-vinodleo.fly.dev`, and `localhost` for local runs).
 - Profiles and everything under them can be read and written only by
   their owner.
 - `uid`, `email` and `createdAt` are fixed once a profile exists, and

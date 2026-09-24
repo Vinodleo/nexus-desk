@@ -1,7 +1,7 @@
 {
   "firestore": [
     {
-      "database": "ai-studio-selflearningtrad-dca5620c-de20-4870-858d-10ae4d3e46b0",
+      "database": "(default)",
       "rules": "firestore.rules"
     }
   ],
