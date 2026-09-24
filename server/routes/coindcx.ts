@@ -203,13 +203,28 @@ router.get("/api/coindcx/candles", validate({ query: coinDcxCandlesQuery }), asy
     });
     const url = `https://public.coindcx.com/market_data/candles?${params}`;
     const response = await fetch(url);
-
-    if (!response.ok) {
-      return res.status(response.status).json({ error: `CoinDCX candles returned ${response.status}` });
+    const text = await response.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = undefined;
     }
+    // Normally a bare array; accept { data: [...] } too.
+    const list = Array.isArray(data)
+      ? data
+      : data && typeof data === "object" && Array.isArray((data as { data?: unknown }).data)
+      ? (data as { data: unknown[] }).data
+      : null;
 
-    const data = await response.json();
-    res.json(data);
+    if (!response.ok || !list) {
+      // Pass CoinDCX's own answer through, so the app can show why
+      // there's no price data instead of failing silently.
+      const detail = `CoinDCX candles (${pair}, ${params.get("interval")}): HTTP ${response.status} ${text.slice(0, 160)}`;
+      console.warn(`[Candles] ${detail}`);
+      return res.status(502).json({ error: detail });
+    }
+    res.json(list);
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to fetch candles from CoinDCX" });
   }

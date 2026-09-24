@@ -464,6 +464,11 @@ export async function scanAllMarkets(
 
     // Only real, closed candles are scanned. Without enough of them there's
     // nothing trustworthy to trade on, so the coin is skipped, not faked.
+    // Stocks have no 5-minute candle source yet (they need Zerodha's
+    // intraday candles); leave them out rather than report them every scan.
+    if (symbolConfig.assetClass === "equity" && (!bars || bars.length === 0)) {
+      continue;
+    }
     if (!bars || bars.length < MIN_SIGNAL_BARS || bars.some((b) => b.isSynthetic)) {
       // Automatic scans count a coin without data once per candle, not every
       // time the backstop runs.

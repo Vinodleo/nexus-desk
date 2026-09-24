@@ -57,20 +57,44 @@ describe("market stream", () => {
     expect(btc[btc.length - 1].volume).toBeGreaterThan(0);
 
     expect(liveMarketStream.getBars("ETH/INR")).toBeNull();
+    // Why ETH has no candles is kept for the Floor to show.
+    const eth = liveMarketStream.getCandleStatus().find((s) => s.symbol === "ETH/INR")!;
+    expect(eth.bars).toBe(0);
+    expect(eth.error).toBeTruthy();
     expect(liveMarketStream.getLastPrice("BTC/INR")).toBe(5_000_200);
     expect(liveMarketStream.dailyChanges.get("BTC/INR")).toBe(1.25);
   });
 });
 
 describe("candle helpers", () => {
-  it("keeps only closed candles, oldest first", async () => {
+  // A realistic epoch (Sept 2026), aligned to 5 minutes.
+  const T0 = Math.floor(1_790_000_000_000 / FIVE_MIN) * FIVE_MIN;
+
+  it("reads candles given as arrays, or with times in seconds", async () => {
     const { toClosedBars } = await import("../../src/services/liveMarketStreamService");
-    const now = 10 * FIVE_MIN + 1000;
+    const now = T0 + 10 * FIVE_MIN + 1000;
     const bars = toClosedBars(
       [
-        { time: 10 * FIVE_MIN, open: 3, high: 3, low: 3, close: 3, volume: 1 }, // still forming
-        { time: 9 * FIVE_MIN, open: 2, high: 2, low: 2, close: 2, volume: 1 },
-        { time: 8 * FIVE_MIN, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+        [T0 + 9 * FIVE_MIN, "2", "3", "1", "2.5", "10"],
+        { time: (T0 + 8 * FIVE_MIN) / 1000, open: 1, high: 2, low: 1, close: 1.5, volume: 4 },
+      ],
+      FIVE_MIN,
+      now
+    );
+    expect(bars.map((b) => [b.timestampMs, b.close, b.volume])).toEqual([
+      [T0 + 8 * FIVE_MIN, 1.5, 4],
+      [T0 + 9 * FIVE_MIN, 2.5, 10],
+    ]);
+  });
+
+  it("keeps only closed candles, oldest first", async () => {
+    const { toClosedBars } = await import("../../src/services/liveMarketStreamService");
+    const now = T0 + 10 * FIVE_MIN + 1000;
+    const bars = toClosedBars(
+      [
+        { time: T0 + 10 * FIVE_MIN, open: 3, high: 3, low: 3, close: 3, volume: 1 }, // still forming
+        { time: T0 + 9 * FIVE_MIN, open: 2, high: 2, low: 2, close: 2, volume: 1 },
+        { time: T0 + 8 * FIVE_MIN, open: 1, high: 1, low: 1, close: 1, volume: 1 },
       ],
       FIVE_MIN,
       now
@@ -80,6 +104,6 @@ describe("candle helpers", () => {
 
   it("schedules the next fetch just after the next candle closes", async () => {
     const { nextCandleFetchAt } = await import("../../src/services/liveMarketStreamService");
-    expect(nextCandleFetchAt(10 * FIVE_MIN + 1000)).toBe(11 * FIVE_MIN + 8000);
+    expect(nextCandleFetchAt(T0 + 10 * FIVE_MIN + 1000)).toBe(T0 + 11 * FIVE_MIN + 8000);
   });
 });

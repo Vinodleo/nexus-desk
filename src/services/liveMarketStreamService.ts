@@ -20,13 +20,38 @@ const CLOSE_GRACE_MS = 8000;
 /** Fewer closed candles than this and a symbol isn't scanned. */
 export const MIN_SIGNAL_BARS = 60;
 
-interface RawCandle {
-  time: number;
-  open: number | string;
-  high: number | string;
-  low: number | string;
-  close: number | string;
-  volume: number | string;
+/** Candle open time in ms from a number (ms or seconds), numeric string or ISO date. */
+function toMs(t: unknown): number {
+  const n = typeof t === "number" ? t : typeof t === "string" && t.trim() !== "" && !isNaN(Number(t)) ? Number(t) : NaN;
+  if (Number.isFinite(n)) return n < 1e12 ? n * 1000 : n;
+  if (typeof t === "string") return Date.parse(t);
+  return NaN;
+}
+
+/**
+ * One candle from CoinDCX, as an object ({ time, open, high, low, close,
+ * volume }) or an array ([time, open, high, low, close, volume]).
+ */
+function readCandle(c: unknown): MarketBar | null {
+  let t: unknown, o: unknown, h: unknown, l: unknown, cl: unknown, v: unknown;
+  if (Array.isArray(c)) [t, o, h, l, cl, v] = c;
+  else if (c && typeof c === "object") {
+    const r = c as Record<string, unknown>;
+    [t, o, h, l, cl, v] = [r.time ?? r.t ?? r.timestamp, r.open ?? r.o, r.high ?? r.h, r.low ?? r.l, r.close ?? r.c, r.volume ?? r.v];
+  } else return null;
+  const timestampMs = toMs(t);
+  const bar = {
+    time: "",
+    timestampMs,
+    open: Number(o),
+    high: Number(h),
+    low: Number(l),
+    close: Number(cl),
+    volume: Number(v) || 0,
+  };
+  if (!Number.isFinite(timestampMs) || !(bar.close > 0) || !(bar.high >= bar.low)) return null;
+  bar.time = new Date(timestampMs).toISOString();
+  return bar;
 }
 
 /**
@@ -36,19 +61,10 @@ interface RawCandle {
  */
 export function toClosedBars(raw: unknown, intervalMs: number, nowMs: number): MarketBar[] {
   if (!Array.isArray(raw)) return [];
-  return (raw as RawCandle[])
-    .filter((c) => c && Number.isFinite(Number(c.time)) && Number(c.time) + intervalMs <= nowMs)
-    .map((c) => ({
-      time: new Date(Number(c.time)).toISOString(),
-      timestampMs: Number(c.time),
-      open: Number(c.open),
-      high: Number(c.high),
-      low: Number(c.low),
-      close: Number(c.close),
-      volume: Number(c.volume) || 0,
-    }))
-    .filter((b) => b.close > 0 && b.high >= b.low)
-    .sort((a, b) => a.timestampMs - b.timestampMs);
+  return raw
+    .map(readCandle)
+    .filter((b): b is MarketBar => b !== null && (b.timestampMs as number) + intervalMs <= nowMs)
+    .sort((a, b) => (a.timestampMs as number) - (b.timestampMs as number));
 }
 
 /** When the next signal candle closes (plus the grace period), from `nowMs`. */
@@ -56,20 +72,37 @@ export function nextCandleFetchAt(nowMs: number, intervalMs = SIGNAL_INTERVAL_MS
   return Math.floor(nowMs / intervalMs) * intervalMs + intervalMs + CLOSE_GRACE_MS;
 }
 
-async function fetchClosedCandles(symbol: string, interval: string, intervalMs: number, limit: number): Promise<MarketBar[] | null> {
+type CandleFetch = { bars: MarketBar[]; error?: string };
+
+async function fetchClosedCandles(symbol: string, interval: string, intervalMs: number, limit: number): Promise<CandleFetch> {
   try {
     const base = symbol.split("/")[0];
     const res = await apiFetch(`/api/coindcx/candles?symbol=${base}&interval=${interval}&limit=${limit}`);
-    if (!res.ok) return null;
-    return toClosedBars(await res.json(), intervalMs, Date.now());
-  } catch {
-    return null;
+    const body = await res.json().catch(() => null);
+    if (!res.ok) return { bars: [], error: body?.error || `HTTP ${res.status}` };
+    const bars = toClosedBars(body, intervalMs, Date.now());
+    if (bars.length === 0) {
+      const sample = JSON.stringify(Array.isArray(body) ? body[0] : body)?.slice(0, 120);
+      return { bars, error: `No usable candles in CoinDCX's reply (${sample ?? "empty"})` };
+    }
+    return { bars };
+  } catch (err: any) {
+    return { bars: [], error: err?.message || "Couldn't reach the server" };
   }
+}
+
+/** Whether the scanner has real candles for a coin, and if not, why. */
+export interface CandleStatus {
+  symbol: string;
+  bars: number;
+  error?: string;
+  checkedAt: number;
 }
 
 class LiveMarketStreamService {
   /** Closed 5-minute candles with indicators, per symbol. */
   private marketData: Map<string, MarketBar[]> = new Map();
+  private candleStatus: Map<string, CandleStatus> = new Map();
   /** Last traded price from the live feed, per symbol. */
   private lastPrices: Map<string, number> = new Map();
   /** 24-hour change in %, from CoinDCX's ticker. */
@@ -128,8 +161,22 @@ class LiveMarketStreamService {
     const updated: string[] = [];
     await Promise.all(
       this.cryptoSymbols.map(async (sym) => {
-        const bars = await fetchClosedCandles(sym, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS, SIGNAL_CANDLES);
-        if (!bars || bars.length === 0) return;
+        let { bars, error } = await fetchClosedCandles(sym, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS, SIGNAL_CANDLES);
+        if (bars.length === 0) {
+          // One retry with a smaller request, in case the size was the problem.
+          const retry = await fetchClosedCandles(sym, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS, 120);
+          if (retry.bars.length > 0) ({ bars, error } = retry);
+        }
+        this.candleStatus.set(sym, {
+          symbol: sym,
+          bars: bars.length || this.marketData.get(sym)?.length || 0,
+          error,
+          checkedAt: Date.now(),
+        });
+        if (bars.length === 0) {
+          console.warn(`[MarketStream] ${sym}: ${error}`);
+          return;
+        }
         const prevLast = this.getLatestClosedCandleMs(sym);
         this.marketData.set(sym, decorateBarsWithIndicators(bars));
         if (!this.lastPrices.has(sym)) this.lastPrices.set(sym, bars[bars.length - 1].close);
@@ -166,7 +213,7 @@ class LiveMarketStreamService {
       try {
         let bars: MarketBar[] | null;
         if (assetClass === "crypto") {
-          bars = await fetchClosedCandles(sym, "1h", 60 * 60 * 1000, 100);
+          bars = (await fetchClosedCandles(sym, "1h", 60 * 60 * 1000, 100)).bars;
         } else {
           // Zerodha's historical-candles endpoint needs an active login —
           // a 401 just means "not connected yet", not a failure.
@@ -221,6 +268,13 @@ class LiveMarketStreamService {
   /** Closed 5-minute candles with indicators, oldest first. */
   getBars(symbol: string): MarketBar[] | null {
     return this.marketData.get(symbol) || null;
+  }
+
+  /** Candle status for every crypto coin the scanner covers. */
+  getCandleStatus(): CandleStatus[] {
+    return this.cryptoSymbols.map(
+      (sym) => this.candleStatus.get(sym) ?? { symbol: sym, bars: 0, checkedAt: 0, error: "Not loaded yet" }
+    );
   }
 
   getLastPrice(symbol: string): number | undefined {

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight } from "lucide-react";
+import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight, AlertTriangle } from "lucide-react";
 import type { Position } from "../../types";
 import { useLiveTickers } from "../../hooks/useLiveTickers";
+import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../services/liveMarketStreamService";
 import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
@@ -50,8 +51,10 @@ export interface LedgerFloorProps {
   guardianOnline: boolean | null;
   /** Whether the server allows live orders at all (null until known). */
   liveTradingEnabled: boolean | null;
-  /** Headline price for the status line. Omit to follow the live stream (ETH/INR). */
-  ticker?: FloorTicker | null;
+  /** Prices for the market line (BTC and ETH). Omit to follow the live stream. */
+  market?: FloorTicker[];
+  /** Whether the scanner has price candles for each coin. Omit to follow the live stream. */
+  candleStatus?: CandleStatus[];
   pendingProposals: number;
   scan: FloorScanSummary;
   onOpenQueue: () => void;
@@ -67,21 +70,56 @@ function positionNote(p: Position): string {
   return "Guarded on the server if you close this tab";
 }
 
-const TickerText: React.FC<{ ticker: FloorTicker | null }> = ({ ticker }) =>
-  ticker ? (
-    <>
-      {" · "}
-      {ticker.symbol.split("/")[0]} {formatPrice(ticker.price)}{" "}
-      <span className={pnlTone(ticker.changePercent)}>{formatPct(ticker.changePercent)}</span>
-    </>
-  ) : null;
+const MARKET_SYMBOLS = ["BTC/INR", "ETH/INR"];
+
+/** BTC and ETH with their 24-hour change: context, not part of the guardian's status. */
+const MarketLine: React.FC<{ tickers: FloorTicker[] }> = ({ tickers }) => {
+  const shown = MARKET_SYMBOLS.map((s) => tickers.find((t) => t.symbol === s)).filter((t): t is FloorTicker => !!t);
+  if (shown.length === 0) return null;
+  return (
+    <div className="text-xs text-muted tabular-nums">
+      {shown.map((t, i) => (
+        <React.Fragment key={t.symbol}>
+          {i > 0 && " · "}
+          {t.symbol.split("/")[0]} {formatPrice(t.price)}{" "}
+          <span className={pnlTone(t.changePercent)}>{formatPct(t.changePercent)}</span>
+        </React.Fragment>
+      ))}
+      <span> in 24h</span>
+    </div>
+  );
+};
 
 // Subscribes to the price stream here, not in App, so a tick re-renders
 // only this line.
-const LiveTickerText: React.FC = () => {
+const LiveMarketLine: React.FC = () => {
   const tickers = useLiveTickers();
-  const t = tickers.find((x) => x.symbol === "ETH/INR") ?? tickers.find((x) => x.symbol.endsWith("/INR"));
-  return <TickerText ticker={t ? { symbol: t.symbol, price: t.price, changePercent: t.changePercent } : null} />;
+  return <MarketLine tickers={tickers.map((t) => ({ symbol: t.symbol, price: t.price, changePercent: t.changePercent }))} />;
+};
+
+/** A warning when some coins have no price candles, with CoinDCX's reason. */
+const CandleWarning: React.FC<{ status: CandleStatus[] }> = ({ status }) => {
+  const missing = status.filter((s) => s.bars < MIN_SIGNAL_BARS && s.checkedAt > 0);
+  if (missing.length === 0) return null;
+  const reason = missing.find((s) => s.error)?.error;
+  return (
+    <div role="status" className="flex gap-2.5 p-3 rounded-xl bg-warn-soft text-warn-ink text-xs leading-relaxed">
+      <AlertTriangle className="w-4 h-4 shrink-0 text-warn mt-px" strokeWidth={1.8} />
+      <span>
+        <strong>
+          No price candles for {missing.length} of {status.length} coins
+        </strong>{" "}
+        ({missing.map((s) => s.symbol.split("/")[0]).join(", ")}), so the scanner can't check them.
+        {reason && <span className="block mt-1 break-words opacity-80">{reason}</span>}
+      </span>
+    </div>
+  );
+};
+
+const LiveCandleWarning: React.FC = () => {
+  const [status, setStatus] = useState<CandleStatus[]>(() => liveMarketStream.getCandleStatus());
+  useEffect(() => liveMarketStream.subscribe(() => setStatus(liveMarketStream.getCandleStatus())), []);
+  return <CandleWarning status={status} />;
 };
 
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void }> = ({ position: p, onClose }) => {
@@ -267,12 +305,15 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
             <ShieldCheck className="w-4 h-4" strokeWidth={1.8} />
           )}
         </span>
-        <span className="tabular-nums">
+        <span>
           {guardianText}
           {liveText && ` · ${liveText}`}
-          {props.ticker !== undefined ? <TickerText ticker={props.ticker} /> : <LiveTickerText />}
         </span>
       </div>
+
+      {props.market !== undefined ? <MarketLine tickers={props.market} /> : <LiveMarketLine />}
+
+      {props.candleStatus !== undefined ? <CandleWarning status={props.candleStatus} /> : <LiveCandleWarning />}
 
       <section aria-label="Scanner today" className="flex flex-col gap-1.5 text-xs text-muted tabular-nums">
         <div>
