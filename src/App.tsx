@@ -37,7 +37,6 @@ import {
   resetStoredExperiencesToBaseline,
   loadStoredClosedTrades,
   saveStoredClosedTrades,
-  getBaselineClosedTrades,
   loadStoredModelAccuracy,
   saveStoredModelAccuracy,
   LearnedModelAccuracy,
@@ -60,7 +59,8 @@ import { LedgerFloor } from "./components/ledger/LedgerFloor";
 import { SettingsSheet } from "./components/ledger/SettingsSheet";
 import { useZerodhaConnection } from "./hooks/useZerodhaConnection";
 import { LedgerQueue } from "./components/ledger/LedgerQueue";
-import { BookTab } from "./components/BookTab";
+import { LedgerBook } from "./components/ledger/LedgerBook";
+import { LedgerRisk } from "./components/ledger/LedgerRisk";
 import { LabTab } from "./components/LabTab";
 import { LearningTab } from "./components/LearningTab";
 import { CommanderModal } from "./components/CommanderModal";
@@ -1695,7 +1695,7 @@ export default function App() {
   ).length;
 
   // Tabs already rebuilt in the Private Ledger design.
-  const isLedgerTab = activeTab === "floor" || activeTab === "queue";
+  const isLedgerTab = activeTab === "floor" || activeTab === "queue" || activeTab === "book";
   // Match the browser chrome (status bar, overscroll) to the tab's design.
   useEffect(() => {
     const colour = isLedgerTab ? "#F6F3EE" : "#09090b";
@@ -1847,52 +1847,44 @@ export default function App() {
           />
         )}
 
-        {/* 3. Book Tab View (Screenshot 2) */}
         {activeTab === "book" && (
-          <BookTab
-            positions={activePositions}
-            closedTrades={closedTrades}
-            maxPositions={5}
-            onClosePosition={handleClosePosition}
+          <LedgerBook
+            trades={closedTrades}
             onUpdateTrade={(updatedTrade) => {
               setClosedTrades((prev) =>
                 prev.map((t) => (t.id === updatedTrade.id ? updatedTrade : t))
               );
             }}
-            onResetTradesToBaseline={() => {
-              const freshTrades = getBaselineClosedTrades();
-              setClosedTrades(freshTrades);
-              saveStoredClosedTrades(freshTrades);
-              setExecutionToast({
-                id: `toast-${Date.now()}`,
-                title: "Trade History Reset",
-                message: "Restored baseline benchmark trade history with profit/loss metrics.",
-                type: "INFO",
-                timestamp: new Date().toLocaleTimeString(),
-              });
-            }}
-            tradingMode={tradingMode}
-            onToggleTradingMode={handleToggleTradingMode}
-            coinDcxBalance={coinDcxBalance}
-            coinDcxStatus={coinDcxStatus}
-            onRefreshCoinDcxStatus={refreshCoinDcxStatus}
-            onRefreshBalance={fetchCoinDcxBalance}
-            riskCalc={currentRiskCalculation}
-            failureState={failureState}
-            onUpdateFailureState={(key, val) =>
-              setFailureState((prev) => ({ ...prev, [key]: val }))
+            riskBlocked={
+              !currentRiskCalculation.passedAllChecks ||
+              failureState.simulateStaleMarketData ||
+              failureState.simulateDailyLossBreach ||
+              failureState.simulateOrderBookThinLiquidity
             }
-            onResetFailures={() =>
-              setFailureState({
-                globalKillSwitchActive: false,
-                simulateAgentTimeout: false,
-                simulateStaleMarketData: false,
-                simulateDailyLossBreach: false,
-                simulateOrderBookThinLiquidity: false,
-                simulateConflictingSignals: false,
-              })
+            risk={
+              <LedgerRisk
+                riskCalc={currentRiskCalculation}
+                failureState={failureState}
+                onUpdateFailureState={(key, val) =>
+                  setFailureState((prev) => ({ ...prev, [key]: val }))
+                }
+                onResetFailures={() =>
+                  setFailureState((prev) => ({
+                    ...prev,
+                    simulateAgentTimeout: false,
+                    simulateStaleMarketData: false,
+                    simulateDailyLossBreach: false,
+                    simulateOrderBookThinLiquidity: false,
+                    simulateConflictingSignals: false,
+                  }))
+                }
+                stopped={killSwitchActive}
+                onToggleStop={handleToggleKillSwitch}
+                coinDcxStatus={coinDcxStatus}
+                onRefreshCoinDcxStatus={refreshCoinDcxStatus}
+                onRefreshBalance={fetchCoinDcxBalance}
+              />
             }
-            toggleKillSwitch={handleToggleKillSwitch}
           />
         )}
 
