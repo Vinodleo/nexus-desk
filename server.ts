@@ -1,4 +1,5 @@
 import express, { type Request, type Response } from "express";
+import compression from "compression";
 import path from "path";
 import dotenv from "dotenv";
 
@@ -29,6 +30,9 @@ import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+// Compress responses (the app, its assets and API replies); cuts the
+// server's outgoing data, which some hosts bill for. WebSockets aren't affected.
+app.use(compression());
 app.use(express.json());
 
 // Unauthenticated, for uptime monitors and container health checks: 503 when

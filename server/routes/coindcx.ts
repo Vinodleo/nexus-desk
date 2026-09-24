@@ -169,9 +169,26 @@ router.post("/api/coindcx/orders/cancel", validate({ body: cancelOrderBody }), a
   }
 });
 
+// Prices for the app: INR and USDT markets, with only the fields it reads.
+// (CoinDCX's full list is several times bigger, and the app polls it every
+// few seconds; this keeps the server's outgoing data small.)
+export function trimTicker(data: unknown[]): { market: string; last_price: string; change_24_hour?: string }[] {
+  const out: { market: string; last_price: string; change_24_hour?: string }[] = [];
+  for (const t of data as Record<string, unknown>[]) {
+    const market = typeof t?.market === "string" ? t.market : "";
+    if (!/(INR|USDT)$/.test(market) || t.last_price === undefined) continue;
+    out.push({
+      market,
+      last_price: String(t.last_price),
+      ...(t.change_24_hour !== undefined ? { change_24_hour: String(t.change_24_hour) } : {}),
+    });
+  }
+  return out;
+}
+
 router.get("/api/coindcx/ticker", async (req, res) => {
   try {
-    res.json(await getCoinDcxTicker());
+    res.json(trimTicker(await getCoinDcxTicker()));
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch from CoinDCX" });
   }
