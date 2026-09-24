@@ -13,7 +13,6 @@ import {
 } from "../types";
 import {
   SUPPORTED_SYMBOLS,
-  isIndianEquityMarketOpen,
   SymbolConfig,
   classifyRegime,
   decorateBarsWithIndicators,
@@ -31,6 +30,7 @@ import { skipReasonForRisk, type SkipReason, type SymbolScanOutcome } from "./sc
 import { shadowFromSetup, type ShadowSignal } from "./shadowTracker";
 import { DEFAULT_MIN_CONFIDENCE, HEURISTIC_SCORE_VERSION, MIN_EDGE_R, type Calibrator, type ConfidenceScorer } from "./calibration";
 import { META_FEATURE_VERSION, metaFeatures } from "./metaFeatures";
+import { NSE_UNIVERSE, nseTakesEntries } from "../shared/nse";
 
 // A Lab model trained on generated candles says nothing about the real
 // market, so the live desk ignores it (default hurdle, no persona tuning, no
@@ -103,6 +103,10 @@ export interface ScanMarketOptions {
   promotedModel?: PromotedLabModel | null;
   macroRegimes?: Record<string, RegimeType | "neutral">;
   cryptoSymbols?: string[];
+  /** NSE stocks to scan (default: the fixed list). Scanned only while the market takes new trades. */
+  equitySymbols?: string[];
+  /** The time of the scan (default now): decides whether the stock market is open. */
+  now?: number;
   useLabModel?: boolean;
   /** A scheduled-news pause in force now (see shared/eventCalendar): the event officer vetoes new trades. */
   eventWindow?: { active: boolean; headline?: string };
@@ -164,7 +168,7 @@ export async function scanSingleMarket(
   // The latest candle closed at open time + interval. If that was more than
   // two intervals ago the feed has stalled, and the risk engine fails closed.
   const candleCloseMs = (currentBar?.timestampMs ?? Date.now()) + SIGNAL_INTERVAL_MS;
-  const isDataStale = Date.now() - candleCloseMs > 2 * SIGNAL_INTERVAL_MS;
+  const isDataStale = (options.now ?? Date.now()) - candleCloseMs > 2 * SIGNAL_INTERVAL_MS;
   // No generated starter trades: without a memory, each trader's own
   // estimate stands (see computeMetaLabelScore).
   const experiences = options.experiences ?? [];
@@ -252,7 +256,6 @@ export async function scanSingleMarket(
   if (
     qualifiedSetups.length > 0 &&
     options.getOrderBook &&
-    symbolConfig.assetClass !== "equity" &&
     !options.failureState.simulateOrderBookThinLiquidity
   ) {
     const live = await options.getOrderBook(symbolConfig.symbol, policy.maxOrderValueInr);
@@ -408,7 +411,7 @@ export async function scanSingleMarket(
           1000 + Math.random() * 9000
         )}`,
         supervisorNotes: `${setup.name}, one of ${sourcePanel.supportingPersonas.length} agreeing trader(s) (${sourcePanel.totalVotesCast} voted, ${(sourcePanel.agreementScore * 100).toFixed(0)}% weighted agreement), in ${regime.replace(/_/g, " ")}. Meta-confidence ${(metaScore.confidence * 100).toFixed(0)}%, net EV +₹${evAssessment.expectedNetValue.toFixed(2)}. Allocated ${riskCalc.recommendedPositionSizeUnits} units (₹${riskCalc.riskDollars.toFixed(0)} risk). Placed in Queue for human authorization.`,
-        marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. ${orderBook.source === "coindcx" ? "CoinDCX order book: spread" : "Estimated spread"} ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}%, depth score ${orderBook.depthScore}/100${orderBook.depthInr !== undefined ? ` (${formatInr(orderBook.depthInr)} within 0.5% of the price)` : ""}.`,
+        marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. ${orderBook.source === "coindcx" ? "CoinDCX order book: spread" : orderBook.source === "angelone" ? "NSE market depth: spread" : "Estimated spread"} ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}%, depth score ${orderBook.depthScore}/100${orderBook.depthInr !== undefined ? ` (${formatInr(orderBook.depthInr)} within 0.5% of the price)` : ""}.`,
         aiRecommendation:
           metaScore.confidence >= 0.60 ? "TRADE_FAVORED" : "CAUTION",
         modelUsed: "Multi-Agent Trader Panel v3.0",
@@ -420,7 +423,7 @@ export async function scanSingleMarket(
         dataQuality: {
           syntheticBarShare: syntheticBarShare(bars),
           seededExperienceShare: retrieval.seededShare,
-          simulatedOrderBook: orderBook.source !== "coindcx",
+          simulatedOrderBook: orderBook.source !== "coindcx" && orderBook.source !== "angelone",
         },
       };
       passing.push({ proposal, shadow });
@@ -513,11 +516,11 @@ export async function scanAllMarkets(
   // INR coins); stocks from the fixed list.
   const universe = [
     ...(options.cryptoSymbols ?? liveMarketStream.getCryptoSymbols()).map(getSymbolConfig),
-    ...SUPPORTED_SYMBOLS.filter((s) => s.assetClass === "equity"),
+    ...(options.equitySymbols ?? SUPPORTED_SYMBOLS.filter((s) => s.assetClass === "equity").map((s) => s.symbol)).map(getSymbolConfig),
   ];
   const targetSymbols = options.symbols
     ? [...new Set(options.symbols.map((s) => (s === "XPR/INR" ? "XRP/INR" : s)))]
-        .filter((s) => SUPPORTED_SYMBOLS.some((c) => c.symbol === s) || isCryptoInrSymbol(s))
+        .filter((s) => SUPPORTED_SYMBOLS.some((c) => c.symbol === s) || isCryptoInrSymbol(s) || NSE_UNIVERSE[s] !== undefined)
         .map(getSymbolConfig)
     : universe;
 
@@ -542,13 +545,14 @@ export async function scanAllMarkets(
     }
   }
 
-  const equityMarketOpen = isIndianEquityMarketOpen();
+  // Stocks: only while NSE takes new intraday trades (9:15 to 3:00 IST, weekdays).
+  const equityMarketOpen = nseTakesEntries(options.now ?? Date.now());
   const outcomes: SymbolScanOutcome[] = [];
   const shadows: ShadowSignal[] = [];
 
   for (const symbolConfig of targetSymbols) {
-    // Equities only get analysed within NSE cash-market hours (9:15-3:30
-    // IST, Mon-Fri) — crypto is unaffected, it trades 24/7.
+    // Equities only get analysed while NSE takes new intraday trades —
+    // crypto is unaffected, it trades 24/7.
     if (symbolConfig.assetClass === "equity" && !equityMarketOpen) {
       continue;
     }
@@ -563,8 +567,8 @@ export async function scanAllMarkets(
 
     // Only real, closed candles are scanned. Without enough of them there's
     // nothing trustworthy to trade on, so the coin is skipped, not faked.
-    // Stocks have no 5-minute candle source yet (they need Zerodha's
-    // intraday candles); leave them out rather than report them every scan.
+    // Stocks without a candle source (Angel One not set up, or scanning in
+    // the browser) are left out rather than reported every scan.
     if (symbolConfig.assetClass === "equity" && (!bars || bars.length === 0)) {
       continue;
     }

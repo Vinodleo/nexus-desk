@@ -272,6 +272,25 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             )}
           </Row>
           <Row
+            label="Angel One"
+            sub={
+              !props.serverStatus?.angelOne?.configured
+                ? "Indian stocks: add the ANGEL_* settings on the server (see docs/hosting.md)"
+                : props.serverStatus.angelOne.lastError ??
+                  (props.serverStatus.angelOne.loggedIn
+                    ? `Nifty 50 stocks scanned 9:15–3:00 IST · ${props.serverStatus.angelOne.stocksKnown} found`
+                    : "Logs in by itself when NSE opens")
+            }
+          >
+            {!props.serverStatus?.angelOne?.configured ? (
+              <span className="text-muted">Not set up</span>
+            ) : props.serverStatus.angelOne.lastError ? (
+              <span className="text-warn">Problem</span>
+            ) : (
+              <span className="text-gain">{props.serverStatus.angelOne.loggedIn ? "Connected" : "Ready"}</span>
+            )}
+          </Row>
+          <Row
             label="Scanning"
             sub={
               props.scanLocation === "server"

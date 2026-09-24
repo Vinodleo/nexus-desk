@@ -8,6 +8,8 @@ import { exitAt, mergeGuardState, updateTrailingStop } from "../src/shared/trail
 export type GuardianExitReason = "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME";
 
 export interface GuardedPosition {
+  /** NSE stocks are squared off at 3:20 IST and trail further past entry. */
+  symbol?: string;
   direction: "LONG" | "SHORT";
   entryPrice: number;
   currentPrice: number;

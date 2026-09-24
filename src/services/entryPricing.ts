@@ -2,6 +2,7 @@ import type { StrategySetup } from "../types";
 import { fitQuantity } from "../shared/marketRules";
 import { ruleFor } from "./marketRulesStore";
 import { TAKER_FEE_RATE } from "../shared/tradeMath";
+import { isNseSymbol, nseRoundTripRate } from "../shared/nse";
 
 // A proposal is priced at the close of the candle it came from; by the time
 // it's approved the market has moved. The entry is taken at the live price,
@@ -35,7 +36,7 @@ export function priceEntry(
 
   // Fees come off the reward and add to the loss, so a tight setup is judged
   // on what it actually pays.
-  const fees = entry * ROUND_TRIP_FEES;
+  const fees = entry * (isNseSymbol(setup.symbol) ? nseRoundTripRate(entry * units) : ROUND_TRIP_FEES);
   const rewardToRisk = (reward - fees) / (risk + fees);
   if (rewardToRisk < MIN_REWARD_TO_RISK_AT_ENTRY) {
     const movedPct = (Math.abs(entry - setup.entryPrice) / setup.entryPrice) * 100;

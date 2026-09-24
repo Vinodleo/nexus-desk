@@ -1,5 +1,6 @@
 import { MarketBar, OrderBook, RegimeType } from "../types";
 import { averageTrueRange, directionalIndex } from "./indicators";
+import { NSE_UNIVERSE } from "../shared/nse";
 
 export interface SymbolConfig {
   symbol: string;
@@ -177,25 +178,6 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
   },
 ];
 
-/**
- * Indian equity cash-market session: 9:15 AM - 3:30 PM IST, Monday-Friday.
- * Crypto (assetClass "crypto") is unaffected — it trades 24/7. Equities
- * scanned or held outside this window is exactly the "trading NIFTY stocks
- * at 2 AM IST" problem — this is what prevents that.
- */
-export function isIndianEquityMarketOpen(): boolean {
-  const nowIst = new Date(
-    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
-  );
-  const day = nowIst.getDay(); // 0 = Sunday, 6 = Saturday
-  if (day === 0 || day === 6) return false;
-
-  const minutesSinceMidnight = nowIst.getHours() * 60 + nowIst.getMinutes();
-  const marketOpen = 9 * 60 + 15; // 9:15 AM
-  const marketClose = 15 * 60 + 30; // 3:30 PM
-  return minutesSinceMidnight >= marketOpen && minutesSinceMidnight <= marketClose;
-}
-
 // Configs for INR coins outside SUPPORTED_SYMBOLS, which the scanner picks up
 // from CoinDCX's most-traded list.
 const dynamicConfigs = new Map<string, SymbolConfig>();
@@ -210,6 +192,23 @@ export function getSymbolConfig(symbolOrCfg: SymbolConfig | string): SymbolConfi
   const normalized = symbolOrCfg === "XPR/INR" ? "XRP/INR" : symbolOrCfg;
   const known = SUPPORTED_SYMBOLS.find((s) => s.symbol === normalized);
   if (known) return known;
+  // Nifty 50 stocks the fixed list doesn't carry.
+  if (NSE_UNIVERSE[normalized]) {
+    let cfg = dynamicConfigs.get(normalized);
+    if (!cfg) {
+      cfg = {
+        symbol: normalized,
+        name: normalized,
+        basePrice: 0,
+        tickSize: 0.05,
+        volatility: 0.22,
+        correlatedGroup: `EQUITY_${NSE_UNIVERSE[normalized]}`,
+        assetClass: "equity",
+      };
+      dynamicConfigs.set(normalized, cfg);
+    }
+    return cfg;
+  }
   if (!isCryptoInrSymbol(normalized)) return SUPPORTED_SYMBOLS[0];
   let cfg = dynamicConfigs.get(normalized);
   if (!cfg) {

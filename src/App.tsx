@@ -620,7 +620,8 @@ export default function App() {
         exitPrice,
         pos.quantity,
         reason,
-        pos.bankedQuantity && pos.bankedPrice !== undefined ? { quantity: pos.bankedQuantity, price: pos.bankedPrice } : undefined
+        pos.bankedQuantity && pos.bankedPrice !== undefined ? { quantity: pos.bankedQuantity, price: pos.bankedPrice } : undefined,
+        pos.symbol
       );
 
       // Remove from active positions & update capital

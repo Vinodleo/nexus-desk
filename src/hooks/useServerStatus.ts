@@ -7,6 +7,8 @@ export interface ServerStatus {
   cloudRun: { service: string; revision: string } | null;
   storage: { dir: string; kept: boolean; note: string };
   scanner: { lastTickAt: number; lastCycleDoneAt: number; stalled: boolean };
+  /** Angel One (Indian stocks); missing on an older server. */
+  angelOne?: { configured: boolean; loggedIn: boolean; lastLoginAt: number; lastError: string | null; stocksKnown: number };
 }
 
 /** The server's host status, read while `active` (Settings open) and every minute. */

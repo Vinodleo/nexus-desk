@@ -22,6 +22,8 @@ import { router as scannerRouter } from "./server/routes/scanner";
 import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
 import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
+import { startStockPrices } from "./server/stockPrices";
+import { angelStatus } from "./server/angelOne";
 
 // Entry point: builds the Express app, mounts the route modules behind
 // Firebase auth, and starts the WebSocket fan-out, the CoinDCX price relay and
@@ -62,7 +64,7 @@ app.use(scannerRouter);
 
 // Where the server runs and whether its saved state survives restarts.
 app.get("/api/server/status", (_req: Request, res: Response) => {
-  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat() });
+  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus() });
 });
 
 // Unknown API paths get a JSON 404 instead of falling through to the SPA's
@@ -109,6 +111,7 @@ async function startServer() {
   startCoinDcxRelay();
   startExpiryGuard();
   startServerScanner();
+  startStockPrices();
 }
 
 startServer();

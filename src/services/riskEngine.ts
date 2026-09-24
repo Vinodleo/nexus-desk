@@ -8,6 +8,7 @@ import {
 } from "../types";
 import { fitQuantity } from "../shared/marketRules";
 import { openQuantity } from "../shared/exitRules";
+import { nseRoundTripRate } from "../shared/nse";
 import { ruleFor } from "./marketRulesStore";
 import type { RiskRejectionCode } from "./scanOutcome";
 
@@ -80,16 +81,13 @@ export function evaluateExpectedValue(
   const avgWinDollars = rewardPerUnit * units;
   const avgLossDollars = riskPerUnit * units;
 
-  // Costs estimation — genuinely different fee structures per asset class,
-  // not a one-size-fits-all constant. Crypto exchanges (CoinDCX) charge a
-  // percentage-of-trade-value taker fee; Zerodha (equities) charges a flat
-  // fee per executed order regardless of trade size (₹20 or 0.03%,
-  // whichever is lower, for intraday — flat ₹20 is the safe conservative
-  // assumption at the trade sizes this app runs).
+  // Costs estimation — different fee structures per asset class. Crypto
+  // (CoinDCX) charges a percentage-of-trade-value taker fee; stocks (Angel
+  // One intraday) a per-order brokerage plus STT, stamp duty and GST.
   const isEquity = !setup.symbol.includes("/");
   const estimatedSpreadCost = spread * units;
   const estimatedBrokerageFee = isEquity
-    ? 40.0 // ~₹20/side, ₹40 round trip flat — Zerodha intraday equity brokerage
+    ? setup.entryPrice * units * nseRoundTripRate(setup.entryPrice * units) // Angel One intraday costs (shared/nse)
     : setup.entryPrice * units * policy.takerFeeRateRoundTrip;
   const estimatedRate = depthScore < 40 ? 0.0006 : 0.0002; // higher in thin liquidity
   // A book too thin to fill the trade gets a punitive 1%; the liquidity check rejects it anyway.

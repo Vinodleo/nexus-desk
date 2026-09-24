@@ -299,7 +299,8 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     exitPrice,
     pos.quantity,
     reason,
-    pos.bankedQuantity && pos.bankedPrice !== undefined ? { quantity: pos.bankedQuantity, price: pos.bankedPrice } : undefined
+    pos.bankedQuantity && pos.bankedPrice !== undefined ? { quantity: pos.bankedQuantity, price: pos.bankedPrice } : undefined,
+    pos.symbol
   );
 
   const exitTimeMs = Date.now();

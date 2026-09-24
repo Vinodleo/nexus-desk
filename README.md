@@ -106,6 +106,7 @@ See `.env.example` for the full list. At minimum you need:
 | `GEMINI_API_KEY` | AI agents (without it, the rule-based fallbacks are used) |
 | `COINDCX_API_KEY`, `COINDCX_API_SECRET` | Live CoinDCX balances and orders |
 | `ZERODHA_API_KEY`, `ZERODHA_API_SECRET` | Zerodha Kite login, ticker and candles |
+| `ANGEL_API_KEY`, `ANGEL_CLIENT_CODE`, `ANGEL_PIN`, `ANGEL_TOTP_SECRET` | Indian stocks (Nifty 50) via Angel One SmartAPI: candles, live prices, depth |
 | `LIVE_TRADING_ENABLED` + `LIVE_*` limits | Server-side live-order limits |
 
 ### Firestore rules
