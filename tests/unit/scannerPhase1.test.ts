@@ -73,6 +73,10 @@ describe("scanner outcomes", () => {
     const trend = candles(150, (i) => 10000 + i * 8);
     const report = await scanAllMarkets({ ...baseOptions, symbols: ["SOL/INR"], barsMap: { "SOL/INR": trend } });
     expect(report.outcomes).toEqual([{ symbol: "SOL/INR", proposed: true }]);
+    // Every setup is handed to shadow tracking, starting at the candle close.
+    expect(report.shadows.length).toBeGreaterThan(0);
+    expect(report.shadows.some((s) => s.kind === "proposed")).toBe(true);
+    expect(report.shadows[0].signalTime).toBe(trend[trend.length - 1].timestampMs! + FIVE_MIN);
     const p = report.newProposals[0];
     expect(p.setup.timeframe).toBe("5m");
     expect(p.setup.direction).toBe("LONG");
