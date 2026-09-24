@@ -158,7 +158,9 @@ an https address. `fly.toml` holds the settings. The GitHub Action
    merged PR deploys itself once CI passes.
 8. **Tell the other services about the new address:**
    - **Firebase Authentication → Settings → Authorized domains:** add
-     `nexus-desk-vinodleo.fly.dev`.
+     `nexus-desk-vinodleo.fly.dev`. This must be in a Firebase project you
+     own (the app uses `nexus-desk-21656`, see the README): AI Studio's own
+     project can't be changed from your account.
    - **Kite Connect app → Redirect URL:** `https://nexus-desk-vinodleo.fly.dev/`.
 
 The paper book, trade history and Lab model live in the browser, per
