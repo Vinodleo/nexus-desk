@@ -19,7 +19,7 @@ import { NSE_SYMBOLS, isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
 import { broadcastToUser, currentPrices } from "../realtime";
 import { dailyPnlToday, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
-import { runServerAutopilot } from "./autopilot";
+import { runServerAutopilot, serverQuarantines } from "./autopilot";
 import { ServerMarketData } from "./marketData";
 
 // The scanner, run on the server after every 5-minute candle close, so coins
@@ -170,7 +170,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     riskPolicy,
     // The trade memory: this user's finished tracked setups (real results).
     experiences: experiencesFromShadows(state.shadows),
-    quarantines: desk.quarantines,
+    quarantines: serverQuarantines(uid, desk, now),
     getOrderBook,
     calibrators: { heuristic: buildCalibrator(state.shadows, "heuristic") },
     promotedModel: desk.promotedModel,

@@ -15,6 +15,7 @@ const desk: DeskSettings = {
   tradingMode: "PAPER",
   trailProfile: "tight",
   killSwitch: false,
+  lossStreak: 0,
   scanning: true,
   failureState: {
     simulateAgentTimeout: false, simulateStaleMarketData: false, simulateDailyLossBreach: false,

@@ -19,6 +19,8 @@ export interface DeskState {
   /** Trailing-stop profile new positions carry (shared/trailingStop). */
   trailProfile?: string;
   killSwitch: boolean;
+  /** Losses in a row the app has counted (since its kill switch was last turned off). */
+  lossStreak?: number;
   /** Continuous scanning switched on in the app. */
   scanning: boolean;
   failureState: FailureInjectionState;

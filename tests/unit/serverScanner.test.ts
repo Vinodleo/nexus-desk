@@ -248,6 +248,46 @@ describe("server autopilot", () => {
     expect(guardian.daemonPositions.size).toBe(0);
   });
 
+  /** The guardian closes a SOL position at a loss, as it would with the app closed. */
+  async function guardianLoss(id: string, symbol = "SOL/INR") {
+    const guardian = await import("../../server/guardian");
+    guardian.daemonPositions.set(id, {
+      id, userId: "owner", symbol, direction: "LONG", entryPrice: 11700, currentPrice: 11700, isSelfApproved: true,
+      quantity: 0.5, stopLoss: 11650, takeProfit: 12000, openTime: new Date(Date.now() - 10 * MIN).toISOString(),
+    });
+    guardian.evaluateDaemonPositions(symbol, 11600);
+    expect(guardian.daemonPositions.has(id)).toBe(false);
+  }
+
+  it("doesn't reopen a coin the guardian just closed at a loss", async () => {
+    await post("/api/desk/state", on);
+    await guardianLoss("z1");
+    const { runScanCycle, reportsSince } = await import("../../server/scanner/scannerService");
+    await runScanCycle(now);
+    // The scanner leaves the coin out for the cooldown (no proposal is made).
+    expect(reportsSince("owner", 0)[0].newProposals.filter((p) => p.symbol === "SOL/INR")).toEqual([]);
+    expect((await import("../../server/guardian")).daemonPositions.size).toBe(0);
+  });
+
+  it("pauses after three losses in a row, until the app starts a fresh count", async () => {
+    await post("/api/desk/state", { ...on, lossStreak: 1 });
+    // Two more losses on other coins while the app is closed.
+    await guardianLoss("l1", "ETH/INR");
+    await guardianLoss("l2", "BTC/INR");
+    const { runScanCycle, reportsSince } = await import("../../server/scanner/scannerService");
+    await runScanCycle(now);
+    const proposal = reportsSince("owner", 0)[0].newProposals[0];
+    expect(proposal.status).toBe("DEFERRED");
+    expect(proposal.deferralReason).toMatch(/3 losses in a row/);
+    expect((await import("../../server/guardian")).daemonPositions.size).toBe(0);
+
+    // The app counted them and you turned the kill switch off: a fresh start.
+    await new Promise((r) => setTimeout(r, 5));
+    await post("/api/desk/state", { ...on, lossStreak: 0 });
+    await runScanCycle(now + 5 * MIN);
+    expect(reportsSince("owner", now).at(-1)!.newProposals[0].status).toBe("APPROVED");
+  });
+
   it("counts the guardian's closes since the app's last update against the daily loss limit", async () => {
     const { serverDailyPnl } = await import("../../server/scanner/scannerService");
     const { setDeskState } = await import("../../server/scanner/deskState");

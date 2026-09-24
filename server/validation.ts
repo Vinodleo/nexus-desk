@@ -141,6 +141,7 @@ export const deskStateBody = z.object({
   tradingMode: z.enum(["PAPER", "LIVE_COINDCX"]).optional(),
   trailProfile: z.enum(["tight", "balanced", "patient", "fixed"]).optional(),
   killSwitch: z.boolean(),
+  lossStreak: z.number().int().min(0).max(10_000).optional(),
   scanning: z.boolean(),
   failureState: z.object({
     simulateAgentTimeout: z.boolean(),

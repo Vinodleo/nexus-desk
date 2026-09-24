@@ -18,6 +18,8 @@ export interface DeskSettings {
   tradingMode: TradingExecutionMode;
   trailProfile: string;
   killSwitch: boolean;
+  /** Losses in a row since the kill switch was last turned off. */
+  lossStreak: number;
   scanning: boolean;
   failureState: FailureInjectionState;
   quarantines: Record<string, { quarantinedUntilMs: number }>;
