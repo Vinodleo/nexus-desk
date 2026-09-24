@@ -26,6 +26,8 @@ export interface MarketBar {
   low: number;
   close: number;
   volume: number;
+  /** Minutes of this 5-minute candle that had trades (CoinDCX coins; built from 1-minute candles). */
+  activeMinutes?: number;
   vwap?: number;
   ema9?: number;
   ema21?: number;
@@ -168,6 +170,8 @@ export interface ProposalDataQuality {
   seededExperienceShare: number;
   /** Order-book spread/depth used for costs and the liquidity check is simulated, not CoinDCX's. */
   simulatedOrderBook: boolean;
+  /** Share of the last two hours' minutes the coin traded in (coins only). */
+  tradingActivity?: number;
 }
 
 export interface TradeProposal {

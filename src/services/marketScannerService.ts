@@ -32,6 +32,7 @@ import { DEFAULT_MIN_CONFIDENCE, HEURISTIC_SCORE_VERSION, MIN_EDGE_R, type Calib
 import { META_FEATURE_VERSION, metaFeatures } from "./metaFeatures";
 import { NSE_UNIVERSE, nseTakesEntries } from "../shared/nse";
 import { exitEdgeFor, marketIsFalling, type ExpectancyTable, type MarketTrend } from "./exitExpectancy";
+import { MIN_TRADING_ACTIVITY, tradingActivity } from "./tradingActivity";
 
 // A Lab model trained on generated candles says nothing about the real
 // market, so the live desk ignores it (default hurdle, no persona tuning, no
@@ -277,6 +278,11 @@ export async function scanSingleMarket(
     predictions = predictConfidenceBatch(tfjsModel, candidateFeatures);
   }
 
+  // Coins that go minutes without a trade jump between trades, so their
+  // stops fill past where they're set.
+  const activity = symbolConfig.assetClass === "crypto" ? tradingActivity(bars) : null;
+  const tradesTooRarely = activity !== null && activity < MIN_TRADING_ACTIVITY;
+
   // Why each qualified setup didn't become a proposal, in panel order.
   const candidateSkips: SkipReason[] = [];
   const shadows: ShadowSignal[] = [];
@@ -372,6 +378,7 @@ export async function scanSingleMarket(
     let skip: SkipReason | null = null;
     if (!riskCalc.passedAllChecks) skip = skipReasonForRisk(riskCalc.rejectionCode);
     else if (marketFalling) skip = "market_down";
+    else if (tradesTooRarely) skip = "thin_trading";
     else if (exitEdge && exitEdge.r < MIN_EDGE_R) skip = "no_exit_edge";
     else if (!evAssessment.isPositiveEdge) skip = "negative_ev";
     else if (riskCalc.recommendedPositionSizeUnits <= 0) skip = "below_min_size";
@@ -433,6 +440,7 @@ export async function scanSingleMarket(
           syntheticBarShare: syntheticBarShare(bars),
           seededExperienceShare: retrieval.seededShare,
           simulatedOrderBook: orderBook.source !== "coindcx" && orderBook.source !== "angelone",
+          ...(activity !== null ? { tradingActivity: Number(activity.toFixed(2)) } : {}),
         },
       };
       passing.push({ proposal, shadow });

@@ -1,6 +1,7 @@
 import type { MarketBar, RegimeType } from "../types";
 import { panelSetupsOnHistory } from "./labSimulation";
 import { decorateBarsWithIndicators } from "./marketDataService";
+import { tradesTooRarely } from "./tradingActivity";
 import { simulateExit } from "./exitComparison";
 import { isNseSymbol } from "../shared/nse";
 import { DEFAULT_TRAIL_PROFILE, type TrailProfileId } from "../shared/trailingStop";
@@ -61,6 +62,8 @@ export function measureExpectancy(
   for (const set of sets) {
     const { symbol } = set;
     if (set.bars.length < 100 || set.bars.some((b) => b.isSynthetic)) continue;
+    // Coins that trade too rarely aren't traded, so they don't count toward anyone's record.
+    if (tradesTooRarely(set.bars)) continue;
     // The live candles carry the scanner's indicators; add them if these don't.
     const bars = set.bars[set.bars.length - 1].ema21 === undefined ? decorateBarsWithIndicators(set.bars) : set.bars;
     symbols++;

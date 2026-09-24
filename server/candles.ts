@@ -12,6 +12,8 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+  /** On built candles: how many of its 1-minute candles had trades (0 to `minutes`). */
+  activeMinutes?: number;
 }
 
 function readCandle(c: unknown): Candle | null {
@@ -35,7 +37,9 @@ function readCandle(c: unknown): Candle | null {
  * CoinDCX's own. The oldest bucket is dropped if its first minute is
  * missing (it would be a partial candle), and a bucket with no trades at
  * all becomes a flat candle at the previous close with zero volume, so the
- * series has no gaps.
+ * series has no gaps. Each candle records how many of its minutes had
+ * trades (activeMinutes): a coin that trades rarely jumps between trades,
+ * and its stops fill badly.
  */
 export function aggregateMinuteCandles(raw: unknown[], minutes: number): Candle[] {
   const bucketMs = minutes * MINUTE_MS;
@@ -49,13 +53,15 @@ export function aggregateMinuteCandles(raw: unknown[], minutes: number): Candle[
   for (const c of ones) {
     const start = Math.floor(c.time / bucketMs) * bucketMs;
     const b = buckets.get(start);
+    const traded = c.volume > 0 ? 1 : 0;
     if (!b) {
-      buckets.set(start, { ...c, time: start });
+      buckets.set(start, { ...c, time: start, activeMinutes: traded });
     } else {
       b.high = Math.max(b.high, c.high);
       b.low = Math.min(b.low, c.low);
       b.close = c.close;
       b.volume += c.volume;
+      b.activeMinutes = (b.activeMinutes ?? 0) + traded;
     }
   }
 
@@ -71,7 +77,7 @@ export function aggregateMinuteCandles(raw: unknown[], minutes: number): Candle[
       out.push(b);
     } else {
       const prev = out[out.length - 1].close;
-      out.push({ time: t, open: prev, high: prev, low: prev, close: prev, volume: 0 });
+      out.push({ time: t, open: prev, high: prev, low: prev, close: prev, volume: 0, activeMinutes: 0 });
     }
   }
   return out.reverse();

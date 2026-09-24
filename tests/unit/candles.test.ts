@@ -18,8 +18,8 @@ describe("aggregateMinuteCandles", () => {
   it("combines each five minutes into one candle, newest first", () => {
     const out = aggregateMinuteCandles(minutes(0, 10), 5);
     expect(out).toEqual([
-      { time: T0 + 5 * MIN, open: 105, high: 110, low: 104, close: 109.5, volume: 10 },
-      { time: T0, open: 100, high: 105, low: 99, close: 104.5, volume: 10 },
+      { time: T0 + 5 * MIN, open: 105, high: 110, low: 104, close: 109.5, volume: 10, activeMinutes: 5 },
+      { time: T0, open: 100, high: 105, low: 99, close: 104.5, volume: 10, activeMinutes: 5 },
     ]);
   });
 
@@ -31,7 +31,14 @@ describe("aggregateMinuteCandles", () => {
 
   it("fills a five-minute gap with no trades as a flat candle", () => {
     const out = aggregateMinuteCandles(minutes(0, 15, [5, 6, 7, 8, 9]), 5);
-    expect(out[1]).toEqual({ time: T0 + 5 * MIN, open: 104.5, high: 104.5, low: 104.5, close: 104.5, volume: 0 });
+    expect(out[1]).toEqual({ time: T0 + 5 * MIN, open: 104.5, high: 104.5, low: 104.5, close: 104.5, volume: 0, activeMinutes: 0 });
+  });
+
+  it("counts the minutes that had trades", () => {
+    // Minutes 6 and 8 missing, minute 7 listed with no volume: 2 of 5 traded.
+    const raw = minutes(0, 10, [6, 8]).map((c) => (c.time === T0 + 7 * MIN ? { ...c, volume: 0 } : c));
+    const out = aggregateMinuteCandles(raw, 5);
+    expect(out.map((c) => c.activeMinutes)).toEqual([2, 5]);
   });
 });
 

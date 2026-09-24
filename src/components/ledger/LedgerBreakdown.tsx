@@ -3,7 +3,7 @@ import type { HistoricalTrade } from "../../types";
 import { apiFetch } from "../../services/apiClient";
 import { MIN_EDGE_R } from "../../services/calibration";
 import { Card, StatTile } from "./ui";
-import { EXIT_LABEL, formatMoney, pnlTone } from "./format";
+import { EXIT_LABEL, formatMoney, pnlTone, stopSlip } from "./format";
 
 // Where the book's money goes: average win against average loss, and the
 // same by trader, coin and exit. Plus the scanner's own record of each
@@ -18,6 +18,8 @@ export interface BreakdownRow {
   avgLoss: number;
   /** Average result in R, over trades that recorded their risk at open; null if none did. */
   avgR: number | null;
+  /** Average % a stop exit sold past its stop, over those recorded; null if none. */
+  avgSlipPct: number | null;
 }
 
 /** Trades grouped by `keyOf`, the costliest first. */
@@ -41,6 +43,10 @@ export function breakdown(trades: HistoricalTrade[], keyOf: (t: HistoricalTrade)
         avgWin: wins.length > 0 ? sum(wins) / wins.length : 0,
         avgLoss: losses.length > 0 ? sum(losses) / losses.length : 0,
         avgR: withRisk.length > 0 ? withRisk.reduce((a, t) => a + t.realizedPnl / t.riskAtOpen!, 0) / withRisk.length : null,
+        avgSlipPct: (() => {
+          const slips = list.map(stopSlip).filter((s): s is { pct: number } => s !== null);
+          return slips.length > 0 ? slips.reduce((a, s) => a + s.pct, 0) / slips.length : null;
+        })(),
       };
     })
     .sort((a, b) => a.net - b.net);
@@ -82,6 +88,9 @@ const Rows: React.FC<{ title: string; rows: BreakdownRow[]; limit?: number }> = 
               <div className="text-xs text-muted tabular-nums">
                 avg win {formatMoney(r.avgWin, { decimals: 0 })} · avg loss {formatMoney(Math.abs(r.avgLoss), { decimals: 0 })}
               </div>
+              {r.avgSlipPct !== null && r.avgSlipPct >= 0.05 && (
+                <div className="text-xs text-loss tabular-nums">stops sold {r.avgSlipPct.toFixed(2)}% past the stop on average</div>
+              )}
             </div>
             <div className={`text-sm font-semibold tabular-nums shrink-0 ${pnlTone(r.net)}`}>{formatMoney(r.net, { signed: true, decimals: 0 })}</div>
           </li>
@@ -110,19 +119,56 @@ interface EdgeTable {
   rows: EdgeRow[];
 }
 
-/** The scanner's record of each trader with your exits: who may trade now. */
-const TraderRecord: React.FC = () => {
-  const [table, setTable] = useState<EdgeTable | null | undefined>(undefined);
+interface CoinActivity {
+  minActivity: number;
+  coins: { symbol: string; activity: number }[];
+}
+
+/** What the server measures: each trader's record with your exits, and how often each coin trades. */
+function useScannerMeasures() {
+  const [measures, setMeasures] = useState<{ table: EdgeTable | null; activity: CoinActivity | null }>({ table: null, activity: null });
   useEffect(() => {
     let cancelled = false;
     apiFetch("/api/scanner/exit-edge")
       .then((r) => (r.ok ? r.json() : null))
-      .then((body) => !cancelled && setTable(body?.table ?? null))
-      .catch(() => !cancelled && setTable(null));
+      .then((body) => !cancelled && setMeasures({ table: body?.table ?? null, activity: body?.activity ?? null }))
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
+  return measures;
+}
+
+/** Coins the scanner leaves alone because they trade too rarely. */
+const ThinCoins: React.FC<{ activity: CoinActivity | null }> = ({ activity }) => {
+  if (!activity || activity.coins.length === 0) return null;
+  const thin = activity.coins.filter((c) => c.activity < activity.minActivity);
+  return (
+    <Card aria-label="How often coins trade" className="flex flex-col gap-1">
+      <div className="text-sm font-semibold">How often coins trade</div>
+      <div className="text-xs text-muted">
+        A coin that goes minutes without a trade jumps when the next one comes, so a stop fills past where it was set. Coins that traded in
+        under {Math.round(activity.minActivity * 100)}% of the last two hours' minutes aren't traded.
+      </div>
+      {thin.length === 0 ? (
+        <div className="text-sm">All {activity.coins.length} watched coins trade often enough.</div>
+      ) : (
+        <ul className="m-0 p-0 list-none flex flex-col">
+          {thin.map((c) => (
+            <li key={c.symbol} className="flex items-center justify-between gap-3 py-2 border-b border-line last:border-b-0">
+              <span className="text-sm">{c.symbol}</span>
+              <span className="text-xs text-loss tabular-nums">traded in {Math.round(c.activity * 100)}% of minutes · skipped</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+};
+
+/** The scanner's record of each trader with your exits: who may trade now. */
+const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
   if (!table || table.rows.length === 0) return null;
   const markets = (["crypto", "nse"] as const).filter((m) => table.rows.some((r) => r.market === m));
   return (
@@ -183,6 +229,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
   const byTrader = useMemo(() => breakdown(inRange, (t) => t.setupName || "Unknown"), [inRange]);
   const byCoin = useMemo(() => breakdown(inRange, (t) => t.symbol), [inRange]);
   const byExit = useMemo(() => breakdown(inRange, (t) => EXIT_LABEL[t.exitReason] ?? t.exitReason), [inRange]);
+  const measures = useScannerMeasures();
 
   return (
     <div className="flex flex-col gap-4">
@@ -235,9 +282,10 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
         </Card>
       )}
 
-      <TraderRecord />
+      <TraderRecord table={measures.table} />
       <Rows title="By trader" rows={byTrader} />
       <Rows title="By coin" rows={byCoin} limit={8} />
+      <ThinCoins activity={measures.activity} />
       <Rows title="By exit" rows={byExit} />
     </div>
   );

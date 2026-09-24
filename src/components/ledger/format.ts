@@ -5,6 +5,18 @@ import type { HistoricalTrade } from "../../types";
 
 const MINUS = "−";
 
+/**
+ * For a stop exit: how far past the stop the position actually sold, as a %
+ * of the stop (0 when it sold at or better than the stop). Null when the
+ * trade didn't close on its stop or predates recording these.
+ */
+export function stopSlip(t: HistoricalTrade): { pct: number } | null {
+  if (t.exitReason !== "STOP_LOSS" && t.exitReason !== "TRAILING_STOP") return null;
+  if (t.stopAtExit === undefined || t.fillAtExit === undefined || !(t.stopAtExit > 0)) return null;
+  const worse = t.direction === "LONG" ? t.stopAtExit - t.fillAtExit : t.fillAtExit - t.stopAtExit;
+  return { pct: Math.max(0, (worse / t.stopAtExit) * 100) };
+}
+
 /** How a trade closed, in words. */
 export const EXIT_LABEL: Record<HistoricalTrade["exitReason"], string> = {
   TAKE_PROFIT: "Take profit",

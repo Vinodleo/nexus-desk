@@ -132,6 +132,7 @@ describe("the Book's breakdown tab", () => {
               { market: "crypto", trader: "Chen Conservative Trend", trades: 20, winPct: 40, avgWinR: 0.3, avgLossR: -0.9, avgR: -0.42, judgedR: -0.3 },
             ],
           },
+          activity: { minActivity: 0.5, coins: [{ symbol: "ZEC/INR", activity: 0.38 }, { symbol: "BTC/INR", activity: 1 }] },
         })
       )
     );
@@ -147,5 +148,9 @@ describe("the Book's breakdown tab", () => {
     expect(screen.getByText("Paused")).toBeTruthy();
     expect(screen.getByText("Trading")).toBeTruthy();
     expect(screen.getByLabelText("By trader").textContent).toMatch(/Chen.*−₹64/);
+    // Coins that trade too rarely, and only those, are listed as skipped.
+    const thin = screen.getByLabelText("How often coins trade").textContent;
+    expect(thin).toMatch(/ZEC\/INR.*traded in 38% of minutes · skipped/);
+    expect(thin).not.toMatch(/BTC/);
   });
 });

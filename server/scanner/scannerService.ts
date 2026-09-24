@@ -21,6 +21,7 @@ import { broadcastToUser, currentPrices } from "../realtime";
 import { dailyPnlToday, deskFirstSeenAt, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
 import { runServerAutopilot, serverQuarantines } from "./autopilot";
 import { getExpectancyTable, marketTrendFrom } from "../../src/services/exitExpectancy";
+import { tradingActivity } from "../../src/services/tradingActivity";
 
 /** Bitcoin: its trend decides whether coin longs are taken, so its candles are always kept. */
 const MARKET_SYMBOL = "BTC/INR";
@@ -289,6 +290,14 @@ export function scannerStatus(uid: string, now: number = Date.now()) {
 
 export function reportsSince(uid: string, since: number): ServerScanReport[] {
   return (users.get(uid)?.reports ?? []).filter((r) => r.at > since);
+}
+
+/** How often each watched coin traded over the last two hours (share of minutes), least first. */
+export function coinActivity(): { symbol: string; activity: number }[] {
+  return universe
+    .map((symbol) => ({ symbol, activity: tradingActivity(market.getBars(symbol)) }))
+    .filter((c): c is { symbol: string; activity: number } => c.activity !== null)
+    .sort((a, b) => a.activity - b.activity);
 }
 
 /** Each trader's recent results with this user's exits (measured on the next scan if not yet). */

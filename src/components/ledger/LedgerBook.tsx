@@ -3,22 +3,12 @@ import { ChevronDown } from "lucide-react";
 import type { HistoricalTrade } from "../../types";
 import { TradeAutopsyCard } from "../TradeAutopsyCard";
 import { Card, StatTile } from "./ui";
-import { EXIT_LABEL, formatMoney, formatPct, formatPrice, pnlTone } from "./format";
+import { EXIT_LABEL, formatMoney, formatPct, formatPrice, pnlTone, stopSlip } from "./format";
 import { LedgerBreakdown } from "./LedgerBreakdown";
 
 export type BookFilter = "all" | "wins" | "losses";
 
-/**
- * For a stop exit: how far past the stop the position actually sold, as a %
- * of the stop (0 when it sold at or better than the stop). Null when the
- * trade didn't close on its stop or predates recording these.
- */
-export function stopSlip(t: HistoricalTrade): { pct: number } | null {
-  if (t.exitReason !== "STOP_LOSS" && t.exitReason !== "TRAILING_STOP") return null;
-  if (t.stopAtExit === undefined || t.fillAtExit === undefined || !(t.stopAtExit > 0)) return null;
-  const worse = t.direction === "LONG" ? t.stopAtExit - t.fillAtExit : t.fillAtExit - t.stopAtExit;
-  return { pct: Math.max(0, (worse / t.stopAtExit) * 100) };
-}
+export { stopSlip };
 
 
 /** Totals for the summary card. Wins and losses are by net P&L after fees. */
