@@ -6,13 +6,16 @@ import {
   Position,
   FailureInjectionState,
 } from "../types";
-import { SUPPORTED_SYMBOLS, getSymbolConfig } from "./marketDataService";
+import { fitQuantity } from "../shared/marketRules";
+import { ruleFor } from "./marketRulesStore";
+import type { RiskRejectionCode } from "./scanOutcome";
 
 export interface RiskPolicyConfig {
   equity: number;
   maxRiskFraction: number; // 0.01 (1.0% max risk ceiling per trade)
   hardDailyLossLimit: number; // ₹25,000 max daily loss
   maxAllowedExposureFraction: number; // 0.50 (50% max total margin exposure)
+  maxOrderValueInr: number; // largest single position, in rupees
   maxSimultaneousPositions: number; // 3 positions
   maxCorrelatedPositionsPerGroup: number; // 2 in same group (e.g. INDIAN_EQUITIES, CRYPTO_MAJOR)
   turnoverCapHourly: number; // 4 trades per hour max
@@ -34,6 +37,7 @@ export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
   maxRiskFraction: 0.003, // 0.3% = ₹300 max risk per trade
   hardDailyLossLimit: 2500, // ₹2,500 hard daily loss limit
   maxAllowedExposureFraction: 0.10, // 10% = ₹10,000 total trading limit / maximum exposure
+  maxOrderValueInr: 10000,
   maxSimultaneousPositions: 3,
   maxCorrelatedPositionsPerGroup: 2,
   turnoverCapHourly: 4,
@@ -142,10 +146,12 @@ export function evaluateRiskEngine(
 
   let passed = true;
   let rejectionReason: string | undefined;
+  let rejectionCode: RiskRejectionCode | undefined;
 
   // Check Global Kill Switch
   if (failureState.globalKillSwitchActive) {
     passed = false;
+    rejectionCode = "kill_switch";
     rejectionReason =
       "REJECTED BY RISK: Global Kill Switch is ACTIVE. All trading halted.";
   }
@@ -160,6 +166,7 @@ export function evaluateRiskEngine(
       (options.quarantinedUntilMs - Date.now()) / 60000
     );
     passed = false;
+    rejectionCode = "quarantine";
     rejectionReason = `REJECTED BY RISK: ${setup.symbol} is under embargo (${remainingMins}m remaining) due to consecutive loss protection.`;
   }
 
@@ -170,6 +177,7 @@ export function evaluateRiskEngine(
     // If the spread eats more than 25% of the stop loss, the trade is practically unviable
     if (spreadFractionOfStop > 0.25) {
       passed = false;
+      rejectionCode = "spread";
       rejectionReason = `REJECTED BY RISK: Bid-ask spread (₹${options.spread.toFixed(
         2
       )}) is ${(spreadFractionOfStop * 100).toFixed(
@@ -183,6 +191,7 @@ export function evaluateRiskEngine(
   // Check Stale Data
   if (passed && (isDataStale || failureState.simulateStaleMarketData)) {
     passed = false;
+    rejectionCode = "stale_data";
     rejectionReason =
       "REJECTED BY RISK: Stale or inconsistent market data detected. Fail-closed enforced.";
   }
@@ -193,6 +202,7 @@ export function evaluateRiskEngine(
     : currentDailyLoss;
   if (passed && simulatedDailyLoss >= hardDailyLossLimit) {
     passed = false;
+    rejectionCode = "daily_loss";
     rejectionReason = `REJECTED BY RISK: Hard daily loss limit breached (₹${simulatedDailyLoss.toFixed(
       2
     )} >= ₹${hardDailyLossLimit}). Stopped opening new positions.`;
@@ -201,6 +211,7 @@ export function evaluateRiskEngine(
   // Check Maximum Simultaneous Positions
   if (passed && activePositions.length >= maxSimultaneousPositions) {
     passed = false;
+    rejectionCode = "max_positions";
     rejectionReason = `REJECTED BY RISK: Maximum simultaneous positions reached (${activePositions.length}/${maxSimultaneousPositions}).`;
   }
 
@@ -210,18 +221,21 @@ export function evaluateRiskEngine(
     : orderBookDepthScore;
   if (passed && effectiveDepth < policy.minLiquidityScore) {
     passed = false;
+    rejectionCode = "liquidity";
     rejectionReason = `REJECTED BY RISK: Liquidity filter failed. Order book depth score ${effectiveDepth} < minimum ${policy.minLiquidityScore}.`;
   }
 
   // Check Turnover Cap (Section 7)
   if (passed && recentHourlyTradeCount >= policy.turnoverCapHourly) {
     passed = false;
+    rejectionCode = "turnover";
     rejectionReason = `REJECTED BY RISK: Turnover cap reached (${recentHourlyTradeCount}/${policy.turnoverCapHourly} trades/hour). Skipping marginal candidate.`;
   }
 
   // Check Expected Net Edge (Section 7)
   if (passed && !ev.isPositiveEdge) {
     passed = false;
+    rejectionCode = "negative_ev";
     rejectionReason = `REJECTED BY RISK: Negative expectancy after fees and slippage (Net EV: ₹${ev.expectedNetValue}).`;
   }
 
@@ -231,6 +245,7 @@ export function evaluateRiskEngine(
   );
   if (passed && sameSymbolPositions.length >= 1) {
     passed = false;
+    rejectionCode = "existing_position";
     rejectionReason = `REJECTED BY RISK: Existing active position already open on ${setup.symbol}.`;
   }
 
@@ -242,6 +257,7 @@ export function evaluateRiskEngine(
   const currentExposureFraction = currentExposure / equity;
   if (passed && currentExposureFraction >= maxAllowedExposureFraction) {
     passed = false;
+    rejectionCode = "exposure";
     rejectionReason = `REJECTED BY RISK: Portfolio exposure (${(
       currentExposureFraction * 100
     ).toFixed(1)}%) exceeds limit (${(
@@ -264,20 +280,18 @@ export function evaluateRiskEngine(
   const stopDistance = Math.abs(setup.entryPrice - setup.stopLoss);
   const rawUnits = stopDistance > 0 ? riskDollars / stopDistance : 0;
 
-  // Max order value cap (10k INR)
-  const maxOrderValue = 10000;
-  const maxUnitsByValue = maxOrderValue / setup.entryPrice;
-  let recommendedUnits = Math.min(rawUnits, maxUnitsByValue);
+  // Cap the position's value, and don't let it push total exposure past
+  // the limit, then fit it to CoinDCX's quantity step and minimums.
+  const exposureRoom = Math.max(0, maxAllowedExposureFraction * equity - currentExposure);
+  const maxValue = Math.min(policy.maxOrderValueInr, exposureRoom);
+  const maxUnitsByValue = setup.entryPrice > 0 ? maxValue / setup.entryPrice : 0;
+  const fit = fitQuantity(Math.min(rawUnits, maxUnitsByValue), setup.entryPrice, ruleFor(setup.symbol, setup.entryPrice));
+  const recommendedUnits = fit.quantity;
 
-  // Snap to exchange lot size
-  const symConfig = getSymbolConfig(setup.symbol);
-  const lotSize = symConfig?.lotSize || 1;
-  const lots = Math.floor(recommendedUnits / lotSize);
-  recommendedUnits = Number((lots * lotSize).toFixed(6));
-
-  if (recommendedUnits === 0 && passed) {
+  if (!fit.ok && passed) {
     passed = false;
-    rejectionReason = `Calculated risk position size is smaller than the exchange minimum lot size (${lotSize}) for ${setup.symbol}.`;
+    rejectionCode = "size";
+    rejectionReason = `REJECTED BY RISK: ${fit.reason}`;
   }
 
   const recommendedDollarExposure = Number(
@@ -299,6 +313,7 @@ export function evaluateRiskEngine(
     riskDollars,
     passedAllChecks: passed,
     rejectionReason,
+    rejectionCode,
   };
 }
 

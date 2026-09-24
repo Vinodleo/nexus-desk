@@ -4,7 +4,8 @@ import type { CoinDcxAccountBalance, CoinDcxServerStatus, TradingExecutionMode }
 import type { ZerodhaStatus } from "../../hooks/useZerodhaConnection";
 import { useAuth } from "../../context/AuthContext";
 import { usePWAInstall } from "../../hooks/usePWAInstall";
-import { RoundIconButton, Switch } from "./ui";
+import { RoundIconButton } from "./ui";
+import { EXPOSURE_CHOICES, ORDER_VALUE_CHOICES, type RiskLimits } from "../../hooks/useRiskPolicy";
 import { formatMoney } from "./format";
 
 export interface SettingsSheetProps {
@@ -18,14 +19,17 @@ export interface SettingsSheetProps {
   zerodhaStatus: ZerodhaStatus;
   zerodhaError: string;
   onZerodhaConnect: () => void;
-  liveMarketData: boolean;
-  onLiveMarketDataChange: (on: boolean) => void;
   dailyLossLimit: number;
   maxOpenPositions: number;
+  riskLimits: RiskLimits;
+  onRiskLimitsChange: (next: Partial<RiskLimits>) => void;
   onOpenDeskBrief: () => void;
   onOpenBackground: () => void;
   onOpenSecurity: () => void;
 }
+
+const selectClass =
+  "min-h-9 rounded-full border border-line bg-surface px-3 text-[13px] font-semibold text-ink cursor-pointer";
 
 const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em] px-1">{children}</div>
@@ -152,18 +156,43 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             </span>
           </Row>
           {typeof liveRisk?.maxOrderNotionalInr === "number" && (
-            <Row label="Per-order cap" sub={`${formatMoney(liveRisk.maxDailyNotionalInr, { decimals: 0 })} a day · ${liveRisk.maxDailyOrders} orders`}>
+            <Row label="Server cap per live order" sub={`${formatMoney(liveRisk.maxDailyNotionalInr, { decimals: 0 })} a day · ${liveRisk.maxDailyOrders} orders`}>
               <span>{formatMoney(liveRisk.maxOrderNotionalInr, { decimals: 0 })}</span>
             </Row>
           )}
+          <Row label="Largest trade" sub="Most money in any one position">
+            <select
+              aria-label="Largest trade"
+              value={props.riskLimits.maxOrderValueInr}
+              onChange={(e) => props.onRiskLimitsChange({ maxOrderValueInr: Number(e.target.value) })}
+              className={selectClass}
+            >
+              {ORDER_VALUE_CHOICES.map((v) => (
+                <option key={v} value={v}>
+                  {formatMoney(v, { decimals: 0 })}
+                </option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Most in open trades" sub="Share of your equity across all positions">
+            <select
+              aria-label="Most in open trades"
+              value={props.riskLimits.maxAllowedExposureFraction}
+              onChange={(e) => props.onRiskLimitsChange({ maxAllowedExposureFraction: Number(e.target.value) })}
+              className={selectClass}
+            >
+              {EXPOSURE_CHOICES.map((v) => (
+                <option key={v} value={v}>
+                  {Math.round(v * 100)}%
+                </option>
+              ))}
+            </select>
+          </Row>
           <Row label="Daily loss limit">
             <span>{formatMoney(props.dailyLossLimit, { decimals: 0 })}</span>
           </Row>
           <Row label="Max open positions">
             <span>{props.maxOpenPositions}</span>
-          </Row>
-          <Row label="Live market data" sub="The scanner reads real CoinDCX prices">
-            <Switch checked={props.liveMarketData} onChange={props.onLiveMarketDataChange} label="Live market data" />
           </Row>
         </Group>
 

@@ -1,5 +1,6 @@
 import { ExperienceVector, Position, HistoricalTrade, PromotedLabModel } from "../types";
 import { generateInitialExperienceDatabase } from "./experienceMemory";
+import type { SkipCounts } from "./scanOutcome";
 
 const STORAGE_KEY_EXPERIENCES = "nexus_agent_experiences_inr_v4";
 const STORAGE_KEY_STATS = "nexus_agent_stats_inr_v4";
@@ -287,18 +288,19 @@ export function resetStoredExperiencesToBaseline(): ExperienceVector[] {
  */
 export interface DailySampleTelemetry {
   istDateString: string; // YYYY-MM-DD in Asia/Kolkata (IST)
+  /** Coin-candles the scanner looked at today. */
   analyzedCount: number;
+  /** Of those, how many became proposals. */
   selectedCount: number;
+  /** Of those, how many were skipped (see skipReasons). */
   rejectedCount: number;
-  rejectionBreakdown: {
-    metaHurdle: number;
-    riskEngine: number;
-    regimeFilter: number;
-    supervisorVeto: number;
-  };
+  /** Why they were skipped, counted by reason. */
+  skipReasons: SkipCounts;
+  /** Proposals you skipped in the queue. */
+  skippedByYou: number;
 }
 
-const STORAGE_KEY_DAILY_TELEMETRY = "nexus_agent_daily_telemetry_ist_v1";
+const STORAGE_KEY_DAILY_TELEMETRY = "nexus_agent_daily_telemetry_ist_v2";
 
 /**
  * Returns current date string in IST (Asia/Kolkata timezone: UTC+5:30)
@@ -323,12 +325,8 @@ export function getInitialDailyTelemetry(istDate = getCurrentISTDateString()): D
     analyzedCount: 0,
     selectedCount: 0,
     rejectedCount: 0,
-    rejectionBreakdown: {
-      metaHurdle: 0,
-      riskEngine: 0,
-      regimeFilter: 0,
-      supervisorVeto: 0,
-    },
+    skipReasons: {},
+    skippedByYou: 0,
   };
 }
 
@@ -348,12 +346,8 @@ export function loadDailySampleTelemetry(): DailySampleTelemetry {
           analyzedCount: Number(parsed.analyzedCount) || 0,
           selectedCount: Number(parsed.selectedCount) || 0,
           rejectedCount: Number(parsed.rejectedCount) || 0,
-          rejectionBreakdown: {
-            metaHurdle: Number(parsed.rejectionBreakdown?.metaHurdle) || 0,
-            riskEngine: Number(parsed.rejectionBreakdown?.riskEngine) || 0,
-            regimeFilter: Number(parsed.rejectionBreakdown?.regimeFilter) || 0,
-            supervisorVeto: Number(parsed.rejectionBreakdown?.supervisorVeto) || 0,
-          },
+          skipReasons: parsed.skipReasons && typeof parsed.skipReasons === "object" ? parsed.skipReasons : {},
+          skippedByYou: Number(parsed.skippedByYou) || 0,
         };
       }
     }

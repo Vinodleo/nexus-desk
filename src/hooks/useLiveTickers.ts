@@ -1,53 +1,39 @@
-
 import { useState, useEffect, useRef } from "react";
 import { liveMarketStream } from "../services/liveMarketStreamService";
 
 export interface TickerInfo {
   symbol: string;
   price: number;
+  /** 24-hour change in %, from CoinDCX's ticker (0 until it loads). */
   changePercent: number;
-  direction: 'up' | 'down' | 'none';
+  direction: "up" | "down" | "none";
 }
 
+/** Last traded price and 24-hour change for each tracked symbol. */
 export function useLiveTickers() {
   const [tickers, setTickers] = useState<TickerInfo[]>([]);
   const prevPrices = useRef<Record<string, number>>({});
 
   useEffect(() => {
     const updateTickers = () => {
-      const active = liveMarketStream.getActiveSymbols();
-      const updated = active.map(sym => {
-        const bars = liveMarketStream.getBars(sym);
-        if (!bars || bars.length === 0) return null;
-        
-        const last = bars[bars.length - 1];
-        // Compare with first bar of the day or just the first in our 120 window
-        const first = bars[0];
-        const changePercent = liveMarketStream.dailyChanges.get(sym) || (((last.close - first.open) / first.open) * 100);
-        
-        const currentPrice = last.close;
-        const previousPrice = prevPrices.current[sym] || currentPrice;
-        
-        let direction: 'up' | 'down' | 'none' = 'none';
-        if (currentPrice > previousPrice) direction = 'up';
-        else if (currentPrice < previousPrice) direction = 'down';
-        
-        prevPrices.current[sym] = currentPrice;
-
-        return {
+      const updated: TickerInfo[] = [];
+      for (const sym of liveMarketStream.getActiveSymbols()) {
+        const price = liveMarketStream.getLastPrice(sym);
+        if (!price) continue;
+        const previous = prevPrices.current[sym] ?? price;
+        prevPrices.current[sym] = price;
+        updated.push({
           symbol: sym,
-          price: currentPrice,
-          changePercent,
-          direction
-        };
-      }).filter(Boolean) as TickerInfo[];
-      
+          price,
+          changePercent: liveMarketStream.dailyChanges.get(sym) ?? 0,
+          direction: price > previous ? "up" : price < previous ? "down" : "none",
+        });
+      }
       setTickers(updated);
     };
 
     updateTickers();
-    const unsubscribe = liveMarketStream.subscribe(updateTickers);
-    return unsubscribe;
+    return liveMarketStream.subscribe(updateTickers);
   }, []);
 
   return tickers;

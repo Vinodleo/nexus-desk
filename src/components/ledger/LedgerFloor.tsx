@@ -4,6 +4,19 @@ import type { Position } from "../../types";
 import { useLiveTickers } from "../../hooks/useLiveTickers";
 import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
+import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
+
+/** The most common skip reasons, largest first, with their share of all skips. */
+export function topSkipReasons(counts: SkipCounts | undefined, limit = 3): { reason: SkipReason; label: string; pct: number }[] {
+  const entries = Object.entries(counts ?? {}) as [SkipReason, number][];
+  const total = entries.reduce((a, [, n]) => a + n, 0);
+  if (total === 0) return [];
+  return entries
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([reason, n]) => ({ reason, label: SKIP_REASON_LABEL[reason] ?? reason, pct: Math.round((n / total) * 100) }));
+}
 
 export interface FloorTicker {
   symbol: string;
@@ -15,6 +28,8 @@ export interface FloorScanSummary {
   analyzed: number;
   selected: number;
   rejected: number;
+  /** Why coins were skipped today, counted by reason. */
+  skipReasons?: SkipCounts;
 }
 
 export interface LedgerFloorProps {
@@ -259,9 +274,21 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         </span>
       </div>
 
-      <div className="text-xs text-muted tabular-nums">
-        Scanner today: {props.scan.analyzed} checked · {props.scan.selected} proposed · {props.scan.rejected} skipped
-      </div>
+      <section aria-label="Scanner today" className="flex flex-col gap-1.5 text-xs text-muted tabular-nums">
+        <div>
+          Scanner today: {props.scan.analyzed} checked · {props.scan.selected} proposed · {props.scan.rejected} skipped
+        </div>
+        {topSkipReasons(props.scan.skipReasons).map((r) => (
+          <div key={r.reason} className="flex items-center gap-2">
+            <div className="w-16 h-1 rounded-full bg-line overflow-hidden shrink-0" aria-hidden="true">
+              <div className="h-full bg-muted" style={{ width: `${r.pct}%` }} />
+            </div>
+            <span>
+              {r.label} · {r.pct}%
+            </span>
+          </div>
+        ))}
+      </section>
     </div>
   );
 };

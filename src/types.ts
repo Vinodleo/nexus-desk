@@ -146,6 +146,8 @@ export interface RiskCalculation {
   riskDollars: number;
   passedAllChecks: boolean;
   rejectionReason?: string;
+  /** Machine-readable reason, for counting why setups were skipped. */
+  rejectionCode?: import("./services/scanOutcome").RiskRejectionCode;
 }
 
 export interface ProposalDataQuality {

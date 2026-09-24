@@ -90,6 +90,14 @@ describe("LedgerFloor", () => {
     expect(p.onToggleStop).toHaveBeenCalled();
   });
 
+  it("lists today's main reasons for skipping", () => {
+    const { container } = render(
+      createElement(LedgerFloor, props({ scan: { analyzed: 10, selected: 1, rejected: 9, skipReasons: { no_setup: 6, low_confidence: 3 } } }))
+    );
+    expect(container.textContent).toContain("No trader's rules matched · 67%");
+    expect(container.textContent).toContain("Chance of a win too low · 33%");
+  });
+
   it("links to the queue when proposals are waiting", () => {
     const p = props({ pendingProposals: 2, positions: [] });
     const { container } = render(createElement(LedgerFloor, p));

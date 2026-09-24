@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-// initialize() seeds each symbol's chart. Crypto charts should start from
-// CoinDCX's real 1-minute candles; anything that can't be fetched falls back
-// to generated bars that are flagged isSynthetic.
+// initialize() loads each crypto symbol's closed 5-minute candles from
+// CoinDCX. The candle still forming is dropped, and a symbol whose candles
+// can't be fetched gets no bars at all (the scanner then skips it) rather
+// than generated ones.
 
 const apiFetch = vi.fn();
 vi.mock("../../src/services/apiClient", () => ({
@@ -11,16 +12,19 @@ vi.mock("../../src/services/apiClient", () => ({
   authenticateSocket: vi.fn(),
 }));
 
-const minuteCandles = (base: number) =>
-  // CoinDCX returns newest first
-  Array.from({ length: 120 }, (_, i) => {
-    const t = Date.now() - i * 60000;
+const FIVE_MIN = 5 * 60 * 1000;
+const fiveMinuteCandles = (base: number) => {
+  // CoinDCX returns newest first, starting with the candle still forming.
+  const formingOpen = Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN;
+  return Array.from({ length: 120 }, (_, i) => {
+    const t = formingOpen - i * FIVE_MIN;
     const p = base + i;
-    return { time: t, open: p, high: p + 1, low: p - 1, close: p, volume: 2 };
+    return { time: t, open: p, high: p + 1, low: p - 1, close: p, volume: 2 + i };
   });
+};
 
 beforeAll(() => {
-  vi.useFakeTimers({ toFake: ["setInterval"] });
+  vi.useFakeTimers({ toFake: ["setInterval", "setTimeout"] });
   vi.stubGlobal("WebSocket", class { close() {} send() {} });
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -31,15 +35,14 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
-describe("live chart seeding", () => {
-  it("uses real candles where available and flags generated fallbacks", async () => {
+describe("market stream", () => {
+  it("uses closed 5-minute candles, skips symbols without real data, and reads the ticker", async () => {
     apiFetch.mockImplementation(async (url: string) => {
       if (url === "/api/coindcx/ticker") {
-        return new Response(JSON.stringify([{ market: "BTCINR", last_price: "5000000" }]));
+        return new Response(JSON.stringify([{ market: "BTCINR", last_price: "5000200", change_24_hour: "1.25" }]));
       }
-      // Real 1m candles for BTC only; every other symbol's candle fetch fails.
-      if (url.startsWith("/api/coindcx/candles?symbol=BTC&interval=1m")) {
-        return new Response(JSON.stringify(minuteCandles(5_000_000)));
+      if (url.startsWith("/api/coindcx/candles?symbol=BTC&interval=5m")) {
+        return new Response(JSON.stringify(fiveMinuteCandles(5_000_000)));
       }
       return new Response("unavailable", { status: 503 });
     });
@@ -47,14 +50,36 @@ describe("live chart seeding", () => {
     await liveMarketStream.initialize();
 
     const btc = liveMarketStream.getBars("BTC/INR")!;
-    expect(btc).toHaveLength(120);
+    expect(btc).toHaveLength(119); // the forming candle is dropped
     expect(btc.some((b) => b.isSynthetic)).toBe(false);
-    // oldest first, as indicator maths needs
     expect(btc[0].timestampMs!).toBeLessThan(btc[btc.length - 1].timestampMs!);
-    expect(btc[btc.length - 1].close).toBe(5_000_000);
+    expect(btc[btc.length - 1].close).toBe(5_000_001); // newest closed candle
+    expect(btc[btc.length - 1].volume).toBeGreaterThan(0);
 
-    const eth = liveMarketStream.getBars("ETH/INR")!;
-    expect(eth.length).toBeGreaterThan(0);
-    expect(eth.every((b) => b.isSynthetic)).toBe(true);
+    expect(liveMarketStream.getBars("ETH/INR")).toBeNull();
+    expect(liveMarketStream.getLastPrice("BTC/INR")).toBe(5_000_200);
+    expect(liveMarketStream.dailyChanges.get("BTC/INR")).toBe(1.25);
+  });
+});
+
+describe("candle helpers", () => {
+  it("keeps only closed candles, oldest first", async () => {
+    const { toClosedBars } = await import("../../src/services/liveMarketStreamService");
+    const now = 10 * FIVE_MIN + 1000;
+    const bars = toClosedBars(
+      [
+        { time: 10 * FIVE_MIN, open: 3, high: 3, low: 3, close: 3, volume: 1 }, // still forming
+        { time: 9 * FIVE_MIN, open: 2, high: 2, low: 2, close: 2, volume: 1 },
+        { time: 8 * FIVE_MIN, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+      ],
+      FIVE_MIN,
+      now
+    );
+    expect(bars.map((b) => b.close)).toEqual([1, 2]);
+  });
+
+  it("schedules the next fetch just after the next candle closes", async () => {
+    const { nextCandleFetchAt } = await import("../../src/services/liveMarketStreamService");
+    expect(nextCandleFetchAt(10 * FIVE_MIN + 1000)).toBe(11 * FIVE_MIN + 8000);
   });
 });
