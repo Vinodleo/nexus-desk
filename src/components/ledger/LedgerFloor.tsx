@@ -7,6 +7,7 @@ import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
 import type { EventWindow } from "../../shared/eventCalendar";
+import { openQuantity } from "../../shared/exitRules";
 
 /** The most common skip reasons, largest first, with their share of all skips. */
 export function topSkipReasons(counts: SkipCounts | undefined, limit = 3): { reason: SkipReason; label: string; pct: number }[] {
@@ -193,6 +194,9 @@ export const NewsPause: React.FC<{ window: EventWindow; now?: number }> = ({ win
   return null;
 };
 
+/** Money in a position: its entry price times the quantity still open. */
+export const moneyIn = (p: Position) => p.entryPrice * openQuantity(p);
+
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void }> = ({ position: p, onClose }) => {
   const [confirming, setConfirming] = useState(false);
   useEffect(() => {
@@ -208,7 +212,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
         <div className="min-w-0">
           <span className="text-base font-semibold">{p.symbol}</span>{" "}
           <span className="text-xs text-muted">
-            {p.direction === "LONG" ? "Long" : "Short"} · {p.quantity}
+            {p.direction === "LONG" ? "Long" : "Short"} · {p.quantity} · {formatMoney(moneyIn(p), { decimals: 0 })} in
           </span>
         </div>
         <div className={`font-display text-xl tabular-nums whitespace-nowrap ${tone}`}>
@@ -311,7 +315,10 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
           <Switch checked={props.autopilotOn} onChange={props.onAutopilotChange} label="Autopilot" disabled={props.stopped} />
         </div>
         <div className="flex gap-2">
-          <StatTile label="Exposure" value={`${(props.exposureFraction * 100).toFixed(1)}%`} />
+          <StatTile
+            label={`In trades · ${(props.exposureFraction * 100).toFixed(1)}%`}
+            value={formatMoney(props.positions.reduce((a, p) => a + moneyIn(p), 0), { decimals: 0 })}
+          />
           <StatTile
             label="Daily loss left"
             value={formatMoney(Math.max(0, props.dailyLossLeft), { decimals: 0 })}

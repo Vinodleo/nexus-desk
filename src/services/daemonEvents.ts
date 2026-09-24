@@ -23,7 +23,12 @@ export interface DaemonCloseEvent {
   setupName?: string;
 }
 
+const hhmm = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
 export function daemonEventToTrade(ev: DaemonCloseEvent): HistoricalTrade {
+  // The guardian sends ISO times; the Book sorts and groups by the ms ones.
+  const closedAtMs = Date.parse(ev.closedAt);
+  const openedAtMs = Date.parse(ev.openedAt);
   return {
     id: ev.id,
     positionId: ev.positionId,
@@ -40,8 +45,10 @@ export function daemonEventToTrade(ev: DaemonCloseEvent): HistoricalTrade {
     realizedPnlPercent: ev.realizedPnlPercent,
     isWin: ev.isWin,
     exitReason: ev.exitReason,
-    closedAt: ev.closedAt,
-    openedAt: ev.openedAt,
+    closedAt: Number.isFinite(closedAtMs) ? hhmm(closedAtMs) : ev.closedAt,
+    openedAt: Number.isFinite(openedAtMs) ? hhmm(openedAtMs) : ev.openedAt,
+    ...(Number.isFinite(closedAtMs) ? { closedAtMs } : {}),
+    ...(Number.isFinite(openedAtMs) ? { openedAtMs } : {}),
     holdingDurationMinutes: ev.holdingDurationMinutes,
     isSelfApproved: true,
   };

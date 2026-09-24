@@ -101,6 +101,11 @@ function atrForExits(proposal: TradeProposal): number {
   return Math.max(atr ?? 0, proposal.setup.entryPrice * 0.003);
 }
 
+/** A position id that won't repeat (the old last-6-digits-of-the-clock ids could). */
+function newPositionId(): string {
+  return `pos-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export default function App() {
   const { userRole, logSecurityAudit, currentUser, loading } = useAuth();
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
@@ -711,7 +716,9 @@ export default function App() {
 
       const nowMs = Date.now();
       const newHistoricalTrade: HistoricalTrade = {
-        id: `trade-closed-${nowMs}`,
+        // Several positions can close on the same price update: the position
+        // id keeps each trade's id unique.
+        id: `trade-closed-${pos.id}-${nowMs}`,
         positionId: pos.id,
         symbol: pos.symbol,
         direction: pos.direction,
@@ -1008,7 +1015,7 @@ export default function App() {
       const quantity = priced.units;
 
       const newPosition: Position = {
-        id: `pos-${Date.now().toString().slice(-6)}`,
+        id: newPositionId(),
         symbol: proposal.symbol,
         direction: proposal.setup.direction,
         setupName: proposal.setup.name,
@@ -1310,7 +1317,7 @@ export default function App() {
           proposal.setup.horizon === "swing";
 
         return {
-          id: `pos-${Date.now().toString().slice(-6)}-${index}`,
+          id: newPositionId(),
           symbol: proposal.symbol,
           direction: proposal.setup.direction,
           setupName: proposal.setup.name,

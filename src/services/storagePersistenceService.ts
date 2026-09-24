@@ -411,6 +411,38 @@ export function saveStoredPositions(positions: Position[]): void {
   }
 }
 
+export const MAX_STORED_TRADES = 1000;
+
+/**
+ * Fixes trades saved by older versions so the Book shows all of them:
+ * trades sharing an id (two closes in the same millisecond) get distinct
+ * ids, and guardian-closed trades saved without a close time get it from
+ * their ISO timestamp (they sorted to the bottom, under "Earlier").
+ */
+export function repairClosedTrades(trades: HistoricalTrade[]): HistoricalTrade[] {
+  const seen = new Map<string, number>();
+  return trades.map((t) => {
+    let fixed = t;
+    const n = seen.get(t.id) ?? 0;
+    seen.set(t.id, n + 1);
+    if (n > 0) fixed = { ...fixed, id: `${t.id}-${n + 1}` };
+    if (fixed.closedAtMs === undefined && typeof fixed.closedAt === "string") {
+      const ms = Date.parse(fixed.closedAt);
+      if (Number.isFinite(ms)) {
+        const hhmm = (v: number) => new Date(v).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const opened = typeof fixed.openedAt === "string" ? Date.parse(fixed.openedAt) : NaN;
+        fixed = {
+          ...fixed,
+          closedAtMs: ms,
+          closedAt: hhmm(ms),
+          ...(Number.isFinite(opened) ? { openedAtMs: opened, openedAt: hhmm(opened) } : {}),
+        };
+      }
+    }
+    return fixed;
+  });
+}
+
 export function loadStoredClosedTrades(): HistoricalTrade[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CLOSED_TRADES);
@@ -419,7 +451,7 @@ export function loadStoredClosedTrades(): HistoricalTrade[] {
       if (parsed && Array.isArray(parsed)) {
         // Filter out old dummy placeholders and any legacy USDT/BTCUSDT test trades
         const filtered = parsed.filter(t => !t.id.startsWith("trade-hist-") && t.symbol !== "BTCUSDT" && !t.symbol.endsWith("USDT"));
-        return filtered;
+        return repairClosedTrades(filtered);
       }
     }
   } catch (err) {
@@ -433,8 +465,8 @@ export function loadStoredClosedTrades(): HistoricalTrade[] {
  */
 export function saveStoredClosedTrades(trades: HistoricalTrade[]): void {
   try {
-    // Keep the most recent 100 trades
-    const bounded = trades.slice(0, 100);
+    // Keep the most recent 1,000 trades (about 0.5 MB).
+    const bounded = trades.slice(0, MAX_STORED_TRADES);
     localStorage.setItem(STORAGE_KEY_CLOSED_TRADES, JSON.stringify(bounded));
   } catch (err) {
     console.warn("Failed to save closed trades to LocalStorage:", err);
