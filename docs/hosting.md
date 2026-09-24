@@ -17,17 +17,17 @@ By default, Cloud Run (where AI Studio deploys) meets neither requirement:
 - Its disk is in memory, so saved state is lost on every restart and every
   deploy.
 
-Two ways to fix that:
+Three ways to fix that:
 
-| | A. Keep Cloud Run | B. Your own VM with Docker |
-|---|---|---|
-| Setup | One script | A VM, a domain, Docker |
-| Your URL | Unchanged | New domain: update Firebase and Kite |
-| Monthly cost (rough) | ~US$40–55 (1 vCPU + 1 GiB always on) | ~US$7–15 (small VM) |
-| After AI Studio redeploys | Re-run the script | Not affected: you deploy with `git pull` |
+| | A. Cloud Run, always-on | B. Your own VM with Docker | C. Fly.io |
+|---|---|---|---|
+| Setup | One script | A VM, a domain, Docker | One-time commands, then automatic |
+| Address | Unchanged | Your domain | `your-app.fly.dev` (https included) |
+| Region | Yours | Yours | Mumbai |
+| Monthly cost (rough) | ~US$40–55 | ~US$0–15 | ~US$4–7 |
+| Updates | AI Studio deploy + re-run the script | `git pull` + rebuild | Every merge to `main`, automatically |
 
-The costs are rough estimates. Check the Google Cloud pricing calculator for
-your region.
+The costs are rough estimates. Check each provider's pricing for your region.
 
 ## A. Keep Cloud Run, make it always-on
 
@@ -90,6 +90,75 @@ DigitalOcean or Hetzner VM (1 vCPU, 1–2 GB RAM).
 
 When you move, switch the old Cloud Run service's minimum instances back to 0,
 so only one server is scanning and guarding.
+
+## C. Fly.io
+
+One machine in Mumbai that never stops, with a 1 GB disk for saved state and
+an https address. `fly.toml` holds the settings. The GitHub Action
+`.github/workflows/fly-deploy.yml` deploys `main` whenever CI passes on it.
+
+### One-time setup (works from a phone)
+
+1. **Fly dashboard:** add a payment method (Account → Billing).
+2. **A terminal:** open [Google Cloud Shell](https://shell.cloud.google.com).
+   It's free with any Google account and runs in the browser.
+3. **Install Fly's tool and sign in:**
+
+   ```bash
+   curl -L https://fly.io/install.sh | sh
+   export PATH="$HOME/.fly/bin:$PATH"
+   fly auth login
+   ```
+
+   Open the link it prints and sign in with the account you used for Fly.
+4. **Create the app and its disk.** The name must match `app` in
+   `fly.toml`. If it's taken, choose another and edit `fly.toml` on GitHub.
+
+   ```bash
+   fly apps create nexus-desk-vinodleo
+   fly volumes create nexus_data --app nexus-desk-vinodleo --region bom --size 1 --yes
+   ```
+
+   If Mumbai (`bom`) isn't offered, use Singapore (`sin`) here and in
+   `primary_region`.
+5. **Your settings.** Fill in your values; leave out the ones you don't use:
+
+   ```bash
+   fly secrets set --app nexus-desk-vinodleo --stage \
+     ALLOWED_EMAILS="you@gmail.com" \
+     APP_URL="https://nexus-desk-vinodleo.fly.dev" \
+     LIVE_TRADING_ENABLED="false" \
+     GEMINI_API_KEY="..." \
+     COINDCX_API_KEY="..." COINDCX_API_SECRET="..." \
+     ZERODHA_API_KEY="..." ZERODHA_API_SECRET="..."
+   ```
+
+   `GEMINI_API_KEY` comes from [AI Studio → Get API key](https://aistudio.google.com/apikey).
+   Without it, the agents use their rule-based fallbacks. The other
+   `LIVE_*` limits in `.env.example` can be added the same way.
+6. **Let GitHub deploy.** Create a deploy token:
+
+   ```bash
+   fly tokens create deploy --app nexus-desk-vinodleo
+   ```
+
+   Copy everything it prints, starting at `FlyV1`. On GitHub, open the repo's
+   **Settings → Secrets and variables → Actions → New repository secret**,
+   name it `FLY_API_TOKEN`, and paste the value.
+7. **First deploy:** on GitHub, open **Actions → Deploy to Fly.io → Run
+   workflow** (branch `main`). It takes about 5–10 minutes. After that, every
+   merged PR deploys itself once CI passes.
+8. **Tell the other services about the new address:**
+   - **Firebase Authentication → Settings → Authorized domains:** add
+     `nexus-desk-vinodleo.fly.dev`.
+   - **Kite Connect app → Redirect URL:** `https://nexus-desk-vinodleo.fly.dev/`.
+
+The paper book, trade history and Lab model live in the browser, per
+address, so the Fly address starts with a fresh book.
+
+Logs and the machine's status are in the Fly dashboard, under the app's
+**Monitoring** page. To stop paying, destroy the app there or run
+`fly apps destroy nexus-desk-vinodleo`.
 
 ## Checking it works
 

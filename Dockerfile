@@ -23,11 +23,13 @@ ENV NODE_ENV=production \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN mkdir -p /data && chown node:node /data
-USER node
 VOLUME ["/data"]
 EXPOSE 3000
 # Unhealthy when the scanner's candle-close loop has stopped running.
 HEALTHCHECK --interval=60s --timeout=5s --start-period=60s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# Runs as root only long enough to give /data to the "node" user, then as "node".
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/server.cjs"]
