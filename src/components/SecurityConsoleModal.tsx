@@ -1,500 +1,249 @@
-import React, { useState } from "react";
-
+import React, { useEffect, useState } from "react";
+import { UploadCloud, DownloadCloud, Loader2, AlertTriangle } from "lucide-react";
 import { syncToFirebase, syncFromFirebase, hasLegacyExchangeKeys, deleteLegacyExchangeKeys } from "../services/storagePersistenceService";
 import { apiFetch } from "../services/apiClient";
 import type { CoinDcxServerStatus } from "../types";
-import { Cloud, UploadCloud, DownloadCloud } from "lucide-react";
-import { useAuth, UserRole } from "../context/AuthContext";
-import {
-  Shield,
-  ShieldCheck,
-  ShieldAlert,
-  Lock,
-  UserCheck,
-  Key,
-  Server,
-  FileText,
-  Clock,
-  ExternalLink,
-  X,
-  AlertTriangle,
-  Radio,
-  CheckCircle2,
-  RefreshCw,
-} from "lucide-react";
+import { useAuth, type UserRole } from "../context/AuthContext";
+import { Sheet, SheetLabel } from "./ledger/Sheet";
 
 interface SecurityConsoleModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onOpenAuthModal: () => void;
 }
 
-export const SecurityConsoleModal: React.FC<SecurityConsoleModalProps> = ({
-  isOpen,
-  onClose,
-  onOpenAuthModal,
-}) => {
-  const {
-    currentUser,
-    userProfile,
-    userRole,
-    switchUserRole,
-    logout,
-    recentAudits,
-    logSecurityAudit,
-  } = useAuth();
+const ROLES: { id: UserRole; label: string; sub: string }[] = [
+  { id: "commander", label: "Commander", sub: "Everything, including autopilot and Stop all" },
+  { id: "trader", label: "Trader", sub: "Approve proposals and close positions" },
+  { id: "auditor", label: "Auditor", sub: "Look only; can't trade or change settings" },
+];
 
-  const [activeTab, setActiveTab] = useState<"overview" | "rbac" | "audit" | "api_keys" | "cloud">("overview");
-  const [coinDcxStatus, setCoinDcxStatus] = useState<CoinDcxServerStatus | null>(null);
+/** "KILL_SWITCH_ENGAGED" -> "Kill switch engaged" */
+export function auditLabel(action: string): string {
+  const s = action.toLowerCase().replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+const Group: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="bg-surface border border-line rounded-2xl px-3.5 [&>*:last-child]:border-b-0">{children}</div>
+);
+
+const Row: React.FC<{ label: React.ReactNode; sub?: React.ReactNode; children?: React.ReactNode }> = ({ label, sub, children }) => (
+  <div className="flex items-center justify-between gap-3 min-h-12 py-2 border-b border-line text-sm">
+    <div className="min-w-0">
+      <div>{label}</div>
+      {sub && <div className="text-xs text-muted mt-0.5">{sub}</div>}
+    </div>
+    {children && <div className="shrink-0 font-semibold">{children}</div>}
+  </div>
+);
+
+// Security and access: the signed-in account, the role that gates actions,
+// where exchange keys live, cloud backup of the desk's memory, and the log.
+export const SecurityConsoleModal: React.FC<SecurityConsoleModalProps> = ({ isOpen, onClose }) => {
+  const { currentUser, userProfile, userRole, switchUserRole, logout, recentAudits, logSecurityAudit } = useAuth();
+  const [status, setStatus] = useState<CoinDcxServerStatus | null>(null);
   const [hasLegacyKeys, setHasLegacyKeys] = useState(false);
-  const [isDeletingLegacy, setIsDeletingLegacy] = useState(false);
+  const [deletingLegacy, setDeletingLegacy] = useState(false);
+  const [sync, setSync] = useState<{ busy: boolean; message: string | null }>({ busy: false, message: null });
+  const [confirmRestore, setConfirmRestore] = useState(false);
 
-  React.useEffect(() => {
-    if (activeTab !== "api_keys") return;
+  useEffect(() => {
+    if (!isOpen) {
+      setConfirmRestore(false);
+      return;
+    }
     apiFetch("/api/coindcx/status")
       .then((res) => res.json())
-      .then((data) => data.success && setCoinDcxStatus(data))
-      .catch(() => setCoinDcxStatus(null));
-    if (currentUser) {
-      hasLegacyExchangeKeys(currentUser.uid).then(setHasLegacyKeys);
-    }
-  }, [activeTab, currentUser]);
+      .then((data) => data.success && setStatus(data))
+      .catch(() => setStatus(null));
+    if (currentUser) hasLegacyExchangeKeys(currentUser.uid).then(setHasLegacyKeys);
+  }, [isOpen, currentUser]);
 
-  const handleDeleteLegacyKeys = async () => {
+  const deleteLegacy = async () => {
     if (!currentUser) return;
-    setIsDeletingLegacy(true);
+    setDeletingLegacy(true);
     const ok = await deleteLegacyExchangeKeys(currentUser.uid);
-    setIsDeletingLegacy(false);
+    setDeletingLegacy(false);
     if (ok) {
       setHasLegacyKeys(false);
       logSecurityAudit("LEGACY_KEYS_DELETED", "Deleted plain-text exchange keys previously stored in Firestore");
-    } else {
-      alert("Failed to delete the legacy key document from Firestore.");
     }
   };
 
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<string | null>(null);
-
-  const handlePushToCloud = async () => {
+  const backUp = async () => {
     if (!currentUser) return;
-    setIsSyncing(true);
-    setSyncStatus("Syncing...");
+    setSync({ busy: true, message: "Backing up…" });
     await syncToFirebase(currentUser.uid);
     await logSecurityAudit("CLOUD_SYNC_PUSH", "Pushed local trading memory and telemetry to Cloud Firestore.");
-    setSyncStatus("Synced to Cloud");
-    setTimeout(() => setSyncStatus(null), 3000);
-    setIsSyncing(false);
+    setSync({ busy: false, message: "Backed up to the cloud." });
   };
 
-  const handlePullFromCloud = async () => {
+  const restore = async () => {
     if (!currentUser) return;
-    setIsSyncing(true);
-    setSyncStatus("Downloading...");
-    const success = await syncFromFirebase(currentUser.uid);
-    if (success) {
+    setConfirmRestore(false);
+    setSync({ busy: true, message: "Restoring…" });
+    const ok = await syncFromFirebase(currentUser.uid);
+    if (ok) {
       await logSecurityAudit("CLOUD_SYNC_PULL", "Downloaded cloud trading memory to local device.");
-      setSyncStatus("Restored from Cloud");
-      // Force reload to apply state
-      setTimeout(() => window.location.reload(), 1500);
+      setSync({ busy: true, message: "Restored. Reloading…" });
+      setTimeout(() => window.location.reload(), 1200);
     } else {
-      setSyncStatus("Failed to restore");
+      setSync({ busy: false, message: "Couldn't restore from the cloud." });
     }
-    setTimeout(() => setSyncStatus(null), 3000);
-    setIsSyncing(false);
   };
 
-
-  if (!isOpen) return null;
+  const name = currentUser?.displayName || userProfile?.displayName || "You";
+  const live = status?.liveRisk;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in select-none">
-      <div className="w-full max-w-2xl bg-[#0e0e13] border border-[#242432] rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden text-stone-200">
-        {/* Top Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-[#1f1f2a] bg-[#111117]">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-emerald-950/60 border border-emerald-800/60 text-emerald-400">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-sans font-bold text-white">
-                  Security & Authentication Console
-                </h3>
-                <span className="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-800/60 text-emerald-300 font-mono text-[10px] uppercase tracking-wider">
-                  Firebase Active
-                </span>
-              </div>
-              <p className="text-xs text-stone-400 font-sans mt-0.5">
-                Authentication, Role-Based Access Control, and Immutable Audit Trail
-              </p>
+    <Sheet isOpen={isOpen} onClose={onClose} title="Security and access" subtitle="Your account, role, keys and activity">
+      <SheetLabel>Account</SheetLabel>
+      <Group>
+        <div className="flex items-center gap-3 py-3 border-b border-line">
+          <div className="w-11 h-11 shrink-0 rounded-full bg-accent-soft text-accent font-display text-lg flex items-center justify-center">
+            {(name[0] || "Y").toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold truncate">{name}</div>
+            <div className="text-xs text-muted truncate">
+              {currentUser?.email || "Not signed in"}
+              {userProfile?.provider ? ` · ${userProfile.provider}` : ""}
             </div>
           </div>
-
-          <button
-            onClick={onClose}
-            className="text-stone-400 hover:text-stone-200 p-1.5 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="flex items-center gap-1 px-4 pt-3 border-b border-[#1d1d28] bg-[#0c0c11] overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
-          {[
-            { id: "overview", label: "Operator Session", icon: UserCheck },
-            { id: "rbac", label: "Clearance & RBAC", icon: Lock },
-            { id: "audit", label: `Audit Trail (${recentAudits.length})`, icon: FileText },
-            { id: "api_keys", label: "Exchange API Security", icon: Key },
-            { id: "cloud", label: "Cloud Sync", icon: Cloud },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center whitespace-nowrap shrink-0 gap-1.5 px-3 py-2 text-xs font-mono font-medium rounded-t-lg transition-colors cursor-pointer border-b-2 ${
-                  isActive
-                    ? "text-emerald-400 border-emerald-400 bg-[#161620]"
-                    : "text-stone-400 border-transparent hover:text-stone-200"
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Modal Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto space-y-4">
-          {/* TAB 1: OPERATOR SESSION */}
-          {activeTab === "overview" && (
-            <div className="space-y-4">
-              {/* Session Card */}
-              <div className="rounded-xl bg-[#14141d] border border-[#252535] p-4 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-[#1e1e2c] border border-[#323246] flex items-center justify-center font-mono font-bold text-white text-base">
-                      {currentUser?.displayName?.[0] || currentUser?.email?.[0] || userProfile?.displayName?.[0] || "O"}
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold text-white flex items-center gap-2">
-                        <span>{currentUser?.displayName || userProfile?.displayName || "Desk Operator"}</span>
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
-                          {userProfile?.provider.toUpperCase() || "SECURE"}
-                        </span>
-                      </div>
-                      <div className="text-xs font-mono text-stone-400">
-                        {currentUser?.email || (currentUser?.isAnonymous ? "Anonymous Verified Token" : "operator@nexus.terminal")}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        onClose();
-                        onOpenAuthModal();
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-medium transition-all cursor-pointer shadow-sm"
-                    >
-                      {currentUser ? "Switch Operator" : "Sign In / Register"}
-                    </button>
-
-                    {currentUser && (
-                      <button
-                        onClick={async () => {
-                          await logout();
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-800/50 text-rose-300 font-mono text-xs transition-all cursor-pointer"
-                      >
-                        Sign Out
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-[#1f1f2c] text-[11px] font-mono">
-                  <div>
-                    <span className="text-stone-400 block text-[9px] uppercase">Clearance</span>
-                    <span className="text-emerald-400 font-bold capitalize">{userRole}</span>
-                  </div>
-                  <div>
-                    <span className="text-stone-400 block text-[9px] uppercase">Auth Provider</span>
-                    <span className="text-stone-200">{currentUser ? (currentUser.isAnonymous ? "Firebase Anon" : "Firebase JWT") : "Sandbox Session"}</span>
-                  </div>
-                  <div>
-                    <span className="text-stone-400 block text-[9px] uppercase">Encryption</span>
-                    <span className="text-stone-200">TLS 1.3 / SHA-256</span>
-                  </div>
-                  <div>
-                    <span className="text-stone-400 block text-[9px] uppercase">Last Verified</span>
-                    <span className="text-stone-300">{userProfile?.lastLoginAt || "Live"}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Security Guardrails Check */}
-              <div className="rounded-xl bg-[#111118] border border-[#20202c] p-4 space-y-2.5">
-                <h4 className="text-xs font-mono uppercase tracking-wider text-stone-300 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>Terminal Defensive Guardrails</span>
-                </h4>
-
-                <div className="space-y-2 text-xs font-mono">
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-[#161622] border border-[#262638]">
-                    <div className="flex items-center gap-2 text-stone-200">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Firebase Auth Token Verification</span>
-                    </div>
-                    <span className="text-emerald-400 font-medium">ENFORCED</span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-[#161622] border border-[#262638]">
-                    <div className="flex items-center gap-2 text-stone-200">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Hard 1.0% Equity Loss Cap per Trade</span>
-                    </div>
-                    <span className="text-emerald-400 font-medium">STRICT CODE</span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-[#161622] border border-[#262638]">
-                    <div className="flex items-center gap-2 text-stone-200">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Emergency Kill-Switch Ingress</span>
-                    </div>
-                    <span className="text-emerald-400 font-medium">ONLINE</span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-[#161622] border border-[#262638]">
-                    <div className="flex items-center gap-2 text-stone-200">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Immutable Cloud Firestore Audit Trail</span>
-                    </div>
-                    <span className="text-emerald-400 font-medium">SYNCHRONIZED</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: RBAC MATRIX */}
-          {activeTab === "rbac" && (
-            <div className="space-y-4">
-              <p className="text-xs text-stone-300 font-sans leading-relaxed">
-                Role-Based Access Control isolates sensitive operational commands. Switch clearances
-                below to test enforcement across the terminal.
-              </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* Commander */}
-                <div
-                  onClick={() => switchUserRole("commander")}
-                  className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-                    userRole === "commander"
-                      ? "bg-emerald-950/40 border-emerald-500 shadow-lg ring-1 ring-emerald-500"
-                      : "bg-[#13131b] border-[#222230] hover:border-stone-500"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-mono font-bold text-emerald-400 uppercase">
-                      Commander
-                    </span>
-                    {userRole === "commander" && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-900 text-emerald-200 font-mono">
-                        Active
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-stone-400 leading-snug">
-                    Full root administrative control. Can toggle autonomous self-approval, trigger kill switch, and override risk rules.
-                  </p>
-                  <ul className="mt-3 space-y-1 text-[10px] font-mono text-stone-300">
-                    <li className="flex items-center gap-1.5 text-emerald-400">✓ Kill Switch Toggle</li>
-                    <li className="flex items-center gap-1.5 text-emerald-400">✓ Self-Approval Access</li>
-                    <li className="flex items-center gap-1.5 text-emerald-400">✓ Risk Limit Override</li>
-                  </ul>
-                </div>
-
-                {/* Trader */}
-                <div
-                  onClick={() => switchUserRole("trader")}
-                  className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-                    userRole === "trader"
-                      ? "bg-blue-950/40 border-blue-500 shadow-lg ring-1 ring-blue-500"
-                      : "bg-[#13131b] border-[#222230] hover:border-stone-500"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-mono font-bold text-blue-400 uppercase">
-                      Desk Trader
-                    </span>
-                    {userRole === "trader" && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-900 text-blue-200 font-mono">
-                        Active
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-stone-400 leading-snug">
-                    Operational execution rights. Can approve proposal queue items, execute manual orders, and close positions.
-                  </p>
-                  <ul className="mt-3 space-y-1 text-[10px] font-mono text-stone-300">
-                    <li className="flex items-center gap-1.5 text-blue-400">✓ Queue Order Approvals</li>
-                    <li className="flex items-center gap-1.5 text-blue-400">✓ Position Close Rights</li>
-                    <li className="flex items-center gap-1.5 text-stone-500">✕ No Risk Policy Edits</li>
-                  </ul>
-                </div>
-
-                {/* Auditor */}
-                <div
-                  onClick={() => switchUserRole("auditor")}
-                  className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-                    userRole === "auditor"
-                      ? "bg-amber-950/40 border-amber-500 shadow-lg ring-1 ring-amber-500"
-                      : "bg-[#13131b] border-[#222230] hover:border-stone-500"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-mono font-bold text-amber-400 uppercase">
-                      Auditor
-                    </span>
-                    {userRole === "auditor" && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-200 font-mono">
-                        Active
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-stone-400 leading-snug">
-                    Compliance and inspection clearance. Read-only access to decision pipelines, telemetry, and memory vectors.
-                  </p>
-                  <ul className="mt-3 space-y-1 text-[10px] font-mono text-stone-300">
-                    <li className="flex items-center gap-1.5 text-amber-400">✓ Inspect Audit Logs</li>
-                    <li className="flex items-center gap-1.5 text-stone-500">✕ No Order Execution</li>
-                    <li className="flex items-center gap-1.5 text-stone-500">✕ No Position Modifying</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: IMMUTABLE AUDIT TRAIL */}
-          {activeTab === "audit" && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs font-mono text-stone-400">
-                <span>Recent Security & Operational Audit Log Entries</span>
-                <span className="text-emerald-400">Firestore collection: auditLogs</span>
-              </div>
-
-              {recentAudits.length === 0 ? (
-                <div className="rounded-xl bg-[#121219] border border-[#20202c] p-6 text-center text-xs text-stone-400">
-                  No audit events recorded yet. Authentication, role changes, and order executions will stream here.
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-                  {recentAudits.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className="p-3 rounded-xl bg-[#13131c] border border-[#232333] space-y-1 font-mono text-xs"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-emerald-400 flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>{entry.action}</span>
-                        </span>
-                        <span className="text-[10px] text-stone-400 flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-stone-400" />
-                          {entry.timestamp}
-                        </span>
-                      </div>
-                      <p className="text-stone-200 text-[11px] font-sans">{entry.details}</p>
-                      <div className="text-[10px] text-stone-400 flex items-center gap-2 pt-1 border-t border-[#1c1c28]">
-                        <span>Operator: {entry.userEmail}</span>
-                        <span>•</span>
-                        <span>UID: {entry.userId.slice(0, 14)}...</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 4: EXCHANGE API CREDENTIALS (server-held) */}
-          {activeTab === "api_keys" && (
-            <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
-              <div className="rounded-xl bg-amber-950/20 border border-amber-900/30 p-4 space-y-2">
-                <h4 className="text-xs font-mono font-semibold text-amber-500 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>Server-Held Exchange Credentials</span>
-                </h4>
-                <p className="text-[11px] font-sans text-stone-300 leading-relaxed">
-                  Exchange API keys are configured only as environment variables on the server
-                  (<code>COINDCX_API_KEY</code>, <code>COINDCX_API_SECRET</code>, <code>ZERODHA_API_KEY</code>, <code>ZERODHA_API_SECRET</code>).
-                  They are never entered in, stored by, or sent to the browser. Create exchange keys with withdrawals disabled.
-                </p>
-              </div>
-
-              <div className="space-y-2 p-4 rounded-xl bg-[#12121a] border border-[#20202c] text-[11px] font-mono">
-                <div className="flex items-center justify-between">
-                  <span className="text-stone-400">CoinDCX keys</span>
-                  {coinDcxStatus?.configured ? (
-                    <span className="text-emerald-400 flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Configured ({coinDcxStatus.keyMasked})
-                    </span>
-                  ) : (
-                    <span className="text-rose-400">Not configured</span>
-                  )}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-stone-400">Live trading</span>
-                  <span className={coinDcxStatus?.liveRisk.enabled ? "text-amber-300" : "text-stone-300"}>
-                    {coinDcxStatus?.liveRisk.enabled ? "ENABLED" : "DISABLED"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-stone-400">Zerodha</span>
-                  <span className="text-stone-300">Connect via the Kite login in the header</span>
-                </div>
-              </div>
-
-              {hasLegacyKeys && (
-                <div className="p-4 rounded-xl bg-rose-950/30 border border-rose-900/50 space-y-2">
-                  <div className="flex items-center gap-2 text-rose-300 text-xs font-mono font-semibold">
-                    <AlertTriangle className="w-4 h-4" />
-                    Legacy plain-text keys found in Firestore
-                  </div>
-                  <p className="text-[11px] text-stone-300 leading-relaxed">
-                    An earlier version saved exchange keys unencrypted to your Firestore profile. Delete that copy, and
-                    rotate those keys on the exchange since they may have been exposed.
-                  </p>
-                  <button
-                    onClick={handleDeleteLegacyKeys}
-                    disabled={isDeletingLegacy}
-                    className="w-full py-2 rounded-lg bg-rose-700 hover:bg-rose-600 text-white text-xs font-mono cursor-pointer disabled:opacity-50"
-                  >
-                    {isDeletingLegacy ? "Deleting..." : "Delete legacy keys from Firestore"}
-                  </button>
-                </div>
-              )}
-            </div>
+          {currentUser && (
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="shrink-0 min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold text-loss cursor-pointer"
+            >
+              Sign out
+            </button>
           )}
         </div>
-        {/* Modal Footer */}
-        <div className="p-3 sm:p-4 border-t border-[#1f1f2c] bg-[#0c0c11] flex items-center justify-between text-xs font-mono text-stone-400">
-          <span className="flex items-center gap-1.5">
-            <Lock className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Terminal Clearance: <strong className="text-white capitalize">{userRole}</strong></span>
-          </span>
-          <button
-            onClick={onClose}
-            className="px-4 py-1.5 rounded-lg bg-[#1a1a24] hover:bg-[#252533] text-stone-200 hover:text-white transition-all cursor-pointer"
-          >
-            Close
-          </button>
-        </div>
+      </Group>
+
+      <SheetLabel>Role</SheetLabel>
+      <div className="flex flex-col gap-2" role="radiogroup" aria-label="Role">
+        {ROLES.map((r) => {
+          const on = userRole === r.id;
+          return (
+            <button
+              key={r.id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => void switchUserRole(r.id)}
+              className={`flex items-center justify-between gap-3 p-3.5 rounded-2xl border text-left cursor-pointer ${
+                on ? "border-accent bg-accent-soft" : "border-line bg-surface"
+              }`}
+            >
+              <span>
+                <span className={`block text-sm font-semibold ${on ? "text-accent" : ""}`}>{r.label}</span>
+                <span className="block text-xs text-muted mt-0.5">{r.sub}</span>
+              </span>
+              <span
+                className={`w-5 h-5 shrink-0 rounded-full border-2 ${on ? "border-accent bg-accent shadow-[inset_0_0_0_3px_var(--nx-accent-soft)]" : "border-line"}`}
+                aria-hidden="true"
+              />
+            </button>
+          );
+        })}
       </div>
-    </div>
+
+      <SheetLabel>Exchange keys</SheetLabel>
+      <Group>
+        <Row label="CoinDCX" sub={status?.configured ? `Key ${status.keyMasked ?? ""}` : "Not set up on the server"}>
+          <span className={status?.configured ? "text-gain" : "text-muted"}>{status ? (status.configured ? "Set" : "Missing") : "…"}</span>
+        </Row>
+        <Row label="Live orders" sub="Allowed only when LIVE_TRADING_ENABLED is true">
+          <span className={live?.enabled ? "text-warn" : "text-muted"}>{live ? (live.enabled ? "Allowed" : "Blocked") : "…"}</span>
+        </Row>
+        <p className="m-0 py-3 text-xs text-muted leading-relaxed">
+          Keys are set as environment variables on the server and never reach this browser. Create them with withdrawals
+          turned off.
+        </p>
+      </Group>
+      {hasLegacyKeys && (
+        <div className="flex flex-col gap-2 p-3.5 rounded-2xl bg-danger-soft border border-danger-line text-[13px] leading-relaxed">
+          <div className="flex gap-2 text-loss font-semibold">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            Old keys found in your cloud profile
+          </div>
+          <p className="m-0">
+            An earlier version saved exchange keys unencrypted in Firestore. Delete that copy, then create new keys on the
+            exchange, since the old ones may have been exposed.
+          </p>
+          <button
+            type="button"
+            onClick={deleteLegacy}
+            disabled={deletingLegacy}
+            className="self-start min-h-9 px-3.5 rounded-full bg-loss text-on-accent text-[13px] font-semibold cursor-pointer disabled:opacity-60"
+          >
+            {deletingLegacy ? "Deleting…" : "Delete the old keys"}
+          </button>
+        </div>
+      )}
+
+      <SheetLabel>Cloud backup</SheetLabel>
+      <Group>
+        <p className="m-0 py-3 border-b border-line text-xs text-muted leading-relaxed">
+          Copies the desk's memory, trades and stats to your Firestore account, so another device can pick them up.
+        </p>
+        <div className="flex gap-2 py-3">
+          <button
+            type="button"
+            onClick={backUp}
+            disabled={sync.busy || !currentUser}
+            className="flex-1 min-h-11 rounded-full border border-line bg-surface text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+          >
+            <UploadCloud className="w-4 h-4" />
+            Back up now
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmRestore(true)}
+            disabled={sync.busy || !currentUser}
+            className="flex-1 min-h-11 rounded-full border border-line bg-surface text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+          >
+            <DownloadCloud className="w-4 h-4" />
+            Restore
+          </button>
+        </div>
+        {confirmRestore && (
+          <div className="flex flex-wrap items-center gap-2 pb-3 text-[13px]">
+            <span>Replace this device's data with the cloud copy?</span>
+            <button type="button" onClick={restore} className="min-h-9 px-3.5 rounded-full bg-accent text-on-accent font-semibold cursor-pointer">
+              Restore
+            </button>
+            <button type="button" onClick={() => setConfirmRestore(false)} className="min-h-9 px-3 text-muted cursor-pointer">
+              Cancel
+            </button>
+          </div>
+        )}
+        {sync.message && (
+          <div className="pb-3 text-xs text-muted flex items-center gap-2">
+            {sync.busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            {sync.message}
+          </div>
+        )}
+      </Group>
+
+      <SheetLabel>Activity</SheetLabel>
+      {recentAudits.length === 0 ? (
+        <p className="m-0 text-[13px] text-muted px-1">Sign-ins, role changes, Stop all and orders will be listed here.</p>
+      ) : (
+        <ul className="list-none m-0 p-0 bg-surface border border-line rounded-2xl px-3.5">
+          {recentAudits.slice(0, 20).map((e) => (
+            <li key={e.id} className="py-2.5 border-b border-line last:border-b-0">
+              <div className="flex justify-between gap-3 text-sm">
+                <span className="font-semibold">{auditLabel(e.action)}</span>
+                <span className="text-xs text-muted tabular-nums shrink-0">{e.timestamp}</span>
+              </div>
+              <div className="text-xs text-muted mt-0.5">{e.details}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Sheet>
   );
 };

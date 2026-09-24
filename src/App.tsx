@@ -61,7 +61,6 @@ import { LedgerRisk } from "./components/ledger/LedgerRisk";
 import { LedgerLab } from "./components/ledger/LedgerLab";
 import { LedgerLearning } from "./components/ledger/LedgerLearning";
 import { CommanderModal } from "./components/CommanderModal";
-import { AuthModal } from "./components/AuthModal";
 import { checkAndRunOnlineLearning } from "./services/onlineLearningService";
 import { SecurityConsoleModal } from "./components/SecurityConsoleModal";
 import { useAuth } from "./context/AuthContext";
@@ -89,7 +88,7 @@ import {
 import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 
 export default function App() {
-  const { userRole, logSecurityAudit, openAuthModal, currentUser, loading } = useAuth();
+  const { userRole, logSecurityAudit, currentUser, loading } = useAuth();
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
 
   // Navigation: Floor, Queue, Book, Lab, Learning
@@ -106,7 +105,7 @@ export default function App() {
     useState<boolean>(false);
   const [commanderLoading, setCommanderLoading] = useState<boolean>(false);
   const [commanderBrief, setCommanderBrief] = useState<string>(
-    "Grok is unreachable. The playbook, risk, and tickets do not depend on this call."
+    "The brief isn't available right now. Trading, risk checks and the guardian don't depend on it."
   );
 
   // Dynamic Learning & Self-Approval Track Record (Initialized from LocalStorage)
@@ -1608,16 +1607,16 @@ export default function App() {
           data.summary ||
           data.analysis?.summary ||
           (typeof data.analysis === "string" ? data.analysis : null) ||
-          "Grok is unreachable. The playbook, risk, and tickets do not depend on this call.";
+          "The brief isn't available right now. Trading, risk checks and the guardian don't depend on it.";
         setCommanderBrief(brief);
       } else {
         setCommanderBrief(
-          "Grok is unreachable. The playbook, risk, and tickets do not depend on this call."
+          "The brief isn't available right now. Trading, risk checks and the guardian don't depend on it."
         );
       }
     } catch {
       setCommanderBrief(
-        "Grok is unreachable. The playbook, risk, and tickets do not depend on this call."
+        "The brief isn't available right now. Trading, risk checks and the guardian don't depend on it."
       );
     } finally {
       setCommanderLoading(false);
@@ -1925,14 +1924,11 @@ export default function App() {
         isLoading={commanderLoading}
       />
 
-      {/* Firebase Authentication Modal */}
-      <AuthModal />
 
       {/* Firebase Security, RBAC & Audit Console */}
       <SecurityConsoleModal
         isOpen={isSecurityModalOpen}
         onClose={() => setIsSecurityModalOpen(false)}
-        onOpenAuthModal={openAuthModal}
       />
 
       {/* 24/7 Background Execution & Device-Lock Guardian Modal */}
