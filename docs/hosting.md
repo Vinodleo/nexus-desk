@@ -26,7 +26,7 @@ Three ways to fix that:
 |---|---|---|---|
 | Setup | One script | A VM, a domain, Docker | One-time commands, then automatic |
 | Address | Unchanged | Your domain | `your-app.fly.dev` (https included) |
-| Region | Yours | Yours | Mumbai |
+| Region | Yours | Yours | Singapore |
 | Monthly cost (rough) | ~US$40–55 | ~US$0–15 | ~US$4–7 |
 | Updates | AI Studio deploy + re-run the script | `git pull` + rebuild | Every merge to `main`, automatically |
 
@@ -96,7 +96,7 @@ so only one server is scanning and guarding.
 
 ## C. Fly.io
 
-One machine in Mumbai that never stops, with a 1 GB disk for saved state and
+One machine in Singapore that never stops, with a 1 GB disk for saved state and
 an https address. `fly.toml` holds the settings. The GitHub Action
 `.github/workflows/fly-deploy.yml` deploys `main` whenever CI passes on it.
 
@@ -119,11 +119,11 @@ an https address. `fly.toml` holds the settings. The GitHub Action
 
    ```bash
    fly apps create nexus-desk-vinodleo
-   fly volumes create nexus_data --app nexus-desk-vinodleo --region bom --size 1 --yes
+   fly volumes create nexus_data --app nexus-desk-vinodleo --region sin --size 1 --yes
    ```
 
-   If Mumbai (`bom`) isn't offered, use Singapore (`sin`) here and in
-   `primary_region`.
+   Fly no longer offers Mumbai (`bom`); Singapore (`sin`) is the nearest.
+   The region here must match `primary_region` in `fly.toml`.
 5. **Your settings.** Fill in your values; leave out the ones you don't use:
 
    ```bash
