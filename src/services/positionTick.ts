@@ -1,5 +1,6 @@
 import type { Position } from "../types";
 import { bankPartial, blendedExitPrice, partialDue } from "../shared/exitRules";
+import { exitAt, updateTrailingStop, type TrailExitReason } from "../shared/trailingStop";
 
 // The browser book's per-tick position logic: price-sanity guard, trailing
 // stop / profit lock (scalp and trend-runner modes, long and short), and
@@ -7,7 +8,7 @@ import { bankPartial, blendedExitPrice, partialDue } from "../shared/exitRules";
 // mutates the position it's given. (It used to run inline in App's WebSocket
 // handler, mutating React state in place.)
 
-export type TickExitReason = "STOP_LOSS" | "TAKE_PROFIT" | "TRAILING_STOP";
+export type TickExitReason = TrailExitReason;
 
 export type TickOutcome =
   | { kind: "unchanged"; position: Position }
@@ -89,147 +90,10 @@ export function applyTickToPosition(
     changed = true;
   }
 
-  const atr = pos.atrAtEntry || pos.entryPrice * 0.005;
-  const isTrendRunner =
-    pos.trailMode === "TREND_RUNNER" ||
-    pos.family === "trend_following" ||
-    pos.family === "breakout_confirmation" ||
-    (pos.expectedHoldingTimeMinutes || 30) > 60;
-
-  if (isLong) {
-    pos.highestPrice = Math.max(pos.highestPrice || pos.entryPrice, price);
-    const peakGain = Math.max(0, pos.highestPrice - pos.entryPrice);
-    const profitInATR = atr > 0 ? peakGain / atr : 0;
-    const profitPct = (peakGain / pos.entryPrice) * 100;
-    const initialTP = pos.initialTakeProfit || pos.takeProfit;
-    const targetDist = Math.max(0.001, initialTP - pos.entryPrice);
-    const targetProgress = peakGain / targetDist;
-
-    if (isTrendRunner) {
-      // Trend runner (long): trail once established (0.8%, 1.2 ATR or 50% of target).
-      if (!pos.trailActive && (profitPct >= 0.8 || profitInATR >= 1.2 || targetProgress >= 0.5)) {
-        pos.trailActive = true;
-      }
-      if (pos.trailActive) {
-        if (price >= initialTP) {
-          // Past the initial target: lock the stop there, extend the target,
-          // and trail 1.5 ATR behind the peak without dropping below the lock.
-          const targetLockPrice = initialTP;
-          if (targetLockPrice > pos.stopLoss) {
-            pos.stopLoss = targetLockPrice;
-            changed = true;
-          }
-          const extendedTarget = initialTP + targetDist * 1.5;
-          if (pos.takeProfit < extendedTarget) {
-            pos.takeProfit = extendedTarget;
-            changed = true;
-          }
-          const runnerTrailStop = Math.max(targetLockPrice, pos.highestPrice - atr * 1.5);
-          if (runnerTrailStop > pos.stopLoss) {
-            pos.stopLoss = runnerTrailStop;
-            changed = true;
-          }
-        } else {
-          // Pre-target: room for pullbacks, with a break-even floor.
-          const dynamicStop = Math.max(pos.entryPrice * 1.002, pos.highestPrice - atr * 1.5);
-          if (dynamicStop > pos.stopLoss) {
-            pos.stopLoss = dynamicStop;
-            changed = true;
-          }
-        }
-      }
-    } else {
-      // Scalp (long): trail after 0.6%, 1.0 ATR or 40% of target, so spread
-      // flicker doesn't cut trades early.
-      if (!pos.trailActive && (profitPct >= 0.6 || profitInATR >= 1.0 || targetProgress >= 0.4)) {
-        pos.trailActive = true;
-      }
-      if (pos.trailActive) {
-        // +0.18% floor covers CoinDCX's 0.10% round-trip fees plus spread.
-        let ratchetGain = pos.entryPrice * 0.0018;
-        if (profitInATR >= 1.8 || targetProgress >= 0.75) {
-          ratchetGain = Math.max(ratchetGain, peakGain * 0.7);
-        } else if (profitInATR >= 1.0 || targetProgress >= 0.5) {
-          ratchetGain = Math.max(ratchetGain, peakGain * 0.5);
-        }
-        const dynamicStop = Math.max(pos.entryPrice * 1.0018, pos.entryPrice + ratchetGain);
-        if (dynamicStop > pos.stopLoss) {
-          pos.stopLoss = dynamicStop;
-          changed = true;
-        }
-      }
-    }
-
-    if (price >= pos.takeProfit) {
-      exitReason = "TAKE_PROFIT";
-    } else if (price <= pos.stopLoss) {
-      exitReason = pos.trailActive || pos.stopLoss >= pos.entryPrice ? "TRAILING_STOP" : "STOP_LOSS";
-    }
-  } else {
-    pos.lowestPrice = Math.min(pos.lowestPrice || pos.entryPrice, price);
-    const peakGain = Math.max(0, pos.entryPrice - pos.lowestPrice);
-    const profitInATR = atr > 0 ? peakGain / atr : 0;
-    const profitPct = (peakGain / pos.entryPrice) * 100;
-    const initialTP = pos.initialTakeProfit || pos.takeProfit;
-    const targetDist = Math.max(0.001, pos.entryPrice - initialTP);
-    const targetProgress = peakGain / targetDist;
-
-    if (isTrendRunner) {
-      // Trend runner (short): mirror of the long rules.
-      if (!pos.trailActive && (profitPct >= 0.8 || profitInATR >= 1.2 || targetProgress >= 0.5)) {
-        pos.trailActive = true;
-      }
-      if (pos.trailActive) {
-        if (price <= initialTP) {
-          const targetLockPrice = initialTP;
-          if (targetLockPrice < pos.stopLoss) {
-            pos.stopLoss = targetLockPrice;
-            changed = true;
-          }
-          const extendedTarget = initialTP - targetDist * 1.5;
-          if (pos.takeProfit > extendedTarget) {
-            pos.takeProfit = extendedTarget;
-            changed = true;
-          }
-          const runnerTrailStop = Math.min(targetLockPrice, pos.lowestPrice + atr * 1.5);
-          if (runnerTrailStop < pos.stopLoss) {
-            pos.stopLoss = runnerTrailStop;
-            changed = true;
-          }
-        } else {
-          const dynamicStop = Math.min(pos.entryPrice * 0.998, pos.lowestPrice + atr * 1.5);
-          if (dynamicStop < pos.stopLoss) {
-            pos.stopLoss = dynamicStop;
-            changed = true;
-          }
-        }
-      }
-    } else {
-      // Scalp (short): mirror of the long rules.
-      if (!pos.trailActive && (profitPct >= 0.6 || profitInATR >= 1.0 || targetProgress >= 0.4)) {
-        pos.trailActive = true;
-      }
-      if (pos.trailActive) {
-        let ratchetGain = pos.entryPrice * 0.0018;
-        if (profitInATR >= 1.8 || targetProgress >= 0.75) {
-          ratchetGain = Math.max(ratchetGain, peakGain * 0.7);
-        } else if (profitInATR >= 1.0 || targetProgress >= 0.5) {
-          ratchetGain = Math.max(ratchetGain, peakGain * 0.5);
-        }
-        const dynamicStop = Math.min(pos.entryPrice * 0.9982, pos.entryPrice - ratchetGain);
-        if (dynamicStop < pos.stopLoss) {
-          pos.stopLoss = dynamicStop;
-          changed = true;
-        }
-      }
-    }
-
-    if (price <= pos.takeProfit) {
-      exitReason = "TAKE_PROFIT";
-    } else if (price >= pos.stopLoss) {
-      exitReason = pos.trailActive || pos.stopLoss <= pos.entryPrice ? "TRAILING_STOP" : "STOP_LOSS";
-    }
-  }
+  // Trailing stop and, for runners past the first target, the extended
+  // target: the same rules the server guardian applies (shared/trailingStop).
+  if (updateTrailingStop(pos, price)) changed = true;
+  exitReason = exitAt(pos, price);
 
   if (exitReason) {
     return { kind: "exit", position: pos, reason: exitReason, price };

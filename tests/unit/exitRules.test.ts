@@ -134,10 +134,10 @@ describe("server guardian", () => {
   });
 
   it("keeps the first banked fill when the browser syncs", () => {
-    const existing = { stopLoss: 1002, bankedQuantity: 1, bankedPrice: 1010 };
-    const merged = mergeSyncedGuardState("LONG", 1000, existing, { stopLoss: 990, bankedQuantity: 1, bankedPrice: 1011 });
+    const existing = { stopLoss: 1002, takeProfit: 1030, bankedQuantity: 1, bankedPrice: 1010 };
+    const merged = mergeSyncedGuardState("LONG", 1000, existing, { stopLoss: 990, takeProfit: 1030, bankedQuantity: 1, bankedPrice: 1011 });
     expect(merged).toMatchObject({ bankedQuantity: 1, bankedPrice: 1010, stopLoss: 1002 });
-    expect(mergeSyncedGuardState("LONG", 1000, { stopLoss: 990 }, { stopLoss: 1002, bankedQuantity: 1, bankedPrice: 1011 })).toMatchObject({
+    expect(mergeSyncedGuardState("LONG", 1000, { stopLoss: 990, takeProfit: 1030 }, { stopLoss: 1002, takeProfit: 1030, bankedQuantity: 1, bankedPrice: 1011 })).toMatchObject({
       bankedPrice: 1011,
     });
   });

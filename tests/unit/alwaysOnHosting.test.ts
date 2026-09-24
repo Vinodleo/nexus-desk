@@ -54,19 +54,19 @@ describe("guardian saves", () => {
     try {
       guardian.daemonPositions.set("p1", {
         id: "p1", symbol: "SOL/INR", direction: "LONG", entryPrice: 100, currentPrice: 100, quantity: 1,
-        stopLoss: 95, takeProfit: 120, highestPrice: 105, lowestPrice: 95, atrAtEntry: 10, trailMode: "SCALP_TIGHT",
+        stopLoss: 95, takeProfit: 120, highestPrice: 100.3, lowestPrice: 99.5, atrAtEntry: 10, trailMode: "SCALP_TIGHT",
         openTime: new Date().toISOString(), expectedHoldingTimeMinutes: 30,
       });
       guardian.evaluateDaemonPositions("SOL/INR", 100.2); // inside the old high and low: nothing to keep
       vi.advanceTimersByTime(11_000);
       expect(fs.existsSync(file)).toBe(false);
 
-      guardian.evaluateDaemonPositions("SOL/INR", 106); // a new high
+      guardian.evaluateDaemonPositions("SOL/INR", 100.4); // a new high
       vi.advanceTimersByTime(9_000);
       expect(fs.existsSync(file)).toBe(false); // waits 10 seconds, so a burst of ticks is one write
       vi.advanceTimersByTime(2_000);
       const saved = JSON.parse(fs.readFileSync(file, "utf8"));
-      expect(saved.positions[0]).toMatchObject({ id: "p1", highestPrice: 106 });
+      expect(saved.positions[0]).toMatchObject({ id: "p1", highestPrice: 100.4 });
     } finally {
       vi.useRealTimers();
       guardian.daemonPositions.clear();
