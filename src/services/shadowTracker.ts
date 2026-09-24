@@ -23,6 +23,8 @@ export interface ShadowSignal {
   confidence?: number;
   /** What produced that score; absent on older records, which were all "heuristic". */
   scorer?: "heuristic" | "tfjs";
+  /** The Lab model's inputs at the signal (metaFeatures), for online learning. */
+  features?: number[];
   entryPrice: number;
   stopLoss: number;
   takeProfit: number;
@@ -50,7 +52,8 @@ export function shadowFromSetup(
   kind: ShadowKind,
   signalTime: number,
   confidence?: number,
-  scorer?: "heuristic" | "tfjs"
+  scorer?: "heuristic" | "tfjs",
+  features?: number[]
 ): ShadowSignal {
   const horizon = setup.horizon === "swing" ? "swing" : "intraday";
   return {
@@ -63,6 +66,7 @@ export function shadowFromSetup(
     kind,
     confidence,
     ...(scorer ? { scorer } : {}),
+    ...(features ? { features } : {}),
     entryPrice: setup.entryPrice,
     stopLoss: setup.stopLoss,
     takeProfit: setup.takeProfit,

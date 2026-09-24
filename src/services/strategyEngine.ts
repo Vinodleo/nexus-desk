@@ -12,6 +12,17 @@ export interface CandidateEvaluationContext {
   macroRegime?: RegimeType | "neutral";
 }
 
+/**
+ * Rounds a stop or target to a sensible number of decimals for the coin's
+ * price: 2 for ₹100 and up, more for cheaper coins, so a ₹0.0012 coin's stop
+ * doesn't round to zero.
+ */
+export function roundPrice(v: number, reference: number): number {
+  const abs = Math.abs(reference);
+  const decimals = abs >= 100 ? 2 : abs >= 1 ? 4 : Math.min(12, 4 + Math.ceil(-Math.log10(abs || 1e-12)));
+  return Number(v.toFixed(decimals));
+}
+
 // Shared, derived indicator snapshot every builder works from.
 interface IndicatorSnapshot {
   price: number;
@@ -92,8 +103,8 @@ export function buildMacroTrendSetup(ctx: CandidateEvaluationContext, tuning: Ma
   const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
   const targetDistance = stopDistance * tuning.targetMult;
   const entryPrice = s.price;
-  const stopLoss = Number((direction === "LONG" ? s.price - stopDistance : s.price + stopDistance).toFixed(2));
-  const takeProfit = Number((direction === "LONG" ? s.price + targetDistance : s.price - targetDistance).toFixed(2));
+  const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
+  const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
 
   let disqualificationReason: string | undefined;
   if (regime === "high_volatility_choppy")
@@ -161,8 +172,8 @@ export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTu
   const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
   const targetDistance = stopDistance * tuning.targetMult;
   const entryPrice = s.price;
-  const stopLoss = Number((direction === "LONG" ? s.price - stopDistance : s.price + stopDistance).toFixed(2));
-  const takeProfit = Number((direction === "LONG" ? s.price + targetDistance : s.price - targetDistance).toFixed(2));
+  const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
+  const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
 
   let disqualificationReason: string | undefined;
   if (regime === "high_volatility_choppy")
@@ -228,8 +239,8 @@ export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: Brea
   const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
   const targetDistance = Math.max(s.atr * tuning.targetAtrMult, stopDistance * tuning.targetStopMultFloor);
   const entryPrice = s.price;
-  const stopLoss = Number((direction === "LONG" ? s.price - stopDistance : s.price + stopDistance).toFixed(2));
-  const takeProfit = Number((direction === "LONG" ? s.price + targetDistance : s.price - targetDistance).toFixed(2));
+  const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
+  const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
 
   let disqualificationReason: string | undefined;
   if (eventWindowActive)
@@ -288,8 +299,8 @@ export function buildMeanReversionSetup(ctx: CandidateEvaluationContext, tuning:
   const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
   const targetDistance = Math.abs(s.price - s.vwap);
   const entryPrice = s.price;
-  const stopLoss = Number((direction === "LONG" ? s.price - stopDistance : s.price + stopDistance).toFixed(2));
-  const takeProfit = Number((direction === "LONG" ? s.price + targetDistance : s.price - targetDistance).toFixed(2));
+  const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
+  const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
 
   let disqualificationReason: string | undefined;
   if (!isRangeRegime)

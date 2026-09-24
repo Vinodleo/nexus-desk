@@ -58,6 +58,7 @@ import { LedgerLab } from "./components/ledger/LedgerLab";
 import { LedgerLearning } from "./components/ledger/LedgerLearning";
 import { CommanderModal } from "./components/CommanderModal";
 import { checkAndRunOnlineLearning } from "./services/onlineLearningService";
+import { promoteCandidateModel } from "./services/mlService";
 import { SecurityConsoleModal } from "./components/SecurityConsoleModal";
 import { useAuth } from "./context/AuthContext";
 import { useBackgroundExecution } from "./hooks/useBackgroundExecution";
@@ -520,12 +521,12 @@ export default function App() {
   useEffect(() => {
     // Check every hour if a day has passed since last training
     const interval = setInterval(() => {
-      checkAndRunOnlineLearning(experiences);
+      void checkAndRunOnlineLearning(shadowStore.all());
     }, 60 * 60 * 1000);
 
     // Also check shortly after launch
     const timeout = setTimeout(() => {
-      checkAndRunOnlineLearning(experiences);
+      void checkAndRunOnlineLearning(shadowStore.all());
     }, 5000);
 
     const handleModelTrained = () => {
@@ -541,7 +542,7 @@ export default function App() {
       clearTimeout(timeout);
       window.removeEventListener("nexus-model-trained", handleModelTrained);
     };
-  }, [experiences]);
+  }, []);
 
   // Autonomous Continuous Scanning State (evaluates universe continuously)
   const [isContinuousScanActive, setIsContinuousScanActive] =
@@ -1849,17 +1850,25 @@ export default function App() {
                 sourceExchange: result.sourceExchange,
                 isSynthetic: result.isSynthetic,
                 optimizedParameters: result.optimizedParameters,
-                hasTrainedModel: result.distilledLessons.some(l => l.action.includes('TensorFlow.js')),
+                hasTrainedModel: false,
               };
-              setPromotedLabModel(promoted);
-              handleUpdateModelAccuracy({
-                accuracyPct: result.learnedMetrics.accuracyPercent,
-                winRatePct: result.learnedMetrics.winRate,
-                sharpeRatio: result.learnedMetrics.sharpeRatio,
-                datasetName: result.datasetName || `${result.symbol} Custom`,
-                lastUpdated: new Date().toISOString(),
-                totalCandlesEvaluated: result.totalCandles || result.candlesCount
-              });
+              const finish = (withModel: boolean) => {
+                setPromotedLabModel(
+                  withModel ? { ...promoted, hasTrainedModel: true, featureVersion: result.featureVersion } : promoted
+                );
+                handleUpdateModelAccuracy({
+                  accuracyPct: result.learnedMetrics.accuracyPercent,
+                  winRatePct: result.learnedMetrics.winRate,
+                  sharpeRatio: result.learnedMetrics.sharpeRatio,
+                  datasetName: result.datasetName || `${result.symbol} Custom`,
+                  lastUpdated: new Date().toISOString(),
+                  totalCandlesEvaluated: result.totalCandles || result.candlesCount,
+                });
+              };
+              // The Lab's model goes live first, so the scanner never pairs
+              // this promotion with an older model file.
+              if (result.featureVersion) void promoteCandidateModel().then(finish);
+              else finish(false);
             }}
             onRevert={() => {
               setPromotedLabModel(null);

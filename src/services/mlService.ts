@@ -38,7 +38,23 @@ export function predictConfidenceBatch(model: tf.LayersModel, featuresBatch: num
   return Array.from(data);
 }
 
-export async function loadMetaModel(path: string = 'localstorage://meta-model'): Promise<tf.LayersModel | null> {
+/** The model the live scanner uses (set by promotion or online learning). */
+export const LIVE_MODEL_PATH = 'localstorage://meta-model';
+/** The Lab's latest trained model, waiting to be promoted. */
+export const CANDIDATE_MODEL_PATH = 'localstorage://meta-model-candidate';
+
+/** Makes the Lab's candidate model the live one. False if there's no candidate. */
+export async function promoteCandidateModel(): Promise<boolean> {
+  try {
+    await tf.io.copyModel(CANDIDATE_MODEL_PATH, LIVE_MODEL_PATH);
+    return true;
+  } catch (err) {
+    console.warn("No Lab model to promote", err);
+    return false;
+  }
+}
+
+export async function loadMetaModel(path: string = LIVE_MODEL_PATH): Promise<tf.LayersModel | null> {
   try {
     const model = await tf.loadLayersModel(path);
     return model;

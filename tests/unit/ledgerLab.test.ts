@@ -42,8 +42,8 @@ describe("LedgerLab", () => {
     expect(screen.getByText(/No Lab model promoted/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Train on BTC/INR" }));
-    expect(await screen.findByText("BTC/INR (1h, 1 bars via Coinbase Public API)")).toBeTruthy();
-    expect(service.fetchRealHistoricalCandles).toHaveBeenCalledWith("BTCINR", "1h", 500, "BINANCE");
+    expect(await screen.findByText("BTC/INR (5m, 1 bars via Coinbase Public API)")).toBeTruthy();
+    expect(service.fetchRealHistoricalCandles).toHaveBeenCalledWith("BTCINR", "5m", 3000, "BINANCE");
     expect(screen.getByText("4 of 5 periods passed")).toBeTruthy();
     expect(screen.getByText("Skip breakouts on thin volume")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Promote to live" }));

@@ -7,6 +7,7 @@ import {
   buildMeanReversionSetup,
   buildVolatilitySuppressor,
   buildEventNewsSuppressor,
+  roundPrice,
 } from "./strategyEngine";
 import { arbitrateConflictingSetups } from "./riskEngine";
 
@@ -297,18 +298,8 @@ function blendSetups(
       .join(", ")})`,
     direction,
     entryPrice,
-    stopLoss: Number(
-      (direction === "LONG"
-        ? entryPrice - stopDist
-        : entryPrice + stopDist
-      ).toFixed(2)
-    ),
-    takeProfit: Number(
-      (direction === "LONG"
-        ? entryPrice + targetDist
-        : entryPrice - targetDist
-      ).toFixed(2)
-    ),
+    stopLoss: roundPrice(direction === "LONG" ? entryPrice - stopDist : entryPrice + stopDist, entryPrice),
+    takeProfit: roundPrice(direction === "LONG" ? entryPrice + targetDist : entryPrice - targetDist, entryPrice),
     riskRewardRatio: Number((targetDist / (stopDist || 1)).toFixed(2)),
     baseProbability: Number(baseProbability.toFixed(3)),
     qualifies: true,
