@@ -9,26 +9,6 @@ const STORAGE_KEY_CLOSED_TRADES = "nexus_agent_closed_trades_inr_v4";
 const STORAGE_KEY_MODEL_ACCURACY = "nexus_agent_model_accuracy_inr_v4";
 const STORAGE_KEY_PROMOTED_LAB_MODEL = "nexus_agent_promoted_lab_model_inr_v4";
 const STORAGE_KEY_QUARANTINES = "nexus_agent_quarantines_inr_v1";
-const STORAGE_KEY_TRADING_MODE = "nexus_agent_trading_mode_v1";
-
-export function loadStoredTradingMode(): "PAPER" | "LIVE" {
-  try {
-    const val = localStorage.getItem(STORAGE_KEY_TRADING_MODE);
-    if (val === "LIVE" || val === "PAPER") return val;
-  } catch (err) {
-    console.warn("Failed to load trading mode from LocalStorage:", err);
-  }
-  return "PAPER";
-}
-
-export function saveStoredTradingMode(mode: "PAPER" | "LIVE"): void {
-  try {
-    localStorage.setItem(STORAGE_KEY_TRADING_MODE, mode);
-  } catch (err) {
-    console.warn("Failed to save trading mode to LocalStorage:", err);
-  }
-}
-
 export interface SymbolQuarantineRecord {
   symbol: string;
   quarantinedUntilMs: number;

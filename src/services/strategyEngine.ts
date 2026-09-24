@@ -205,20 +205,6 @@ export interface BreakoutTuning {
   baseProbability: number;
 }
 
-export const DEFAULT_BREAKOUT_TUNING = (promotedModel?: PromotedLabModel | null): BreakoutTuning => {
-  const params = promotedModel?.optimizedParameters;
-  return {
-    idSuffix: "breakout",
-    name: "Breakout With Volume Confirmation",
-    volSurgeThreshold: params ? params.volSurgeThreshold : 1.25,
-    stopAtrMult: params ? params.slMultiplier : 1.2,
-    stopPriceFloorPct: 0.003,
-    targetAtrMult: params ? params.tpMultiplier : 2.5,
-    targetStopMultFloor: 1.5,
-    baseProbability: 0.53,
-  };
-};
-
 export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: BreakoutTuning): StrategySetup | null {
   const { symbol, timeframe, bars, eventWindowActive } = ctx;
   const s = deriveSnapshot(bars);
@@ -275,20 +261,6 @@ export interface MeanReversionTuning {
   stopPriceFloorPct: number;
   baseProbability: number;
 }
-
-export const DEFAULT_MEANREV_TUNING = (promotedModel?: PromotedLabModel | null): MeanReversionTuning => {
-  const params = promotedModel?.optimizedParameters;
-  return {
-    idSuffix: "meanrev",
-    name: "Range Mean Reversion",
-    rsiOversold: params ? (100 - params.rsiThreshold) : 32,
-    rsiOverbought: params ? params.rsiThreshold : 68,
-    maxAdxForRange: 26,
-    stopAtrMult: 1.0,
-    stopPriceFloorPct: 0.0035,
-    baseProbability: 0.61,
-  };
-};
 
 export function buildMeanReversionSetup(ctx: CandidateEvaluationContext, tuning: MeanReversionTuning): StrategySetup | null {
   const { symbol, timeframe, bars, regime, eventWindowActive } = ctx;
@@ -391,22 +363,4 @@ export function buildEventNewsSuppressor(ctx: CandidateEvaluationContext): Strat
     disqualificationReason: eventWindowActive ? undefined : "No active event blackout",
     features: baseFeatures(s, false),
   };
-}
-
-// ---------------------------------------------------------------------------
-// Legacy entry point — preserved for backward compatibility. Returns exactly
-// the same three setups this file always produced (default tuning). The full
-// panel of differentiated personas lives in personaEngine.ts.
-// ---------------------------------------------------------------------------
-
-export function evaluatePredefinedSetups(ctx: CandidateEvaluationContext): StrategySetup[] {
-  if (ctx.bars.length < 5) return [];
-  const setups: StrategySetup[] = [];
-  const trend = buildTrendSetup(ctx, DEFAULT_TREND_TUNING);
-  const breakout = buildBreakoutSetup(ctx, DEFAULT_BREAKOUT_TUNING(ctx.promotedModel));
-  const meanrev = buildMeanReversionSetup(ctx, DEFAULT_MEANREV_TUNING(ctx.promotedModel));
-  if (trend) setups.push(trend);
-  if (breakout) setups.push(breakout);
-  if (meanrev) setups.push(meanrev);
-  return setups;
 }

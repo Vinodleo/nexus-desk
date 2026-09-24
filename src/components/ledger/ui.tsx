@@ -70,10 +70,3 @@ export const SectionHeading: React.FC<{ title: string; right?: React.ReactNode }
     {right}
   </div>
 );
-
-export const Notice: React.FC<{ icon?: React.ReactNode; children: React.ReactNode }> = ({ icon, children }) => (
-  <div className="flex gap-2.5 p-3 rounded-xl bg-warn-soft text-warn-ink text-xs leading-relaxed">
-    {icon && <span className="shrink-0 text-warn mt-px">{icon}</span>}
-    <span>{children}</span>
-  </div>
-);
