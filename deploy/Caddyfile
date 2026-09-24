@@ -1,0 +1,6 @@
+# HTTPS in front of the app (certificates from Let's Encrypt, renewed
+# automatically). WebSockets pass through as-is.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:3000
+}

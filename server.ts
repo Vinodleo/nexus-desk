@@ -19,7 +19,8 @@ import { router as tradingRouter } from "./server/routes/trading";
 import { router as agentsRouter } from "./server/routes/agents";
 import { router as scannerRouter } from "./server/routes/scanner";
 import { loadDeskStates } from "./server/scanner/deskState";
-import { startServerScanner } from "./server/scanner/scannerService";
+import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
+import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
 
 // Entry point: builds the Express app, mounts the route modules behind
 // Firebase auth, and starts the WebSocket fan-out, the CoinDCX price relay and
@@ -30,11 +31,16 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
+// Unauthenticated, for uptime monitors and container health checks: 503 when
+// the scanner's candle-close loop has stopped firing.
 app.get("/api/health", (_req: Request, res: Response) => {
-  res.json({
-    status: "ok",
+  const scanner = scannerHeartbeat();
+  res.status(scanner.stalled ? 503 : 200).json({
+    status: scanner.stalled ? "scanner-stalled" : "ok",
     version: "2.0",
     hasApiKey: Boolean(process.env.GEMINI_API_KEY),
+    uptimeSec: hostStatus().uptimeSec,
+    scanner: { lastTickAt: scanner.lastTickAt, lastCycleDoneAt: scanner.lastCycleDoneAt },
     timestamp: new Date().toISOString(),
   });
 });
@@ -50,6 +56,11 @@ app.use(guardianRouter);
 app.use(agentsRouter);
 app.use(scannerRouter);
 
+// Where the server runs and whether its saved state survives restarts.
+app.get("/api/server/status", (_req: Request, res: Response) => {
+  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat() });
+});
+
 // Unknown API paths get a JSON 404 instead of falling through to the SPA's
 // index.html (which answered 200 with a web page).
 app.use("/api", (_req: Request, res: Response) => {
@@ -59,10 +70,12 @@ app.use("/api", (_req: Request, res: Response) => {
 // Restore guardian state before anything can tick, and flush it on shutdown.
 loadDaemonStateFromDisk();
 loadDeskStates();
+warnIfStateIsTemporary();
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
     console.log(`[Daemon] ${signal} received. Flushing state to disk...`);
     saveDaemonStateToDisk();
+    saveScannerState();
     process.exit(0);
   });
 }

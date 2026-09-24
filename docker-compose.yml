@@ -1,0 +1,41 @@
+# Nexus Desk on your own machine or VM, always running, behind HTTPS.
+#
+#   1. Put your settings in .env (see .env.example) plus DOMAIN=desk.example.com,
+#      a domain whose DNS points at this machine.
+#   2. docker compose up -d --build
+#
+# The app restarts on its own after a crash or reboot; saved state lives in
+# the nexus-data volume. Caddy gets and renews the HTTPS certificate.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NEXUS_DATA_DIR: /data
+      PORT: "3000"
+    volumes:
+      - nexus-data:/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env to the domain pointing at this machine}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  nexus-data:
+  caddy-data:
+  caddy-config:

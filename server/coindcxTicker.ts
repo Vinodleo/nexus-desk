@@ -3,6 +3,8 @@
 // cache every one of those hit CoinDCX separately. Responses are reused for
 // TICKER_TTL_MS and concurrent callers share a single in-flight request.
 
+import { fetchWithTimeout } from "./http";
+
 const TICKER_URL = "https://public.coindcx.com/exchange/ticker";
 export const TICKER_TTL_MS = 2000;
 
@@ -14,7 +16,7 @@ export async function getCoinDcxTicker(now: number = Date.now()): Promise<unknow
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
-      const response = await fetch(TICKER_URL);
+      const response = await fetchWithTimeout(TICKER_URL);
       if (!response.ok) throw new Error(`CoinDCX ticker returned ${response.status}`);
       const data = await response.json();
       if (!Array.isArray(data)) throw new Error("CoinDCX ticker returned an unexpected shape");

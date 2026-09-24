@@ -1,4 +1,5 @@
 import { parseMarketsDetails, type MarketRule } from "../src/shared/marketRules";
+import { fetchWithTimeout } from "./http";
 
 // CoinDCX's order rules per market (minimum quantity, step, minimum order
 // value), fetched from its public markets_details endpoint and cached. The
@@ -12,7 +13,7 @@ let cache: { at: number; rules: Map<string, MarketRule> } | null = null;
 let inFlight: Promise<Map<string, MarketRule>> | null = null;
 
 async function fetchRules(): Promise<Map<string, MarketRule>> {
-  const res = await fetch(MARKETS_DETAILS_URL);
+  const res = await fetchWithTimeout(MARKETS_DETAILS_URL);
   if (!res.ok) throw new Error(`CoinDCX markets_details returned ${res.status}`);
   const rules = parseMarketsDetails(await res.json());
   if (rules.length === 0) throw new Error("CoinDCX markets_details had no active INR markets");

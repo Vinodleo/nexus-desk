@@ -337,6 +337,11 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
   broadcastToUser(pos.userId, { type: "DAEMON_POSITION_CLOSED", data: closedRecord });
 }
 
+/** What a restart would need to carry on guarding a position the same way. */
+function guardStateKey(p: DaemonPosition): string {
+  return [p.stopLoss, p.takeProfit, p.trailActive, p.highestPrice, p.lowestPrice, p.bankedQuantity].join("|");
+}
+
 // Evaluate all daemon positions against the latest price tick
 export function evaluateDaemonPositions(symbol: string, currentPrice: number) {
   if (daemonPositions.size === 0) return;
@@ -344,12 +349,15 @@ export function evaluateDaemonPositions(symbol: string, currentPrice: number) {
   for (const pos of daemonPositions.values()) {
     if (pos.symbol !== symbol) continue;
 
+    const before = guardStateKey(pos);
     const exitReason = applyGuardianTick(pos, currentPrice);
     if (exitReason) {
       executeDaemonExit(pos, currentPrice, exitReason);
-    } else {
-      // Ratchet or price moved without exit — keep disk state fresh in background
-      scheduleDaemonDiskSave(3000);
+    } else if (guardStateKey(pos) !== before) {
+      // The stop, trailing state, price extremes or banked half moved: save
+      // soon. A tick that only changed the price isn't worth a disk write
+      // (on a Cloud Storage volume every write is an upload).
+      scheduleDaemonDiskSave(10_000);
     }
   }
 }

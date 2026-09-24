@@ -1,5 +1,6 @@
 import { aggregateMinuteCandles } from "./candles";
 import { parseCoinDcxOrderBook, type RawBook } from "../src/shared/orderBook";
+import { fetchWithTimeout } from "./http";
 
 // CoinDCX's public candles and order books for INR markets, used by the
 // /api/coindcx routes and by the server-side scanner.
@@ -15,7 +16,7 @@ export interface CandleFetchResult {
 
 async function fetchCandles(pair: string, interval: string, limit: number): Promise<CandleFetchResult> {
   const params = new URLSearchParams({ pair, interval, limit: String(limit) });
-  const response = await fetch(`https://public.coindcx.com/market_data/candles?${params}`);
+  const response = await fetchWithTimeout(`https://public.coindcx.com/market_data/candles?${params}`);
   const text = await response.text();
   let data: unknown;
   try {
@@ -63,7 +64,7 @@ export async function fetchOrderBook(coin: string): Promise<{ book: RawBook } | 
   const cached = bookCache.get(pair);
   if (cached && Date.now() - cached.fetchedAt < BOOK_CACHE_MS) return { book: cached };
   try {
-    const response = await fetch(`https://public.coindcx.com/market_data/orderbook?pair=${encodeURIComponent(pair)}`);
+    const response = await fetchWithTimeout(`https://public.coindcx.com/market_data/orderbook?pair=${encodeURIComponent(pair)}`);
     const text = await response.text();
     let data: unknown;
     try {
