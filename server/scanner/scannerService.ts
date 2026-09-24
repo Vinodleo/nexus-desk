@@ -11,6 +11,7 @@ import { toOrderBook } from "../../src/services/orderBookService";
 import { setMarketRules } from "../../src/services/marketRulesStore";
 import type { SymbolScanOutcome } from "../../src/services/scanOutcome";
 import { getCoinUniverse } from "../coinUniverse";
+import { currentEventWindow } from "../eventCalendar";
 import { getMarketRules } from "../marketRules";
 import { fetchOrderBook } from "../coindcxMarketData";
 import { daemonPositions, type DaemonPosition } from "../guardian";
@@ -136,6 +137,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     calibrators: { heuristic: buildCalibrator(state.shadows, "heuristic") },
     promotedModel: desk.promotedModel,
     macroRegimes: market.macroRegimes(),
+    eventWindow: await currentEventWindow(now),
     // The Lab's TensorFlow model lives in the browser.
     useLabModel: false,
   });

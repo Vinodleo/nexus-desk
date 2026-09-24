@@ -233,12 +233,17 @@ export function replayPanel(symbol: string, bars: MarketBar[]): PanelSample[] {
       (setup) => computeMetaLabelScore({ setup, regime, empiricalWinRate: 0.5, sampleCount: 0, similarityScore: 1 }),
       "intraday"
     );
-    if (!panel.setup) continue;
+    if (panel.candidates.length === 0) continue;
+    // Every trader's setup is scored live, so each is a training sample.
     const features = metaFeatures(bars, i);
-    const trade = toTrade(symbol, panel.setup, bars, i, regime, 0.5, features);
-    if (!trade) continue;
-    samples.push({ features, win: trade.isWin, pnlPercent: trade.pnlPercent });
-    quietUntil = i + REPLAY_COOLDOWN_BARS;
+    let any = false;
+    for (const setup of panel.candidates) {
+      const trade = toTrade(symbol, setup, bars, i, regime, 0.5, features);
+      if (!trade) continue;
+      samples.push({ features, win: trade.isWin, pnlPercent: trade.pnlPercent });
+      any = true;
+    }
+    if (any) quietUntil = i + REPLAY_COOLDOWN_BARS;
   }
   return samples;
 }

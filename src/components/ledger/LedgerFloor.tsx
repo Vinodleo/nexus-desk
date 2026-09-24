@@ -6,6 +6,7 @@ import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../serv
 import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
+import type { EventWindow } from "../../shared/eventCalendar";
 
 /** The most common skip reasons, largest first, with their share of all skips. */
 export function topSkipReasons(counts: SkipCounts | undefined, limit = 3): { reason: SkipReason; label: string; pct: number }[] {
@@ -65,6 +66,8 @@ export interface LedgerFloorProps {
   watching?: CoinCoverage;
   /** Where scanning runs: on the server (even with the app closed) or in this browser. */
   scanLocation?: "checking" | "server" | "browser";
+  /** A scheduled-news pause now, or the next one. */
+  eventWindow?: EventWindow;
   pendingProposals: number;
   scan: FloorScanSummary;
   onOpenQueue: () => void;
@@ -162,6 +165,32 @@ const LiveCoverage: React.FC<{ scanLocation?: string }> = ({ scanLocation }) => 
     []
   );
   return <Coverage watching={{ count, fallback }} scanLocation={scanLocation} />;
+};
+
+const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/** Show the next pause this far ahead. */
+const NEXT_PAUSE_NOTICE_MS = 2 * 60 * 60 * 1000;
+
+/** A news pause in force, or one coming up within two hours. */
+export const NewsPause: React.FC<{ window: EventWindow; now?: number }> = ({ window: w, now = Date.now() }) => {
+  if (w.active) {
+    return (
+      <div role="status" className="flex gap-2.5 p-3 rounded-xl bg-warn-soft text-warn-ink text-xs leading-relaxed">
+        <AlertTriangle className="w-4 h-4 shrink-0 text-warn mt-px" strokeWidth={1.8} />
+        <span>
+          <strong>News pause until {clock(w.until ?? now)}</strong> for {w.headline}. No new trades; open positions stay guarded.
+        </span>
+      </div>
+    );
+  }
+  if (w.next && w.next.startsAt - now <= NEXT_PAUSE_NOTICE_MS) {
+    return (
+      <div className="text-xs text-muted">
+        News pause from {clock(w.next.startsAt)} for {w.next.headline}
+      </div>
+    );
+  }
+  return null;
 };
 
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void }> = ({ position: p, onClose }) => {
@@ -356,6 +385,8 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
       {props.market !== undefined ? <MarketLine tickers={props.market} /> : <LiveMarketLine />}
 
       {props.candleStatus !== undefined ? <CandleWarning status={props.candleStatus} /> : <LiveCandleWarning />}
+
+      {props.eventWindow && <NewsPause window={props.eventWindow} />}
 
       <section aria-label="Scanner today" className="flex flex-col gap-1.5 text-xs text-muted tabular-nums">
         {props.watching !== undefined ? (

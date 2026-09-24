@@ -4,6 +4,8 @@ import type { PromotedLabModel } from "../../src/types";
 import { validate, deskStateBody, scannerReportsQuery } from "../validation";
 import { setDeskState } from "../scanner/deskState";
 import { reportsSince, scanNow, scannerStatus, shadowsFor } from "../scanner/scannerService";
+import { getEvents } from "../eventCalendar";
+import { PAUSE_AFTER_MS, eventWindowAt } from "../../src/shared/eventCalendar";
 
 // The app's side of the server scanner: it sends its desk settings, and
 // picks up scan results and tracked setups.
@@ -40,4 +42,12 @@ router.post("/api/scanner/scan-now", async (req: Request, res: Response) => {
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || "Scan failed" });
   }
+});
+
+// This week's high-impact events still to come (or under way), and whether a
+// news pause is on now.
+router.get("/api/events", async (_req: Request, res: Response) => {
+  const now = Date.now();
+  const events = await getEvents(now);
+  res.json({ success: true, events: events.filter((e) => e.at + PAUSE_AFTER_MS >= now), window: eventWindowAt(events, now) });
 });

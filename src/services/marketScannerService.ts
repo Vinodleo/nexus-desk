@@ -104,6 +104,8 @@ export interface ScanMarketOptions {
   macroRegimes?: Record<string, RegimeType | "neutral">;
   cryptoSymbols?: string[];
   useLabModel?: boolean;
+  /** A scheduled-news pause in force now (see shared/eventCalendar): the event officer vetoes new trades. */
+  eventWindow?: { active: boolean; headline?: string };
   /** Win-chance calibration from shadow-tracked setups, per scorer. Without one, raw scores are used. */
   calibrators?: Partial<Record<ConfidenceScorer, Calibrator>>;
 }
@@ -178,7 +180,8 @@ export async function scanSingleMarket(
       timeframe: SIGNAL_INTERVAL,
       bars,
       regime,
-      eventWindowActive: false,
+      eventWindowActive: options.eventWindow?.active ?? false,
+      eventHeadline: options.eventWindow?.headline,
       longOnly,
       promotedModel,
       macroRegime: options.macroRegimes?.[symbolConfig.symbol] ?? liveMarketStream.getMacroRegime(symbolConfig.symbol),
@@ -211,7 +214,8 @@ export async function scanSingleMarket(
       timeframe: SIGNAL_INTERVAL,
       bars,
       regime,
-      eventWindowActive: false,
+      eventWindowActive: options.eventWindow?.active ?? false,
+      eventHeadline: options.eventWindow?.headline,
       longOnly,
       promotedModel,
       macroRegime: options.macroRegimes?.[symbolConfig.symbol] ?? liveMarketStream.getMacroRegime(symbolConfig.symbol),
@@ -234,11 +238,14 @@ export async function scanSingleMarket(
     "swing"
   );
 
-  const candidates: { setup: StrategySetup; panel: typeof panel }[] = [];
-  if (panel.setup) candidates.push({ setup: panel.setup, panel });
-  if (swingPanel.setup)
-    candidates.push({ setup: swingPanel.setup, panel: swingPanel });
+  // Every trader's own setup on the winning side is judged on its own; the
+  // best one that passes every check becomes the coin's proposal.
+  const candidates: { setup: StrategySetup; panel: typeof panel }[] = [
+    ...panel.candidates.map((setup) => ({ setup, panel })),
+    ...swingPanel.candidates.map((setup) => ({ setup, panel: swingPanel })),
+  ];
   const qualifiedSetups = candidates.map((c) => c.setup);
+  const passing: { proposal: TradeProposal; shadow: ShadowSignal }[] = [];
 
   // Real spread and depth for coins with a setup. The thin-liquidity drill
   // keeps the simulated book so it still exercises the liquidity check.
@@ -354,20 +361,19 @@ export async function scanSingleMarket(
     } else if (!passesConfidence) {
       candidateSkips.push("low_confidence");
     }
-    shadows.push(
-      shadowFromSetup(
-        setup,
-        candidateSkips.length > skipsBefore ? candidateSkips[candidateSkips.length - 1] : "proposed",
-        candleCloseMs,
-        {
-          confidence: metaScore.confidence,
-          scorer,
-          scoreVersion: scorer === "heuristic" ? HEURISTIC_SCORE_VERSION : undefined,
-          features: signalFeatures,
-          regime,
-        }
-      )
+    const shadow = shadowFromSetup(
+      setup,
+      candidateSkips.length > skipsBefore ? candidateSkips[candidateSkips.length - 1] : "proposed",
+      candleCloseMs,
+      {
+        confidence: metaScore.confidence,
+        scorer,
+        scoreVersion: scorer === "heuristic" ? HEURISTIC_SCORE_VERSION : undefined,
+        features: signalFeatures,
+        regime,
+      }
     );
+    shadows.push(shadow);
 
     if (
       evAssessment.isPositiveEdge &&
@@ -401,7 +407,7 @@ export async function scanSingleMarket(
         approvalToken: `AUTH-${uniqueSuffix}-${Math.floor(
           1000 + Math.random() * 9000
         )}`,
-        supervisorNotes: `Trader panel (${sourcePanel.supportingPersonas.length}/${sourcePanel.totalVotesCast} personas, ${(sourcePanel.agreementScore * 100).toFixed(0)}% weighted agreement) detected ${setup.name} in ${regime.replace(/_/g, " ")}. Meta-confidence ${(metaScore.confidence * 100).toFixed(0)}%, net EV +₹${evAssessment.expectedNetValue.toFixed(2)}. Allocated ${riskCalc.recommendedPositionSizeUnits} units (₹${riskCalc.riskDollars.toFixed(0)} risk). Placed in Queue for human authorization.`,
+        supervisorNotes: `${setup.name}, one of ${sourcePanel.supportingPersonas.length} agreeing trader(s) (${sourcePanel.totalVotesCast} voted, ${(sourcePanel.agreementScore * 100).toFixed(0)}% weighted agreement), in ${regime.replace(/_/g, " ")}. Meta-confidence ${(metaScore.confidence * 100).toFixed(0)}%, net EV +₹${evAssessment.expectedNetValue.toFixed(2)}. Allocated ${riskCalc.recommendedPositionSizeUnits} units (₹${riskCalc.riskDollars.toFixed(0)} risk). Placed in Queue for human authorization.`,
         marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. ${orderBook.source === "coindcx" ? "CoinDCX order book: spread" : "Estimated spread"} ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}%, depth score ${orderBook.depthScore}/100${orderBook.depthInr !== undefined ? ` (${formatInr(orderBook.depthInr)} within 0.5% of the price)` : ""}.`,
         aiRecommendation:
           metaScore.confidence >= 0.60 ? "TRADE_FAVORED" : "CAUTION",
@@ -417,9 +423,16 @@ export async function scanSingleMarket(
           simulatedOrderBook: orderBook.source !== "coindcx",
         },
       };
-      proposals.push(proposal);
+      passing.push({ proposal, shadow });
     }
   }
+
+  // One proposal per coin: the setup expecting the most back after costs
+  // (EV is per the same ₹300 risk, so setups compare fairly). The others
+  // are followed as "weaker setup", to show whether the choice was right.
+  passing.sort((a, b) => b.proposal.evAssessment.expectedNetValue - a.proposal.evAssessment.expectedNetValue);
+  if (passing.length > 0) proposals.push(passing[0].proposal);
+  for (const p of passing.slice(1)) p.shadow.kind = "weaker_setup";
 
   const trendFiltered = (panel.filteredByHigherTimeframe ?? 0) + (swingPanel.filteredByHigherTimeframe ?? 0);
   const shortOnly = [...(panel.shortOnlySetups ?? []), ...(swingPanel.shortOnlySetups ?? [])];
@@ -448,6 +461,13 @@ export async function scanSingleMarket(
   for (const setup of shortOnly) {
     shadows.push(shadowFromSetup(setup, "no_shorting", candleCloseMs, { features: signalFeatures, regime }));
   }
+  // What the losing side of a split vote, and a vetoed panel, wanted to do.
+  for (const setup of [...(panel.outvotedSetups ?? []), ...(swingPanel.outvotedSetups ?? [])]) {
+    shadows.push(shadowFromSetup(setup, "outvoted", candleCloseMs, { features: signalFeatures, regime }));
+  }
+  for (const setup of [...(panel.vetoedSetups ?? []), ...(swingPanel.vetoedSetups ?? [])]) {
+    shadows.push(shadowFromSetup(setup, "vetoed", candleCloseMs, { features: signalFeatures, regime }));
+  }
 
   return {
     shadows,
@@ -464,7 +484,7 @@ export async function scanSingleMarket(
     summaryNote: panel.vetoed
       ? `Trader panel vetoed this symbol: ${panel.vetoReason}`
       : proposals.length > 0
-      ? `Trader panel reached ${(panel.agreementScore * 100).toFixed(0)}% consensus (${panel.supportingPersonas.length}/${panel.totalVotesCast} personas) meeting positive EV and Kelly risk criteria.${swingPanel.setup ? " Swing panel also qualified a long-horizon setup." : ""}`
+      ? `${proposals[0].setup.name} was the strongest of ${passing.length} setup(s) that met the profit and risk checks (panel ${(panel.agreementScore * 100).toFixed(0)}% agreed).`
       : qualifiedSetups.length > 0
       ? `Panel setup qualified but filtered out by negative net EV or strict risk engine constraints.`
       : `No panel consensus met qualifying criteria in current ${regime.replace(/_/g, " ")} market.`,
