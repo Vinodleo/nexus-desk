@@ -209,8 +209,8 @@ describe("server autopilot", () => {
       clientSeen: false,
       trailProfile: "balanced",
     });
-    // Entered at the latest price (with no live tick, the last candle's close), sized within limits.
-    expect(opened[0].entryPrice).toBe(proposal.setup.entryPrice);
+    // Bought at the ask of the order book the scan read (bids 11,598, asks 11,600), sized within limits.
+    expect(opened[0].entryPrice).toBe(11600);
     expect(opened[0].quantity * opened[0].entryPrice).toBeLessThanOrEqual(10000);
 
     // The next scan holds SOL already: nothing more is opened.

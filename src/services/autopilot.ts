@@ -70,7 +70,8 @@ export function selectAutopilotTrades(
   proposals: TradeProposal[],
   book: AutopilotBook,
   policy: RiskPolicyConfig,
-  livePrice: (symbol: string) => number | undefined,
+  /** The price a new position would open at now: the ask for a long, the bid for a short, when known. */
+  livePrice: (symbol: string, direction: "LONG" | "SHORT") => number | undefined,
   now: number = Date.now()
 ): AutopilotSelection {
   // From the book as it is now, not the snapshot each proposal was checked
@@ -112,8 +113,9 @@ export function selectAutopilotTrades(
       continue;
     }
 
-    // Enter at the live price; skip it if price has already run too far.
-    const priced = priceEntry(proposal.setup, livePrice(proposal.symbol), units, proposal.riskCalc.riskDollars);
+    // Enter at the price it would really fill at (the ask for a long); skip
+    // it if price has already run too far.
+    const priced = priceEntry(proposal.setup, livePrice(proposal.symbol, proposal.setup.direction), units, proposal.riskCalc.riskDollars);
     if (!priced.ok) {
       deferred.push({ proposal, reason: priced.reason });
       continue;

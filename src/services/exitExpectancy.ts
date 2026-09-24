@@ -14,7 +14,8 @@ import { DEFAULT_TRAIL_PROFILE, type TrailProfileId } from "../shared/trailingSt
 //
 // This plays every setup each trader would have put forward over the
 // candles held now (about the last day) forward under the live exit rules,
-// after fees, and records each trader's average result in R. A trader whose
+// after fees and the market's bid-ask spread (a round trip buys at the ask
+// and sells at the bid), and records each trader's average result in R. A trader whose
 // setups lose money that way doesn't trade until they recover. Coins and
 // stocks are measured separately. Recomputed every hour.
 
@@ -55,7 +56,9 @@ export function expectancyKey(symbol: string, setupName: string): string {
 export function measureExpectancy(
   sets: { symbol: string; bars: MarketBar[] }[],
   profile: TrailProfileId = DEFAULT_TRAIL_PROFILE,
-  now: number = Date.now()
+  now: number = Date.now(),
+  /** Each market's bid-ask spread (share of price), paid once per trade; unknown ones cost nothing extra. */
+  spreadFor: (symbol: string) => number | undefined = () => undefined
 ): ExpectancyTable {
   const byKey: Record<string, TraderRecord> = {};
   let symbols = 0;
@@ -69,7 +72,7 @@ export function measureExpectancy(
     symbols++;
     for (const { i, setups } of panelSetupsOnHistory(symbol, bars)) {
       for (const setup of setups) {
-        const result = simulateExit(setup, bars, i, profile);
+        const result = simulateExit(setup, bars, i, profile, spreadFor(symbol) ?? 0);
         if (!result) continue;
         const key = expectancyKey(symbol, setup.name);
         const rec = (byKey[key] ??= { trades: 0, totalR: 0, wins: 0, winR: 0, lossR: 0 });
@@ -137,7 +140,8 @@ export function getExpectancyTable(
   symbols: string[],
   getBars: (symbol: string) => MarketBar[] | null | undefined,
   profile: string | undefined,
-  now: number = Date.now()
+  now: number = Date.now(),
+  spreadFor?: (symbol: string) => number | undefined
 ): ExpectancyTable {
   const id = (profile ?? DEFAULT_TRAIL_PROFILE) as TrailProfileId;
   const held = cache.get(id);
@@ -146,7 +150,7 @@ export function getExpectancyTable(
     const bars = getBars(symbol);
     return bars && bars.length > 0 ? [{ symbol, bars }] : [];
   });
-  const table = measureExpectancy(sets, id, now);
+  const table = measureExpectancy(sets, id, now, spreadFor);
   cache.set(id, table);
   return table;
 }

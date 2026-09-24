@@ -121,10 +121,10 @@ interface EdgeTable {
 
 interface CoinActivity {
   minActivity: number;
-  coins: { symbol: string; activity: number }[];
+  coins: { symbol: string; activity: number | null; spreadPct: number | null }[];
 }
 
-/** What the server measures: each trader's record with your exits, and how often each coin trades. */
+/** What the server measures: each trader's record with your exits, and each coin's trading costs. */
 function useScannerMeasures() {
   const [measures, setMeasures] = useState<{ table: EdgeTable | null; activity: CoinActivity | null }>({ table: null, activity: null });
   useEffect(() => {
@@ -140,29 +140,33 @@ function useScannerMeasures() {
   return measures;
 }
 
-/** Coins the scanner leaves alone because they trade too rarely. */
-const ThinCoins: React.FC<{ activity: CoinActivity | null }> = ({ activity }) => {
+/** Each coin's spread and how often it trades; coins trading too rarely are skipped. */
+const CoinCosts: React.FC<{ activity: CoinActivity | null }> = ({ activity }) => {
   if (!activity || activity.coins.length === 0) return null;
-  const thin = activity.coins.filter((c) => c.activity < activity.minActivity);
   return (
-    <Card aria-label="How often coins trade" className="flex flex-col gap-1">
-      <div className="text-sm font-semibold">How often coins trade</div>
+    <Card aria-label="What coins cost to trade" className="flex flex-col gap-1">
+      <div className="text-sm font-semibold">What coins cost to trade</div>
       <div className="text-xs text-muted">
-        A coin that goes minutes without a trade jumps when the next one comes, so a stop fills past where it was set. Coins that traded in
-        under {Math.round(activity.minActivity * 100)}% of the last two hours' minutes aren't traded.
+        The spread is the gap between the cheapest seller and the highest buyer: a trade buys at the one and sells at the other, so it pays
+        the spread once, on top of fees. A coin that goes minutes without a trade jumps when the next one comes; those trading in under{" "}
+        {Math.round(activity.minActivity * 100)}% of the last two hours' minutes aren't traded.
       </div>
-      {thin.length === 0 ? (
-        <div className="text-sm">All {activity.coins.length} watched coins trade often enough.</div>
-      ) : (
-        <ul className="m-0 p-0 list-none flex flex-col">
-          {thin.map((c) => (
+      <ul className="m-0 p-0 list-none flex flex-col">
+        {activity.coins.map((c) => {
+          const skipped = c.activity !== null && c.activity < activity.minActivity;
+          return (
             <li key={c.symbol} className="flex items-center justify-between gap-3 py-2 border-b border-line last:border-b-0">
               <span className="text-sm">{c.symbol}</span>
-              <span className="text-xs text-loss tabular-nums">traded in {Math.round(c.activity * 100)}% of minutes · skipped</span>
+              <span className={`text-xs tabular-nums text-right ${skipped ? "text-loss" : "text-muted"}`}>
+                {c.spreadPct !== null && `spread ${(c.spreadPct * 100).toFixed(2)}%`}
+                {c.spreadPct !== null && c.activity !== null && " · "}
+                {c.activity !== null && `trades in ${Math.round(c.activity * 100)}% of minutes`}
+                {skipped && " · skipped"}
+              </span>
             </li>
-          ))}
-        </ul>
-      )}
+          );
+        })}
+      </ul>
     </Card>
   );
 };
@@ -285,7 +289,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
       <TraderRecord table={measures.table} />
       <Rows title="By trader" rows={byTrader} />
       <Rows title="By coin" rows={byCoin} limit={8} />
-      <ThinCoins activity={measures.activity} />
+      <CoinCosts activity={measures.activity} />
       <Rows title="By exit" rows={byExit} />
     </div>
   );

@@ -24,8 +24,8 @@ const HOUR_MS = 60 * 60 * 1000;
 const openings = new Map<string, { id: string; at: number }[]>();
 
 export interface ServerAutopilotDeps {
-  /** Latest price for a symbol, if known. */
-  livePrice: (symbol: string) => number | undefined;
+  /** The price a new position would open at: the ask for a long, the bid for a short, when known. */
+  livePrice: (symbol: string, direction: "LONG" | "SHORT") => number | undefined;
   /** ATR of the latest closed candle. */
   barAtr: (symbol: string) => number | undefined;
 }

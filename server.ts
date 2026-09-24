@@ -23,6 +23,7 @@ import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
 import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
 import { startStockPrices } from "./server/stockPrices";
+import { startQuotes } from "./server/quotes";
 import { angelStatus } from "./server/angelOne";
 
 // Entry point: builds the Express app, mounts the route modules behind
@@ -112,6 +113,7 @@ async function startServer() {
   startExpiryGuard();
   startServerScanner();
   startStockPrices();
+  startQuotes();
 }
 
 startServer();

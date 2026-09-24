@@ -7,6 +7,7 @@ import { getLivePosition, isOpenLivePosition, requestLiveExit } from "./liveExec
 import { broadcastToUser } from "./realtime";
 import { computeClosedTradePnl } from "../src/shared/tradeMath";
 import { blendedExitPrice, riskAtOpen } from "../src/shared/exitRules";
+import { closeoutPrice, type Quote } from "../src/shared/quotes";
 
 import { validate, syncPositionsBody, closedEventsQuery } from "./validation";
 
@@ -398,16 +399,22 @@ function guardStateKey(p: DaemonPosition): string {
 }
 
 // Evaluate all daemon positions against the latest price tick
-export function evaluateDaemonPositions(symbol: string, currentPrice: number) {
+/**
+ * Judges this symbol's positions on a new price. With a quote, each is
+ * judged (and a paper exit filled) at the price it could be closed at: the
+ * bid for a long, the ask for a short.
+ */
+export function evaluateDaemonPositions(symbol: string, currentPrice: number, quote?: Quote) {
   if (daemonPositions.size === 0) return;
 
   for (const pos of daemonPositions.values()) {
     if (pos.symbol !== symbol) continue;
 
+    const price = quote ? closeoutPrice(pos.direction, quote) : currentPrice;
     const before = guardStateKey(pos);
-    const exitReason = applyGuardianTick(pos, currentPrice);
+    const exitReason = applyGuardianTick(pos, price);
     if (exitReason) {
-      executeDaemonExit(pos, currentPrice, exitReason);
+      executeDaemonExit(pos, price, exitReason);
     } else if (guardStateKey(pos) !== before) {
       // The stop, trailing state, price extremes or banked half moved: save
       // soon. A tick that only changed the price isn't worth a disk write
