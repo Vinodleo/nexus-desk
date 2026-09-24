@@ -4,7 +4,6 @@ import {
   ExperienceVector,
   FailureInjectionState,
   MarketBar,
-  ModelVersion,
   OrderBook,
   Position,
   HistoricalTrade,
@@ -46,14 +45,12 @@ import {
   saveStoredQuarantines,
   SymbolQuarantineRecord,
 } from "./services/storagePersistenceService";
-import { getBaselineModels } from "./services/backtestingEngine";
 import { scanAllMarkets } from "./services/marketScannerService";
 import { DEFAULT_RISK_POLICY } from "./services/riskEngine";
 import { liveMarketStream } from "./services/liveMarketStreamService";
 import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
 
 import { LoginScreen } from './components/LoginScreen';
-import { NexusHeader } from "./components/NexusHeader";
 import { BottomNavBar, TabType } from "./components/BottomNavBar";
 import { LedgerFloor } from "./components/ledger/LedgerFloor";
 import { SettingsSheet } from "./components/ledger/SettingsSheet";
@@ -61,7 +58,7 @@ import { useZerodhaConnection } from "./hooks/useZerodhaConnection";
 import { LedgerQueue } from "./components/ledger/LedgerQueue";
 import { LedgerBook } from "./components/ledger/LedgerBook";
 import { LedgerRisk } from "./components/ledger/LedgerRisk";
-import { LabTab } from "./components/LabTab";
+import { LedgerLab } from "./components/ledger/LedgerLab";
 import { LedgerLearning } from "./components/ledger/LedgerLearning";
 import { CommanderModal } from "./components/CommanderModal";
 import { AuthModal } from "./components/AuthModal";
@@ -448,17 +445,6 @@ export default function App() {
     };
   }, [activePositions.length]);
 
-  // Models State for Lab
-  const { champion: initialChampion, challenger: initialChallenger } = useMemo(
-    () => getBaselineModels(),
-    []
-  );
-  const [championModel, setChampionModel] =
-    useState<ModelVersion>(initialChampion);
-  const [challengerModel, setChallengerModel] =
-    useState<ModelVersion>(initialChallenger);
-  const [isRunningWalkForward, setIsRunningWalkForward] =
-    useState<boolean>(false);
   const [learnedAccuracy, setLearnedAccuracy] = useState<LearnedModelAccuracy>(() =>
     loadStoredModelAccuracy()
   );
@@ -1694,105 +1680,49 @@ export default function App() {
     (p) => p.status === "PENDING_APPROVAL"
   ).length;
 
-  // Tabs already rebuilt in the Private Ledger design.
-  const isLedgerTab = activeTab !== "lab";
-  // Match the browser chrome (status bar, overscroll) to the tab's design.
-  useEffect(() => {
-    const colour = isLedgerTab ? "#F6F3EE" : "#09090b";
-    document.documentElement.style.backgroundColor = colour;
-    document.body.style.backgroundColor = colour;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", colour);
-  }, [isLedgerTab]);
-
   return (
-    <div
-      className={`min-h-screen w-full max-w-full overflow-x-hidden flex flex-col pb-20 ${
-        isLedgerTab
-          ? "bg-canvas text-ink font-ui"
-          : "bg-[#09090b] text-stone-100 font-sans selection:bg-stone-800 selection:text-white"
-      }`}
-    >
-      {/* Tabs not yet moved to the Private Ledger design keep the old header. */}
-      {!isLedgerTab && (
-      <NexusHeader
-        equity={equity}
-        dailyPnl={dailyRealizedPnl}
-        netPnl={allTimeRealizedPnl}
-        cash={cash}
-        openCount={activePositions.length}
-        maxPositions={5}
-        decisionMode={decisionMode}
-        onDecisionModeChange={handleDecisionModeChange}
-        onOpenLab={() => setActiveTab("lab")}
-        onWakeCommander={handleWakeCommander}
-        killSwitchActive={killSwitchActive}
-        onToggleKillSwitch={handleToggleKillSwitch}
-        tapeMode={tapeMode}
-        onToggleTapeMode={() =>
-          setTapeMode((prev) =>
-            prev === "SIMULATED TAPE" ? "LIVE TAPE" : "SIMULATED TAPE"
-          )
-        }
-        onOpenSecurityConsole={() => setIsSecurityModalOpen(true)}
-        modelAccuracyPct={learnedAccuracy.accuracyPct}
-        isLabPromoted={Boolean(promotedLabModel)}
-        promotedDatasetName={learnedAccuracy.datasetName}
-        backgroundStatus={backgroundStatus}
-        isPlaying={isPlaying}
-        onOpenBackgroundModal={() => setIsBackgroundModalOpen(true)}
-        tradingMode={tradingMode}
-        onToggleTradingMode={handleToggleTradingMode}
-        coinDcxBalance={coinDcxBalance}
-        onRefreshCoinDcxBalance={fetchCoinDcxBalance}
-        zerodhaStatus={zerodha.status}
-        zerodhaError={zerodha.error}
-        onZerodhaConnect={zerodha.connect}
-      />
-      )}
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col pb-20 bg-canvas text-ink font-ui">
 
       {/* Main Content Area */}
-      <main className={`flex-1 max-w-2xl w-full mx-auto space-y-4 ${isLedgerTab ? "px-5 pt-4" : "p-4 sm:p-5"}`}>
-        {/* Real-time Agent Execution Toast */}
+      <main className="flex-1 max-w-2xl w-full mx-auto space-y-4 px-5 pt-4">
+        {/* Latest desk notification */}
         {executionToast && (
           <div
-            className={`p-3.5 rounded-xl border shadow-lg flex items-start justify-between gap-3 transition-all animate-in fade-in duration-200 ${
+            role="status"
+            className={`p-3.5 rounded-2xl border flex items-start justify-between gap-3 ${
               executionToast.type === "SUCCESS"
-                ? "bg-emerald-950/90 text-emerald-100 border-emerald-700/60"
+                ? "bg-surface border-line"
                 : executionToast.type === "WARNING"
-                ? "bg-rose-950/90 text-rose-100 border-rose-700/60"
-                : "bg-[#181820] text-stone-200 border-[#2e2e3a]"
+                ? "bg-danger-soft border-danger-line"
+                : "bg-accent-soft border-transparent"
             }`}
           >
-            <div className="flex items-start gap-2.5">
-              <div className="mt-0.5">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <div className="mt-0.5 shrink-0">
                 {executionToast.type === "SUCCESS" ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <CheckCircle2 className="w-4 h-4 text-gain" />
                 ) : executionToast.type === "WARNING" ? (
-                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                  <AlertTriangle className="w-4 h-4 text-loss" />
                 ) : (
-                  <Play className="w-4 h-4 text-stone-300" />
+                  <Play className="w-4 h-4 text-accent" />
                 )}
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h4 className="font-semibold text-xs text-white">
-                    {executionToast.title}
-                  </h4>
-                  <span className="text-[10px] font-mono opacity-60">
-                    {executionToast.timestamp}
-                  </span>
+              <div className="min-w-0">
+                <div className="flex items-baseline gap-2">
+                  <h4 className="m-0 font-semibold text-sm">{executionToast.title}</h4>
+                  <span className="text-[11px] text-muted tabular-nums">{executionToast.timestamp}</span>
                 </div>
-                <p className="text-xs mt-0.5 text-stone-300 leading-relaxed">
-                  {executionToast.message}
-                </p>
+                <p className="m-0 text-[13px] mt-0.5 text-muted leading-relaxed">{executionToast.message}</p>
               </div>
             </div>
 
             <button
+              type="button"
+              aria-label="Dismiss"
               onClick={() => setExecutionToast(null)}
-              className="text-stone-400 hover:text-white p-0.5 rounded cursor-pointer transition-colors"
+              className="shrink-0 w-8 h-8 -m-1 rounded-full text-muted hover:bg-inset flex items-center justify-center cursor-pointer"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         )}
@@ -1898,14 +1828,10 @@ export default function App() {
           />
         )}
 
-        {/* 5. Lab Tab View (Screenshot 1 & Real Data Training) */}
         {activeTab === "lab" && (
-          <LabTab
-            championModel={championModel}
-            challengerModel={challengerModel}
-            currentAccuracy={learnedAccuracy}
+          <LedgerLab
             promotedLabModel={promotedLabModel}
-            onPromoteLabModel={(result) => {
+            onPromote={(result) => {
               if (result.isSynthetic) {
                 setExecutionToast({
                   id: `toast-${Date.now()}`,
@@ -1940,34 +1866,14 @@ export default function App() {
                 totalCandlesEvaluated: result.totalCandles || result.candlesCount
               });
             }}
-            isRunningWalkForward={isRunningWalkForward}
-            onRerunWalkForward={() => {
-              setIsRunningWalkForward(true);
-              setTimeout(() => {
-                setIsRunningWalkForward(false);
-                setExecutionToast({
-                  id: `toast-${Date.now()}`,
-                  title: "Walk-Forward Validation Complete",
-                  message: "5/5 embargoed folds passed. Deflated Sharpe ratio 1.48 with 72h purge window.",
-                  type: "SUCCESS",
-                  timestamp: new Date().toLocaleTimeString(),
-                });
-              }, 1200);
-            }}
-            onPromoteChallenger={(newMetrics) => {
-              if (newMetrics) {
-                setChampionModel((prev) => ({
-                  ...prev,
-                  winRate: newMetrics.winRate / 100,
-                  sharpeRatio: newMetrics.sharpeRatio,
-                  maxDrawdownPercent: newMetrics.maxDrawdownPercent,
-                }));
-              }
+            onRevert={() => {
+              setPromotedLabModel(null);
+              saveStoredPromotedLabModel(null);
               setExecutionToast({
                 id: `toast-${Date.now()}`,
-                title: "Challenger Promoted to Champion",
-                message: `Calibrated model (${learnedAccuracy.accuracyPct}% accuracy) promoted to active desk execution.`,
-                type: "SUCCESS",
+                title: "Lab model removed",
+                message: "The desk is back on the built-in rules, adjusted by live learning.",
+                type: "INFO",
                 timestamp: new Date().toLocaleTimeString(),
               });
             }}
