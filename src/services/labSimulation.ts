@@ -172,13 +172,14 @@ export function simulateTunedBreakout(symbol: string, bars: MarketBar[], params:
         rsiCeiling: params.rsiThreshold,
       }
     );
-    if (!setup?.qualifies) continue;
+    // CoinDCX spot can't short, so neither does the Lab (its history is crypto).
+    if (!setup?.qualifies || setup.direction === "SHORT") continue;
     const features = metaFeatures(bars, i);
     // Without a model: a simple score from trend alignment (% change over
     // 20 candles) and volume.
     const slope = features[5];
     let confidence = 0.5;
-    if ((setup.direction === "LONG" && slope > 0.2) || (setup.direction === "SHORT" && slope < -0.2)) confidence += 0.12;
+    if (slope > 0.2) confidence += 0.12;
     if (features[1] * 5 > 1.5) confidence += 0.08;
     if (regime === "high_volatility_choppy") confidence -= 0.14;
     candidates.push({ i, setup, regime, confidence, features });
@@ -226,6 +227,7 @@ export function replayPanel(symbol: string, bars: MarketBar[]): PanelSample[] {
         bars: bars.slice(i - WINDOW_BARS + 1, i + 1),
         regime,
         eventWindowActive: false,
+        longOnly: true,
         macroRegime: macroAt((bars[i].timestampMs as number) + LAB_INTERVAL_MS),
       },
       (setup) => computeMetaLabelScore({ setup, regime, empiricalWinRate: 0.5, sampleCount: 0, similarityScore: 1 }),

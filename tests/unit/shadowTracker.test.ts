@@ -11,7 +11,7 @@ afterEach(cleanup);
 const FIVE = 5 * 60 * 1000;
 const T0 = Math.floor(1_790_000_000_000 / FIVE) * FIVE;
 const setup: any = { symbol: "SOL/INR", name: "Trend", family: "trend_following", direction: "LONG", entryPrice: 1000, stopLoss: 990, takeProfit: 1020 };
-const signal = (kind: ShadowSignal["kind"] = "low_confidence") => shadowFromSetup(setup, kind, T0, 0.55);
+const signal = (kind: ShadowSignal["kind"] = "low_confidence") => shadowFromSetup(setup, kind, T0, { confidence: 0.55 });
 const bar = (i: number, low: number, high: number, close = (low + high) / 2): MarketBar => ({
   time: "", timestampMs: T0 + i * FIVE, open: close, high, low, close, volume: 1,
 });

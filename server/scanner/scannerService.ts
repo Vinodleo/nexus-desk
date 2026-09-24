@@ -6,6 +6,7 @@ import { DEFAULT_RISK_POLICY } from "../../src/services/riskEngine";
 import { SIGNAL_INTERVAL_MS, nextCandleFetchAt } from "../../src/services/liveMarketStreamService";
 import { mergeShadows, resolveShadows, type ShadowSignal } from "../../src/services/shadowTracker";
 import { buildCalibrator } from "../../src/services/calibration";
+import { experiencesFromShadows } from "../../src/services/experienceMemory";
 import { toOrderBook } from "../../src/services/orderBookService";
 import { setMarketRules } from "../../src/services/marketRulesStore";
 import type { SymbolScanOutcome } from "../../src/services/scanOutcome";
@@ -128,9 +129,8 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
       ...desk.riskLimits,
       equity: desk.equity > 0 ? desk.equity : DEFAULT_RISK_POLICY.equity,
     },
-    // No starter memory of generated trades on the server; win chances
-    // come from the calibration below.
-    experiences: [],
+    // The trade memory: this user's finished tracked setups (real results).
+    experiences: experiencesFromShadows(state.shadows),
     quarantines: desk.quarantines,
     getOrderBook,
     calibrators: { heuristic: buildCalibrator(state.shadows, "heuristic") },

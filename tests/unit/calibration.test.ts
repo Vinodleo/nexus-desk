@@ -18,7 +18,7 @@ const setup: any = { symbol: "SOL/INR", name: "Trend", family: "trend_following"
 
 let n = 0;
 function resolved(score: number, status: "target" | "stop" | "expired", exitPrice?: number, extra: Partial<ShadowSignal> = {}): ShadowSignal {
-  const s = shadowFromSetup(setup, "proposed", T0 + n++ * FIVE, score);
+  const s = shadowFromSetup(setup, "proposed", T0 + n++ * FIVE, { confidence: score, scoreVersion: 2 });
   const exit = exitPrice ?? (status === "target" ? 1020 : status === "stop" ? 990 : 1000);
   return { ...s, status, exitPrice: exit, ...extra };
 }
@@ -29,7 +29,7 @@ describe("scoring an outcome", () => {
     expect(outcomeScore(resolved(0.5, "stop"))).toBe(0);
     // Closed at +0.5R on a 2R target: (0.5 + 1) / (2 + 1)
     expect(outcomeScore(resolved(0.5, "expired", 1005))).toBeCloseTo(0.5);
-    expect(outcomeScore(shadowFromSetup(setup, "proposed", T0, 0.5))).toBeNull(); // still open
+    expect(outcomeScore(shadowFromSetup(setup, "proposed", T0, { confidence: 0.5 }))).toBeNull(); // still open
   });
 });
 

@@ -133,6 +133,15 @@ export function evaluateLiveOrder(req: LiveOrderRequest, cfg: LiveRiskConfig = l
   if (isReducing) {
     return { status: "accepted", notionalInr: req.quantity * (req.referencePrice || req.clientPrice || 0), isReducing };
   }
+  // CoinDCX's INR markets are spot: selling more than is held would be a
+  // short, which the exchange can't fill. Only buys open positions.
+  if (req.side === "sell") {
+    return {
+      status: "rejected",
+      code: "NO_SPOT_SHORT",
+      reason: `Can't sell ${req.quantity} ${req.market}: only ${Math.max(0, held)} is held, and CoinDCX spot markets can't be shorted.`,
+    };
+  }
 
   if (!req.referencePrice || !Number.isFinite(req.referencePrice) || req.referencePrice <= 0) {
     return { status: "rejected", code: "NO_REFERENCE_PRICE", reason: `No server-side reference price for ${req.market}; refusing to size a live order blind.` };

@@ -12,8 +12,12 @@ export interface MetaModelFeatures {
 export function computeMetaLabelScore(input: MetaModelFeatures): MetaLabelScore {
   const { setup, regime, empiricalWinRate, sampleCount, similarityScore } = input;
 
-  // Base confidence begins with empirical win rate from historically similar setups
-  let rawConfidence = empiricalWinRate * 0.55 + setup.baseProbability * 0.45;
+  // Start from the win rate of similar past setups, blended with the
+  // trader's own estimate. The past setups count fully (55%) only with 15
+  // close matches; with fewer or looser ones they count less, and with none
+  // the trader's estimate stands alone (it used to be a 50% guess).
+  const memoryWeight = 0.55 * Math.min(1, sampleCount / 15) * Math.min(1, similarityScore / 0.6);
+  let rawConfidence = empiricalWinRate * memoryWeight + setup.baseProbability * (1 - memoryWeight);
 
   // Regime interaction adjustments
   let regimeFit: "optimal" | "acceptable" | "poor" = "acceptable";
@@ -52,11 +56,6 @@ export function computeMetaLabelScore(input: MetaModelFeatures): MetaLabelScore 
       rawConfidence -= 0.28;
       rationale = `Non-ranging regime: high trend hazard overrides mean-reversion expectations.`;
     }
-  }
-
-  // Weight by similarity quality
-  if (similarityScore < 0.6) {
-    rawConfidence *= 0.9;
   }
 
   // Clamp calibrated probability to realistic bound [0.15, 0.85]

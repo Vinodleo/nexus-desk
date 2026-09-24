@@ -1,4 +1,4 @@
-import type { MarketBar, StrategySetup, TradeDirection } from "../types";
+import type { MarketBar, RegimeType, StrategySetup, TradeDirection } from "../types";
 import type { SkipReason } from "./scanOutcome";
 import { SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
 
@@ -23,8 +23,16 @@ export interface ShadowSignal {
   confidence?: number;
   /** What produced that score; absent on older records, which were all "heuristic". */
   scorer?: "heuristic" | "tfjs";
+  /**
+   * Version of the rule-based score's formula (see HEURISTIC_SCORE_VERSION in
+   * calibration). Absent on records from before version 2.
+   */
+  scoreVersion?: number;
   /** The Lab model's inputs at the signal (metaFeatures), for online learning. */
   features?: number[];
+  /** Market regime at the signal, and the setup's indicator readings: the trade memory matches on these. */
+  regime?: RegimeType;
+  setupFeatures?: { adx: number; rsi: number; volumeSurgeRatio: number; vwapDistancePercent: number };
   entryPrice: number;
   stopLoss: number;
   takeProfit: number;
@@ -47,15 +55,18 @@ const SWING_LIMIT_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_KEPT = 1500;
 const STORAGE_KEY = "nexus_shadow_signals_v1";
 
-export function shadowFromSetup(
-  setup: StrategySetup,
-  kind: ShadowKind,
-  signalTime: number,
-  confidence?: number,
-  scorer?: "heuristic" | "tfjs",
-  features?: number[]
-): ShadowSignal {
+export interface ShadowContext {
+  confidence?: number;
+  scorer?: "heuristic" | "tfjs";
+  scoreVersion?: number;
+  features?: number[];
+  regime?: RegimeType;
+}
+
+export function shadowFromSetup(setup: StrategySetup, kind: ShadowKind, signalTime: number, ctx: ShadowContext = {}): ShadowSignal {
   const horizon = setup.horizon === "swing" ? "swing" : "intraday";
+  const { confidence, scorer, scoreVersion, features, regime } = ctx;
+  const f = setup.features;
   return {
     id: `${setup.symbol}|${setup.name}|${signalTime}`,
     symbol: setup.symbol,
@@ -66,7 +77,12 @@ export function shadowFromSetup(
     kind,
     confidence,
     ...(scorer ? { scorer } : {}),
+    ...(scoreVersion !== undefined ? { scoreVersion } : {}),
     ...(features ? { features } : {}),
+    ...(regime ? { regime } : {}),
+    ...(f
+      ? { setupFeatures: { adx: f.adx, rsi: f.rsi, volumeSurgeRatio: f.volumeSurgeRatio, vwapDistancePercent: f.vwapDistancePercent } }
+      : {}),
     entryPrice: setup.entryPrice,
     stopLoss: setup.stopLoss,
     takeProfit: setup.takeProfit,
