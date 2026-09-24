@@ -41,6 +41,7 @@ import {
 import { scanAllMarkets, type FullScanReport } from "./services/marketScannerService";
 import { addSkipCounts } from "./services/scanOutcome";
 import { priceEntry } from "./services/entryPricing";
+import { shadowStore } from "./services/shadowTracker";
 import { useRiskPolicy } from "./hooks/useRiskPolicy";
 import { liveMarketStream } from "./services/liveMarketStreamService";
 import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
@@ -1448,6 +1449,7 @@ export default function App() {
     });
     recordScan(report);
     mergeScanIntoQueue(report);
+    shadowStore.add(report.shadows);
     return report;
   };
   // The candle-close listener below always calls the latest runScan.
@@ -1496,6 +1498,19 @@ export default function App() {
       clearTimeout(first);
     };
   }, [isContinuousScanActive]);
+
+  // Follow every setup the scanner found on real candles, to measure what
+  // the filters skip (see shadowTracker). Resolved after each candle close,
+  // and once a minute as a backstop.
+  useEffect(() => {
+    const resolve = () => shadowStore.resolve((sym) => liveMarketStream.getBars(sym));
+    const unsubscribe = liveMarketStream.onCandleClose(resolve);
+    const timer = setInterval(resolve, 60 * 1000);
+    return () => {
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }, []);
 
   // Drop proposals whose signal has expired, even between scans.
   useEffect(() => {

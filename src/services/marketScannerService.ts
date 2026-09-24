@@ -29,6 +29,7 @@ import { computeMetaLabelScore } from "./metaLabeling";
 import { syntheticBarShare } from "./dataProvenance";
 import { MIN_SIGNAL_BARS, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
 import { skipReasonForRisk, type SkipReason, type SymbolScanOutcome } from "./scanOutcome";
+import { shadowFromSetup, type ShadowSignal } from "./shadowTracker";
 
 // A Lab model trained on generated candles says nothing about the real
 // market, so the live desk ignores it (default hurdle, no persona tuning, no
@@ -97,6 +98,8 @@ export interface MarketScanResult {
   proposals: TradeProposal[];
   summaryNote: string;
   outcome: SymbolScanOutcome;
+  /** Every setup found this candle, taken or not, for shadow tracking. */
+  shadows: ShadowSignal[];
 }
 
 export interface FullScanReport {
@@ -108,6 +111,7 @@ export interface FullScanReport {
   newProposals: TradeProposal[];
   /** One entry per coin scanned: proposed, or why not. */
   outcomes: SymbolScanOutcome[];
+  shadows: ShadowSignal[];
 }
 
 /**
@@ -249,6 +253,7 @@ export async function scanSingleMarket(
 
   // Why each qualified setup didn't become a proposal, in panel order.
   const candidateSkips: SkipReason[] = [];
+  const shadows: ShadowSignal[] = [];
 
   for (let i = 0; i < qualifiedSetups.length; i++) {
     const setup = qualifiedSetups[i];
@@ -308,6 +313,7 @@ export async function scanSingleMarket(
     // Must pass edge criteria, risk constraints, and the confidence hurdle.
     const requiredConfidence = requiredMetaConfidence(promotedModel);
 
+    const skipsBefore = candidateSkips.length;
     if (!riskCalc.passedAllChecks) {
       candidateSkips.push(skipReasonForRisk(riskCalc.rejectionCode));
     } else if (!evAssessment.isPositiveEdge) {
@@ -317,6 +323,14 @@ export async function scanSingleMarket(
     } else if (metaScore.confidence < requiredConfidence) {
       candidateSkips.push("low_confidence");
     }
+    shadows.push(
+      shadowFromSetup(
+        setup,
+        candidateSkips.length > skipsBefore ? candidateSkips[candidateSkips.length - 1] : "proposed",
+        candleCloseMs,
+        metaScore.confidence
+      )
+    );
 
     if (
       evAssessment.isPositiveEdge &&
@@ -383,7 +397,12 @@ export async function scanSingleMarket(
             (panel.vetoed || swingPanel.vetoed ? "vetoed" : trendFiltered > 0 ? "against_trend" : "no_setup"),
         };
 
+  for (const setup of [...(panel.trendFilteredSetups ?? []), ...(swingPanel.trendFilteredSetups ?? [])]) {
+    shadows.push(shadowFromSetup(setup, "against_trend", candleCloseMs));
+  }
+
   return {
+    shadows,
     outcome,
     symbol: symbolConfig.symbol,
     symbolName: symbolConfig.name,
@@ -446,6 +465,7 @@ export async function scanAllMarkets(
 
   const equityMarketOpen = isIndianEquityMarketOpen();
   const outcomes: SymbolScanOutcome[] = [];
+  const shadows: ShadowSignal[] = [];
 
   for (const symbolConfig of targetSymbols) {
     // Equities only get analysed within NSE cash-market hours (9:15-3:30
@@ -495,6 +515,7 @@ export async function scanAllMarkets(
     );
     resultsBySymbol.push(scanResult);
     outcomes.push(scanResult.outcome);
+    shadows.push(...scanResult.shadows);
     totalSetupsEvaluated += scanResult.evaluatedSetupsCount;
 
     for (const prop of scanResult.proposals) {
@@ -519,5 +540,6 @@ export async function scanAllMarkets(
     resultsBySymbol,
     newProposals,
     outcomes,
+    shadows,
   };
 }

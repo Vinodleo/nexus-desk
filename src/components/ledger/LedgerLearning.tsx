@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Download, ChevronRight } from "lucide-react";
 import type { ExperienceVector, PromotedLabModel } from "../../types";
 import {
@@ -9,6 +9,8 @@ import {
   type WinRateBucket,
 } from "../../services/learningStats";
 import { Card, RoundIconButton, StatTile } from "./ui";
+import { shadowStore, summarizeShadows, type ShadowSignal } from "../../services/shadowTracker";
+import { SKIP_REASON_LABEL, type SkipReason } from "../../services/scanOutcome";
 
 export interface LedgerLearningProps {
   experiences: ExperienceVector[];
@@ -17,7 +19,77 @@ export interface LedgerLearningProps {
   autopilotWins: number;
   promotedLabModel: PromotedLabModel | null;
   onOpenLab: () => void;
+  /** Shadow-tracked setups. Omit to follow the live store. */
+  shadows?: ShadowSignal[];
 }
+
+/** Resolved setups a row needs before its numbers are shown. */
+const MIN_SHADOW_SAMPLE = 5;
+
+const signedR = (r: number) => `${r >= 0 ? "+" : "\u2212"}${Math.abs(r).toFixed(2)}R`;
+
+/**
+ * What happened to setups the scanner found: the proposed ones next to each
+ * reason for skipping. A skip reason whose setups reach their target about
+ * as often as proposed ones is a filter costing you trades.
+ */
+export const SkippedSetups: React.FC<{ shadows: ShadowSignal[] }> = ({ shadows }) => {
+  const rows = useMemo(() => summarizeShadows(shadows), [shadows]);
+  const open = shadows.filter((s) => s.status === "open").length;
+  return (
+    <Card aria-label="What skipped setups did" className="flex flex-col gap-3">
+      <div>
+        <div className="text-sm font-semibold">What skipped setups did</div>
+        <div className="text-xs text-muted mt-0.5 leading-relaxed">
+          Every setup is followed on real prices until it would have hit its target or stop (intraday ones for 30 minutes).
+          {open > 0 && ` ${open} still being followed.`}
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <p className="m-0 text-[13px] text-muted">Nothing tracked yet. Setups appear here as the scanner finds them.</p>
+      ) : (
+        <div className="flex flex-col" role="table" aria-label="Outcome by reason">
+          <div role="row" className="grid grid-cols-[1fr_auto_auto] gap-3 text-[11px] text-muted pb-1.5 border-b border-line">
+            <span role="columnheader">Setups</span>
+            <span role="columnheader" className="text-right w-14">Hit target</span>
+            <span role="columnheader" className="text-right w-14">Avg result</span>
+          </div>
+          {rows.map((r) => {
+            const enough = r.resolved >= MIN_SHADOW_SAMPLE;
+            const label = r.kind === "proposed" ? "Proposed" : SKIP_REASON_LABEL[r.kind as SkipReason] ?? r.kind;
+            return (
+              <div role="row" key={r.kind} className="grid grid-cols-[1fr_auto_auto] gap-3 items-baseline py-2 border-b border-line last:border-b-0 text-[13px] tabular-nums">
+                <span role="cell" className="min-w-0">
+                  <span className={r.kind === "proposed" ? "font-semibold" : ""}>{label}</span>
+                  <span className="block text-[11px] text-muted">
+                    {r.resolved} of {r.tracked} finished
+                  </span>
+                </span>
+                <span role="cell" className="text-right w-14">{enough && r.targetPct !== null ? `${r.targetPct}%` : "—"}</span>
+                <span
+                  role="cell"
+                  className={`text-right w-14 ${enough && r.avgR !== null ? (r.avgR >= 0 ? "text-gain" : "text-loss") : ""}`}
+                >
+                  {enough && r.avgR !== null ? signedR(r.avgR) : "—"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="m-0 text-xs text-muted leading-relaxed">
+        Results are after fees; a candle that touched both stop and target counts as the stop. Numbers show once {MIN_SHADOW_SAMPLE} setups
+        of a kind have finished.
+      </p>
+    </Card>
+  );
+};
+
+const LiveSkippedSetups: React.FC = () => {
+  const [shadows, setShadows] = useState<ShadowSignal[]>(() => shadowStore.all());
+  useEffect(() => shadowStore.subscribe(() => setShadows(shadowStore.all())), []);
+  return <SkippedSetups shadows={shadows} />;
+};
 
 const FAMILY: Record<string, string> = {
   trend_following: "Trend following",
@@ -192,6 +264,8 @@ export const LedgerLearning: React.FC<LedgerLearningProps> = (props) => {
           </p>
         </Card>
       )}
+
+      {props.shadows !== undefined ? <SkippedSetups shadows={props.shadows} /> : <LiveSkippedSetups />}
 
       <Card className="flex flex-col py-1">
         <div className="flex items-center justify-between gap-3 min-h-12 py-2 border-b border-line text-sm">

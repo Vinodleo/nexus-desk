@@ -256,6 +256,8 @@ export interface PanelResult {
   supportingPersonas: string[];
   /** Setups that qualified but were dropped for going against the 1-hour trend. */
   filteredByHigherTimeframe?: number;
+  /** Those setups, for shadow tracking. */
+  trendFilteredSetups?: StrategySetup[];
   dissentingPersonas: string[];
   totalVotesCast: number; // personas that QUALIFIED (voted) — most scans, this is 0
   totalPersonasRun: number; // personas actually EVALUATED this cycle, qualified or not — the real "analysed" count
@@ -357,6 +359,7 @@ export function runPersonaPanel(
   const roster = panelRoster(ctx.promotedModel);
   const ballots: PersonaBallot[] = [];
   let filteredByHigherTimeframe = 0;
+  const trendFilteredSetups: StrategySetup[] = [];
   for (const persona of roster) {
     const setup = persona.evaluate(ctx);
     const setupHorizon = setup?.horizon || "intraday";
@@ -373,6 +376,7 @@ export function runPersonaPanel(
       (macro === "trending_bearish" && setup.direction === "LONG");
     if (fightsHigherTimeframe) {
       filteredByHigherTimeframe++;
+      trendFilteredSetups.push(setup);
       continue;
     }
 
@@ -396,6 +400,7 @@ export function runPersonaPanel(
       totalPersonasRun:
         SUPPRESSOR_PERSONAS.length + roster.length,
       filteredByHigherTimeframe,
+      trendFilteredSetups,
     };
   }
 
