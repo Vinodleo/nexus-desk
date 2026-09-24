@@ -11,11 +11,17 @@ import {
 } from "../../services/realDataBacktestService";
 import { liveMarketStream } from "../../services/liveMarketStreamService";
 import { Card } from "./ui";
+import { ExitSettings } from "./ExitSettings";
+import { runExitComparison } from "../../services/exitComparison";
+import type { TrailProfileId } from "../../shared/trailingStop";
 
 export interface LedgerLabProps {
   promotedLabModel: PromotedLabModel | null;
   onPromote: (result: RealDataLearningResult) => void;
   onRevert: () => void;
+  /** The trailing-stop profile new trades use, and changing it (the exit comparison). */
+  trailProfile?: TrailProfileId;
+  onTrailProfileChange?: (p: TrailProfileId) => void;
 }
 
 const MARKETS = ["BTCINR", "ETHINR", "SOLINR", "XRPINR", "AVAXINR", "NEARINR", "BNBINR", "DOGEINR"];
@@ -65,7 +71,7 @@ const CompareRow: React.FC<{ label: string; before: string; after: string; bette
   </div>
 );
 
-export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted, onPromote, onRevert }) => {
+export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted, onPromote, onRevert, trailProfile, onTrailProfileChange }) => {
   const [source, setSource] = useState<HistoricalSource>("BINANCE");
   const [market, setMarket] = useState("BTCINR");
   const [bars, setBars] = useState(3000);
@@ -349,7 +355,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
           {!result.isSynthetic && tooFewTrades && (
             <div className="text-xs leading-relaxed text-warn-ink bg-warn-soft rounded-xl px-3 py-2.5">
               Only {l.tradesCount} test {l.tradesCount === 1 ? "trade" : "trades"}, too few to trust these numbers, so it
-              can't be promoted. Train on more history or a longer candle.
+              can't be promoted. Train on more history.
             </div>
           )}
 
@@ -372,6 +378,14 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
             </button>
           )}
         </Card>
+      )}
+
+      {trailProfile && onTrailProfileChange && (
+        <ExitSettings
+          profile={trailProfile}
+          onChange={onTrailProfileChange}
+          onCompare={() => runExitComparison(liveMarketStream.getCryptoSymbols().slice(0, GLOBAL_TRAINING_COINS), bars)}
+        />
       )}
     </div>
   );

@@ -16,6 +16,7 @@ export interface GuardedPosition {
   /** The target at open: a trend runner's lock level (shared/trailingStop). */
   initialTakeProfit?: number;
   family?: string;
+  trailProfile?: string;
   highestPrice?: number;
   lowestPrice?: number;
   trailActive?: boolean;

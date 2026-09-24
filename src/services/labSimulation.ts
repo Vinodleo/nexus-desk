@@ -209,16 +209,14 @@ export interface PanelSample {
 }
 
 /**
- * The live trader panel on history: every intraday setup it would have put
- * forward, with the model inputs at that candle and how it turned out. This
- * is what the confidence model scores live, so it's what it learns from.
+ * Every intraday setup the live trader panel (long-only, with the 1-hour
+ * trend check) would have put forward on history, at the candle it came
+ * from. After a signal, the next few candles on the coin aren't counted again.
  */
-export function replayPanel(symbol: string, bars: MarketBar[]): PanelSample[] {
+export function panelSetupsOnHistory(symbol: string, bars: MarketBar[]): { i: number; regime: RegimeType; setups: StrategySetup[] }[] {
   const macroAt = hourlyRegimeLookup(bars);
-  const samples: PanelSample[] = [];
-  let quietUntil = -1;
+  const out: { i: number; regime: RegimeType; setups: StrategySetup[] }[] = [];
   for (let i = WARMUP_BARS; i < bars.length - 1; i++) {
-    if (i <= quietUntil) continue;
     const regime = classifyRegime(bars[i]);
     const panel = runPersonaPanel(
       {
@@ -234,16 +232,26 @@ export function replayPanel(symbol: string, bars: MarketBar[]): PanelSample[] {
       "intraday"
     );
     if (panel.candidates.length === 0) continue;
+    out.push({ i, regime, setups: panel.candidates });
+    i += REPLAY_COOLDOWN_BARS;
+  }
+  return out;
+}
+
+/**
+ * The live trader panel on history: every intraday setup it would have put
+ * forward, with the model inputs at that candle and how it turned out. This
+ * is what the confidence model scores live, so it's what it learns from.
+ */
+export function replayPanel(symbol: string, bars: MarketBar[]): PanelSample[] {
+  const samples: PanelSample[] = [];
+  for (const { i, regime, setups } of panelSetupsOnHistory(symbol, bars)) {
     // Every trader's setup is scored live, so each is a training sample.
     const features = metaFeatures(bars, i);
-    let any = false;
-    for (const setup of panel.candidates) {
+    for (const setup of setups) {
       const trade = toTrade(symbol, setup, bars, i, regime, 0.5, features);
-      if (!trade) continue;
-      samples.push({ features, win: trade.isWin, pnlPercent: trade.pnlPercent });
-      any = true;
+      if (trade) samples.push({ features, win: trade.isWin, pnlPercent: trade.pnlPercent });
     }
-    if (any) quietUntil = i + REPLAY_COOLDOWN_BARS;
   }
   return samples;
 }

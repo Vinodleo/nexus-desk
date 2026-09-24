@@ -7,6 +7,18 @@ import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
 
 export type BookFilter = "all" | "wins" | "losses";
 
+/**
+ * For a stop exit: how far past the stop the position actually sold, as a %
+ * of the stop (0 when it sold at or better than the stop). Null when the
+ * trade didn't close on its stop or predates recording these.
+ */
+export function stopSlip(t: HistoricalTrade): { pct: number } | null {
+  if (t.exitReason !== "STOP_LOSS" && t.exitReason !== "TRAILING_STOP") return null;
+  if (t.stopAtExit === undefined || t.fillAtExit === undefined || !(t.stopAtExit > 0)) return null;
+  const worse = t.direction === "LONG" ? t.stopAtExit - t.fillAtExit : t.fillAtExit - t.stopAtExit;
+  return { pct: Math.max(0, (worse / t.stopAtExit) * 100) };
+}
+
 const EXIT_LABEL: Record<HistoricalTrade["exitReason"], string> = {
   TAKE_PROFIT: "Take profit",
   STOP_LOSS: "Stop loss",
@@ -134,6 +146,20 @@ const TradeRow: React.FC<{
               <dt className="text-muted">Setup</dt>
               <dd className="m-0 font-semibold truncate">{t.setupName}</dd>
             </div>
+            {stopSlip(t) && (
+              <div className="col-span-2">
+                <dt className="text-muted">Stop → sold at</dt>
+                <dd className="m-0 font-semibold">
+                  {formatPrice(t.stopAtExit!)} → {formatPrice(t.fillAtExit!)}
+                  {stopSlip(t)!.pct >= 0.05 && (
+                    <span className="text-loss font-normal">
+                      {" "}
+                      · {stopSlip(t)!.pct.toFixed(2)}% past the stop: the price moved through it between checks
+                    </span>
+                  )}
+                </dd>
+              </div>
+            )}
           </dl>
           <TradeAutopsyCard trade={t} onUpdateTrade={onUpdateTrade} />
         </div>

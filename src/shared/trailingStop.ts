@@ -27,14 +27,94 @@ export interface TrailState {
   trailMode?: "SCALP_TIGHT" | "TREND_RUNNER";
   family?: string;
   expectedHoldingTimeMinutes?: number;
+  /** Which TRAIL_PROFILES entry this position trails by (default "tight"). */
+  trailProfile?: string;
 }
 
 export type TrailExitReason = "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP";
 
-/** Stop past entry that covers CoinDCX's 0.10% round-trip fees plus spread. */
-const SCALP_FLOOR = 0.0018;
-/** A runner's break-even floor. */
-const RUNNER_FLOOR = 0.002;
+/**
+ * How a trailing stop behaves. "tight" is the original setting; the others
+ * start later and lock in less of the gain, so normal 5-minute wobbles are
+ * less likely to stop a trade out with a small win. "fixed" never trails:
+ * the baseline the Lab compares against. The Lab's exit comparison measures
+ * them on history, and new positions carry the one in use (trailProfile).
+ */
+export interface TrailProfile {
+  label: string;
+  /** Scalp trades: start trailing at this % gain, ATR multiple or share of the way to target. */
+  scalpStart: { pct: number; atr: number; progress: number };
+  /** Scalp trades: lock in this share of the best gain once past these marks (checked strongest first). */
+  scalpLocks: { atr: number; progress: number; share: number }[];
+  /** Least a scalp stop sits past entry once trailing (fees and spread). */
+  scalpFloor: number;
+  runnerStart: { pct: number; atr: number; progress: number };
+  /** Runner: the stop follows this many ATR behind the best price. */
+  runnerTrailAtr: number;
+  runnerFloor: number;
+  /** Past the first target, the runner's target moves out by this multiple of the original distance. */
+  runnerExtend: number;
+  /** Never trail: the original stop and target only. */
+  fixed?: boolean;
+}
+
+export type TrailProfileId = "tight" | "balanced" | "patient" | "fixed";
+
+export const TRAIL_PROFILES: Record<TrailProfileId, TrailProfile> = {
+  tight: {
+    label: "Tight",
+    scalpStart: { pct: 0.6, atr: 1.0, progress: 0.4 },
+    scalpLocks: [
+      { atr: 1.8, progress: 0.75, share: 0.7 },
+      { atr: 1.0, progress: 0.5, share: 0.5 },
+    ],
+    scalpFloor: 0.0018,
+    runnerStart: { pct: 0.8, atr: 1.2, progress: 0.5 },
+    runnerTrailAtr: 1.5,
+    runnerFloor: 0.002,
+    runnerExtend: 1.5,
+  },
+  balanced: {
+    label: "Balanced",
+    scalpStart: { pct: 1.0, atr: 1.5, progress: 0.6 },
+    scalpLocks: [
+      { atr: 2.2, progress: 0.85, share: 0.6 },
+      { atr: 1.5, progress: 0.6, share: 0.4 },
+    ],
+    scalpFloor: 0.0018,
+    runnerStart: { pct: 1.2, atr: 1.8, progress: 0.6 },
+    runnerTrailAtr: 2.0,
+    runnerFloor: 0.002,
+    runnerExtend: 1.5,
+  },
+  patient: {
+    label: "Patient",
+    scalpStart: { pct: 1.5, atr: 2.0, progress: 0.8 },
+    scalpLocks: [{ atr: 2.5, progress: 0.9, share: 0.5 }],
+    scalpFloor: 0.0018,
+    runnerStart: { pct: 1.8, atr: 2.5, progress: 0.75 },
+    runnerTrailAtr: 2.5,
+    runnerFloor: 0.002,
+    runnerExtend: 2.0,
+  },
+  fixed: {
+    label: "Fixed stop and target",
+    scalpStart: { pct: Infinity, atr: Infinity, progress: Infinity },
+    scalpLocks: [],
+    scalpFloor: 0,
+    runnerStart: { pct: Infinity, atr: Infinity, progress: Infinity },
+    runnerTrailAtr: 0,
+    runnerFloor: 0,
+    runnerExtend: 0,
+    fixed: true,
+  },
+};
+
+export const DEFAULT_TRAIL_PROFILE: TrailProfileId = "tight";
+
+export function trailProfile(id: string | undefined): TrailProfile {
+  return TRAIL_PROFILES[(id as TrailProfileId) in TRAIL_PROFILES ? (id as TrailProfileId) : DEFAULT_TRAIL_PROFILE];
+}
 
 /** Trend, breakout and swing trades trail as runners (the app sets trailMode to match). */
 export function isTrendRunner(p: Pick<TrailState, "trailMode" | "family" | "expectedHoldingTimeMinutes">): boolean {
@@ -48,10 +128,11 @@ export function isTrendRunner(p: Pick<TrailState, "trailMode" | "family" | "expe
 
 /**
  * Moves the price extremes, trailing state, stop and (for runners past the
- * first target) the target for a new price. Stops only ever tighten.
- * Mutates `p`; returns true if the stop or target moved.
+ * first target) the target for a new price, by the position's trail profile.
+ * Stops only ever tighten. Mutates `p`; returns true if the stop or target moved.
  */
 export function updateTrailingStop(p: TrailState, price: number): boolean {
+  const cfg = trailProfile(p.trailProfile);
   const isLong = p.direction === "LONG";
   const entry = p.entryPrice;
   const atr = p.atrAtEntry || entry * 0.005;
@@ -64,12 +145,15 @@ export function updateTrailingStop(p: TrailState, price: number): boolean {
 
   if (isLong) p.highestPrice = Math.max(p.highestPrice || entry, price);
   else p.lowestPrice = Math.min(p.lowestPrice || entry, price);
+  if (cfg.fixed) return false;
   const best = isLong ? p.highestPrice! : p.lowestPrice!;
   const peakGain = Math.max(0, (best - entry) * dir);
   const profitInATR = atr > 0 ? peakGain / atr : 0;
   const profitPct = (peakGain / entry) * 100;
   const targetDist = Math.max(0.001, (initialTP - entry) * dir);
   const targetProgress = peakGain / targetDist;
+  const started = (s: { pct: number; atr: number; progress: number }) =>
+    profitPct >= s.pct || profitInATR >= s.atr || targetProgress >= s.progress;
 
   let changed = false;
   const moveStop = (candidate: number) => {
@@ -80,30 +164,31 @@ export function updateTrailingStop(p: TrailState, price: number): boolean {
   };
 
   if (runner) {
-    if (!p.trailActive && (profitPct >= 0.8 || profitInATR >= 1.2 || targetProgress >= 0.5)) p.trailActive = true;
+    if (!p.trailActive && started(cfg.runnerStart)) p.trailActive = true;
     if (!p.trailActive) return changed;
+    const trail = best - dir * atr * cfg.runnerTrailAtr;
     if ((price - initialTP) * dir >= 0) {
       // Past the first target: lock the stop there, extend the target, and
-      // keep trailing 1.5 ATR behind the best price.
+      // keep trailing behind the best price.
       moveStop(initialTP);
-      const extended = initialTP + dir * targetDist * 1.5;
+      const extended = initialTP + dir * targetDist * cfg.runnerExtend;
       if ((extended - p.takeProfit) * dir > 0) {
         p.takeProfit = extended;
         changed = true;
       }
-      moveStop(better(initialTP, best - dir * atr * 1.5));
+      moveStop(better(initialTP, trail));
     } else {
-      moveStop(better(entry * (1 + dir * RUNNER_FLOOR), best - dir * atr * 1.5));
+      moveStop(better(entry * (1 + dir * cfg.runnerFloor), trail));
     }
     return changed;
   }
 
-  if (!p.trailActive && (profitPct >= 0.6 || profitInATR >= 1.0 || targetProgress >= 0.4)) p.trailActive = true;
+  if (!p.trailActive && started(cfg.scalpStart)) p.trailActive = true;
   if (!p.trailActive) return changed;
-  let lockedGain = entry * SCALP_FLOOR;
-  if (profitInATR >= 1.8 || targetProgress >= 0.75) lockedGain = Math.max(lockedGain, peakGain * 0.7);
-  else if (profitInATR >= 1.0 || targetProgress >= 0.5) lockedGain = Math.max(lockedGain, peakGain * 0.5);
-  moveStop(better(entry * (1 + dir * SCALP_FLOOR), entry + dir * lockedGain));
+  let lockedGain = entry * cfg.scalpFloor;
+  const lock = cfg.scalpLocks.find((l) => profitInATR >= l.atr || targetProgress >= l.progress);
+  if (lock) lockedGain = Math.max(lockedGain, peakGain * lock.share);
+  moveStop(better(entry * (1 + dir * cfg.scalpFloor), entry + dir * lockedGain));
   return changed;
 }
 

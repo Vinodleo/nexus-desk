@@ -36,6 +36,7 @@ export interface DaemonPosition {
   expectedHoldingTimeMinutes?: number;
   initialTakeProfit?: number;
   family?: string;
+  trailProfile?: string;
   initialStopLoss?: number;
   partialQuantity?: number;
   bankedQuantity?: number;
@@ -67,6 +68,8 @@ export interface DaemonClosedTrade {
   setupName?: string;
   userId?: string;
   isLiveOrder?: boolean;
+  stopAtExit?: number;
+  fillAtExit?: number;
 }
 
 interface DaemonPersistedState {
@@ -315,6 +318,8 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     setupName: pos.setupName || "Statistical Trailing System",
     userId: pos.userId,
     isLiveOrder: !!pos.isLiveOrder,
+    stopAtExit: pos.stopLoss,
+    fillAtExit: exitPrice,
   };
 
   daemonClosedTrades.unshift(closedRecord);
