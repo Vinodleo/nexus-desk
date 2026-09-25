@@ -16,6 +16,7 @@ import { getMarketRules } from "../marketRules";
 import { fetchOrderBook, recentBook } from "../coindcxMarketData";
 import { entryPriceFrom } from "../../src/shared/quotes";
 import { angelConfigured, fetchStockDepth } from "../angelOne";
+import { freshQuote } from "../quoteStore";
 import { NSE_SYMBOLS, isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
 import { broadcastToUser, currentPrices } from "../realtime";
@@ -128,18 +129,22 @@ export function recordSpread(symbol: string, spread: number): void {
   observedSpreads.set(symbol, held === undefined ? spread : held * 0.7 + spread * 0.3);
 }
 
-/** A coin's typical spread; for one never read, the middle of the others'. */
+/** A market's typical spread; for one never read, the middle of the others' in the same market (coins, or stocks). */
 export function typicalSpread(symbol: string): number | undefined {
   const own = observedSpreads.get(symbol);
-  if (own !== undefined || isNseSymbol(symbol)) return own;
-  const all = [...observedSpreads.entries()].filter(([s]) => !isNseSymbol(s)).map(([, v]) => v).sort((a, b) => a - b);
+  if (own !== undefined) return own;
+  const stock = isNseSymbol(symbol);
+  const all = [...observedSpreads.entries()].filter(([s]) => isNseSymbol(s) === stock).map(([, v]) => v).sort((a, b) => a - b);
   return all.length > 0 ? all[Math.floor(all.length / 2)] : undefined;
 }
 
 async function getOrderBook(symbol: string, notional: number) {
   if (isNseSymbol(symbol)) {
     const book = await fetchStockDepth(symbol).catch(() => null);
-    return book ? toOrderBook(book, notional, "angelone") : null;
+    if (!book) return null;
+    const orderBook = toOrderBook(book, notional, "angelone");
+    if (orderBook.spreadPct !== undefined) recordSpread(symbol, orderBook.spreadPct);
+    return orderBook;
   }
   const result = await fetchOrderBook(symbol.split("/")[0]);
   if (!("book" in result)) return null;
@@ -219,12 +224,15 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
   // Self-Approve: opens what autopilot accepts and marks each proposal.
   const newProposals = runServerAutopilot(uid, desk, report.newProposals, riskPolicy, {
     // A coin opens at the ask (or bid, for a short) from the order book the
-    // scan just read; otherwise at the latest trade or candle close.
+    // scan just read, a stock at its latest Angel One quote; otherwise at the
+    // latest trade or candle close.
     livePrice: (s, direction) => {
       const book = isNseSymbol(s) ? null : recentBook(s.split("/")[0], ENTRY_BOOK_MAX_AGE_MS);
       if (book && book.bids.length > 0 && book.asks.length > 0) {
         return entryPriceFrom(direction, { bid: book.bids[0][0], ask: book.asks[0][0], at: book.fetchedAt });
       }
+      const quote = isNseSymbol(s) ? freshQuote(s, now) : undefined;
+      if (quote) return entryPriceFrom(direction, quote);
       return currentPrices[s] ?? market.getBars(s)?.at(-1)?.close;
     },
     barAtr: (s) => market.getBars(s)?.at(-1)?.atr,
@@ -405,6 +413,7 @@ export function startServerScanner(): void {
 export function _resetServerScanner(): void {
   users.clear();
   observedSpreads.clear();
+  market.keepOnly([]);
   cycleStartedAt = null;
   universe = [];
   if (timer) clearTimeout(timer);
