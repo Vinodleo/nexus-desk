@@ -84,7 +84,10 @@ export interface LedgerFloorProps {
   pendingProposals: number;
   scan: FloorScanSummary;
   onOpenQueue: () => void;
-  onOpenSettings: () => void;
+  /** Opens Settings; `from` is the gear's place on screen, where it opens from. */
+  onOpenSettings: (from?: DOMRect) => void;
+  /** Settings is open (the gear turns away while it is). */
+  settingsOpen?: boolean;
 }
 
 function positionNote(p: Position): string {
@@ -522,8 +525,9 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
           >
             {isLive ? "Live" : "Paper"}
           </span>
-          <RoundIconButton label="Settings" onClick={props.onOpenSettings}>
-            <Settings className="w-[18px] h-[18px]" strokeWidth={1.6} />
+          {/* Settings opens as a circle from here; the gear turns away as its ✕ turns in on the same spot. */}
+          <RoundIconButton label="Settings" onClick={(e) => props.onOpenSettings(e.currentTarget.getBoundingClientRect())}>
+            <Settings className={`w-[18px] h-[18px] nx-gear${props.settingsOpen ? " nx-gear-away" : ""}`} strokeWidth={1.6} />
           </RoundIconButton>
         </div>
       </header>

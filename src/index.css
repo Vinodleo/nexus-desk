@@ -345,7 +345,40 @@ html.nx-theme-fade, html.nx-theme-fade *, html.nx-theme-fade *::before, html.nx-
   transition: background-color 350ms ease, color 350ms ease, border-color 350ms ease, fill 350ms ease, stroke 350ms ease !important;
 }
 
+/* Settings opens as a circle from the gear, and closes back into it. */
+@keyframes nx-circle {
+  from { clip-path: circle(0px at var(--nx-ox) var(--nx-oy)); }
+  to { clip-path: circle(150vmax at var(--nx-ox) var(--nx-oy)); }
+}
+.nx-circle-in { animation: nx-circle 420ms cubic-bezier(0.4, 0, 0.2, 1) both; }
+.nx-circle-out { animation: nx-circle 320ms cubic-bezier(0.4, 0, 0.2, 1) reverse both; }
+/* The gear turns into the ✕ in the same spot, and back. */
+@keyframes nx-x-in {
+  from { transform: rotate(-120deg) scale(0.6); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.nx-x-in { animation: nx-x-in 380ms cubic-bezier(0.3, 0.9, 0.3, 1.2) 60ms both; }
+.nx-x-out { animation: nx-x-in 260ms ease-in reverse both; }
+.nx-gear { transition: transform 360ms cubic-bezier(0.4, 0, 0.2, 1), opacity 260ms ease; }
+.nx-gear-away { transform: rotate(120deg); opacity: 0; }
+/* Paper/Live: the pill slides across and changes colour. */
+.nx-mode-pill { transition: transform 300ms cubic-bezier(0.3, 0.9, 0.3, 1.15), background-color 300ms ease; }
+/* A notice that drops open under its row. */
+@keyframes nx-drop-down {
+  from { opacity: 0; transform: translateY(-8px); max-height: 0; }
+  to { opacity: 1; transform: none; max-height: 120px; }
+}
+.nx-drop-down { overflow: hidden; animation: nx-drop-down 320ms ease-out both; }
+/* A changed value rolls up into place. */
+@keyframes nx-roll-in {
+  from { transform: translateY(80%); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.nx-roll-in { display: inline-block; animation: nx-roll-in 300ms cubic-bezier(0.3, 0.9, 0.3, 1.1) both; }
+
 @media (prefers-reduced-motion: reduce) {
+  .nx-circle-in, .nx-circle-out, .nx-x-in, .nx-x-out, .nx-drop-down, .nx-roll-in { animation: none; }
+  .nx-gear, .nx-mode-pill { transition: none; }
   .nx-item-enter > *::after { animation: none; display: none; }
   .nx-item-close, .nx-tag-pop, .nx-reveal, .nx-ring, .nx-ring-once, .nx-flip-in, .nx-grow-left { animation: none; }
   .nx-item-close { display: none; }

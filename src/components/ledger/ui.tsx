@@ -25,7 +25,7 @@ export const StatTile: React.FC<{ label: string; value: React.ReactNode; valueCl
 
 export const RoundIconButton: React.FC<{
   label: string;
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   children: React.ReactNode;
 }> = ({ label, onClick, children }) => (
   <button
@@ -52,13 +52,14 @@ export const Switch: React.FC<{
     aria-label={label}
     disabled={disabled}
     onClick={() => onChange(!checked)}
-    className={`relative shrink-0 w-[52px] h-8 rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+    className={`group relative shrink-0 w-[52px] h-8 rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
       checked ? "bg-accent" : "bg-line"
     }`}
   >
+    {/* The knob stretches while pressed and slides when let go, like a phone's own switches. */}
     <span
-      className={`absolute top-1 w-6 h-6 rounded-full shadow-sm transition-all ${
-        checked ? "left-[24px] bg-on-accent" : "left-1 bg-surface"
+      className={`absolute top-1 w-6 h-6 rounded-full shadow-sm transition-all duration-200 group-active:w-[30px] ${
+        checked ? "left-[24px] group-active:left-[18px] bg-on-accent" : "left-1 bg-surface"
       }`}
     />
   </button>

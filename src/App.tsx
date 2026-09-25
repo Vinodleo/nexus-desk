@@ -529,6 +529,8 @@ export default function App() {
   const guardianOnline = useGuardianSync(activePositions, setActivePositions, handleServerClose, isClosedLocally);
   const zerodha = useZerodhaConnection();
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  // Where the gear was when Settings was opened: it opens from there.
+  const [settingsFrom, setSettingsFrom] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
   // 3. Web Worker un-throttled background heartbeat
   useEffect(() => {
@@ -1769,7 +1771,11 @@ export default function App() {
                 skipReasons: sampleTelemetry.skipReasons,
               }}
               onOpenQueue={() => setActiveTab("queue")}
-              onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenSettings={(from) => {
+                setSettingsFrom(from ? { left: from.left, top: from.top, width: from.width, height: from.height } : null);
+                setIsSettingsOpen(true);
+              }}
+              settingsOpen={isSettingsOpen}
             />
           )}
 
@@ -1925,6 +1931,7 @@ export default function App() {
 
       <SettingsSheet
         isOpen={isSettingsOpen}
+        from={settingsFrom}
         theme={appTheme.theme}
         onThemeChange={appTheme.setTheme}
         notifications={tradeNotifications}

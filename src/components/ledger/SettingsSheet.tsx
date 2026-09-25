@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, RefreshCw, ChevronRight, Check } from "lucide-react";
+import { X, RefreshCw, ChevronRight, ChevronDown, Check } from "lucide-react";
 import type { CoinDcxAccountBalance, CoinDcxServerStatus, TradingExecutionMode } from "../../types";
 import type { ZerodhaStatus } from "../../hooks/useZerodhaConnection";
 import { useAuth } from "../../context/AuthContext";
@@ -10,7 +10,7 @@ import type { RiskLimits } from "../../hooks/useRiskPolicy";
 import { AMOUNT_CHOICES, MAX_TRADES_CHOICES, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
 import { formatMoney } from "./format";
 import type { ServerStatus } from "../../hooks/useServerStatus";
-import { usePresence } from "./motion";
+import { prefersReducedMotion, usePresence } from "./motion";
 import { builtAtText, checkForUpdate, type UpdateCheck } from "../../services/appUpdates";
 import { THEMES, type ThemeId } from "../../services/theme";
 import { nseTakesEntries } from "../../shared/nse";
@@ -41,6 +41,8 @@ export interface SettingsSheetProps {
   /** Where scanning runs, and when the server last scanned. */
   scanLocation?: "checking" | "server" | "browser";
   lastServerScanAt?: number;
+  /** Where the gear was on screen when Settings was opened: it opens from there, and its ✕ sits on that spot. */
+  from?: { left: number; top: number; width: number; height: number } | null;
   /** This device's colour theme, and choosing another. */
   theme?: ThemeId;
   onThemeChange?: (id: ThemeId) => void;
@@ -59,6 +61,53 @@ export function formatSpan(ms: number): string {
 
 const selectClass =
   "min-h-9 rounded-full border border-line bg-surface px-3 text-[13px] font-semibold text-ink cursor-pointer";
+
+/** "Connected", with a green dot that pulses gently. */
+export const Connected: React.FC<{ label?: string }> = ({ label = "Connected" }) => (
+  <span className="flex items-center gap-1.5 text-gain">
+    <span className="relative w-2 h-2" aria-hidden="true">
+      <span className="absolute inset-0 rounded-full bg-gain nx-ring" />
+      <span className="absolute inset-0 rounded-full bg-gain" />
+    </span>
+    {label}
+  </span>
+);
+
+/** A shimmering bar while the server's answer is on its way. */
+const Checking: React.FC = () => <span role="status" aria-label="Checking" className="inline-block w-20 h-3.5 rounded bg-inset nx-shimmer" />;
+
+/**
+ * A dropdown that shows its value in a chip; a new value rolls up into place
+ * (not on first show). The real select sits invisibly on top, so tapping
+ * still opens the phone's own picker.
+ */
+const RollingSelect: React.FC<{ label: string; value: number; options: number[]; format: (v: number) => string; onChange: (v: number) => void }> = ({
+  label,
+  value,
+  options,
+  format,
+  onChange,
+}) => {
+  const first = React.useRef(value);
+  const changed = value !== first.current;
+  return (
+    <span className="relative inline-flex">
+      <span aria-hidden="true" className={`${selectClass} inline-flex items-center gap-1 overflow-hidden`}>
+        <span key={value} className={changed ? "nx-roll-in" : undefined} data-testid={`${label} shown`}>
+          {format(value)}
+        </span>
+        <ChevronDown className="w-3.5 h-3.5 text-muted" />
+      </span>
+      <select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))} className="absolute inset-0 w-full opacity-0 cursor-pointer">
+        {options.map((v) => (
+          <option key={v} value={v}>
+            {format(v)}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+};
 
 const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em] px-1">{children}</div>
@@ -114,9 +163,23 @@ const AppVersionRow: React.FC = () => {
           setState("checking");
           setState(await checkForUpdate(true));
         }}
-        className="min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer hover:bg-inset disabled:opacity-60"
+        className="min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer hover:bg-inset disabled:opacity-80 inline-flex items-center gap-1.5"
       >
-        Check for updates
+        {state === "checking" || state === "updating" ? (
+          <>
+            <RefreshCw className="w-3.5 h-3.5 motion-safe:animate-spin" />
+            {state === "checking" ? "Checking…" : "Updating…"}
+          </>
+        ) : state === "latest" ? (
+          <span key="latest" className="nx-tick-in text-gain inline-flex items-center gap-1">
+            <Check className="w-3.5 h-3.5" strokeWidth={2.5} />
+            Up to date
+          </span>
+        ) : state === "unavailable" ? (
+          "Try again"
+        ) : (
+          "Check for updates"
+        )}
       </button>
     </Row>
   );
@@ -153,35 +216,25 @@ const MarketLimitRows: React.FC<{
           )
         }
       >
-        <select
-          aria-label={`${title}: amount per trade`}
+        <RollingSelect
+          label={`${title}: amount per trade`}
           value={mine.amountPerTradeInr}
-          onChange={(e) => set({ amountPerTradeInr: Number(e.target.value) })}
-          className={selectClass}
-        >
-          {withCurrent(AMOUNT_CHOICES, mine.amountPerTradeInr).map((v) => (
-            <option key={v} value={v}>
-              {formatMoney(v, { decimals: 0 })}
-            </option>
-          ))}
-        </select>
+          options={withCurrent(AMOUNT_CHOICES, mine.amountPerTradeInr)}
+          format={(v) => formatMoney(v, { decimals: 0 })}
+          onChange={(v) => set({ amountPerTradeInr: v })}
+        />
       </Row>
       <Row
         label={`${title}: trades at once`}
         sub={`Up to ${formatMoney(mine.amountPerTradeInr * mine.maxOpenTrades, { decimals: 0 })} in ${title.toLowerCase()} at a time`}
       >
-        <select
-          aria-label={`${title}: trades at once`}
+        <RollingSelect
+          label={`${title}: trades at once`}
           value={mine.maxOpenTrades}
-          onChange={(e) => set({ maxOpenTrades: Number(e.target.value) })}
-          className={selectClass}
-        >
-          {withCurrent(MAX_TRADES_CHOICES, mine.maxOpenTrades).map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </select>
+          options={withCurrent(MAX_TRADES_CHOICES, mine.maxOpenTrades)}
+          format={(v) => String(v)}
+          onChange={(v) => set({ maxOpenTrades: v })}
+        />
       </Row>
     </>
   );
@@ -191,8 +244,11 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
   const { currentUser, userRole, logout } = useAuth();
   const pwa = usePWAInstall();
   const [confirmLive, setConfirmLive] = useState(false);
-  // Slides up when opened and back down when closed.
-  const presence = usePresence(props.isOpen);
+  // Opens as a circle from the gear (and closes back into it); without the
+  // gear's place, or with reduced motion, it rises and fades as before.
+  const origin = props.from ?? null;
+  const circle = !!origin && !prefersReducedMotion();
+  const presence = usePresence(props.isOpen, circle ? 320 : 220);
 
   useEffect(() => {
     if (!props.isOpen) setConfirmLive(false);
@@ -231,9 +287,26 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
       : "Connect";
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Settings" className={`fixed inset-0 z-50 bg-canvas text-ink font-ui overflow-y-auto ${
-        presence.leaving ? "nx-page-out pointer-events-none" : "nx-page-in"
-      }`}>
+    <>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Settings"
+      className={`fixed inset-0 z-50 bg-canvas text-ink font-ui overflow-y-auto ${
+        circle
+          ? presence.leaving
+            ? "nx-circle-out pointer-events-none"
+            : "nx-circle-in"
+          : presence.leaving
+          ? "nx-page-out pointer-events-none"
+          : "nx-page-in"
+      }`}
+      style={
+        circle && origin
+          ? ({ "--nx-ox": `${origin.left + origin.width / 2}px`, "--nx-oy": `${origin.top + origin.height / 2}px` } as React.CSSProperties)
+          : undefined
+      }
+    >
       <div className="max-w-lg mx-auto px-5 pt-4 pb-10 flex flex-col gap-4">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -242,15 +315,27 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               {currentUser?.email ? `Signed in as ${currentUser.email}` : "Not signed in"}
             </div>
           </div>
-          <RoundIconButton label="Close settings" onClick={props.onClose}>
-            <X className="w-[18px] h-[18px]" strokeWidth={1.6} />
-          </RoundIconButton>
+          {circle ? (
+            // The ✕ sits on the gear's spot (below), fixed there while the page scrolls.
+            <span className="w-11 h-11 shrink-0" aria-hidden="true" />
+          ) : (
+            <RoundIconButton label="Close settings" onClick={props.onClose}>
+              <X className="w-[18px] h-[18px]" strokeWidth={1.6} />
+            </RoundIconButton>
+          )}
         </header>
 
         <Label>Trading</Label>
         <Group>
           <Row label="Mode" sub={isLive ? "Orders go to CoinDCX" : "Orders stay in the paper book"}>
-            <div className="flex p-0.5 rounded-full bg-inset border border-line" role="group" aria-label="Trading mode">
+            <div className="relative grid grid-cols-2 p-0.5 rounded-full bg-inset border border-line" role="group" aria-label="Trading mode">
+              {/* The pill slides across, blue for Paper, amber for Live. */}
+              <span
+                aria-hidden="true"
+                data-testid="mode-pill"
+                className={`nx-mode-pill absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-full ${isLive ? "bg-warn" : "bg-accent"}`}
+                style={{ transform: `translateX(${isLive ? 100 : 0}%)` }}
+              />
               {(["PAPER", "LIVE_COINDCX"] as const).map((m) => {
                 const on = props.tradingMode === m;
                 return (
@@ -259,8 +344,8 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                     type="button"
                     aria-pressed={on}
                     onClick={() => pickMode(m)}
-                    className={`min-h-9 px-3.5 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${
-                      on ? (m === "PAPER" ? "bg-accent text-on-accent" : "bg-warn text-on-accent") : "text-muted"
+                    className={`relative min-h-9 px-3.5 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${
+                      on ? "text-on-accent" : "text-muted"
                     }`}
                   >
                     {m === "PAPER" ? "Paper" : "Live"}
@@ -269,6 +354,11 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               })}
             </div>
           </Row>
+          {isLive && (
+            <div className="nx-drop-down -mx-3.5 px-3.5 py-2.5 border-b border-line bg-warn-soft text-warn-ink text-xs leading-relaxed">
+              Real orders on CoinDCX from now on, within your limits.
+            </div>
+          )}
           {confirmLive && (
             <div className="py-3 border-b border-line text-xs leading-relaxed text-warn-ink bg-warn-soft -mx-3.5 px-3.5">
               Live mode sends real orders to CoinDCX with your money.{" "}
@@ -329,7 +419,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
           >
             {status?.configured ? (
               <>
-                <span className="text-gain">Connected</span>
+                <Connected />
                 <button
                   type="button"
                   aria-label="Refresh CoinDCX balance"
@@ -340,12 +430,12 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                 </button>
               </>
             ) : (
-              <span className="text-muted">{status ? "Not set up" : "Checking…"}</span>
+              status ? <span className="text-muted">Not set up</span> : <Checking />
             )}
           </Row>
           <Row label="Zerodha Kite" sub={props.zerodhaStatus === "error" ? props.zerodhaError : "Indian equities"}>
             {props.zerodhaStatus === "connected" ? (
-              <span className="text-gain">Connected</span>
+              <Connected />
             ) : (
               <button
                 type="button"
@@ -394,7 +484,21 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               <div className="py-3">
                 <div className="text-sm">Theme</div>
                 <div className="text-xs text-muted mt-0.5">On this phone. Your other devices keep their own.</div>
-                <div className="grid grid-cols-3 gap-2.5 mt-3" role="group" aria-label="Theme">
+                <div className="relative grid grid-cols-3 gap-2.5 mt-3" role="group" aria-label="Theme">
+                  {/* One ring that slides to the picked theme; its tick pops in each time. */}
+                  <span
+                    aria-hidden="true"
+                    data-testid="theme-ring"
+                    className="nx-segment-pill absolute top-0 left-0 h-full rounded-[14px] border-2 border-accent pointer-events-none z-10"
+                    style={{
+                      width: "calc((100% - 20px) / 3)",
+                      transform: `translateX(calc(${Math.max(0, THEMES.findIndex((t) => t.id === props.theme))} * (100% + 10px)))`,
+                    }}
+                  >
+                    <span key={props.theme} className="nx-badge-pop absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-accent text-on-accent flex items-center justify-center">
+                      <Check className="w-3 h-3" strokeWidth={3} />
+                    </span>
+                  </span>
                   {THEMES.map((t) => {
                     const on = props.theme === t.id;
                     return (
@@ -404,9 +508,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                         aria-pressed={on}
                         aria-label={`${t.name} theme`}
                         onClick={() => props.onThemeChange!(t.id)}
-                        className={`relative flex flex-col gap-1.5 p-1.5 rounded-[14px] border-2 bg-surface text-left cursor-pointer transition-colors ${
-                          on ? "border-accent" : "border-transparent"
-                        }`}
+                        className="relative flex flex-col gap-1.5 p-1.5 rounded-[14px] border-2 border-transparent bg-surface text-left cursor-pointer"
                       >
                         <span
                           aria-hidden="true"
@@ -421,11 +523,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                           <span className="block text-xs font-semibold">{t.name}</span>
                           <span className="block text-[11px] text-muted">{t.hint}</span>
                         </span>
-                        {on && (
-                          <span className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-accent text-on-accent flex items-center justify-center">
-                            <Check className="w-3 h-3" strokeWidth={3} />
-                          </span>
-                        )}
                       </button>
                     );
                   })}
@@ -462,12 +559,16 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                   }${props.serverStatus.fx ? ` · $1 = ${formatMoney(props.serverStatus.fx.usdInr)}` : ""}`
             }
           >
-            {!props.serverStatus?.alpaca?.configured ? (
+            {!props.serverStatus ? (
+              <Checking />
+            ) : !props.serverStatus.alpaca?.configured ? (
               <span className="text-muted">Not set up</span>
             ) : props.serverStatus.alpaca.lastError ? (
               <span className="text-warn">Problem</span>
+            ) : props.serverStatus.alpaca.accountStatus === "ACTIVE" ? (
+              <Connected />
             ) : (
-              <span className="text-gain">{props.serverStatus.alpaca.accountStatus === "ACTIVE" ? "Connected" : "Ready"}</span>
+              <span className="text-gain">Ready</span>
             )}
           </Row>
           <Row
@@ -481,12 +582,16 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                     : "Market closed · scans the Nifty 50 from 9:15 to 3:00 IST on weekdays")
             }
           >
-            {!props.serverStatus?.angelOne?.configured ? (
+            {!props.serverStatus ? (
+              <Checking />
+            ) : !props.serverStatus.angelOne?.configured ? (
               <span className="text-muted">Not set up</span>
             ) : props.serverStatus.angelOne.lastError ? (
               <span className="text-warn">Problem</span>
+            ) : props.serverStatus.angelOne.loggedIn ? (
+              <Connected />
             ) : (
-              <span className="text-gain">{props.serverStatus.angelOne.loggedIn ? "Connected" : "Ready"}</span>
+              <span className="text-gain">Ready</span>
             )}
           </Row>
           <Row
@@ -529,5 +634,19 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
         )}
       </div>
     </div>
+    {circle && origin && (
+      <button
+        type="button"
+        aria-label="Close settings"
+        onClick={props.onClose}
+        className={`fixed z-[51] rounded-full border border-line bg-surface text-ink flex items-center justify-center cursor-pointer ${
+          presence.leaving ? "nx-x-out pointer-events-none" : "nx-x-in"
+        }`}
+        style={{ left: origin.left, top: origin.top, width: origin.width, height: origin.height }}
+      >
+        <X className="w-[18px] h-[18px]" strokeWidth={1.6} />
+      </button>
+    )}
+    </>
   );
 };

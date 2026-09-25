@@ -136,3 +136,77 @@ describe("Settings: market rows say whether each market is being scanned", () =>
     expect(text).toContain("Market closed · scans 9:30–3:30 New York time");
   });
 });
+
+describe("Settings: motion", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("opens as a circle from the gear, with its ✕ on the gear's spot, and closes back into it", () => {
+    const from = { left: 330, top: 20, width: 44, height: 44 };
+    const { rerender } = render(createElement(SettingsSheet, props({ from })));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toContain("nx-circle-in");
+    expect(dialog.style.getPropertyValue("--nx-ox")).toBe("352px");
+    expect(dialog.style.getPropertyValue("--nx-oy")).toBe("42px");
+    const close = screen.getByRole("button", { name: "Close settings" });
+    expect(close.className).toContain("nx-x-in");
+    expect(close.style.left).toBe("330px");
+    rerender(createElement(SettingsSheet, props({ from, isOpen: false })));
+    expect(screen.getByRole("dialog").className).toContain("nx-circle-out");
+    expect(screen.getByRole("button", { name: "Close settings" }).className).toContain("nx-x-out");
+  });
+
+  it("rises in as before when opened another way", () => {
+    render(createElement(SettingsSheet, props()));
+    expect(screen.getByRole("dialog").className).toContain("nx-page-in");
+    expect(screen.getAllByRole("button", { name: "Close settings" })).toHaveLength(1);
+  });
+
+  it("slides one ring to the picked theme, and the mode pill to Live in amber with a notice", () => {
+    const { rerender } = render(createElement(SettingsSheet, props({ theme: "ivory", onThemeChange: vi.fn() })));
+    expect(screen.getByTestId("theme-ring").style.transform).toBe("translateX(calc(0 * (100% + 10px)))");
+    rerender(createElement(SettingsSheet, props({ theme: "blush", onThemeChange: vi.fn() })));
+    expect(screen.getByTestId("theme-ring").style.transform).toBe("translateX(calc(2 * (100% + 10px)))");
+    expect(screen.getByTestId("mode-pill").className).toContain("bg-accent");
+    expect(screen.queryByText(/Real orders on CoinDCX from now on/)).toBeNull();
+    rerender(createElement(SettingsSheet, props({ tradingMode: "LIVE_COINDCX" })));
+    expect(screen.getByTestId("mode-pill").className).toContain("bg-warn");
+    expect(screen.getByTestId("mode-pill").style.transform).toBe("translateX(100%)");
+    expect(screen.getByText(/Real orders on CoinDCX from now on/).className).toContain("nx-drop-down");
+  });
+
+  it("shimmers while the server's status loads, then shows Connected with a live dot", () => {
+    const { rerender } = render(createElement(SettingsSheet, props({ serverStatus: null })));
+    expect(screen.getAllByRole("status", { name: "Checking" }).length).toBeGreaterThanOrEqual(2);
+    const status = {
+      startedAt: 0, uptimeSec: 60, storage: { dir: "/data", kept: true, note: "" },
+      angelOne: { configured: true, loggedIn: true, lastLoginAt: 0, lastError: null, stocksKnown: 50 },
+      alpaca: { configured: true, accountStatus: "ACTIVE", lastError: null },
+    };
+    rerender(createElement(SettingsSheet, props({ serverStatus: status as any })));
+    // Only CoinDCX's own check (not given here) is still on its way.
+    expect(screen.queryAllByRole("status", { name: "Checking" })).toHaveLength(1);
+    expect(document.querySelectorAll(".nx-ring").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("rolls a changed amount into place, but not when first shown", () => {
+    const limits = cleanMarketLimits(null);
+    const p = (marketLimits = limits) => props({ riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits } });
+    const { rerender } = render(createElement(SettingsSheet, p()));
+    const shown = () => screen.getByTestId("Coins: amount per trade shown");
+    expect(shown().className).not.toContain("nx-roll-in");
+    rerender(createElement(SettingsSheet, p({ ...limits, coins: { ...limits.coins, amountPerTradeInr: 10000 } })));
+    expect(shown().textContent).toBe("₹10,000");
+    expect(shown().className).toContain("nx-roll-in");
+    // The real dropdown is still there to tap.
+    fireEvent.change(screen.getByLabelText("Coins: amount per trade"), { target: { value: "5000" } });
+  });
+
+  it("shows Checking… then a tick when looking for updates", async () => {
+    render(createElement(SettingsSheet, props()));
+    const btn = screen.getByRole("button", { name: "Check for updates" });
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { getRegistration: async () => ({ update: async () => {}, installing: null, waiting: null }) } });
+    fireEvent.click(btn);
+    expect(btn.textContent).toContain("Checking…");
+    expect(await screen.findByText("Up to date")).toBeTruthy();
+  });
+});
