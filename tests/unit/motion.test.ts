@@ -236,8 +236,12 @@ describe("the Floor's top", () => {
     const at = (h: number) => new Date(2026, 8, 25, h, 0).getTime();
     const { container } = render(createElement(TodayLine, { closes: [{ at: at(10), pnl: 120 }, { at: at(19), pnl: -800 }], openPnl: -20, now }));
     const path = container.querySelector("path")!;
-    expect(path.getAttribute("class")).toContain("nx-draw");
+    expect(path.closest(".nx-reveal")).not.toBeNull();
     expect(path.getAttribute("d")!.split("L")).toHaveLength(4);
+    // The "now" dot sits in the chart's own box (not beside the labels below it).
+    const dot = screen.getByTestId("today-dot");
+    expect(dot.parentElement!.className).toContain("h-14");
+    expect(dot.parentElement!.contains(screen.getByText("Now"))).toBe(false);
     expect(container.querySelector('[data-testid="today-line"]')!.className).toContain("text-loss");
     // Nothing closed and nothing open: no line.
     const empty = render(createElement(TodayLine, { closes: [], openPnl: 0, now }));
