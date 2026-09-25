@@ -10,6 +10,7 @@ import { EXPOSURE_CHOICES, ORDER_VALUE_CHOICES, type RiskLimits } from "../../ho
 import { formatMoney } from "./format";
 import type { ServerStatus } from "../../hooks/useServerStatus";
 import { usePresence } from "./motion";
+import { builtAtText, checkForUpdate, type UpdateCheck } from "../../services/appUpdates";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -83,6 +84,36 @@ const LinkRow: React.FC<{ label: string; sub?: string; onClick: () => void }> = 
     <ChevronRight className="w-4 h-4 text-muted shrink-0" />
   </button>
 );
+
+/** Which build this is, and a button to look for a newer one (it installs and reloads by itself). */
+const AppVersionRow: React.FC = () => {
+  const [state, setState] = useState<"idle" | "checking" | UpdateCheck>("idle");
+  const sub =
+    state === "checking"
+      ? "Checking…"
+      : state === "updating"
+      ? "New version found · the app reloads in a moment"
+      : state === "latest"
+      ? "You're on the latest version"
+      : state === "unavailable"
+      ? "Couldn't check right now"
+      : "Updates install by themselves when the app is opened";
+  return (
+    <Row label={`Version · built ${builtAtText()}`} sub={sub}>
+      <button
+        type="button"
+        disabled={state === "checking" || state === "updating"}
+        onClick={async () => {
+          setState("checking");
+          setState(await checkForUpdate(true));
+        }}
+        className="min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer hover:bg-inset disabled:opacity-60"
+      >
+        Check for updates
+      </button>
+    </Row>
+  );
+};
 
 export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
   const { currentUser, userRole, logout } = useAuth();
@@ -352,6 +383,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
           {pwa.isInstallable && !pwa.isInstalled && (
             <LinkRow label="Install the app" sub="Add Nexus Desk to your home screen" onClick={() => void pwa.install()} />
           )}
+          <AppVersionRow />
         </Group>
 
         {currentUser && (

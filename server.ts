@@ -100,8 +100,20 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    // The service worker and the page that lists the app's files must be
+    // re-checked every time, or phones keep running an old version; the
+    // hashed files under /assets never change, so they can be kept.
+    const NO_CACHE = /(^|\/)(index\.html|sw\.js|registerSW\.js|push-sw\.js|workbox-[\w-]+\.js|manifest\.webmanifest)$/;
+    app.use(
+      express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (NO_CACHE.test(filePath.replace(/\\/g, "/"))) res.setHeader("Cache-Control", "no-cache");
+          else if (filePath.includes(`${path.sep}assets${path.sep}`)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        },
+      })
+    );
     app.get("*", (_req: Request, res: Response) => {
+      res.setHeader("Cache-Control", "no-cache");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

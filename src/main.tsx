@@ -5,7 +5,9 @@ import { AuthProvider } from "./context/AuthContext";
 import "./index.css";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { AuthGuard } from "./AuthGuard";
+import { startAppUpdates } from "./services/registerApp";
 
+startAppUpdates();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
