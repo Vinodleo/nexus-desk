@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../services/apiClient";
+import type { TradeMessage } from "../shared/tradeMessages";
 
 // Pop-up notifications when a trade opens, even with the app closed: this
 // device subscribes to the server's pushes (Web Push) through the app's
@@ -22,6 +23,24 @@ function keyBytes(base64url: string): Uint8Array {
 async function currentSubscription(): Promise<PushSubscription | null> {
   const reg = await navigator.serviceWorker.ready;
   return reg.pushManager.getSubscription();
+}
+
+/**
+ * Shows a trade pop-up from this app (for a trade it closed itself; the
+ * server sends its own). Needs notifications allowed; does nothing otherwise.
+ */
+export async function showLocalTradePopup(msg: TradeMessage): Promise<void> {
+  if (!supported() || Notification.permission !== "granted") return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification(msg.title, {
+      body: msg.body,
+      tag: msg.tag,
+      icon: "/pwa-192x192.png",
+      badge: "/pwa-192x192.png",
+      data: { url: msg.url },
+    });
+  } catch {}
 }
 
 export function useTradeNotifications() {

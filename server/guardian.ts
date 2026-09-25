@@ -8,7 +8,7 @@ import { broadcastToUser } from "./realtime";
 import { computeClosedTradePnl } from "../src/shared/tradeMath";
 import { blendedExitPrice, riskAtOpen } from "../src/shared/exitRules";
 import { closeoutPrice, type Quote } from "../src/shared/quotes";
-import { notifyUser, tradeOpenedMessage } from "./push";
+import { notifyUser, tradeClosedMessage, tradeOpenedMessage } from "./push";
 
 import { validate, syncPositionsBody, closedEventsQuery } from "./validation";
 
@@ -379,8 +379,9 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     );
   }
 
-  // Tell the owner's connected clients immediately
+  // Tell the owner's connected clients immediately, and pop up on their phones.
   broadcastToUser(pos.userId, { type: "DAEMON_POSITION_CLOSED", data: closedRecord });
+  void notifyUser(pos.userId, tradeClosedMessage(closedRecord));
 }
 
 /** This user's trades the guardian closed (newest first). */

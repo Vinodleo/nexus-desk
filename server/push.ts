@@ -115,29 +115,7 @@ export async function notifyUser(uid: string | undefined, message: PushMessage):
   return sent;
 }
 
-const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: n >= 100 ? 2 : 4 })}`;
-
-/** The notification for a new position. */
-export function tradeOpenedMessage(p: {
-  id: string;
-  symbol: string;
-  direction: "LONG" | "SHORT";
-  quantity: number;
-  entryPrice: number;
-  stopLoss: number;
-  takeProfit: number;
-  setupName?: string;
-}, by: "server" | "app"): PushMessage {
-  const side = p.direction === "LONG" ? "Bought" : "Sold short";
-  return {
-    title: `${side} ${p.symbol}`,
-    body: `${p.quantity} @ ${inr(p.entryPrice)} (${inr(p.quantity * p.entryPrice)}) · stop ${inr(p.stopLoss)} · target ${inr(p.takeProfit)}${
-      p.setupName ? ` · ${p.setupName}` : ""
-    }${by === "server" ? " · opened by the server" : ""}`,
-    tag: `open-${p.id}`,
-    url: "/",
-  };
-}
+export { tradeOpenedMessage, tradeClosedMessage } from "../src/shared/tradeMessages";
 
 /** Test hook. */
 export function _resetPush(): void {

@@ -109,6 +109,35 @@ describe("sending", () => {
   });
 });
 
+describe("when a trade closes", () => {
+  it("says the result, why it closed, the price, how long it was held and the trader", () => {
+    const m = push.tradeClosedMessage({
+      positionId: "p9", symbol: "SOL/INR", direction: "LONG", quantity: 0.86, exitPrice: 11650, realizedPnl: 42.1,
+      exitReason: "TRAILING_STOP", holdingDurationMinutes: 38, setupName: "Chen Conservative Trend",
+    });
+    expect(m).toEqual({
+      title: "SOL/INR closed +₹42.1",
+      body: "Trailing stop · sold 0.86 @ ₹11,650 · held 38 min · Chen Conservative Trend",
+      tag: "close-p9",
+      url: "/",
+    });
+    expect(push.tradeClosedMessage({ positionId: "p", symbol: "ZEC/INR", direction: "LONG", quantity: 0.061, exitPrice: 151230, realizedPnl: -178.28, exitReason: "STOP_LOSS", holdingDurationMinutes: 75 }).title).toBe("ZEC/INR closed −₹178.28");
+    expect(push.tradeClosedMessage({ positionId: "p", symbol: "A/INR", direction: "LONG", quantity: 1, exitPrice: 1, realizedPnl: 1, exitReason: "EXPIRY_TIME", holdingDurationMinutes: 75 }).body).toMatch(/held 1 h 15 min/);
+  });
+
+  it("pops up when the guardian closes it", async () => {
+    push.addSubscription("u3", sub(6));
+    guardian.daemonPositions.set("g1", {
+      id: "g1", userId: "u3", symbol: "SOL/INR", direction: "LONG", entryPrice: 100, currentPrice: 100,
+      quantity: 2, stopLoss: 99, takeProfit: 110, openTime: new Date(Date.now() - 10 * 60_000).toISOString(),
+    });
+    guardian.evaluateDaemonPositions("SOL/INR", 98.5);
+    await vi.waitFor(() =>
+      expect(sent.find((s) => s.payload.tag === "close-g1")?.payload).toMatchObject({ title: expect.stringMatching(/^SOL\/INR closed −₹/), body: expect.stringMatching(/^Stop loss · sold 2 @ ₹98.5/) })
+    );
+  });
+});
+
 describe("when a trade opens", () => {
   const position = (over: Record<string, unknown> = {}) => ({
     id: "app-1", symbol: "SOL/INR", direction: "LONG", entryPrice: 100, quantity: 2, stopLoss: 98, takeProfit: 104,

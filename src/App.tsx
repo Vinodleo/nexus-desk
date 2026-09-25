@@ -96,7 +96,8 @@ import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanne
 import { useServerStatus } from "./hooks/useServerStatus";
 import { useEventWindow } from "./hooks/useEventWindow";
 import { useTrailProfile } from "./hooks/useTrailProfile";
-import { useTradeNotifications } from "./hooks/useTradeNotifications";
+import { showLocalTradePopup, useTradeNotifications } from "./hooks/useTradeNotifications";
+import { tradeClosedMessage } from "./shared/tradeMessages";
 import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, newPositionId, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows } from "./services/experienceMemory";
@@ -296,6 +297,8 @@ export default function App() {
   // claims a position the instant a close is first triggered, so a second,
   // near-simultaneous trigger for the same position is a no-op.
   const closingPositionIds = useRef<Set<string>>(new Set());
+  // Trade pop-ups switched on for this phone (Settings); read when the app closes a trade itself.
+  const tradePopupsOnRef = useRef(false);
   const activePositionsRef = React.useRef<Position[]>([]);
   React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
@@ -887,6 +890,13 @@ export default function App() {
       };
 
       setClosedTrades((prev) => [newHistoricalTrade, ...prev]);
+      // The same pop-up the server sends for its closes (same tag, so a close
+      // both sides report shows once).
+      if (tradePopupsOnRef.current) {
+        void showLocalTradePopup(
+          tradeClosedMessage({ ...newHistoricalTrade, positionId: pos.id })
+        );
+      }
 
       // Coin cooldown and the loss-streak kill switch (shared with server closes).
       lossGuardsRef.current(newHistoricalTrade);
@@ -1509,6 +1519,7 @@ export default function App() {
   liveScanReportRef.current = serverScanner.handleLiveReport;
   const serverStatus = useServerStatus(isSettingsOpen);
   const tradeNotifications = useTradeNotifications();
+  tradePopupsOnRef.current = tradeNotifications.state === "on";
   const scanLocationRef = useRef(serverScanner.location);
   scanLocationRef.current = serverScanner.location;
 
