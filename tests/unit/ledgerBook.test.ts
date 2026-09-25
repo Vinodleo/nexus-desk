@@ -241,19 +241,28 @@ describe("Book, Breakdown and Risk motion", () => {
 });
 
 describe("trader bars", () => {
-  it("grow from zero, red to the left or green to the right, against the line to trade", async () => {
+  it("start at the trader's own record and are tugged to the judged result by the other markets", async () => {
     const { TraderBar, barPct } = await import("../../src/components/ledger/LedgerBreakdown");
     expect(barPct(-1.5)).toBe(0);
     expect(barPct(0)).toBe(75);
     expect(barPct(3)).toBe(100);
-    const { container, rerender } = render(createElement(TraderBar, { judgedR: -0.3, ownR: 0.06 }));
-    const fill = () => container.querySelector('[data-testid="trader-bar"] > div:nth-child(2)') as HTMLElement;
-    expect(fill().className).toContain("nx-grow-left");
-    expect(fill().className).toContain("bg-loss");
-    expect(fill().style.width).toBe("15%");
+    // Diego on coins: −0.18R alone, −1.24R elsewhere, judged −0.36R.
+    const { container, rerender } = render(createElement(TraderBar, { judgedR: -0.36, ownR: -0.18, otherR: -1.24 }));
+    const judged = () => container.querySelector('[data-testid="trader-judged"]') as HTMLElement;
+    expect(judged().className).toContain("nx-tug");
+    expect(judged().className).toContain("bg-loss");
+    // 1R is half the bar. Ends at the judged result (zero at 75%, less 18%),
+    // starting from its own record alone (less 9%).
+    expect(judged().style.left).toBe("57%");
+    expect(judged().style.width).toBe("18%");
+    expect(judged().style.getPropertyValue("--l0")).toBe("66%");
+    expect(judged().style.getPropertyValue("--w0")).toBe("9%");
+    const rope = container.querySelector('[data-testid="trader-rope"]') as HTMLElement;
+    expect(rope.style.left).toBe("13%");
     rerender(createElement(TraderBar, { judgedR: 0.2, ownR: 0.2 }));
-    expect(fill().className).toContain("bg-gain");
-    expect(fill().style.left).toBe("75%");
+    expect(judged().className).toContain("bg-gain");
+    expect(judged().style.left).toBe("75%");
+    expect(container.querySelector('[data-testid="trader-rope"]')).toBeNull();
   });
 
   it("flip their chip between Paused and Trading when it changes on screen, not when first shown", async () => {
@@ -312,5 +321,59 @@ describe("linked stops", () => {
     fireEvent.click(card);
     expect(screen.getByText("ADA/INR")).toBeTruthy();
     expect(card.getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+describe("traders with your exits, by market", () => {
+  const row = (market: string, trader: string, avgR: number, judgedR: number, otherMarketR = 0) => ({
+    market, trader, trades: 40, winPct: 30, avgWinR: 1, avgLossR: -0.5, avgR, judgedR, otherMarketR,
+  });
+  const table = {
+    profile: "tight", measuredAt: NOW, symbols: 96, minMarketTrades: 30,
+    rows: [
+      row("crypto", "Diego Aggressive Breakout", -0.18, -0.36, -1.24),
+      row("crypto", "Chen Conservative Trend", -0.26, -0.29, -0.7),
+      row("nse", "Chen Conservative Trend", -0.51, -0.5, -0.3),
+      row("us", "Chen Conservative Trend", 0.2, 0.12, -0.4),
+      row("us", "Sofia Range Scalp", -0.4, -0.45),
+    ],
+  };
+  const open = async () => {
+    vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify({ success: true, table, activity: null, conditions: null })));
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: null }));
+    fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+    await screen.findByText("Traders with your exits");
+  };
+
+  it("shows one market at a time, with how many traders trade in each", async () => {
+    await open();
+    expect(screen.getByRole("tab", { name: "Coins · 0/2" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "India · 0/1" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "US · 1/2" })).toBeTruthy();
+    expect(screen.getByTestId("trader-list").textContent).toContain("Diego Aggressive Breakout");
+    expect(screen.getByTestId("trader-list").textContent).not.toContain("Sofia");
+    fireEvent.click(screen.getByRole("tab", { name: "US · 1/2" }));
+    expect(screen.getByTestId("trader-list").textContent).toContain("Sofia Range Scalp");
+    expect(screen.getByTestId("trader-list").className).toContain("nx-tab-from-right");
+  });
+
+  it("swipes to the next market", async () => {
+    await open();
+    const list = screen.getByTestId("trader-list");
+    fireEvent.touchStart(list, { touches: [{ clientX: 300 }] });
+    fireEvent.touchEnd(list, { changedTouches: [{ clientX: 150 }] });
+    expect(screen.getByRole("tab", { name: "India · 0/1" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("trader-list").textContent).toContain("−0.51R");
+  });
+
+  it("opens a trader to show their record in every market", async () => {
+    await open();
+    const chen = screen.getAllByRole("button", { expanded: false }).find((b) => b.textContent?.startsWith("Chen Conservative Trend"))!;
+    fireEvent.click(chen);
+    const markets = screen.getByTestId("trader-markets").textContent ?? "";
+    expect(markets).toMatch(/Coins.*−0\.26R/);
+    expect(markets).toMatch(/India.*−0\.51R/);
+    expect(markets).toMatch(/US.*\+0\.20R/);
+    expect(screen.getByTestId("trader-list").textContent).toContain("judged −0.29R · other markets −0.70R");
   });
 });

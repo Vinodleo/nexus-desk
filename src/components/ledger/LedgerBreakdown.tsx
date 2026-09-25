@@ -4,7 +4,8 @@ import { apiFetch } from "../../services/apiClient";
 import { MIN_EDGE_R } from "../../services/calibration";
 import { Card, StatTile } from "./ui";
 import { EXIT_LABEL, formatMoney, pnlTone, stopSlip } from "./format";
-import { GrowBar } from "./motion";
+import { GrowBar, useSlideFrom } from "./motion";
+import { ChevronDown } from "lucide-react";
 import { MIN_CONDITION_SETUPS, type ConditionBreakdown } from "../../services/conditionStats";
 
 // Where the book's money goes: average win against average loss, and the
@@ -199,27 +200,71 @@ const BAR_MAX_R = 0.5;
 /** Where a result in R sits on a trader's bar, 0–100 (%). */
 export const barPct = (r: number) => Math.max(0, Math.min(100, ((r - BAR_MIN_R) / (BAR_MAX_R - BAR_MIN_R)) * 100));
 
-/**
- * A trader's judged result as a bar from zero, grown in when shown: red to
- * the left, green to the right, against the line they must cross to trade.
- * The hollow dot is their record in this market alone.
- */
-export const TraderBar: React.FC<{ judgedR: number; ownR: number; delayMs?: number }> = ({ judgedR, ownR, delayMs = 0 }) => {
+/** Where a bar from zero to `r` sits: its left edge and width, in %. */
+const spanOf = (r: number) => {
   const zero = barPct(0);
-  const at = barPct(judgedR);
-  const style = { animationDelay: `${delayMs}ms` };
+  const at = barPct(r);
+  const round = (n: number) => Math.round(n * 100) / 100;
+  return { left: round(Math.min(zero, at)), width: round(Math.abs(at - zero)) };
+};
+
+/**
+ * A trader's result as a bar from zero (red to the left, green to the
+ * right) against the line they must cross to trade. When shown, it starts
+ * at their record in this market alone (the hollow dot) and is tugged to
+ * the judged result by their record in the other markets, drawn as a thin
+ * line from where that record sits.
+ */
+export const TraderBar: React.FC<{ judgedR: number; ownR: number; otherR?: number; delayMs?: number }> = ({ judgedR, ownR, otherR, delayMs = 0 }) => {
+  const zero = barPct(0);
+  const from = spanOf(ownR);
+  const to = spanOf(judgedR);
+  const style = {
+    "--l0": `${from.left}%`,
+    "--w0": `${from.width}%`,
+    left: `${to.left}%`,
+    width: `${to.width}%`,
+    animationDelay: `${delayMs}ms`,
+  } as React.CSSProperties;
+  const pulled = otherR !== undefined && otherR !== 0;
+  const judgedAt = Math.round(barPct(judgedR) * 100) / 100;
+  const otherAt = pulled ? Math.round(barPct(otherR!) * 100) / 100 : 0;
   return (
     <div className="relative h-3.5 my-1" aria-hidden="true" data-testid="trader-bar">
       <div className="absolute inset-x-0 top-[5px] h-1 rounded-full bg-inset" />
-      {judgedR < 0 ? (
-        <div className="absolute top-[5px] h-1 rounded-full bg-loss nx-grow-left" style={{ right: `${100 - zero}%`, width: `${zero - at}%`, ...style }} />
-      ) : (
-        <div className="absolute top-[5px] h-1 rounded-full bg-gain nx-grow" style={{ left: `${zero}%`, width: `${at - zero}%`, ...style }} />
+      {pulled && (
+        <>
+          <div
+            data-testid="trader-rope"
+            className="absolute top-[6px] h-0.5 bg-loss nx-rope"
+            style={{ left: `${Math.min(otherAt, judgedAt)}%`, width: `${Math.abs(judgedAt - otherAt)}%`, animationDelay: `${delayMs}ms` }}
+          />
+          <div className="absolute top-[4px] w-1.5 h-1.5 -ml-[3px] rounded-[2px] bg-loss nx-rope" style={{ left: `${otherAt}%`, animationDelay: `${delayMs}ms` }} />
+        </>
       )}
+      <div
+        data-testid="trader-judged"
+        className={`absolute top-[5px] h-1 rounded-full nx-tug ${judgedR < 0 ? "bg-loss" : "bg-gain"}`}
+        style={style}
+      />
       <div className="absolute top-0 h-3.5 w-px bg-muted" style={{ left: `${zero}%` }} />
       <div className="absolute -top-0.5 h-[18px] w-0.5 -ml-px bg-gain" style={{ left: `${barPct(MIN_EDGE_R)}%` }} />
       <div className="absolute top-0.5 w-2.5 h-2.5 -ml-[5px] rounded-full border-2 border-muted bg-surface" style={{ left: `${barPct(ownR)}%` }} />
     </div>
+  );
+};
+
+/** A plain bar from zero to `r` that grows in (a trader's record in one market). */
+const MarketBar: React.FC<{ r: number; delayMs: number }> = ({ r, delayMs }) => {
+  const span = spanOf(r);
+  return (
+    <span className="relative block h-1.5 rounded-full bg-inset" aria-hidden="true">
+      <span
+        className={`absolute inset-y-0 rounded-full ${r < 0 ? "bg-loss nx-grow-left" : "bg-gain nx-grow"}`}
+        style={{ left: `${span.left}%`, width: `${span.width}%`, animationDelay: `${delayMs}ms` }}
+      />
+      <span className="absolute -inset-y-0.5 w-px bg-muted" style={{ left: `${barPct(0)}%` }} />
+    </span>
   );
 };
 
@@ -238,67 +283,144 @@ export const StatusChip: React.FC<{ paused: boolean }> = ({ paused }) => {
   );
 };
 
-/** The scanner's record of each trader with your exits: who may trade now. */
+const MARKET_TAB = { crypto: "Coins", nse: "India", us: "US" } as const;
+type EdgeMarket = EdgeRow["market"];
+
+/** The scanner's record of each trader with your exits: who may trade now, one market at a time. */
 const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
-  if (!table || table.rows.length === 0) return null;
-  const markets = (["crypto", "nse", "us"] as const).filter((m) => table.rows.some((r) => r.market === m));
+  const [picked, setPicked] = useState<EdgeMarket | null>(null);
+  const [openTrader, setOpenTrader] = useState<string | null>(null);
+  const touchX = useRef<number | null>(null);
+  const markets = table ? (["crypto", "nse", "us"] as const).filter((m) => table.rows.some((r) => r.market === m)) : [];
+  const market = picked && markets.includes(picked as never) ? picked : markets[0];
+  const slideClass = useSlideFrom(market, markets);
+  if (!table || table.rows.length === 0 || !market) return null;
+
+  const judgingIn = (m: EdgeMarket) => table.rows.filter((r) => r.market === m).reduce((n, r) => n + r.trades, 0) >= table.minMarketTrades;
+  const pausedIn = (r: EdgeRow) => judgingIn(r.market) && r.judgedR < MIN_EDGE_R;
+  const pick = (m: EdgeMarket) => {
+    setPicked(m);
+    setOpenTrader(null);
+  };
+  // Swipe left or right to the next market.
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const start = touchX.current;
+    touchX.current = null;
+    if (start === null) return;
+    const dx = e.changedTouches[0].clientX - start;
+    if (Math.abs(dx) < 50) return;
+    const i = markets.indexOf(market as never) + (dx < 0 ? 1 : -1);
+    if (i >= 0 && i < markets.length) pick(markets[i]);
+  };
+
+  const rows = table.rows.filter((r) => r.market === market);
+  const measured = rows.reduce((n, r) => n + r.trades, 0);
+  const judging = judgingIn(market);
+  const index = markets.indexOf(market as never);
   return (
     <Card aria-label="Traders with your exits" className="flex flex-col gap-1">
       <div className="text-sm font-semibold">Traders with your exits</div>
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
         <span className="flex items-center gap-1"><span className="w-3 h-1 rounded-full bg-loss" />judged</span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full border-2 border-muted" />this market alone</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-loss" /><span className="w-1.5 h-1.5 rounded-[2px] bg-loss" />other markets</span>
         <span className="flex items-center gap-1"><span className="w-0.5 h-3 bg-gain" />trades above {rSigned(MIN_EDGE_R)}</span>
       </div>
       <div className="text-xs text-muted">
         Every setup each trader found over the last day ({table.symbols} markets), played out with your {table.profile} trailing stop, the half
         banked at +1R and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)} doesn't trade until they recover. Each
         market's result is judged together with the trader's record in the other markets (8 setups' worth; a good one counts for half), so a
-        few lucky setups can't outweigh a long losing record.
+        few lucky setups can't outweigh a long losing record. Tap a trader to see every market.
       </div>
-      {markets.map((m) => {
-        const rows = table.rows.filter((r) => r.market === m);
-        const measured = rows.reduce((n, r) => n + r.trades, 0);
-        const judging = measured >= table.minMarketTrades;
-        return (
-          <div key={m} className="flex flex-col">
-            <div className="text-xs font-semibold text-muted mt-2">{MARKET_TITLE[m]}</div>
-            {!judging && (
-              <div className="text-xs text-muted">
-                {measured} setups so far; trading isn't limited by this until there are {table.minMarketTrades}.
-              </div>
-            )}
-            <ul className="m-0 p-0 list-none flex flex-col">
-              {rows.map((r, i) => {
-                const paused = judging && r.judgedR < MIN_EDGE_R;
-                return (
-                  <li key={r.trader} className="flex items-start justify-between gap-3 py-2 border-b border-line last:border-b-0">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm truncate">{r.trader}</div>
-                      <TraderBar judgedR={r.judgedR} ownR={r.avgR} delayMs={i * 60} />
-                      <div className="text-xs text-muted tabular-nums">
-                        {r.trades} setups · {r.winPct}% won · win {rSigned(r.avgWinR)} · loss {rSigned(r.avgLossR)}
-                      </div>
-                      <div className="text-xs text-muted tabular-nums">
-                        judged {rSigned(r.judgedR)}
-                        {r.otherMarketR ? ` with their record in the other markets (${rSigned(r.otherMarketR)})` : ""}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className={`text-sm font-semibold tabular-nums ${pnlTone(r.avgR)}`}>{rSigned(r.avgR)}</div>
-                      {judging && (
-                        <div>
-                          <StatusChip paused={paused} />
-                        </div>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+
+      {/* One market at a time: tap a tab or swipe the list; the pill and the list slide together. */}
+      <div role="tablist" aria-label="Market" className="relative grid mt-2 p-0.5 rounded-full bg-inset border border-line" style={{ gridTemplateColumns: `repeat(${markets.length}, minmax(0, 1fr))` }}>
+        <span
+          aria-hidden="true"
+          className="nx-segment-pill absolute inset-y-0.5 left-0.5 rounded-full bg-accent"
+          style={{ width: `calc((100% - 4px) / ${markets.length})`, transform: `translateX(${index * 100}%)` }}
+        />
+        {markets.map((m) => {
+          const on = m === market;
+          const all = table.rows.filter((r) => r.market === m);
+          const trading = all.filter((r) => !pausedIn(r)).length;
+          return (
+            <button
+              key={m}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => pick(m)}
+              className={`relative min-h-9 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${on ? "text-on-accent" : "text-muted"}`}
+            >
+              {MARKET_TAB[m]} · {judgingIn(m) ? `${trading}/${all.length}` : "…"}
+            </button>
+          );
+        })}
+      </div>
+
+      <div
+        key={market}
+        className={`flex flex-col ${slideClass ?? ""}`}
+        onTouchStart={(e) => (touchX.current = e.touches[0].clientX)}
+        onTouchEnd={onTouchEnd}
+        data-testid="trader-list"
+      >
+        <div className="text-xs font-semibold text-muted mt-2">{MARKET_TITLE[market]}</div>
+        {!judging && (
+          <div className="text-xs text-muted">
+            {measured} setups so far; trading isn't limited by this until there are {table.minMarketTrades}.
           </div>
-        );
-      })}
+        )}
+        <ul className="m-0 p-0 list-none flex flex-col">
+          {rows.map((r, i) => {
+            const paused = judging && r.judgedR < MIN_EDGE_R;
+            const open = openTrader === r.trader;
+            const everywhere = markets.map((m) => ({ m, row: table.rows.find((x) => x.market === m && x.trader === r.trader) }));
+            return (
+              <li key={r.trader} className="py-2 border-b border-line last:border-b-0">
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() => setOpenTrader(open ? null : r.trader)}
+                  className="w-full flex items-start justify-between gap-3 text-left cursor-pointer"
+                >
+                  <span className="min-w-0 flex-1 block">
+                    <span className="flex items-center gap-1 text-sm">
+                      <span className="truncate">{r.trader}</span>
+                      <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+                    </span>
+                    <TraderBar judgedR={r.judgedR} ownR={r.avgR} otherR={r.otherMarketR} delayMs={i * 60} />
+                    <span className="block text-xs text-muted tabular-nums">
+                      {r.trades} setups · {r.winPct}% won · win {rSigned(r.avgWinR)} · loss {rSigned(r.avgLossR)}
+                    </span>
+                    <span className="block text-xs text-muted tabular-nums">
+                      judged {rSigned(r.judgedR)}
+                      {r.otherMarketR ? ` · other markets ${rSigned(r.otherMarketR)}` : ""}
+                    </span>
+                  </span>
+                  <span className="text-right shrink-0 block">
+                    <span className={`block text-sm font-semibold tabular-nums ${pnlTone(r.avgR)}`}>{rSigned(r.avgR)}</span>
+                    {judging && <StatusChip paused={paused} />}
+                  </span>
+                </button>
+                {open && (
+                  <div className="nx-drop-down mt-2 p-2.5 rounded-xl bg-inset flex flex-col gap-2" data-testid="trader-markets">
+                    <div className="text-[11px] font-semibold text-muted">{r.trader} in each market, on its own</div>
+                    {everywhere.map(({ m, row }, j) => (
+                      <div key={m} className="grid grid-cols-[3.5rem_1fr_3.5rem] gap-2 items-center text-xs">
+                        <span className="text-muted">{MARKET_TAB[m]}</span>
+                        {row ? <MarketBar r={row.avgR} delayMs={j * 90} /> : <span className="text-muted">no setups</span>}
+                        <span className={`text-right font-semibold tabular-nums ${row ? pnlTone(row.avgR) : "text-muted"}`}>{row ? rSigned(row.avgR) : "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </Card>
   );
 };
