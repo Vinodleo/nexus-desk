@@ -63,6 +63,16 @@ export function isUsOpen(nowMs: number = Date.now()): boolean {
   return weekday >= 1 && weekday <= 5 && minutes >= US_OPEN && minutes < US_CLOSE;
 }
 
+/**
+ * A US candle opening at `startMs` and lasting `frameMs` is (at least partly)
+ * in the regular session. Alpaca's candles include pre-market and
+ * after-hours trading, thin on the free IEX feed, which the scanner
+ * doesn't trade and shouldn't learn from.
+ */
+export function inUsSession(startMs: number, frameMs: number): boolean {
+  return isUsOpen(startMs + frameMs - 1);
+}
+
 /** New US trades are taken now (from the open until 3:30 New York time). */
 export function usTakesEntries(nowMs: number = Date.now()): boolean {
   return isUsOpen(nowMs) && nyParts(nowMs).minutes < US_LAST_ENTRY;
