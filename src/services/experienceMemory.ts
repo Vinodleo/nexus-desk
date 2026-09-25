@@ -1,4 +1,4 @@
-import { ExperienceVector, StrategySetup, RegimeType, TradeAutopsy } from "../types";
+import { ExperienceVector, HistoricalTrade, StrategySetup, RegimeType, TradeAutopsy } from "../types";
 import { seededShare } from "./dataProvenance";
 import type { ShadowSignal } from "./shadowTracker";
 
@@ -95,8 +95,10 @@ export function retrieveSimilarExperiences(
     vwapDist: setup.features.vwapDistancePercent,
   };
 
-  // Filter or prioritize matching family & symbol
+  // Filter or prioritize matching family & symbol. A trade whose readings
+  // weren't recorded counts toward learning but can't be matched on them.
   const scored = database
+    .filter((e) => !e.tags.includes(READINGS_UNKNOWN))
     // Same family, and the same direction when known: a short that paid off
     // when the price fell says nothing good about a long.
     .filter((e) => e.family === setup.family && (!e.direction || e.direction === setup.direction))
@@ -174,4 +176,75 @@ export function experiencesFromShadows(shadows: ShadowSignal[]): ExperienceVecto
     });
   }
   return out;
+}
+
+/** Tag on a trade's memory whose indicator readings weren't recorded. */
+export const READINGS_UNKNOWN = "readings_unknown";
+/** A setup is matched to a trade opened this long after it at most. */
+const SIGNAL_TO_OPEN_MS = 30 * 60 * 1000;
+
+const familyFromName = (name: string): ExperienceVector["family"] =>
+  /breakout/i.test(name) ? "breakout_confirmation" : /reversion|range/i.test(name) ? "mean_reversion" : "trend_following";
+
+/** The id a closed trade's memory has, so each trade is remembered once. */
+export const tradeExperienceId = (t: Pick<HistoricalTrade, "id">) => `exp-trade-${t.id}`;
+
+/**
+ * A closed trade as a memory of what happened: its result, and the market's
+ * readings when its setup was found (from the scanner's record of that
+ * setup: the latest one for the same coin and trader before the trade
+ * opened). Without that record, the trade still counts, tagged so it isn't
+ * matched on readings it doesn't have.
+ */
+export function experienceFromTrade(t: HistoricalTrade, shadows: ShadowSignal[]): ExperienceVector {
+  const openedAt = t.openedAtMs ?? t.closedAtMs ?? 0;
+  const setup = shadows
+    .filter(
+      (s) =>
+        s.symbol === t.symbol &&
+        s.setupName === t.setupName &&
+        s.signalTime <= openedAt + 60_000 &&
+        openedAt - s.signalTime <= SIGNAL_TO_OPEN_MS
+    )
+    .sort((a, b) => b.signalTime - a.signalTime)[0];
+  const readings = setup?.setupFeatures && setup.regime ? setup : undefined;
+  const win = t.realizedPnl > 0;
+  return {
+    id: tradeExperienceId(t),
+    timestamp: new Date(t.closedAtMs ?? Date.now()).toISOString(),
+    symbol: t.symbol,
+    setupName: t.setupName,
+    family: (setup?.family as ExperienceVector["family"]) ?? familyFromName(t.setupName),
+    direction: t.direction,
+    regime: readings?.regime ?? "ranging_tight",
+    features: readings
+      ? {
+          adx: readings.setupFeatures!.adx,
+          rsi: readings.setupFeatures!.rsi,
+          volatilityRatio: 1,
+          volumeSurgeRatio: readings.setupFeatures!.volumeSurgeRatio,
+          vwapDist: readings.setupFeatures!.vwapDistancePercent,
+        }
+      : { adx: 0, rsi: 50, volatilityRatio: 1, volumeSurgeRatio: 1, vwapDist: 0 },
+    metaConfidence: setup?.confidence ?? 0.5,
+    decision: "TRADE",
+    outcome: win ? "WIN" : "LOSS",
+    pnl: t.realizedPnl,
+    pnlPercent: t.realizedPnlPercent,
+    tags: [t.symbol, win ? "win" : "loss", t.exitReason, "trade", ...(readings ? [] : [READINGS_UNKNOWN])],
+  };
+}
+
+/**
+ * The memory with every closed trade in it: those not yet remembered are
+ * added (newest first). Memories the app used to write with placeholder
+ * readings ("exp-live-…") are replaced by these. Returns `memory` itself
+ * when nothing changes.
+ */
+export function withTradeExperiences(memory: ExperienceVector[], trades: HistoricalTrade[], shadows: ShadowSignal[]): ExperienceVector[] {
+  const kept = memory.filter((e) => !e.id.startsWith("exp-live-"));
+  const have = new Set(kept.map((e) => e.id));
+  const added = trades.filter((t) => !have.has(tradeExperienceId(t))).map((t) => experienceFromTrade(t, shadows));
+  if (added.length === 0 && kept.length === memory.length) return memory;
+  return [...added, ...kept];
 }

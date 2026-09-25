@@ -105,7 +105,7 @@ import { tradeClosedMessage } from "./shared/tradeMessages";
 import { holdMinutesFor, trailsAsRunner } from "./shared/coinHolds";
 import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, autopilotQueue, newPositionId, PHONE_SCAN_HOLD_REASON, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
-import { experiencesFromShadows } from "./services/experienceMemory";
+import { experiencesFromShadows, withTradeExperiences } from "./services/experienceMemory";
 
 // ATR recorded on a position for its trailing-stop rules.
 function atrForExits(proposal: TradeProposal): number {
@@ -529,6 +529,8 @@ export default function App() {
   const guardianOnline = useGuardianSync(activePositions, setActivePositions, handleServerClose, isClosedLocally);
   const zerodha = useZerodhaConnection();
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  // Where the gear was when Settings was opened: it opens from there.
+  const [settingsFrom, setSettingsFrom] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
   // 3. Web Worker un-throttled background heartbeat
   useEffect(() => {
@@ -660,6 +662,13 @@ export default function App() {
   useEffect(() => {
     saveStoredExperiences(experiences);
   }, [experiences]);
+
+  // Every closed trade goes into the memory, whoever closed it (this app or
+  // the server's guardian), with the market's readings from when its setup
+  // was found.
+  useEffect(() => {
+    setExperiences((prev) => withTradeExperiences(prev, closedTrades, shadowStore.all()));
+  }, [closedTrades]);
 
   // Continuous Online Learning Background Worker
   useEffect(() => {
@@ -815,15 +824,6 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString(),
       });
 
-      // 4-way post-classification
-      const classification = isWin
-        ? (pos.metaConfidence || 0.5) >= 0.52
-          ? "good_decision_good_outcome"
-          : "bad_decision_good_outcome"
-        : (pos.metaConfidence || 0.5) >= 0.52
-        ? "good_decision_bad_outcome"
-        : "bad_decision_bad_outcome";
-
       const moneyPlaced = Number((pos.entryPrice * pos.quantity).toFixed(2));
       const closedAtFormatted = new Date().toLocaleTimeString([], {
         hour: "2-digit",
@@ -898,42 +898,7 @@ export default function App() {
         }
       }
 
-      // CONTINUOUS LEARNING WITHOUT REWRITING RULES:
-      // Construct rich multi-dimensional experience vector and store in memory bank
-      const newExpVector: ExperienceVector = {
-        id: `exp-live-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        symbol: pos.symbol,
-        setupName: pos.setupName,
-        family: pos.setupName.toLowerCase().includes("breakout")
-          ? "breakout_confirmation"
-          : pos.setupName.toLowerCase().includes("reversion")
-          ? "mean_reversion"
-          : "trend_following",
-        regime: "trending_bullish",
-        features: {
-          adx: 25.5,
-          rsi: 50.0,
-          volatilityRatio: 1.18,
-          volumeSurgeRatio: 2.05,
-          vwapDist: 1.35,
-        },
-        metaConfidence: pos.metaConfidence || 0.52,
-        decision: "TRADE",
-        outcome: isWin ? "WIN" : "LOSS",
-        pnl: finalPnl,
-        pnlPercent,
-        postClassification: classification as any,
-        tags: [
-          pos.symbol,
-          isWin ? "win" : "loss",
-          reason,
-          "frozen_rules_preserved",
-          "memory_veto_active",
-        ],
-      };
-
-      setExperiences((prev) => [newExpVector, ...prev]);
+      // The trade goes into the memory with the other closed trades (the effect on closedTrades below).
 
       // Call Trade Autopsy Agent endpoint server-side
       try {
@@ -1806,7 +1771,11 @@ export default function App() {
                 skipReasons: sampleTelemetry.skipReasons,
               }}
               onOpenQueue={() => setActiveTab("queue")}
-              onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenSettings={(from) => {
+                setSettingsFrom(from ? { left: from.left, top: from.top, width: from.width, height: from.height } : null);
+                setIsSettingsOpen(true);
+              }}
+              settingsOpen={isSettingsOpen}
             />
           )}
 
@@ -1962,6 +1931,7 @@ export default function App() {
 
       <SettingsSheet
         isOpen={isSettingsOpen}
+        from={settingsFrom}
         theme={appTheme.theme}
         onThemeChange={appTheme.setTheme}
         notifications={tradeNotifications}
