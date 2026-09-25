@@ -46,6 +46,8 @@ export default defineConfig(() => {
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10 MiB limit to accommodate TFJS
+          // Trade notifications (Web Push) arrive through the service worker.
+          importScripts: ['push-sw.js'],
         },
         devOptions: {
           enabled: false,

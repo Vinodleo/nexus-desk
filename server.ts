@@ -19,6 +19,7 @@ import { router as coindcxRouter } from "./server/routes/coindcx";
 import { router as tradingRouter } from "./server/routes/trading";
 import { router as agentsRouter } from "./server/routes/agents";
 import { router as scannerRouter } from "./server/routes/scanner";
+import { router as pushRouter } from "./server/routes/push";
 import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
 import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
@@ -62,6 +63,7 @@ app.use(tradingRouter);
 app.use(guardianRouter);
 app.use(agentsRouter);
 app.use(scannerRouter);
+app.use(pushRouter);
 
 // Where the server runs and whether its saved state survives restarts.
 app.get("/api/server/status", (_req: Request, res: Response) => {

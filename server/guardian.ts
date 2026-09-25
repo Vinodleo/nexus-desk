@@ -8,6 +8,7 @@ import { broadcastToUser } from "./realtime";
 import { computeClosedTradePnl } from "../src/shared/tradeMath";
 import { blendedExitPrice, riskAtOpen } from "../src/shared/exitRules";
 import { closeoutPrice, type Quote } from "../src/shared/quotes";
+import { notifyUser, tradeClosedMessage, tradeOpenedMessage } from "./push";
 
 import { validate, syncPositionsBody, closedEventsQuery } from "./validation";
 
@@ -195,6 +196,9 @@ router.get("/api/daemon/state", (req: Request, res: Response) => {
   });
 });
 
+/** A synced position opened within this long is announced as a new trade. */
+const NEW_POSITION_NOTIFY_MS = 5 * 60 * 1000;
+
 // Sync positions from client to server daemon
 router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }), (req: Request, res: Response) => {
   const { positions } = req.body;
@@ -239,6 +243,12 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
 
     const existing = daemonPositions.get(p.id);
     if (existing && existing.userId && existing.userId !== uid) continue; // someone else's position id
+    // A position the app just opened: tell the user's devices. (Only a
+    // fresh one: an old position re-sent after the server lost its state
+    // isn't news.)
+    if (!existing && Date.now() - Date.parse(p.openTime) < NEW_POSITION_NOTIFY_MS) {
+      void notifyUser(uid, tradeOpenedMessage(p, "app"));
+    }
 
     // A live position is guarded only while the server's registry says it's
     // open, and on the server's own quantity — never the client's claim.
@@ -369,8 +379,9 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     );
   }
 
-  // Tell the owner's connected clients immediately
+  // Tell the owner's connected clients immediately, and pop up on their phones.
   broadcastToUser(pos.userId, { type: "DAEMON_POSITION_CLOSED", data: closedRecord });
+  void notifyUser(pos.userId, tradeClosedMessage(closedRecord));
 }
 
 /** This user's trades the guardian closed (newest first). */
@@ -387,6 +398,7 @@ export function openServerPosition(uid: string, position: DaemonPosition): void 
   daemonPositions.set(pos.id, pos);
   saveDaemonStateToDisk();
   broadcastToUser(uid, { type: "POSITION_OPENED", data: pos });
+  void notifyUser(uid, tradeOpenedMessage(pos, "server"));
 }
 
 /** Test hook. */

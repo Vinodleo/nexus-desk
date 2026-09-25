@@ -78,6 +78,7 @@ import { daemonEventToTrade, type DaemonCloseEvent } from "./services/daemonEven
 import type { Quote } from "./shared/quotes";
 import { LOSS_STREAK_LIMIT, cooldownUntil, lossStreak } from "./services/lossGuards";
 import { getExpectancyTable, marketTrendFrom } from "./services/exitExpectancy";
+import { fetchServerDeskControls, loadDeskControls, saveDeskControls } from "./services/deskControls";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { adoptServerOpened, useGuardianSync } from "./hooks/useGuardianSync";
@@ -95,6 +96,8 @@ import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanne
 import { useServerStatus } from "./hooks/useServerStatus";
 import { useEventWindow } from "./hooks/useEventWindow";
 import { useTrailProfile } from "./hooks/useTrailProfile";
+import { showLocalTradePopup, useTradeNotifications } from "./hooks/useTradeNotifications";
+import { tradeClosedMessage } from "./shared/tradeMessages";
 import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, newPositionId, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows } from "./services/experienceMemory";
@@ -122,8 +125,9 @@ export default function App() {
 
   // Navigation: Floor, Queue, Book, Lab, Learning
   const [activeTab, setActiveTab] = useState<TabType>("floor");
-  const [decisionMode, setDecisionMode] =
-    useState<DecisionMode>("AUTO_WITHIN_LIMITS");
+  // Autopilot and the kill switch, as last left on this device (off until known).
+  const savedControls = React.useMemo(() => loadDeskControls(), []);
+  const [decisionMode, setDecisionMode] = useState<DecisionMode>(savedControls?.autopilot ? "AUTO_WITHIN_LIMITS" : "MANUAL");
   const [executionToast, setExecutionToast] = useState<ExecutionToast | null>(
     null
   );
@@ -144,7 +148,29 @@ export default function App() {
   const [dailyRealizedPnl, setDailyRealizedPnl] = useState<number>(() => loadStoredCapital().dailyRealizedPnl);
   const [allTimeRealizedPnl, setAllTimeRealizedPnl] = useState<number>(() => loadStoredCapital().allTimeRealizedPnl || 0);
   const [cash, setCash] = useState<number>(() => loadStoredCapital().cash);
-  const [killSwitchActive, setKillSwitchActive] = useState<boolean>(false);
+  const [killSwitchActive, setKillSwitchActive] = useState<boolean>(savedControls?.killSwitch ?? false);
+  // Known once saved here or read from the server; the server isn't sent
+  // settings before then, so a default can't overwrite its copy.
+  const [controlsKnown, setControlsKnown] = useState<boolean>(savedControls !== null);
+  useEffect(() => {
+    if (controlsKnown) return;
+    let cancelled = false;
+    fetchServerDeskControls().then((server) => {
+      if (cancelled) return;
+      if (server) {
+        setDecisionMode(server.autopilot ? "AUTO_WITHIN_LIMITS" : "MANUAL");
+        setKillSwitchActive(server.killSwitch);
+        if (server.killSwitch) setFailureState((prev) => ({ ...prev, globalKillSwitchActive: true }));
+      }
+      setControlsKnown(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [controlsKnown]);
+  useEffect(() => {
+    if (controlsKnown) saveDeskControls({ autopilot: decisionMode === "AUTO_WITHIN_LIMITS", killSwitch: killSwitchActive });
+  }, [controlsKnown, decisionMode, killSwitchActive]);
 
   const {
     tradingMode,
@@ -271,6 +297,8 @@ export default function App() {
   // claims a position the instant a close is first triggered, so a second,
   // near-simultaneous trigger for the same position is a no-op.
   const closingPositionIds = useRef<Set<string>>(new Set());
+  // Trade pop-ups switched on for this phone (Settings); read when the app closes a trade itself.
+  const tradePopupsOnRef = useRef(false);
   const activePositionsRef = React.useRef<Position[]>([]);
   React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
@@ -590,7 +618,7 @@ export default function App() {
 
   // Failure Injection & Risk States
   const [failureState, setFailureState] = useState<FailureInjectionState>({
-    globalKillSwitchActive: false,
+    globalKillSwitchActive: savedControls?.killSwitch ?? false,
     simulateAgentTimeout: false,
     simulateStaleMarketData: false,
     simulateDailyLossBreach: false,
@@ -862,6 +890,13 @@ export default function App() {
       };
 
       setClosedTrades((prev) => [newHistoricalTrade, ...prev]);
+      // The same pop-up the server sends for its closes (same tag, so a close
+      // both sides report shows once).
+      if (tradePopupsOnRef.current) {
+        void showLocalTradePopup(
+          tradeClosedMessage({ ...newHistoricalTrade, positionId: pos.id })
+        );
+      }
 
       // Coin cooldown and the loss-streak kill switch (shared with server closes).
       lossGuardsRef.current(newHistoricalTrade);
@@ -1478,10 +1513,13 @@ export default function App() {
       recordScan(report);
       // Scans from while the app was closed may hold proposals that have since expired.
       mergeScanIntoQueue({ newProposals: report.newProposals.filter((p) => p.expiresAt === undefined || p.expiresAt > now) });
-    }
+    },
+    controlsKnown
   );
   liveScanReportRef.current = serverScanner.handleLiveReport;
   const serverStatus = useServerStatus(isSettingsOpen);
+  const tradeNotifications = useTradeNotifications();
+  tradePopupsOnRef.current = tradeNotifications.state === "on";
   const scanLocationRef = useRef(serverScanner.location);
   scanLocationRef.current = serverScanner.location;
 
@@ -1902,6 +1940,7 @@ export default function App() {
 
       <SettingsSheet
         isOpen={isSettingsOpen}
+        notifications={tradeNotifications}
         serverStatus={serverStatus}
         scanLocation={serverScanner.location}
         lastServerScanAt={serverScanner.lastScanAt}

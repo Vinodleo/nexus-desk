@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import type { AuthedRequest } from "../auth";
 import type { PromotedLabModel } from "../../src/types";
 import { validate, deskStateBody, scannerReportsQuery } from "../validation";
-import { setDeskState } from "../scanner/deskState";
+import { getDeskState, setDeskState } from "../scanner/deskState";
 import { coinActivity, exitEdgeTable, reportsSince, scanNow, scannerStatus, shadowsFor } from "../scanner/scannerService";
 import { MIN_TRADING_ACTIVITY } from "../../src/services/tradingActivity";
 import { expectancyRows, MIN_MARKET_TRADES } from "../../src/services/exitExpectancy";
@@ -21,6 +21,13 @@ router.post("/api/desk/state", validate({ body: deskStateBody }), (req: Request,
   const body = req.body;
   setDeskState(uidOf(req), { ...body, promotedModel: (body.promotedModel ?? null) as PromotedLabModel | null });
   res.json({ success: true, status: scannerStatus(uidOf(req)) });
+});
+
+// The settings the server holds for this user (null if none): a device that
+// has never saved its own adopts autopilot and the kill switch from here.
+router.get("/api/desk/state", (req: Request, res: Response) => {
+  const desk = getDeskState(uidOf(req));
+  res.json({ success: true, desk: desk ? { autopilot: desk.autopilot, killSwitch: desk.killSwitch, updatedAt: desk.updatedAt } : null });
 });
 
 // Whether the server is scanning, and every scan since `since` (ms).
