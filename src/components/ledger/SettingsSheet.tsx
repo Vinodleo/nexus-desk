@@ -4,12 +4,15 @@ import type { CoinDcxAccountBalance, CoinDcxServerStatus, TradingExecutionMode }
 import type { ZerodhaStatus } from "../../hooks/useZerodhaConnection";
 import { useAuth } from "../../context/AuthContext";
 import { usePWAInstall } from "../../hooks/usePWAInstall";
-import { RoundIconButton } from "./ui";
+import { RoundIconButton, Switch } from "./ui";
+import type { NotifyState } from "../../hooks/useTradeNotifications";
 import { EXPOSURE_CHOICES, ORDER_VALUE_CHOICES, type RiskLimits } from "../../hooks/useRiskPolicy";
 import { formatMoney } from "./format";
 import type { ServerStatus } from "../../hooks/useServerStatus";
 
 export interface SettingsSheetProps {
+  /** Pop-up notifications when a trade opens (this device). */
+  notifications?: { state: NotifyState; error: string; enable: () => void; disable: () => void };
   isOpen: boolean;
   onClose: () => void;
   tradingMode: TradingExecutionMode;
@@ -256,6 +259,34 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             )}
           </Row>
         </Group>
+
+        {props.notifications && (
+          <>
+            <Label>Notifications</Label>
+            <Group>
+              <Row
+                label="Trade pop-ups"
+                sub={
+                  props.notifications.error ||
+                  {
+                    unsupported: "This browser can't show them. On iPhone, add the app to your home screen first.",
+                    blocked: "Blocked for this site: allow notifications in your browser's site settings.",
+                    off: "A pop-up on this phone when a trade opens, even with the app closed",
+                    on: "On for this phone: a pop-up when a trade opens, even with the app closed",
+                    working: "Checking…",
+                  }[props.notifications.state]
+                }
+              >
+                <Switch
+                  checked={props.notifications.state === "on"}
+                  onChange={(on) => (on ? props.notifications!.enable() : props.notifications!.disable())}
+                  label="Trade pop-ups"
+                  disabled={["unsupported", "blocked", "working"].includes(props.notifications.state)}
+                />
+              </Row>
+            </Group>
+          </>
+        )}
 
         <Label>Server</Label>
         <Group>

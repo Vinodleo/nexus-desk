@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiFetch = vi.fn();
@@ -31,7 +31,11 @@ beforeEach(() => {
   localStorage.clear();
   apiFetch.mockReset();
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  // Unmount each test's hook, so its delayed sends can't land in the next test.
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("useServerScanner", () => {
   it("hands over each server scan once, oldest first, and says the server is scanning", async () => {
@@ -60,6 +64,15 @@ describe("useServerScanner", () => {
     await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => u === "/api/desk/state")).toBe(true), { timeout: 3000 });
     const [, init] = apiFetch.mock.calls.find(([u]) => u === "/api/desk/state")!;
     expect(JSON.parse(init.body)).toEqual(desk);
+  });
+
+  it("sends nothing until the desk's controls are known, so defaults can't overwrite the server's", async () => {
+    apiFetch.mockImplementation(async () => json({ status: { running: true }, reports: [] }));
+    const { rerender } = renderHook(({ ready }) => useServerScanner(desk, vi.fn(), ready), { initialProps: { ready: false } });
+    await new Promise((r) => setTimeout(r, 1300));
+    expect(apiFetch.mock.calls.some(([u]) => u === "/api/desk/state")).toBe(false);
+    rerender({ ready: true });
+    await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => u === "/api/desk/state")).toBe(true), { timeout: 3000 });
   });
 
   it("sends the settings again when the server says it doesn't have them", async () => {

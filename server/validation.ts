@@ -155,6 +155,20 @@ export const deskStateBody = z.object({
   promotedModel: promotedModel.nullable(),
 });
 
+// ---------- push notifications ----------
+
+const pushEndpoint = z.string().url().max(2048).refine((u) => u.startsWith("https://"), "push endpoints are https");
+
+export const pushSubscribeBody = z.object({
+  subscription: z.object({
+    endpoint: pushEndpoint,
+    expirationTime: z.number().nullable().optional(),
+    keys: z.object({ p256dh: z.string().min(1).max(256), auth: z.string().min(1).max(256) }),
+  }),
+});
+
+export const pushUnsubscribeBody = z.object({ endpoint: pushEndpoint });
+
 export const scannerReportsQuery = z.object({
   since: z.coerce.number().finite().nonnegative().optional(),
 });

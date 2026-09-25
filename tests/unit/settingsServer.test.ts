@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -54,5 +54,25 @@ describe("Settings: Server", () => {
     const { container } = render(createElement(SettingsSheet, props({ serverStatus: status, scanLocation: "browser" })));
     expect(container.textContent).toContain("Lost on restart");
     expect(container.textContent).toContain("Only while this app is open");
+  });
+});
+
+describe("trade pop-ups", () => {
+  it("switch on and off from Settings, and say why when they can't", () => {
+    const enable = vi.fn();
+    const disable = vi.fn();
+    const { rerender } = render(createElement(SettingsSheet, props({ notifications: { state: "off", error: "", enable, disable } })));
+    const toggle = screen.getByRole("switch", { name: "Trade pop-ups" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    expect(enable).toHaveBeenCalled();
+
+    rerender(createElement(SettingsSheet, props({ notifications: { state: "on", error: "", enable, disable } })));
+    fireEvent.click(screen.getByRole("switch", { name: "Trade pop-ups" }));
+    expect(disable).toHaveBeenCalled();
+
+    rerender(createElement(SettingsSheet, props({ notifications: { state: "blocked", error: "", enable, disable } })));
+    expect(screen.getByText(/allow notifications in your browser's site settings/)).toBeTruthy();
+    expect((screen.getByRole("switch", { name: "Trade pop-ups" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

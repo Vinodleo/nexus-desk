@@ -49,7 +49,12 @@ function readLastReportAt(): number {
   }
 }
 
-export function useServerScanner(desk: DeskSettings, onReport: (report: ServerScanReport) => void) {
+/**
+ * @param ready false until the desk's controls are known (saved on this
+ *   device, or read from the server): nothing is sent before then, so a
+ *   default can't overwrite what the server holds.
+ */
+export function useServerScanner(desk: DeskSettings, onReport: (report: ServerScanReport) => void, ready: boolean = true) {
   const [location, setLocation] = useState<ScanLocation>("checking");
   const [lastScanAt, setLastScanAt] = useState(0);
   const [lastAutopilotOpenAt, setLastAutopilotOpenAt] = useState(0);
@@ -74,9 +79,12 @@ export function useServerScanner(desk: DeskSettings, onReport: (report: ServerSc
   const deskJson = JSON.stringify(desk);
   const deskJsonRef = useRef(deskJson);
   deskJsonRef.current = deskJson;
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
   const resending = useRef(false);
 
   const sendDesk = useCallback(async () => {
+    if (!readyRef.current) return;
     try {
       const res = await apiFetch("/api/desk/state", {
         method: "POST",
@@ -109,9 +117,10 @@ export function useServerScanner(desk: DeskSettings, onReport: (report: ServerSc
   );
 
   useEffect(() => {
+    if (!ready) return;
     const t = setTimeout(() => void sendDesk(), 1000);
     return () => clearTimeout(t);
-  }, [deskJson, sendDesk]);
+  }, [deskJson, sendDesk, ready]);
 
   // Scan reports: on open, on focus, and every 30s as a backstop to the WebSocket.
   useEffect(() => {
