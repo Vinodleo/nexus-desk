@@ -1,3 +1,4 @@
+import { isUsSymbol, US_BREAKEVEN_BUFFER } from "./usMarket";
 import { isNseSymbol } from "./nse";
 import { NSE_BREAKEVEN_BUFFER } from "./exitRules";
 
@@ -138,9 +139,10 @@ export function isTrendRunner(p: Pick<TrailState, "trailMode" | "family" | "expe
  */
 export function updateTrailingStop(p: TrailState, price: number): boolean {
   const base = trailProfile(p.trailProfile);
-  // Stocks: a trailing stop never sits closer to entry than their costs.
-  const cfg = isNseSymbol(p.symbol) && !base.fixed
-    ? { ...base, scalpFloor: Math.max(base.scalpFloor, NSE_BREAKEVEN_BUFFER), runnerFloor: Math.max(base.runnerFloor, NSE_BREAKEVEN_BUFFER) }
+  // Stocks (Indian or US): a trailing stop never sits closer to entry than their costs.
+  const stockBuffer = isNseSymbol(p.symbol) ? NSE_BREAKEVEN_BUFFER : isUsSymbol(p.symbol) ? US_BREAKEVEN_BUFFER : null;
+  const cfg = stockBuffer !== null && !base.fixed
+    ? { ...base, scalpFloor: Math.max(base.scalpFloor, stockBuffer), runnerFloor: Math.max(base.runnerFloor, stockBuffer) }
     : base;
   const isLong = p.direction === "LONG";
   const entry = p.entryPrice;

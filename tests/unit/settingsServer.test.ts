@@ -79,17 +79,21 @@ describe("trade pop-ups", () => {
 });
 
 describe("Settings: trade size per market", () => {
-  it("sets amount per trade and trades at once separately for coins and stocks", () => {
+  it("sets amount per trade and trades at once separately for coins, Indian stocks and US stocks", () => {
     const onRiskLimitsChange = vi.fn();
     render(createElement(SettingsSheet, props({ onRiskLimitsChange })));
     expect(screen.getByText("Up to ₹10,000 in coins at a time")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Coins: amount per trade"), { target: { value: "3000" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { coins: { amountPerTradeInr: 3000, maxOpenTrades: 2 }, stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2 } },
+      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 3000, maxOpenTrades: 2 } },
     });
-    fireEvent.change(screen.getByLabelText("Stocks: trades at once"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Indian stocks: trades at once"), { target: { value: "4" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { coins: { amountPerTradeInr: 5000, maxOpenTrades: 2 }, stocks: { amountPerTradeInr: 5000, maxOpenTrades: 4 } },
+      marketLimits: { ...cleanMarketLimits(null), stocks: { amountPerTradeInr: 5000, maxOpenTrades: 4 } },
+    });
+    fireEvent.change(screen.getByLabelText("US stocks: amount per trade"), { target: { value: "2000" } });
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
+      marketLimits: { ...cleanMarketLimits(null), us: { amountPerTradeInr: 2000, maxOpenTrades: 2 } },
     });
     expect(screen.queryByLabelText("Largest trade")).toBeNull();
   });
@@ -97,7 +101,7 @@ describe("Settings: trade size per market", () => {
   it("in Live mode, flags an amount above the server's cap per live order, and stocks as paper only", () => {
     const riskLimits = {
       maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1,
-      marketLimits: { coins: { amountPerTradeInr: 10000, maxOpenTrades: 2 }, stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2 } },
+      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 10000, maxOpenTrades: 2 } },
     };
     const coinDcxStatus = { liveRisk: { enabled: true, maxOrderNotionalInr: 5000, maxDailyNotionalInr: 20000, maxDailyOrders: 10 } } as any;
     render(createElement(SettingsSheet, props({ tradingMode: "LIVE_COINDCX", riskLimits, coinDcxStatus })));

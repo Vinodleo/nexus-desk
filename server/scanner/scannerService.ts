@@ -17,6 +17,11 @@ import { fetchOrderBook, recentBook } from "../coindcxMarketData";
 import { entryPriceFrom } from "../../src/shared/quotes";
 import { angelConfigured, fetchStockDepth } from "../angelOne";
 import { freshQuote } from "../quoteStore";
+import { alpacaConfigured, checkAlpacaAccount } from "../alpaca";
+import { refreshUsdInr } from "../fx";
+import { usQuoteBook } from "../usPrices";
+import { isUsOpen, isUsSymbol, US_SYMBOLS } from "../../src/shared/usMarket";
+import { marketOf } from "../../src/shared/marketLimits";
 import { cleanMarketLimits } from "../../src/shared/marketLimits";
 import { NSE_SYMBOLS, isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
@@ -130,16 +135,24 @@ export function recordSpread(symbol: string, spread: number): void {
   observedSpreads.set(symbol, held === undefined ? spread : held * 0.7 + spread * 0.3);
 }
 
-/** A market's typical spread; for one never read, the middle of the others' in the same market (coins, or stocks). */
+/** A market's typical spread; for one never read, the middle of the others' in the same market (coins, Indian or US stocks). */
 export function typicalSpread(symbol: string): number | undefined {
   const own = observedSpreads.get(symbol);
   if (own !== undefined) return own;
-  const stock = isNseSymbol(symbol);
-  const all = [...observedSpreads.entries()].filter(([s]) => isNseSymbol(s) === stock).map(([, v]) => v).sort((a, b) => a - b);
+  const market = marketOf(symbol);
+  const all = [...observedSpreads.entries()].filter(([s]) => marketOf(s) === market).map(([, v]) => v).sort((a, b) => a - b);
   return all.length > 0 ? all[Math.floor(all.length / 2)] : undefined;
 }
 
 async function getOrderBook(symbol: string, notional: number) {
+  if (isUsSymbol(symbol)) {
+    // Alpaca's free feed has no depth: the best bid and ask (IEX) with their sizes.
+    const book = usQuoteBook(symbol);
+    if (!book) return null;
+    const orderBook = toOrderBook(book, notional, "alpaca");
+    if (orderBook.spreadPct !== undefined) recordSpread(symbol, orderBook.spreadPct);
+    return orderBook;
+  }
   if (isNseSymbol(symbol)) {
     const book = await fetchStockDepth(symbol).catch(() => null);
     if (!book) return null;
@@ -159,14 +172,24 @@ export function stockUniverse(): string[] {
   return angelConfigured() ? NSE_SYMBOLS : [];
 }
 
-/** Everything with candles to measure traders on: coins, and stocks (whose candles are kept overnight). */
-function measuredSymbols(): string[] {
-  return [...universe, ...stockUniverse()];
+/** US stocks the scanner covers: when Alpaca is set up (paper, prices in rupees). */
+export function usUniverse(): string[] {
+  return alpacaConfigured() ? US_SYMBOLS : [];
 }
 
-/** The coins, plus the stocks while NSE is open. */
+/** Everything with candles to measure traders on: coins, and stocks, Indian and US (whose candles are kept overnight). */
+function measuredSymbols(): string[] {
+  return [...universe, ...stockUniverse(), ...usUniverse()];
+}
+
+/** Whether a symbol's market is open for fresh candles now (coins always are). */
+function marketOpenFor(symbol: string, now: number): boolean {
+  return isUsSymbol(symbol) ? isUsOpen(now) : isNseSymbol(symbol) ? isNseOpen(now) : true;
+}
+
+/** The coins, plus the Indian stocks while NSE is open and the US stocks while the US market is. */
 function scanList(now: number): string[] {
-  return isNseOpen(now) ? [...universe, ...stockUniverse()] : universe;
+  return [...universe, ...(isNseOpen(now) ? stockUniverse() : []), ...(isUsOpen(now) ? usUniverse() : [])];
 }
 
 /**
@@ -202,7 +225,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
   const report = await scanAllMarkets({
     symbols,
     cryptoSymbols: universe,
-    equitySymbols: stockUniverse(),
+    equitySymbols: [...stockUniverse(), ...usUniverse()],
     now,
     // Each trader's last day with your exits; remeasured hourly.
     exitExpectancy: getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk.trailProfile, now, typicalSpread),
@@ -226,14 +249,15 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
   // Self-Approve: opens what autopilot accepts and marks each proposal.
   const newProposals = await runServerAutopilot(uid, desk, report.newProposals, riskPolicy, {
     // A coin opens at the ask (or bid, for a short) from the order book the
-    // scan just read, a stock at its latest Angel One quote; otherwise at the
-    // latest trade or candle close.
+    // scan just read, a stock at its latest quote (Angel One, or Alpaca for
+    // US stocks); otherwise at the latest trade or candle close.
     livePrice: (s, direction) => {
-      const book = isNseSymbol(s) ? null : recentBook(s.split("/")[0], ENTRY_BOOK_MAX_AGE_MS);
+      const coin = marketOf(s) === "coins";
+      const book = coin ? recentBook(s.split("/")[0], ENTRY_BOOK_MAX_AGE_MS) : null;
       if (book && book.bids.length > 0 && book.asks.length > 0) {
         return entryPriceFrom(direction, { bid: book.bids[0][0], ask: book.asks[0][0], at: book.fetchedAt });
       }
-      const quote = isNseSymbol(s) ? freshQuote(s, now) : undefined;
+      const quote = coin ? undefined : freshQuote(s, now);
       if (quote) return entryPriceFrom(direction, quote);
       return currentPrices[s] ?? market.getBars(s)?.at(-1)?.close;
     },
@@ -258,15 +282,23 @@ async function refreshMarket(now: number): Promise<void> {
   setMarketRules([...rules.values()]);
   // Coins with setups still being followed keep their candles too.
   const followed = [...users.values()].flatMap((u) => u.shadows.filter((s) => s.status === "open").map((s) => s.symbol));
-  const open = isNseOpen(now);
-  // Stocks keep their candles overnight; they're fetched only while NSE is
-  // open. Except stocks with none at all (after a restart): their last
-  // session is loaded anyway (Angel One serves past candles any time), at
-  // most hourly, so the traders' stock record doesn't vanish until the open.
-  market.keepOnly([...new Set([...universe, ...stockUniverse(), ...followed, MARKET_SYMBOL])]);
-  const missingStocks = !open && now - lastStockBackfillAt >= STOCK_BACKFILL_GAP_MS ? stockUniverse().filter((s) => !market.getBars(s)) : [];
+  // US prices are converted to rupees: keep the rate current.
+  if (usUniverse().length > 0) {
+    await refreshUsdInr(now);
+    await checkAlpacaAccount(now);
+  }
+  // Stocks keep their candles overnight; they're fetched only while their
+  // market is open. Except stocks with none at all (after a restart): their
+  // last session is loaded anyway (Angel One and Alpaca serve past candles
+  // any time), at most hourly, so the traders' record doesn't vanish until
+  // the open.
+  market.keepOnly([...new Set([...universe, ...stockUniverse(), ...usUniverse(), ...followed, MARKET_SYMBOL])]);
+  const missingStocks =
+    now - lastStockBackfillAt >= STOCK_BACKFILL_GAP_MS
+      ? [...stockUniverse(), ...usUniverse()].filter((s) => !marketOpenFor(s, now) && !market.getBars(s))
+      : [];
   if (missingStocks.length > 0) lastStockBackfillAt = now;
-  const symbols = [...new Set([...scanList(now), ...followed, MARKET_SYMBOL])].filter((sym) => open || !isNseSymbol(sym));
+  const symbols = [...new Set([...scanList(now), ...followed, MARKET_SYMBOL])].filter((sym) => marketOpenFor(sym, now));
   await market.refresh([...symbols, ...missingStocks], now);
   await market.refreshMacro([...new Set([...scanList(now), MARKET_SYMBOL])], now);
 }
@@ -337,6 +369,7 @@ export function scannerStatus(uid: string, now: number = Date.now()) {
     lastAutopilotOpenAt: lastServerOpenAt(uid),
     coins: universe.length,
     stocks: stockUniverse().length,
+    usStocks: usUniverse().length,
     problems: market.problems(scanList(now)),
   };
 }

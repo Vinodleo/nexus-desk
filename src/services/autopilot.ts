@@ -80,7 +80,7 @@ export function selectAutopilotTrades(
   // against at scan time: several proposals from one scan could each pass
   // alone and together break the position or exposure limit.
   let positionCount = book.positions.length;
-  const openByMarket: Record<MarketKey, number> = { coins: 0, stocks: 0 };
+  const openByMarket: Record<MarketKey, number> = { coins: 0, stocks: 0, us: 0 };
   for (const p of book.positions) openByMarket[marketOf(p.symbol)]++;
   let exposure = book.positions.reduce((acc, p) => acc + openQuantity(p) * p.currentPrice, 0);
   let hourly = book.openedLastHour;

@@ -108,8 +108,10 @@ const Rows: React.FC<{ title: string; rows: BreakdownRow[]; limit?: number }> = 
   );
 };
 
+const MARKET_TITLE = { crypto: "Coins", nse: "Indian stocks", us: "US stocks" } as const;
+
 interface EdgeRow {
-  market: "crypto" | "nse";
+  market: "crypto" | "nse" | "us";
   trader: string;
   trades: number;
   winPct: number;
@@ -187,14 +189,14 @@ const CoinCosts: React.FC<{ activity: CoinActivity | null }> = ({ activity }) =>
 /** The scanner's record of each trader with your exits: who may trade now. */
 const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
   if (!table || table.rows.length === 0) return null;
-  const markets = (["crypto", "nse"] as const).filter((m) => table.rows.some((r) => r.market === m));
+  const markets = (["crypto", "nse", "us"] as const).filter((m) => table.rows.some((r) => r.market === m));
   return (
     <Card aria-label="Traders with your exits" className="flex flex-col gap-1">
       <div className="text-sm font-semibold">Traders with your exits</div>
       <div className="text-xs text-muted">
         Every setup each trader found over the last day ({table.symbols} markets), played out with your {table.profile} trailing stop, the half
         banked at +1R and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)} doesn't trade until they recover. Each
-        market's result is judged together with the trader's record in the other market (8 setups' worth; a good one counts for half), so a
+        market's result is judged together with the trader's record in the other markets (8 setups' worth; a good one counts for half), so a
         few lucky setups can't outweigh a long losing record.
       </div>
       {markets.map((m) => {
@@ -203,7 +205,7 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
         const judging = measured >= table.minMarketTrades;
         return (
           <div key={m} className="flex flex-col">
-            <div className="text-xs font-semibold text-muted mt-2">{m === "crypto" ? "Coins" : "Stocks"}</div>
+            <div className="text-xs font-semibold text-muted mt-2">{MARKET_TITLE[m]}</div>
             {!judging && (
               <div className="text-xs text-muted">
                 {measured} setups so far; trading isn't limited by this until there are {table.minMarketTrades}.
@@ -221,7 +223,7 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
                       </div>
                       <div className="text-xs text-muted tabular-nums">
                         judged {rSigned(r.judgedR)}
-                        {r.otherMarketR ? ` with their ${m === "crypto" ? "stocks" : "coins"} record (${rSigned(r.otherMarketR)})` : ""}
+                        {r.otherMarketR ? ` with their record in the other markets (${rSigned(r.otherMarketR)})` : ""}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
@@ -269,7 +271,7 @@ export const WinRateBar: React.FC<{ winPct: number; breakEvenPct: number }> = ({
   );
 };
 
-type ConditionMarket = "all" | "coins" | "stocks";
+type ConditionMarket = "all" | "coins" | "stocks" | "us";
 
 /**
  * Every followed setup by the conditions it appeared in: where setups have
@@ -285,14 +287,15 @@ export const WhenSetupsWin: React.FC<{ data: ConditionBreakdown | null }> = ({ d
       <div className="text-xs text-muted">
         Every setup the scanner followed, taken or not ({data.setups}
         {since ? ` since ${since}` : ""}), grouped by the conditions it appeared in: how often it ended ahead and its average after fees
-        and spreads. Coins and stocks together, or each. Under {MIN_CONDITION_SETUPS} setups is too early to read.
+        and spreads. All markets together, or each. Under {MIN_CONDITION_SETUPS} setups is too early to read.
       </div>
       <div className="flex gap-2" role="group" aria-label="Market">
         {(
           [
-            ["all", "Both"],
+            ["all", "All"],
             ["coins", "Coins"],
-            ["stocks", "Stocks"],
+            ["stocks", "Indian stocks"],
+            ["us", "US stocks"],
           ] as const
         ).map(([id, label]) => (
           <button

@@ -21,7 +21,11 @@ afterAll(() => {
 });
 
 const now = Date.parse("2026-09-24T05:00:00Z");
-const limits = { coins: { amountPerTradeInr: 3000, maxOpenTrades: 2 }, stocks: { amountPerTradeInr: 8000, maxOpenTrades: 1 } };
+const limits = {
+  coins: { amountPerTradeInr: 3000, maxOpenTrades: 2 },
+  stocks: { amountPerTradeInr: 8000, maxOpenTrades: 1 },
+  us: { amountPerTradeInr: 4000, maxOpenTrades: 1 },
+};
 const policy = { ...DEFAULT_RISK_POLICY, equity: 100000, marketLimits: limits };
 
 function proposal(symbol: string, over: Partial<TradeProposal> = {}, setup: Partial<StrategySetup> = {}): TradeProposal {
@@ -45,6 +49,8 @@ describe("per-market limits", () => {
     expect(cleanMarketLimits({ coins: { amountPerTradeInr: 2500, maxOpenTrades: 4 }, stocks: { amountPerTradeInr: -5, maxOpenTrades: 99 } })).toEqual({
       coins: { amountPerTradeInr: 2500, maxOpenTrades: 4 },
       stocks: DEFAULT_MARKET_LIMITS.stocks,
+      // Saved before US stocks existed: the default.
+      us: DEFAULT_MARKET_LIMITS.us,
     });
   });
 
@@ -69,7 +75,7 @@ describe("per-market limits", () => {
     const stock = run({ ...setup, symbol: "SBIN" }, two);
     expect(stock.passedAllChecks).toBe(true);
     expect(stock.recommendedDollarExposure).toBeGreaterThan(3000);
-    expect(run({ ...setup, symbol: "TCS" }, [...two, held("SBIN")]).rejectionReason).toMatch(/open stock trades reached \(1\/1\)/);
+    expect(run({ ...setup, symbol: "TCS" }, [...two, held("SBIN")]).rejectionReason).toMatch(/open Indian stock trades reached \(1\/1\)/);
   });
 
   it("hold the autopilot to each market's count across one batch", () => {
@@ -78,7 +84,7 @@ describe("per-market limits", () => {
     expect(accepted.map((a) => a.proposal.symbol)).toEqual(["A/INR", "B/INR", "SBIN"]);
     expect(deferred.map((d) => d.reason)).toEqual([
       "would exceed 2 open coin trades at once",
-      "would exceed 1 open stock trade at once",
+      "would exceed 1 open Indian stock trade at once",
     ]);
   });
 });

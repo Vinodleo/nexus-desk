@@ -14,6 +14,7 @@ import type { DeskState } from "./deskState";
 import { loadLiveRiskConfig } from "../liveOrderGuard";
 import { placeLiveEntry } from "../liveEntry";
 import { isNseSymbol } from "../../src/shared/nse";
+import { isUsSymbol } from "../../src/shared/usMarket";
 
 // Self-Approve on the server: after each scan, the proposals autopilot would
 // have opened in the app are opened here, by the same rules (the shared
@@ -141,6 +142,10 @@ export async function runServerAutopilot(
       // need a second real order).
       if (isNseSymbol(position.symbol)) {
         liveRefused.set(a.proposal.id, "Angel One live orders aren't set up yet, so live stock trades wait for you.");
+        continue;
+      }
+      if (isUsSymbol(position.symbol)) {
+        liveRefused.set(a.proposal.id, "US stocks are paper only for now, so live US trades wait for you.");
         continue;
       }
       if (position.direction !== "LONG") {

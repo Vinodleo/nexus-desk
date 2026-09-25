@@ -140,6 +140,7 @@ export const deskStateBody = z.object({
       .object({
         coins: z.object({ amountPerTradeInr: positiveNumber.max(1_000_000), maxOpenTrades: z.number().int().min(1).max(20) }),
         stocks: z.object({ amountPerTradeInr: positiveNumber.max(1_000_000), maxOpenTrades: z.number().int().min(1).max(20) }),
+        us: z.object({ amountPerTradeInr: positiveNumber.max(1_000_000), maxOpenTrades: z.number().int().min(1).max(20) }).optional(),
       })
       .optional(),
   }),

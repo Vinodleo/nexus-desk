@@ -7,6 +7,7 @@
 // taker. Indian stocks (NSE symbols) are charged Angel One's intraday
 // costs instead (shared/nse): brokerage per order, STT, stamp duty, GST.
 
+import { isUsSymbol, US_FEE_RATE_PER_SIDE } from "./usMarket";
 import { isNseSymbol, nseTradeCosts } from "./nse";
 
 export const TAKER_FEE_RATE = 0.0005;
@@ -44,7 +45,10 @@ export function computeClosedTradePnl(
 
   const entryNotional = entryPrice * quantity;
   let fees: number;
-  if (isNseSymbol(symbol)) {
+  if (isUsSymbol(symbol)) {
+    // Commission-free; regulatory fees only.
+    fees = (entryNotional + exitPrice * restQty + (bankedQty > 0 ? banked!.price * bankedQty : 0)) * US_FEE_RATE_PER_SIDE;
+  } else if (isNseSymbol(symbol)) {
     const open = direction === "LONG" ? "BUY" : "SELL";
     const close = direction === "LONG" ? "SELL" : "BUY";
     fees = nseTradeCosts([

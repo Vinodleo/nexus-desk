@@ -292,8 +292,15 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
           />
           <MarketLimitRows
             market="stocks"
-            title="Stocks"
+            title="Indian stocks"
             venue={isLive ? "Angel One · paper only for now" : "Angel One"}
+            limits={props.riskLimits.marketLimits}
+            onChange={(marketLimits) => props.onRiskLimitsChange({ marketLimits })}
+          />
+          <MarketLimitRows
+            market="us"
+            title="US stocks"
+            venue="Alpaca · paper only · prices in ₹"
             limits={props.riskLimits.marketLimits}
             onChange={(marketLimits) => props.onRiskLimitsChange({ marketLimits })}
           />
@@ -386,6 +393,25 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               </span>
             ) : (
               <span className="text-muted">—</span>
+            )}
+          </Row>
+          <Row
+            label="Alpaca"
+            sub={
+              !props.serverStatus?.alpaca?.configured
+                ? "US stocks (paper): add ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY on the server"
+                : props.serverStatus.alpaca.lastError ??
+                  `US stocks scanned 9:30–3:30 New York time (7:00 pm–1:00 am IST, 8:00 pm–2:00 am in winter)${
+                    props.serverStatus.fx ? ` · $1 = ${formatMoney(props.serverStatus.fx.usdInr)}` : ""
+                  }`
+            }
+          >
+            {!props.serverStatus?.alpaca?.configured ? (
+              <span className="text-muted">Not set up</span>
+            ) : props.serverStatus.alpaca.lastError ? (
+              <span className="text-warn">Problem</span>
+            ) : (
+              <span className="text-gain">{props.serverStatus.alpaca.accountStatus === "ACTIVE" ? "Connected" : "Ready"}</span>
             )}
           </Row>
           <Row

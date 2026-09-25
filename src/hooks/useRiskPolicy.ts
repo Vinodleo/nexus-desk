@@ -61,7 +61,8 @@ export function useRiskPolicy(equity: number) {
       ...DEFAULT_RISK_POLICY,
       ...limits,
       // The per-market limits decide; this total is for display.
-      maxSimultaneousPositions: limits.marketLimits.coins.maxOpenTrades + limits.marketLimits.stocks.maxOpenTrades,
+      maxSimultaneousPositions:
+        limits.marketLimits.coins.maxOpenTrades + limits.marketLimits.stocks.maxOpenTrades + limits.marketLimits.us.maxOpenTrades,
       equity: equity > 0 ? equity : DEFAULT_RISK_POLICY.equity,
     }),
     [limits, equity]

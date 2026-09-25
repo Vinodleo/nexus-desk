@@ -1,3 +1,4 @@
+import { isUsSymbol, usTicker, US_UNIVERSE } from "../shared/usMarket";
 import { hourlyAtrSeries } from "../shared/coinHolds";
 import { MarketBar, OrderBook, RegimeType } from "../types";
 import { averageTrueRange, directionalIndex } from "./indicators";
@@ -193,6 +194,23 @@ export function getSymbolConfig(symbolOrCfg: SymbolConfig | string): SymbolConfi
   const normalized = symbolOrCfg === "XPR/INR" ? "XRP/INR" : symbolOrCfg;
   const known = SUPPORTED_SYMBOLS.find((s) => s.symbol === normalized);
   if (known) return known;
+  // US stocks ("AAPL.US"), priced in rupees (see shared/usMarket).
+  if (isUsSymbol(normalized) && US_UNIVERSE[usTicker(normalized)]) {
+    let cfg = dynamicConfigs.get(normalized);
+    if (!cfg) {
+      cfg = {
+        symbol: normalized,
+        name: usTicker(normalized),
+        basePrice: 0,
+        tickSize: 0.01,
+        volatility: 0.25,
+        correlatedGroup: `US_${US_UNIVERSE[usTicker(normalized)]}`,
+        assetClass: "equity",
+      };
+      dynamicConfigs.set(normalized, cfg);
+    }
+    return cfg;
+  }
   // Nifty 50 stocks the fixed list doesn't carry.
   if (NSE_UNIVERSE[normalized]) {
     let cfg = dynamicConfigs.get(normalized);

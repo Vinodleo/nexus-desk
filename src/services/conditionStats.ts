@@ -1,5 +1,5 @@
 import type { ShadowSignal } from "./shadowTracker";
-import { isNseSymbol } from "../shared/nse";
+import { marketOf, type MarketKey } from "../shared/marketLimits";
 
 // When setups win: every setup the scanner has followed (taken or not),
 // grouped by the conditions it appeared in (market mood, Bitcoin's last
@@ -20,7 +20,9 @@ export interface ConditionRow {
   label: string;
   all: ConditionCell;
   coins: ConditionCell;
+  /** Indian stocks. */
   stocks: ConditionCell;
+  us: ConditionCell;
 }
 
 export interface ConditionGroup {
@@ -137,8 +139,8 @@ function cell(results: number[]): ConditionCell {
 export function conditionBreakdown(shadows: ShadowSignal[], spreadFor: (symbol: string) => number | undefined = () => undefined): ConditionBreakdown {
   const done = shadows
     .filter((s) => s.horizon === "intraday" && s.status !== "open")
-    .map((s) => ({ s, r: resultAfterSpread(s, spreadFor(s.symbol)), stock: isNseSymbol(s.symbol) }))
-    .filter((x): x is { s: ShadowSignal; r: number; stock: boolean } => x.r !== null);
+    .map((s) => ({ s, r: resultAfterSpread(s, spreadFor(s.symbol)), market: marketOf(s.symbol) }))
+    .filter((x): x is { s: ShadowSignal; r: number; market: MarketKey } => x.r !== null);
 
   const groups = GROUPS.map((g) => ({
     id: g.id,
@@ -149,8 +151,9 @@ export function conditionBreakdown(shadows: ShadowSignal[], spreadFor: (symbol: 
         return {
           label: b.label,
           all: cell(hits.map((x) => x.r)),
-          coins: cell(hits.filter((x) => !x.stock).map((x) => x.r)),
-          stocks: cell(hits.filter((x) => x.stock).map((x) => x.r)),
+          coins: cell(hits.filter((x) => x.market === "coins").map((x) => x.r)),
+          stocks: cell(hits.filter((x) => x.market === "stocks").map((x) => x.r)),
+          us: cell(hits.filter((x) => x.market === "us").map((x) => x.r)),
         };
       })
       .filter((row) => row.all.setups > 0),
