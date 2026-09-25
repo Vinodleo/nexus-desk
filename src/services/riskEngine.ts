@@ -1,3 +1,4 @@
+import { MARKET_LABEL, marketOf, openInMarket, type MarketLimits } from "../shared/marketLimits";
 import {
   StrategySetup,
   MetaLabelScore,
@@ -32,6 +33,12 @@ export interface RiskPolicyConfig {
   autopilotMaxApprovalsPerHour: number; // hard cap on trades opened via Autonomous Self-Approval per rolling hour
   autopilotMinConsensus: number; // 0..1 — min weighted trader-panel agreement required for self-approval
   autopilotMinPersonaVotes: number; // min number of personas that must have voted for self-approval to fire
+  /**
+   * Amount per trade and trades open at once, per market (coins, stocks).
+   * When set, they replace maxOrderValueInr, maxSimultaneousPositions and
+   * the exposure fraction for sizing and the position count.
+   */
+  marketLimits?: MarketLimits;
 }
 
 export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
@@ -215,8 +222,16 @@ export function evaluateRiskEngine(
     )} >= ₹${hardDailyLossLimit}). Stopped opening new positions.`;
   }
 
-  // Check Maximum Simultaneous Positions
-  if (passed && activePositions.length >= maxSimultaneousPositions) {
+  // Check Maximum Simultaneous Positions: per market when set in Settings.
+  const marketLimit = policy.marketLimits?.[marketOf(setup.symbol)];
+  if (marketLimit) {
+    const inMarket = openInMarket(activePositions, setup.symbol).length;
+    if (passed && inMarket >= marketLimit.maxOpenTrades) {
+      passed = false;
+      rejectionCode = "max_positions";
+      rejectionReason = `REJECTED BY RISK: Maximum open ${MARKET_LABEL[marketOf(setup.symbol)]} trades reached (${inMarket}/${marketLimit.maxOpenTrades}).`;
+    }
+  } else if (passed && activePositions.length >= maxSimultaneousPositions) {
     passed = false;
     rejectionCode = "max_positions";
     rejectionReason = `REJECTED BY RISK: Maximum simultaneous positions reached (${activePositions.length}/${maxSimultaneousPositions}).`;
@@ -262,7 +277,8 @@ export function evaluateRiskEngine(
     0
   );
   const currentExposureFraction = currentExposure / equity;
-  if (passed && currentExposureFraction >= maxAllowedExposureFraction) {
+  // With per-market limits, amount per trade × trades at once bounds exposure instead.
+  if (passed && !marketLimit && currentExposureFraction >= maxAllowedExposureFraction) {
     passed = false;
     rejectionCode = "exposure";
     rejectionReason = `REJECTED BY RISK: Portfolio exposure (${(
@@ -290,7 +306,7 @@ export function evaluateRiskEngine(
   // Cap the position's value, and don't let it push total exposure past
   // the limit, then fit it to CoinDCX's quantity step and minimums.
   const exposureRoom = Math.max(0, maxAllowedExposureFraction * equity - currentExposure);
-  const maxValue = Math.min(policy.maxOrderValueInr, exposureRoom);
+  const maxValue = marketLimit ? marketLimit.amountPerTradeInr : Math.min(policy.maxOrderValueInr, exposureRoom);
   const maxUnitsByValue = setup.entryPrice > 0 ? maxValue / setup.entryPrice : 0;
   const fit = fitQuantity(Math.min(rawUnits, maxUnitsByValue), setup.entryPrice, ruleFor(setup.symbol, setup.entryPrice));
   const recommendedUnits = fit.quantity;

@@ -340,13 +340,17 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
             <div className="text-xs text-muted">
               {props.stopped
                 ? "Stopped · no new trades until you resume"
+                : props.autopilotOn && props.isLive
+                ? props.liveTradingEnabled
+                  ? "Live · places real CoinDCX orders from the server within your limits, even with the app closed. Coins only: stock trades wait for you."
+                  : "Live orders are blocked on the server, so live trades wait for you to approve them."
                 : props.autopilotOn
                 ? props.scanLocation === "server" && !props.isLive
                   ? "Approves trades within your limits · runs on the server, even with the app closed"
                   : "Approves trades within your limits"
                 : "Off · you approve every trade"}
             </div>
-            {props.autopilotOn && !props.stopped && props.scanLocation === "server" && !props.isLive && (
+            {props.autopilotOn && !props.stopped && props.scanLocation === "server" && (!props.isLive || props.liveTradingEnabled === true) && (
               <div className="text-xs text-muted tabular-nums" aria-label="Server autopilot">
                 Server: last scan {props.lastServerScanAt ? agoText(props.lastServerScanAt) : "pending"} · last trade{" "}
                 {props.lastServerOpenAt ? clockText(props.lastServerOpenAt) : "none yet"}

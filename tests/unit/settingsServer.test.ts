@@ -10,13 +10,14 @@ vi.mock("../../src/hooks/usePWAInstall", () => ({ usePWAInstall: () => ({ isInst
 
 import { SettingsSheet, formatSpan, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
 
+import { cleanMarketLimits } from "../../src/shared/marketLimits";
 afterEach(cleanup);
 
 const props = (over: Partial<SettingsSheetProps> = {}): SettingsSheetProps => ({
   isOpen: true, onClose: vi.fn(), tradingMode: "PAPER", onTradingModeChange: vi.fn(), coinDcxStatus: null,
   coinDcxBalance: { totalInr: 0, loading: false } as any, onRefreshBalance: vi.fn(), zerodhaStatus: "idle" as any,
   zerodhaError: "", onZerodhaConnect: vi.fn(), dailyLossLimit: 2500, maxOpenPositions: 3,
-  riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1 }, onRiskLimitsChange: vi.fn(),
+  riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits: cleanMarketLimits(null) }, onRiskLimitsChange: vi.fn(),
   onOpenDeskBrief: vi.fn(), onOpenBackground: vi.fn(), onOpenSecurity: vi.fn(),
   ...over,
 });
@@ -74,5 +75,33 @@ describe("trade pop-ups", () => {
     rerender(createElement(SettingsSheet, props({ notifications: { state: "blocked", error: "", enable, disable } })));
     expect(screen.getByText(/allow notifications in your browser's site settings/)).toBeTruthy();
     expect((screen.getByRole("switch", { name: "Trade pop-ups" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("Settings: trade size per market", () => {
+  it("sets amount per trade and trades at once separately for coins and stocks", () => {
+    const onRiskLimitsChange = vi.fn();
+    render(createElement(SettingsSheet, props({ onRiskLimitsChange })));
+    expect(screen.getByText("Up to ₹10,000 in coins at a time")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Coins: amount per trade"), { target: { value: "3000" } });
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
+      marketLimits: { coins: { amountPerTradeInr: 3000, maxOpenTrades: 2 }, stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2 } },
+    });
+    fireEvent.change(screen.getByLabelText("Stocks: trades at once"), { target: { value: "4" } });
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
+      marketLimits: { coins: { amountPerTradeInr: 5000, maxOpenTrades: 2 }, stocks: { amountPerTradeInr: 5000, maxOpenTrades: 4 } },
+    });
+    expect(screen.queryByLabelText("Largest trade")).toBeNull();
+  });
+
+  it("in Live mode, flags an amount above the server's cap per live order, and stocks as paper only", () => {
+    const riskLimits = {
+      maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1,
+      marketLimits: { coins: { amountPerTradeInr: 10000, maxOpenTrades: 2 }, stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2 } },
+    };
+    const coinDcxStatus = { liveRisk: { enabled: true, maxOrderNotionalInr: 5000, maxDailyNotionalInr: 20000, maxDailyOrders: 10 } } as any;
+    render(createElement(SettingsSheet, props({ tradingMode: "LIVE_COINDCX", riskLimits, coinDcxStatus })));
+    expect(screen.getByText(/Above the server's ₹5,000 cap per live order: live orders this size are refused/)).toBeTruthy();
+    expect(screen.getByText("Angel One · paper only for now")).toBeTruthy();
   });
 });

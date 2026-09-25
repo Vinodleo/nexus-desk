@@ -243,3 +243,21 @@ describe("swiping", () => {
     expect(p.onApprove).not.toHaveBeenCalled();
   });
 });
+
+describe("the Queue in Live mode", () => {
+  it("says the server's autopilot places live orders, and offers no approve-all", () => {
+    render(
+      createElement(
+        LedgerQueue,
+        props([proposal("a", "XRP/INR", 0.55), proposal("b", "ETH/INR", 0.61), proposal("c", "SOL/INR", 0.58)], {
+          autopilotOn: true,
+          isLive: true,
+          onApproveAll: undefined,
+        })
+      )
+    );
+    expect(screen.getByText(/Live mode: the server's autopilot places real CoinDCX orders within your limits/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Approve all/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve live trade" })).toBeTruthy();
+  });
+});

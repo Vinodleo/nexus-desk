@@ -1235,6 +1235,9 @@ export default function App() {
   const handleBatchApproveAllProposals = useCallback(
     async (proposalsToApprove: TradeProposal[]) => {
       if (killSwitchActive || proposalsToApprove.length === 0) return;
+      // These open paper positions. In Live mode a real order is placed only
+      // by approving one trade yourself, never in a batch.
+      if (tradingMode === "LIVE_COINDCX") return;
 
       // Drop anything already claimed by a manual approval (or a previous,
       // still-in-flight autopilot batch) before doing any of the position/
@@ -1329,13 +1332,14 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString(),
       });
     },
-    [killSwitchActive, activePositions, closedTrades, symbolQuarantines, riskPolicy, logSecurityAudit]
+    [killSwitchActive, tradingMode, activePositions, closedTrades, symbolQuarantines, riskPolicy, logSecurityAudit]
   );
 
   // Autonomous Self-Approval Engine:
-  // When Self-Approve is ON (AUTO_WITHIN_LIMITS), ALL trades in the queue are automatically approved
+  // When Self-Approve is ON (AUTO_WITHIN_LIMITS), ALL trades in the queue are automatically approved.
+  // Paper only: in Live mode every trade waits for you (the server's autopilot is paper-only too).
   useEffect(() => {
-    if (decisionMode !== "AUTO_WITHIN_LIMITS" || killSwitchActive) return;
+    if (decisionMode !== "AUTO_WITHIN_LIMITS" || killSwitchActive || tradingMode === "LIVE_COINDCX") return;
 
     const pendingProposals = proposalQueue.filter(
       (p) => p.status === "PENDING_APPROVAL"
@@ -1352,6 +1356,7 @@ export default function App() {
     decisionMode,
     proposalQueue,
     killSwitchActive,
+    tradingMode,
     handleBatchApproveAllProposals,
   ]);
 
@@ -1788,14 +1793,18 @@ export default function App() {
               proposals={proposalQueue}
               onApprove={handleApproveProposal}
               onReject={handleRejectProposal}
-              onApproveAll={() => {
-                const pendingProposals = proposalQueue.filter(
-                  (p) => p.status === "PENDING_APPROVAL"
-                );
-                if (pendingProposals.length > 0) {
-                  handleBatchApproveAllProposals(pendingProposals);
-                }
-              }}
+              onApproveAll={
+                tradingMode === "LIVE_COINDCX"
+                  ? undefined
+                  : () => {
+                      const pendingProposals = proposalQueue.filter(
+                        (p) => p.status === "PENDING_APPROVAL"
+                      );
+                      if (pendingProposals.length > 0) {
+                        handleBatchApproveAllProposals(pendingProposals);
+                      }
+                    }
+              }
               onScan={handleTriggerScanner}
               isScanning={isScanningMarkets}
               continuousScan={isContinuousScanActive}

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { FailureInjectionState, PromotedLabModel, TradingExecutionMode } from "../../src/types";
+import type { MarketLimits } from "../../src/shared/marketLimits";
 
 // What the server scanner needs to scan for a user the way the app would:
 // their equity and limits, today's P&L, the kill switch and drills, coin
@@ -9,7 +10,7 @@ import type { FailureInjectionState, PromotedLabModel, TradingExecutionMode } fr
 
 export interface DeskState {
   equity: number;
-  riskLimits: { maxOrderValueInr: number; maxAllowedExposureFraction: number };
+  riskLimits: { maxOrderValueInr: number; maxAllowedExposureFraction: number; marketLimits?: MarketLimits };
   dailyRealizedPnl: number;
   /** Day (IST, YYYY-MM-DD) dailyRealizedPnl belongs to; it counts as 0 on a later day. */
   pnlDay: string;

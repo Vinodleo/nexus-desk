@@ -135,6 +135,13 @@ export const deskStateBody = z.object({
   riskLimits: z.object({
     maxOrderValueInr: positiveNumber.max(10_000_000),
     maxAllowedExposureFraction: z.number().finite().positive().max(1),
+    // Amount per trade and trades at once, for coins and for stocks (shared/marketLimits).
+    marketLimits: z
+      .object({
+        coins: z.object({ amountPerTradeInr: positiveNumber.max(1_000_000), maxOpenTrades: z.number().int().min(1).max(20) }),
+        stocks: z.object({ amountPerTradeInr: positiveNumber.max(1_000_000), maxOpenTrades: z.number().int().min(1).max(20) }),
+      })
+      .optional(),
   }),
   dailyRealizedPnl: z.number().finite(),
   autopilot: z.boolean(),

@@ -17,6 +17,7 @@ import { fetchOrderBook, recentBook } from "../coindcxMarketData";
 import { entryPriceFrom } from "../../src/shared/quotes";
 import { angelConfigured, fetchStockDepth } from "../angelOne";
 import { freshQuote } from "../quoteStore";
+import { cleanMarketLimits } from "../../src/shared/marketLimits";
 import { NSE_SYMBOLS, isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
 import { broadcastToUser, currentPrices } from "../realtime";
@@ -195,6 +196,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
   const riskPolicy = {
     ...DEFAULT_RISK_POLICY,
     ...desk.riskLimits,
+    ...(desk.riskLimits.marketLimits ? { marketLimits: cleanMarketLimits(desk.riskLimits.marketLimits) } : {}),
     equity: desk.equity > 0 ? desk.equity : DEFAULT_RISK_POLICY.equity,
   };
   const report = await scanAllMarkets({
@@ -222,7 +224,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     useLabModel: false,
   });
   // Self-Approve: opens what autopilot accepts and marks each proposal.
-  const newProposals = runServerAutopilot(uid, desk, report.newProposals, riskPolicy, {
+  const newProposals = await runServerAutopilot(uid, desk, report.newProposals, riskPolicy, {
     // A coin opens at the ask (or bid, for a short) from the order book the
     // scan just read, a stock at its latest Angel One quote; otherwise at the
     // latest trade or candle close.
