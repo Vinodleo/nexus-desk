@@ -169,6 +169,22 @@ export function selectAutopilotTrades(
   return { accepted, deferred };
 }
 
+/** Why autopilot leaves a proposal the app's own scan found. */
+export const PHONE_SCAN_HOLD_REASON =
+  "Found by this phone while the server wasn't scanning. Autopilot opens only trades that pass the server's checks (each trader judged on every market, spreads included), so this one waits for you.";
+
+/**
+ * The queue's waiting proposals, split into those autopilot may open and
+ * those it leaves for you: ones the app's own scan found. The app judges
+ * traders on its coins alone, without the spread or their record in the
+ * other markets, so it can pass a trader the server has paused. Only
+ * proposals the server's checks passed are opened on their own.
+ */
+export function autopilotQueue(queue: TradeProposal[]): { take: TradeProposal[]; hold: TradeProposal[] } {
+  const waiting = queue.filter((p) => p.status === "PENDING_APPROVAL");
+  return { take: waiting.filter((p) => !p.scannedOnPhone), hold: waiting.filter((p) => p.scannedOnPhone) };
+}
+
 /**
  * ATR recorded on a position for its trailing-stop rules. The indicator used
  * to be floored at 0.3% of price, and the exit rules were tuned with that

@@ -208,6 +208,12 @@ export interface TradeProposal {
   /** How the setup's trader has done lately with the live exits, in R after fees. */
   exitEdge?: { r: number; trades: number };
   deferralReason?: string;
+  /**
+   * Found by the app's own scan (the server wasn't scanning), not the
+   * server's: its traders were judged on this phone's coins alone, so
+   * autopilot leaves it for you.
+   */
+  scannedOnPhone?: boolean;
 }
 
 export interface Order {
