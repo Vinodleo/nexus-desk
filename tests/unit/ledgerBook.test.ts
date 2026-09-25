@@ -161,3 +161,17 @@ describe("the Book's breakdown tab", () => {
     expect(costs.match(/skipped/g)).toHaveLength(1);
   });
 });
+
+describe("trades the server opened", () => {
+  it("are labelled in the Book", async () => {
+    const { daemonEventToTrade } = await import("../../src/services/daemonEvents");
+    const t = daemonEventToTrade({
+      id: "d1", positionId: "p1", symbol: "SOL/INR", direction: "LONG", entryPrice: 100, exitPrice: 99, quantity: 1, moneyPlaced: 100,
+      grossPnl: -1, feesPaid: 0.1, realizedPnl: -1.1, realizedPnlPercent: -1.1, isWin: false, exitReason: "STOP_LOSS",
+      closedAt: new Date(NOW).toISOString(), openedAt: new Date(NOW - 600000).toISOString(), openedByServer: true,
+    });
+    expect(t.openedByServer).toBe(true);
+    render(createElement(LedgerBook, { trades: [t], risk: null }));
+    expect(screen.getByText(/autopilot \(server\)/)).toBeTruthy();
+  });
+});

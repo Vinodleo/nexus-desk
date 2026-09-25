@@ -79,7 +79,10 @@ export function runServerAutopilot(
     return proposals.map((p) => ({ ...p, status: "DEFERRED" as const, deferralReason: reason }));
   }
   const mine = [...daemonPositions.values()].filter((p) => p.userId === uid);
-  const recent = (openings.get(uid) ?? []).filter((o) => o.at >= now - HOUR_MS);
+  const logged = openings.get(uid) ?? [];
+  // The hour's openings count toward the cap; the last one is kept for the status.
+  const recent = logged.filter((o) => o.at >= now - HOUR_MS);
+  const lastOpen = logged.reduce<{ id: string; at: number } | null>((a, o) => (!a || o.at > a.at ? o : a), null);
   const { accepted, deferred } = selectAutopilotTrades(
     proposals,
     {
@@ -108,7 +111,7 @@ export function runServerAutopilot(
     recent.push({ id: position.id, at: now });
     console.log(`[ServerAutopilot] Opened ${position.symbol} ${position.direction} x${position.quantity} @ ${position.entryPrice} for ${uid}`);
   }
-  openings.set(uid, recent);
+  openings.set(uid, lastOpen && !recent.includes(lastOpen) ? [lastOpen, ...recent] : recent);
 
   const approved = new Set(accepted.map((a) => a.proposal.id));
   const reasons = new Map(deferred.map((d) => [d.proposal.id, d.reason]));
@@ -119,6 +122,11 @@ export function runServerAutopilot(
         ? { ...p, status: "DEFERRED" as const, deferralReason: reasons.get(p.id) }
         : p
   );
+}
+
+/** When the server's autopilot last opened a position for this user (0 if not since the server started). */
+export function lastServerOpenAt(uid: string): number {
+  return Math.max(0, ...(openings.get(uid) ?? []).map((o) => o.at));
 }
 
 /** Test hook. */

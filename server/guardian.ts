@@ -74,6 +74,7 @@ export interface DaemonClosedTrade {
   userId?: string;
   isLiveOrder?: boolean;
   isSelfApproved?: boolean;
+  openedByServer?: boolean;
   riskAtOpen?: number;
   stopAtExit?: number;
   fillAtExit?: number;
@@ -345,6 +346,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     isLiveOrder: !!pos.isLiveOrder,
     isSelfApproved: pos.isSelfApproved,
     riskAtOpen: riskAtOpen(pos),
+    ...(pos.openedByServer ? { openedByServer: true } : {}),
     stopAtExit: pos.stopLoss,
     fillAtExit: exitPrice,
   };

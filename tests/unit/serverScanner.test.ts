@@ -213,6 +213,16 @@ describe("server autopilot", () => {
     expect(opened[0].entryPrice).toBe(11600);
     expect(opened[0].quantity * opened[0].entryPrice).toBeLessThanOrEqual(10000);
 
+    // The app is told when the server last opened a trade.
+    const { scannerStatus } = await import("../../server/scanner/scannerService");
+    expect(scannerStatus("owner", now).lastAutopilotOpenAt).toBe(now);
+
+    // When the guardian closes it, the trade says the server opened it.
+    daemonPositions.get(opened[0].id)!.stopLoss = opened[0].entryPrice * 2; // any price now stops it out
+    (await import("../../server/guardian")).evaluateDaemonPositions("SOL/INR", opened[0].entryPrice);
+    expect((await import("../../server/guardian")).closedTradesFor("owner")[0]).toMatchObject({ openedByServer: true });
+    daemonPositions.set(opened[0].id, opened[0]);
+
     // The next scan holds SOL already: nothing more is opened.
     await runScanCycle(now + 5 * MIN);
     expect(daemonPositions.size).toBe(1);

@@ -20,7 +20,7 @@ import { NSE_SYMBOLS, isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
 import { broadcastToUser, currentPrices } from "../realtime";
 import { dailyPnlToday, deskFirstSeenAt, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
-import { runServerAutopilot, serverQuarantines } from "./autopilot";
+import { lastServerOpenAt, runServerAutopilot, serverQuarantines } from "./autopilot";
 import { getExpectancyTable, marketTrendFrom } from "../../src/services/exitExpectancy";
 import { tradingActivity } from "../../src/services/tradingActivity";
 
@@ -314,6 +314,8 @@ export function scannerStatus(uid: string, now: number = Date.now()) {
     /** The server has this user's settings (it loses them if its disk doesn't survive a restart). */
     hasDesk: Boolean(desk),
     lastScanAt,
+    /** When the server's autopilot last opened a position for this user (0: none since the server started). */
+    lastAutopilotOpenAt: lastServerOpenAt(uid),
     coins: universe.length,
     stocks: stockUniverse().length,
     problems: market.problems(scanList(now)),

@@ -857,6 +857,7 @@ export default function App() {
         isSelfApproved: pos.isSelfApproved,
         stopAtExit: pos.stopLoss,
         riskAtOpen: riskAtOpen(pos),
+        ...(pos.openedByServer ? { openedByServer: true } : {}),
         fillAtExit: exitPrice,
       };
 
@@ -1726,6 +1727,8 @@ export default function App() {
         {activeTab === "floor" && (
           <LedgerFloor
             scanLocation={serverScanner.location}
+            lastServerScanAt={serverScanner.lastScanAt}
+            lastServerOpenAt={serverScanner.lastAutopilotOpenAt}
             eventWindow={eventWindow}
             isLive={tradingMode === "LIVE_COINDCX"}
             equity={currentRiskCalculation.equity}

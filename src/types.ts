@@ -299,6 +299,8 @@ export interface Position {
   trailProfile?: string;
   isLiveOrder?: boolean;
   exchangeOrderId?: string;
+  /** Opened by the server's autopilot (possibly while the app was closed). */
+  openedByServer?: boolean;
 }
 
 export interface HistoricalTrade {
@@ -318,6 +320,8 @@ export interface HistoricalTrade {
   /** Where the stop was when the trade closed, and the price the (rest of the) position actually sold at: a fast move can go past the stop between price checks. */
   stopAtExit?: number;
   fillAtExit?: number;
+  /** Opened by the server's autopilot (possibly while the app was closed). */
+  openedByServer?: boolean;
   /** Rupees at stake when it opened (distance to the first stop × quantity): 1R, to read results in R. */
   riskAtOpen?: number;
   isWin: boolean;
