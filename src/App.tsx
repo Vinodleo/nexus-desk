@@ -100,6 +100,7 @@ import { useEventWindow } from "./hooks/useEventWindow";
 import { useTrailProfile } from "./hooks/useTrailProfile";
 import { showLocalTradePopup, useTradeNotifications } from "./hooks/useTradeNotifications";
 import { tradeClosedMessage } from "./shared/tradeMessages";
+import { holdMinutesFor, trailsAsRunner } from "./shared/coinHolds";
 import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, newPositionId, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows } from "./services/experienceMemory";
@@ -107,7 +108,7 @@ import { experiencesFromShadows } from "./services/experienceMemory";
 // ATR recorded on a position for its trailing-stop rules.
 function atrForExits(proposal: TradeProposal): number {
   const bars = liveMarketStream.getBars(proposal.symbol);
-  return sharedAtrForExits(bars?.at(-1)?.atr, proposal.setup.entryPrice);
+  return sharedAtrForExits(proposal.setup, bars?.at(-1)?.atr);
 }
 
 /**
@@ -1037,10 +1038,7 @@ export default function App() {
 
       const currentAtr = atrForExits(proposal);
 
-      const isTrendOrSwing =
-        proposal.setup.family === "trend_following" ||
-        proposal.setup.family === "breakout_confirmation" ||
-        proposal.setup.horizon === "swing";
+      const isTrendOrSwing = trailsAsRunner(proposal.setup);
 
       const isLiveExecution = tradingMode === "LIVE_COINDCX";
 
@@ -1115,7 +1113,7 @@ export default function App() {
         unrealizedPnl: 0,
         unrealizedPnlPercent: 0,
         openTime: new Date().toISOString(),
-        expectedHoldingTimeMinutes: proposal.setup.horizon === "swing" ? 4320 : 30,
+        expectedHoldingTimeMinutes: holdMinutesFor(proposal.setup),
         metaConfidence: proposal.metaScore.confidence,
         isSelfApproved: isAutonomousSelfApproved,
         highestPrice: entryPrice,

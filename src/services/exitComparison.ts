@@ -1,6 +1,7 @@
 import type { MarketBar, StrategySetup } from "../types";
 import { bankPartial, holdingDecision, partialDue, type ExitState } from "../shared/exitRules";
-import { TRAIL_PROFILES, isTrendRunner, updateTrailingStop, type TrailProfileId, type TrailState } from "../shared/trailingStop";
+import { TRAIL_PROFILES, updateTrailingStop, type TrailProfileId, type TrailState } from "../shared/trailingStop";
+import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
 import { panelSetupsOnHistory, LAB_INTERVAL_MS } from "./labSimulation";
 import { isNseSymbol, nseRoundTripRate } from "../shared/nse";
 
@@ -27,7 +28,7 @@ type SimPosition = TrailState & ExitState;
 
 /**
  * Plays one setup, entered at the close of bar `i`, forward under a trail
- * profile. Null if the history ends before the trade does.
+ * profile. Null if the history ends within an hour of it.
  */
 /**
  * @param spreadPct the market's bid-ask spread as a share of price: a round
@@ -50,11 +51,12 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
     initialStopLoss: setup.stopLoss,
     quantity: 2,
     partialQuantity: 1,
-    atrAtEntry: Math.max(bars[i].atr ?? 0, entry * 0.003),
-    trailMode: isTrendRunner({ family: setup.family, expectedHoldingTimeMinutes: setup.horizon === "swing" ? 4320 : 30 }) ? "TREND_RUNNER" : "SCALP_TIGHT",
+    // Sized, trailed and timed exactly as a live position opened from this setup.
+    atrAtEntry: atrForExits(setup, bars[i].atr),
+    trailMode: trailsAsRunner(setup) ? "TREND_RUNNER" : "SCALP_TIGHT",
     family: setup.family,
     trailProfile: profile,
-    expectedHoldingTimeMinutes: setup.horizon === "swing" ? 4320 : 30,
+    expectedHoldingTimeMinutes: holdMinutesFor(setup),
     openTime: new Date(openMs).toISOString(),
     highestPrice: entry,
     lowestPrice: entry,
@@ -88,8 +90,17 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
     const closeMs = (bar.timestampMs as number) + LAB_INTERVAL_MS;
     if (holdingDecision(p, closeMs) === "expire") return finish(bar.close, "EXPIRY_TIME");
   }
+  // History ended with the trade still open. Coin trades run for hours, so
+  // leaving these out would drop exactly the winners still running while
+  // counting the losers that stopped out early: one that has run an hour is
+  // judged at the last price; a younger one is left out (it would only show
+  // the spread it paid).
+  if (bars.length - 1 - i >= MARK_OPEN_AFTER_BARS) return finish(bars[bars.length - 1].close, "EXPIRY_TIME");
   return null;
 }
+
+/** An unfinished trade is judged at the last price once it has run this many 5-minute candles (an hour). */
+export const MARK_OPEN_AFTER_BARS = 12;
 
 export interface ProfileResult {
   profile: TrailProfileId;

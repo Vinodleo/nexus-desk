@@ -60,14 +60,14 @@ describe("Lab replay on 5-minute candles", () => {
     expect(regimeAt(T0 + 33 * HOUR)).not.toBe("neutral");
   });
 
-  it("trades the tuned breakout and settles each trade within 30 minutes, after costs", () => {
+  it("trades the tuned breakout and settles each coin trade within its 4-hour limit, after costs", () => {
     const trades = simulateTunedBreakout("SOL/INR", bars, {
       slMultiplier: 1.4, tpMultiplier: 2.8, volSurgeThreshold: 1.5, rsiThreshold: 101, minConfidence: 0,
     });
     expect(trades.length).toBeGreaterThan(3);
     for (const t of trades) {
       const held = Date.parse(t.exitTime.replace(" ", "T") + ":00Z") - Date.parse(t.entryTime.replace(" ", "T") + ":00Z");
-      expect(held).toBeLessThanOrEqual(35 * 60 * 1000);
+      expect(held).toBeLessThanOrEqual(4 * 60 * 60 * 1000 + 5 * 60 * 1000);
       const raw = ((t.direction === "LONG" ? t.exitPrice - t.entryPrice : t.entryPrice - t.exitPrice) / t.entryPrice) * 100;
       expect(t.pnlPercent).toBeCloseTo(raw - LAB_COST_PCT, 2);
       expect(t.features).toHaveLength(6);

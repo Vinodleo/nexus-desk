@@ -9,12 +9,14 @@ import { metaFeatures } from "./metaFeatures";
 import { predictConfidenceBatch } from "./mlService";
 import { SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
 import { isNseSymbol } from "../shared/nse";
+import { holdMinutesFor } from "../shared/coinHolds";
 
 // The Lab's replay of live trading on historical 5-minute candles: the same
 // indicators, the same setup builders (the live trader panel, and the
 // breakout builder the Lab-tuned trader uses), the same model inputs, and
 // trades resolved the way shadow tracking resolves live setups (target, stop
-// or 30 minutes, whichever comes first).
+// or the time limit, whichever comes first: 4 hours for a coin, 30 minutes
+// for a stock).
 
 /** Candles are 5 minutes, like the live scanner's. */
 export const LAB_INTERVAL = "5m";
@@ -25,8 +27,8 @@ export const LAB_COST_PCT = 0.15;
 const WARMUP_BARS = 30;
 /** Candles each signal's builders see (they look back 15). */
 const WINDOW_BARS = 21;
-/** Candles handed to resolution: the 30-minute limit is 6; a little extra for its close. */
-const RESOLVE_BARS = 8;
+/** Candles handed to resolution: the setup's time limit in candles, and a little extra for its close. */
+const resolveBarsFor = (setup: StrategySetup) => Math.ceil((holdMinutesFor(setup) * 60 * 1000) / LAB_INTERVAL_MS) + 2;
 /** After a signal, the next few candles on the same coin aren't counted again. */
 const REPLAY_COOLDOWN_BARS = 3;
 
@@ -121,11 +123,12 @@ export function hourlyRegimeLookup(bars: MarketBar[]): (ms: number) => RegimeTyp
 /** Follows a setup from bar `i`'s close, like shadow tracking; null if the data ends first. */
 function resolveFrom(setup: StrategySetup, bars: MarketBar[], i: number) {
   const signalTime = (bars[i].timestampMs as number) + LAB_INTERVAL_MS;
-  const after = bars.slice(i + 1, i + 1 + RESOLVE_BARS);
+  const need = resolveBarsFor(setup);
+  const after = bars.slice(i + 1, i + 1 + need);
   const s = resolveShadow(shadowFromSetup(setup, "proposed", signalTime), after, Number.MAX_SAFE_INTEGER);
   if (s.status === "open" || s.exitPrice === undefined) return null;
   // Too few candles to reach the time limit: not a real result.
-  if (s.status === "expired" && after.length < RESOLVE_BARS) return null;
+  if (s.status === "expired" && after.length < need) return null;
   return s;
 }
 

@@ -244,7 +244,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
         <div>
           <div className="text-sm font-semibold">Train on price history</div>
           <div className="text-xs text-muted mt-0.5 leading-relaxed">
-            5-minute candles, like live trading. Trades are judged the live way: target, stop or 30 minutes, after fees.
+            5-minute candles, like live trading. Trades are judged the live way: target, stop or the time limit (4 hours for a coin), after fees.
           </div>
         </div>
         <div className="flex p-0.5 rounded-full bg-inset border border-line" role="group" aria-label="History source">

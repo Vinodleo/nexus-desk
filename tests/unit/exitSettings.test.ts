@@ -49,10 +49,21 @@ describe("playing a setup out on candles", () => {
     expect(simulateExit(setup(), path, 0, "patient")!.reason).toBe("TAKE_PROFIT");
   });
 
-  it("closes at the time limit, and leaves open trades out when history ends", () => {
-    const flat = candles(Array.from({ length: 12 }, () => [1000, 1003, 997, 1001] as [number, number, number, number]));
-    expect(simulateExit(setup(), flat, 0, "fixed")!.reason).toBe("EXPIRY_TIME");
-    expect(simulateExit(setup(), flat.slice(0, 3), 0, "fixed")).toBeNull();
+  it("closes at the time limit: 4 hours for a coin, 30 minutes for a stock", () => {
+    const flat = (n: number) => candles(Array.from({ length: n }, () => [1000, 1003, 997, 1001] as [number, number, number, number]));
+    // 48 five-minute candles after entry = 4 hours.
+    const coin = simulateExit(setup(), flat(60), 0, "fixed")!;
+    expect(coin.reason).toBe("EXPIRY_TIME");
+    expect(simulateExit(setup({ symbol: "SBIN" }), flat(12), 0, "fixed")!.reason).toBe("EXPIRY_TIME");
+  });
+
+  it("judges a trade still open when history ends at the last price once it has run an hour, and leaves younger ones out", () => {
+    const rising = candles(Array.from({ length: 20 }, (_, k) => [1000 + k, 1001 + k, 999 + k, 1000 + k] as [number, number, number, number]));
+    // Still open after 19 candles (no stop, target or time limit reached): judged at the last close, 1019.
+    const r = simulateExit(setup({ takeProfit: 1100 }), rising, 0, "fixed")!;
+    expect(r.reason).toBe("EXPIRY_TIME");
+    expect(r.r).toBeGreaterThan(0);
+    expect(simulateExit(setup({ takeProfit: 1100 }), rising.slice(0, 8), 0, "fixed")).toBeNull();
   });
 });
 

@@ -36,6 +36,8 @@ export interface MarketBar {
   adx?: number;
   rsi?: number;
   atr?: number;
+  /** ATR of hour-long blocks of 5-minute candles: the scale coin trades are planned on (shared/coinHolds). */
+  atrHour?: number;
   bbUpper?: number;
   bbLower?: number;
 }
@@ -79,6 +81,8 @@ export interface StrategySetup {
   disqualificationReason?: string;
   /** Intraday (minutes-to-hours) vs swing (days-to-weeks) — defaults to intraday when omitted. Drives holding-time estimates, consensus pooling, and autopilot eligibility. */
   horizon?: "intraday" | "swing";
+  /** The ATR its stop and target were sized on, and its trailing stop steps by (hourly for coins). */
+  planAtr?: number;
   features: {
     emaAlignment: boolean;
     volumeSurgeRatio: number;
