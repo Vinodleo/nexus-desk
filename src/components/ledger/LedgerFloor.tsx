@@ -5,7 +5,9 @@ import { useLiveTickers } from "../../hooks/useLiveTickers";
 import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../services/liveMarketStreamService";
 import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
-import { Flash, Rolling, useAnimatedNumber, usePresenceList, type ListItemState } from "./motion";
+import { Flash, GrowBar, Rolling, useAnimatedNumber, usePresenceList, type ListItemState } from "./motion";
+import { isNseOpen } from "../../shared/nse";
+import { isUsOpen } from "../../shared/usMarket";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
 import type { EventWindow } from "../../shared/eventCalendar";
 import { openQuantity } from "../../shared/exitRules";
@@ -75,6 +77,10 @@ export interface LedgerFloorProps {
   lastServerOpenAt?: number;
   /** A scheduled-news pause now, or the next one. */
   eventWindow?: EventWindow;
+  /** Today's loss limit in full, for the meter under "Daily loss left". */
+  dailyLossLimit?: number;
+  /** Trades closed today, oldest first: when (ms) and their P&L, for today's line. */
+  todayCloses?: { at: number; pnl: number }[];
   pendingProposals: number;
   scan: FloorScanSummary;
   onOpenQueue: () => void;
@@ -208,6 +214,118 @@ export const NewsPause: React.FC<{ window: EventWindow; now?: number }> = ({ win
     );
   }
   return null;
+};
+
+/** The next time `isOpen` turns true after `now` (5-minute steps, up to a week); null if not found. */
+export function nextOpenAt(isOpen: (ms: number) => boolean, now: number = Date.now()): number | null {
+  const step = 5 * 60 * 1000;
+  for (let t = Math.ceil(now / step) * step; t < now + 7 * 24 * 60 * 60 * 1000; t += step) if (isOpen(t)) return t;
+  return null;
+}
+
+/** "9:15 AM" today, "Mon 9:15 AM" on another day. */
+const openText = (ms: number, now: number) =>
+  new Date(ms).toDateString() === new Date(now).toDateString()
+    ? clock(ms)
+    : `${new Date(ms).toLocaleDateString([], { weekday: "short" })} ${clock(ms)}`;
+
+const MARKETS: { id: string; label: string; isOpen: (ms: number) => boolean }[] = [
+  { id: "coins", label: "Coins", isOpen: () => true },
+  { id: "india", label: "India", isOpen: isNseOpen },
+  { id: "us", label: "US", isOpen: isUsOpen },
+];
+
+/**
+ * Which markets are open now: a filled dot when open, a hollow one with the
+ * next opening time when closed. A market that opens while this is on
+ * screen pulses a ring a few times.
+ */
+export const MarketChips: React.FC<{ now?: number }> = ({ now: fixedNow }) => {
+  const [tick, setTick] = useState(() => fixedNow ?? Date.now());
+  useEffect(() => {
+    if (fixedNow !== undefined) return setTick(fixedNow);
+    const t = setInterval(() => setTick(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, [fixedNow]);
+  const now = fixedNow ?? tick;
+  const wasOpen = useRef<Record<string, boolean> | null>(null);
+  const opened = useRef<Record<string, number>>({});
+  const open = Object.fromEntries(MARKETS.map((m) => [m.id, m.isOpen(now)]));
+  if (wasOpen.current) {
+    for (const m of MARKETS) if (open[m.id] && !wasOpen.current[m.id]) opened.current[m.id] = (opened.current[m.id] ?? 0) + 1;
+  }
+  wasOpen.current = open;
+  return (
+    <div aria-label="Markets" className="flex flex-wrap gap-1.5">
+      {MARKETS.map((m) => {
+        const on = open[m.id];
+        const next = on || m.id === "coins" ? null : nextOpenAt(m.isOpen, now);
+        const text = m.id === "coins" ? "24/7" : on ? "open" : next ? openText(next, now) : "closed";
+        return (
+          <span
+            key={m.id}
+            data-testid={`market-${m.id}`}
+            data-open={on}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full border border-line transition-colors ${
+              on ? "bg-surface text-ink" : "text-muted"
+            }`}
+          >
+            <span className="relative w-2 h-2">
+              {on && opened.current[m.id] && (
+                <span key={opened.current[m.id]} aria-hidden="true" className="absolute inset-0 rounded-full bg-gain nx-ring-once" />
+              )}
+              <span className={`absolute inset-0 rounded-full border-[1.5px] transition-colors ${on ? "bg-gain border-gain" : "border-muted"}`} />
+            </span>
+            {m.label} · {text}
+          </span>
+        );
+      })}
+    </div>
+  );
+};
+
+/**
+ * Today's P&L through the day: 0 at midnight, a step at each close, and
+ * where it stands now with the open trades. Draws itself when shown; the
+ * "now" dot pulses.
+ */
+export const TodayLine: React.FC<{ closes: { at: number; pnl: number }[]; openPnl: number; now?: number }> = ({ closes, openPnl, now = Date.now() }) => {
+  const start = new Date(now).setHours(0, 0, 0, 0);
+  const pts: [number, number][] = [[start, 0]];
+  let sum = 0;
+  for (const c of closes) {
+    if (c.at < start || c.at > now) continue;
+    sum += c.pnl;
+    pts.push([c.at, sum]);
+  }
+  pts.push([now, sum + openPnl]);
+  if (pts.length < 3 && openPnl === 0) return null;
+  const W = 300;
+  const H = 56;
+  const values = pts.map(([, v]) => v);
+  const lo = Math.min(0, ...values);
+  const hi = Math.max(0, ...values);
+  const span = hi - lo || 1;
+  const x = (t: number) => ((t - start) / Math.max(1, now - start)) * W;
+  const y = (v: number) => 4 + (1 - (v - lo) / span) * (H - 8);
+  const d = pts.map(([t, v], i) => `${i === 0 ? "M" : "L"}${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const end = pts[pts.length - 1][1];
+  const tone = end >= 0 ? "text-gain" : "text-loss";
+  return (
+    <div className={`relative ${tone}`} data-testid="today-line">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block w-full h-14" aria-label="Today's P&L through the day">
+        <line x1="0" x2={W} y1={y(0)} y2={y(0)} className="stroke-line" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
+        <path d={d} pathLength={1} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="nx-draw" />
+      </svg>
+      <span className="absolute w-2 h-2 -ml-1 -mt-1 rounded-full bg-current" style={{ left: "100%", top: `${(y(end) / H) * 100}%` }}>
+        <span aria-hidden="true" className="absolute inset-0 rounded-full bg-current nx-ring" />
+      </span>
+      <div className="flex justify-between text-[11px] text-muted mt-1">
+        <span>Midnight</span>
+        <span>Now</span>
+      </div>
+    </div>
+  );
 };
 
 /** Money in a position: its entry price times the quantity still open. */
@@ -400,6 +518,8 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         </div>
       </header>
 
+      <MarketChips />
+
       <section aria-label="Account" className="flex flex-col gap-1.5">
         <div className="text-[13px] text-muted">{isLive ? "CoinDCX equity" : "Paper equity"}</div>
         <div className="font-display text-[46px] leading-[1.05] tracking-[-0.01em] tabular-nums">
@@ -414,6 +534,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
             All time <strong className={pnlTone(allTimePnl)}><Rolling value={allTimePnl} format={signedMoney} /></strong>
           </span>
         </div>
+        {props.todayCloses && <TodayLine closes={props.todayCloses} openPnl={openPnl} />}
       </section>
 
       <Card aria-label="Autopilot" className="flex flex-col gap-3">
@@ -447,11 +568,20 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
             label={`In trades · ${(props.exposureFraction * 100).toFixed(1)}%`}
             value={formatMoney(props.positions.reduce((a, p) => a + moneyIn(p), 0), { decimals: 0 })}
           />
-          <StatTile
-            label="Daily loss left"
-            value={formatMoney(Math.max(0, props.dailyLossLeft), { decimals: 0 })}
-            valueClassName={props.dailyLossLeft <= 0 ? "text-loss" : ""}
-          />
+          <div className="flex-1 basis-0 min-w-0 bg-inset rounded-[10px] px-2.5 py-2">
+            <div className="text-[11px] text-muted">Daily loss left</div>
+            <div className={`font-display text-lg tabular-nums truncate ${props.dailyLossLeft <= 0 ? "text-loss" : ""}`}>
+              {formatMoney(Math.max(0, props.dailyLossLeft), { decimals: 0 })}
+            </div>
+            {props.dailyLossLimit !== undefined && props.dailyLossLimit > 0 && (
+              <div className="h-1 mt-1 rounded-full bg-line overflow-hidden" data-testid="loss-meter">
+                <GrowBar
+                  fraction={props.dailyLossLeft / props.dailyLossLimit}
+                  className={props.dailyLossLeft / props.dailyLossLimit <= 0.25 ? "bg-warn" : "bg-accent"}
+                />
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={props.onToggleStop}

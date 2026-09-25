@@ -212,3 +212,45 @@ describe("a theme change", () => {
     expect(document.documentElement.dataset.theme).toBe("graphite");
   });
 });
+
+describe("the Floor's top", () => {
+  it("shows which markets are open, with the next opening time for a closed one, and pulses a market that opens", async () => {
+    const { MarketChips } = await import("../../src/components/ledger/LedgerFloor");
+    // Thursday 21:30 IST: India closed, US open.
+    const evening = Date.parse("2026-09-24T16:00:00Z");
+    const { rerender } = render(createElement(MarketChips, { now: evening }));
+    expect(screen.getByTestId("market-coins").textContent).toBe("Coins · 24/7");
+    expect(screen.getByTestId("market-us").getAttribute("data-open")).toBe("true");
+    expect(screen.getByTestId("market-india").getAttribute("data-open")).toBe("false");
+    expect(screen.getByTestId("market-india").textContent).toMatch(/^India · Fri /);
+    expect(screen.getByTestId("market-india").querySelector(".nx-ring-once")).toBeNull();
+    // Friday 9:15 IST: India opens while on screen.
+    rerender(createElement(MarketChips, { now: Date.parse("2026-09-25T03:46:00Z") }));
+    expect(screen.getByTestId("market-india").textContent).toBe("India · open");
+    expect(screen.getByTestId("market-india").querySelector(".nx-ring-once")).not.toBeNull();
+  });
+
+  it("draws today's P&L through the day, ending where it stands now", async () => {
+    const { TodayLine } = await import("../../src/components/ledger/LedgerFloor");
+    const now = new Date(2026, 8, 25, 20, 0).getTime();
+    const at = (h: number) => new Date(2026, 8, 25, h, 0).getTime();
+    const { container } = render(createElement(TodayLine, { closes: [{ at: at(10), pnl: 120 }, { at: at(19), pnl: -800 }], openPnl: -20, now }));
+    const path = container.querySelector("path")!;
+    expect(path.getAttribute("class")).toContain("nx-draw");
+    expect(path.getAttribute("d")!.split("L")).toHaveLength(4);
+    expect(container.querySelector('[data-testid="today-line"]')!.className).toContain("text-loss");
+    // Nothing closed and nothing open: no line.
+    const empty = render(createElement(TodayLine, { closes: [], openPnl: 0, now }));
+    expect(empty.container.querySelector("svg")).toBeNull();
+  });
+
+  it("drains the loss-limit meter, amber when little is left", () => {
+    const { container, rerender } = render(createElement(LedgerFloor, floor({ dailyLossLeft: 2000, dailyLossLimit: 2500 })));
+    const bar = () => container.querySelector('[data-testid="loss-meter"] > div') as HTMLElement;
+    expect(bar().style.width).toBe("80%");
+    expect(bar().className).toContain("bg-accent");
+    rerender(createElement(LedgerFloor, floor({ dailyLossLeft: 500, dailyLossLimit: 2500 })));
+    expect(bar().style.width).toBe("20%");
+    expect(bar().className).toContain("bg-warn");
+  });
+});
