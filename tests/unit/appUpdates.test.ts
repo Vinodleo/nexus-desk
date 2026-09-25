@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The installed app is usually resumed, not relaunched, so it looks for a
@@ -55,5 +57,13 @@ describe("looking for a new version", () => {
     expect(builtAtText("")).toBe("development build");
     expect(builtAtText("2026-09-25T08:35:00Z")).toMatch(/Sep/);
     expect(builtAtText("2026-09-25T08:35:00Z")).toMatch(/25/);
+  });
+
+  it("keeps the app's worker: the page doesn't unregister it on every launch", () => {
+    // A leftover script in index.html unregistered the worker each time the
+    // app opened; the app registered it again, but the browser's "worker
+    // ready" signal then never came, and Trade pop-ups couldn't switch on.
+    const html = readFileSync(resolve(__dirname, "../../index.html"), "utf8");
+    expect(html).not.toMatch(/unregister/);
   });
 });

@@ -10,7 +10,8 @@ const msg = { title: "SOL/INR closed +₹42.1", body: "Trailing stop · sold 0.8
 
 function fakeBrowser(permission: NotificationPermission) {
   const showNotification = vi.fn(async () => {});
-  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: Promise.resolve({ showNotification }) } });
+  const reg = { active: {}, showNotification };
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: Promise.resolve(reg), getRegistration: async () => reg } });
   (window as any).PushManager = function () {};
   (window as any).Notification = { permission };
   return showNotification;
