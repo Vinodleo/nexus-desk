@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { isUsOpen, isUsSymbol, usSquareOffDue, usTakesEntries, US_ROUND_TRIP_RATE } from "../../src/shared/usMarket";
+import { inUsSession, isUsOpen, isUsSymbol, usSquareOffDue, usTakesEntries, US_ROUND_TRIP_RATE } from "../../src/shared/usMarket";
 import { marketOf } from "../../src/shared/marketLimits";
 import { holdMinutesFor, planAtr, stopFloorPct, isCoin } from "../../src/shared/coinHolds";
 import { breakevenBuffer, holdingDecision } from "../../src/shared/exitRules";
@@ -69,8 +69,14 @@ describe("the US market", () => {
 const calls: string[] = [];
 let alpacaDown = false;
 
-/** A strong uptrend (0.15% a candle, well clear of costs), at $250 now. */
-const usdAt = (t: number) => 250 * Math.pow(1.0015, (t - now) / FIVE);
+/** Each 5-minute slot's count of session candles before it, over the days the tests read: prices move only while the market is open. */
+const sessionIndex = new Map<number, number>();
+for (let ms = now - 8 * 24 * 60 * 60_000, k = 0; ms <= now + 24 * 60 * 60_000; ms += FIVE) {
+  sessionIndex.set(ms, k);
+  if (inUsSession(ms, FIVE)) k++;
+}
+/** A strong uptrend (0.15% a session candle, well clear of costs), at $250 now; flat overnight. */
+const usdAt = (t: number) => 250 * Math.pow(1.0015, sessionIndex.get(Math.floor(t / FIVE) * FIVE)! - sessionIndex.get(now)!);
 
 function alpaca(url: URL): Response {
   if (alpacaDown) return new Response(JSON.stringify({ message: "forbidden." }), { status: 403 });
@@ -157,6 +163,22 @@ describe("the Alpaca client", () => {
     expect(calls.every((c) => c.includes("feed=iex") && !c.includes("secret"))).toBe(true);
   });
 
+  it("keeps only regular-session candles: Alpaca's pre-market and after-hours ones are left out", async () => {
+    const fx = await import("../../server/fx");
+    const alpacaClient = await import("../../server/alpaca");
+    fx._setUsdInr(USDINR, now);
+    const day = 24 * 60 * 60_000;
+    const five = (await alpacaClient.fetchUsCandles(["AAPL.US"], "5Min", now - day, now))["AAPL.US"] as number[][];
+    // The stub answers around the clock. 11:00 yesterday to 11:00 today (New
+    // York) holds one session's 78 five-minute candles, plus the one opening now.
+    expect(five.length).toBe(79);
+    expect(five.every(([t]) => isUsOpen(t))).toBe(true);
+    const hours = (await alpacaClient.fetchUsCandles(["AAPL.US"], "1Hour", now - day, now))["AAPL.US"] as number[][];
+    const nyHour = (t: number) => Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hourCycle: "h23" }).format(t));
+    // 9:00 (it holds the 9:30 open) to 15:00 New York: 8:00 and 16:00 are out.
+    expect([...new Set(hours.map(([t]) => nyHour(t)))].sort((a, b) => a - b)).toEqual([9, 10, 11, 12, 13, 14, 15]);
+  });
+
   it("won't price anything without a rate, and says when the keys are refused", async () => {
     const alpacaClient = await import("../../server/alpaca");
     await expect(alpacaClient.fetchUsSnapshots(["AAPL.US"])).rejects.toThrow(/No USD\/INR rate/);
@@ -164,6 +186,34 @@ describe("the Alpaca client", () => {
     alpacaDown = true;
     await expect(alpacaClient.fetchUsSnapshots(["AAPL.US"])).rejects.toThrow(/refused the keys/);
     expect(alpacaClient.alpacaStatus().lastError).toMatch(/refused the keys/);
+  });
+});
+
+describe("the traders' replay", () => {
+  it("counts a stock setup only in the hours the live scanner takes trades, so none is judged across the night", async () => {
+    const { takesEntriesAt, panelSetupsOnHistory, LAB_INTERVAL_MS } = await import("../../src/services/labSimulation");
+    const { toClosedBars } = await import("../../src/services/liveMarketStreamService");
+    const { decorateBarsWithIndicators } = await import("../../src/services/marketDataService");
+    // Coins any time; US stocks 9:30 to 3:30 New York; Indian stocks 9:15 to 3:00 IST.
+    expect(takesEntriesAt("SOL/INR", Date.parse("2026-09-26T03:00:00Z"))).toBe(true);
+    expect(takesEntriesAt("AAPL.US", Date.parse("2026-09-24T19:25:00Z"))).toBe(true);
+    expect(takesEntriesAt("AAPL.US", Date.parse("2026-09-24T19:35:00Z"))).toBe(false);
+    expect(takesEntriesAt("AAPL.US", Date.parse("2026-09-24T12:00:00Z"))).toBe(false);
+    expect(takesEntriesAt("SBIN", Date.parse("2026-09-24T09:25:00Z"))).toBe(true);
+    expect(takesEntriesAt("SBIN", Date.parse("2026-09-24T09:35:00Z"))).toBe(false);
+
+    const fx = await import("../../server/fx");
+    const alpacaClient = await import("../../server/alpaca");
+    fx._setUsdInr(USDINR, now);
+    const rows = (await alpacaClient.fetchUsCandles(["AAPL.US"], "5Min", now - 7 * 24 * 60 * 60_000, now))["AAPL.US"];
+    const bars = decorateBarsWithIndicators(toClosedBars(rows, FIVE, now));
+    const entryAt = (i: number) => (bars[i].timestampMs as number) + LAB_INTERVAL_MS;
+    // The history has candles after 3:30 (and the night after them)...
+    expect(bars.some((_, i) => !usTakesEntries(entryAt(i)))).toBe(true);
+    // ...but every setup counted opens when a live one could.
+    const found = panelSetupsOnHistory("AAPL.US", bars);
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every(({ i }) => usTakesEntries(entryAt(i)))).toBe(true);
   });
 });
 

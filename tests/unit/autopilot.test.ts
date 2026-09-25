@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TradeProposal } from "../../src/types";
 import { DEFAULT_RISK_POLICY } from "../../src/services/riskEngine";
-import { autopilotOpeningsLastHour, positionFromProposal, selectAutopilotTrades } from "../../src/services/autopilot";
+import { autopilotOpeningsLastHour, autopilotQueue, PHONE_SCAN_HOLD_REASON, positionFromProposal, selectAutopilotTrades } from "../../src/services/autopilot";
 import { adoptServerOpened } from "../../src/hooks/useGuardianSync";
 
 // Self-Approve's rules, shared by the app and the server scanner.
@@ -130,5 +130,17 @@ describe("adoptServerOpened", () => {
     // Nor two copies from the server in one go.
     const other = { ...base, symbol: "ETH/INR", openedByServer: true, clientSeen: false };
     expect(adoptServerOpened([], [{ ...other, id: "e1" }, { ...other, id: "e2" }], () => false).map((p) => p.id)).toEqual(["e1"]);
+  });
+});
+
+describe("autopilotQueue", () => {
+  it("opens only what the server's checks passed: what this phone's own scan found waits for you", () => {
+    const fromServer = proposal("SOL/INR");
+    const fromPhone = proposal("ADA/INR", { scannedOnPhone: true });
+    const done = proposal("XRP/INR", { status: "APPROVED" });
+    const { take, hold } = autopilotQueue([fromServer, fromPhone, done]);
+    expect(take.map((p) => p.symbol)).toEqual(["SOL/INR"]);
+    expect(hold.map((p) => p.symbol)).toEqual(["ADA/INR"]);
+    expect(PHONE_SCAN_HOLD_REASON).toMatch(/waits for you/);
   });
 });

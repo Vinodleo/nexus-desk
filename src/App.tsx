@@ -102,7 +102,7 @@ import { useTrailProfile } from "./hooks/useTrailProfile";
 import { showLocalTradePopup, useTradeNotifications } from "./hooks/useTradeNotifications";
 import { tradeClosedMessage } from "./shared/tradeMessages";
 import { holdMinutesFor, trailsAsRunner } from "./shared/coinHolds";
-import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, newPositionId, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
+import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, autopilotQueue, newPositionId, PHONE_SCAN_HOLD_REASON, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows } from "./services/experienceMemory";
 
@@ -1336,14 +1336,20 @@ export default function App() {
   );
 
   // Autonomous Self-Approval Engine:
-  // When Self-Approve is ON (AUTO_WITHIN_LIMITS), ALL trades in the queue are automatically approved.
+  // When Self-Approve is ON (AUTO_WITHIN_LIMITS), waiting trades the server's checks passed are
+  // approved automatically, within the limits; ones this phone's own scan found wait for you.
   // Paper only: in Live mode every trade waits for you (the server's autopilot is paper-only too).
   useEffect(() => {
     if (decisionMode !== "AUTO_WITHIN_LIMITS" || killSwitchActive || tradingMode === "LIVE_COINDCX") return;
 
-    const pendingProposals = proposalQueue.filter(
-      (p) => p.status === "PENDING_APPROVAL"
-    );
+    // What this phone's own scan found waits for you, with why.
+    const { take: pendingProposals, hold } = autopilotQueue(proposalQueue);
+    if (hold.length > 0) {
+      const held = new Set(hold.map((p) => p.id));
+      setProposalQueue((prev) =>
+        prev.map((p) => (held.has(p.id) && p.status === "PENDING_APPROVAL" ? { ...p, status: "DEFERRED", deferralReason: PHONE_SCAN_HOLD_REASON } : p))
+      );
+    }
 
     if (pendingProposals.length > 0) {
       // Auto-approve all trades in the queue
@@ -1468,10 +1474,12 @@ export default function App() {
         tfjs: buildCalibrator(shadowStore.all(), "tfjs"),
       },
     });
-    recordScan(report);
-    mergeScanIntoQueue(report);
-    shadowStore.add(report.shadows);
-    return report;
+    // Autopilot leaves these for you: the server's checks didn't see them.
+    const marked = { ...report, newProposals: report.newProposals.map((p) => ({ ...p, scannedOnPhone: true })) };
+    recordScan(marked);
+    mergeScanIntoQueue(marked);
+    shadowStore.add(marked.shadows);
+    return marked;
   };
   // The candle-close listener below always calls the latest runScan.
   const runScanRef = useRef(runScan);

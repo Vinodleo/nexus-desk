@@ -1,5 +1,5 @@
 import { usdInr } from "./fx";
-import { usSymbol, usTicker } from "../src/shared/usMarket";
+import { inUsSession, usSymbol, usTicker } from "../src/shared/usMarket";
 
 // US stock data from Alpaca (paper account, free IEX feed): 5-minute and
 // 1-hour candles, and snapshots (last trade, best bid and ask). Prices come
@@ -55,6 +55,7 @@ function fx(): number {
 }
 
 export type AlpacaTimeframe = "5Min" | "1Hour";
+const FRAME_MS: Record<AlpacaTimeframe, number> = { "5Min": 5 * 60 * 1000, "1Hour": 60 * 60 * 1000 };
 
 interface AlpacaBar {
   t: string;
@@ -68,7 +69,8 @@ interface AlpacaBar {
 /**
  * Candles for several US stocks ("AAPL.US") since `fromMs`, in rupees, as
  * [openTimeMs, open, high, low, close, volume] rows per symbol (the shape the
- * candle reader takes).
+ * candle reader takes). Regular session only: Alpaca also sends pre-market
+ * and after-hours candles.
  */
 export async function fetchUsCandles(symbols: string[], timeframe: AlpacaTimeframe, fromMs: number, toMs: number = Date.now()): Promise<Record<string, unknown[]>> {
   if (symbols.length === 0) return {};
@@ -90,7 +92,10 @@ export async function fetchUsCandles(symbols: string[], timeframe: AlpacaTimefra
     const body = await get<{ bars?: Record<string, AlpacaBar[]>; next_page_token?: string | null }>(`${DATA_URL}/stocks/bars?${params}`);
     for (const [ticker, bars] of Object.entries(body.bars ?? {})) {
       const rows = (out[usSymbol(ticker)] ??= []);
-      for (const b of bars) rows.push([Date.parse(b.t), b.o * rate, b.h * rate, b.l * rate, b.c * rate, b.v]);
+      for (const b of bars) {
+        const t = Date.parse(b.t);
+        if (inUsSession(t, FRAME_MS[timeframe])) rows.push([t, b.o * rate, b.h * rate, b.l * rate, b.c * rate, b.v]);
+      }
     }
     pageToken = body.next_page_token ?? null;
     if (!pageToken) break;

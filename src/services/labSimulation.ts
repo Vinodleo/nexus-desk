@@ -8,7 +8,8 @@ import { resolveShadow, shadowFromSetup } from "./shadowTracker";
 import { metaFeatures } from "./metaFeatures";
 import { predictConfidenceBatch } from "./mlService";
 import { SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
-import { isNseSymbol } from "../shared/nse";
+import { isNseSymbol, nseTakesEntries } from "../shared/nse";
+import { isUsSymbol, usTakesEntries } from "../shared/usMarket";
 import { holdMinutesFor } from "../shared/coinHolds";
 
 // The Lab's replay of live trading on historical 5-minute candles: the same
@@ -213,10 +214,25 @@ export interface PanelSample {
 }
 
 /**
+ * Whether the live scanner takes a new trade in this market at `ms`: coins
+ * any time, stocks only in their entry hours (a US stock from the open to
+ * 3:30 New York time, an Indian one from the open to 3:00 IST).
+ */
+export function takesEntriesAt(symbol: string, ms: number): boolean {
+  if (!Number.isFinite(ms)) return true;
+  if (isUsSymbol(symbol)) return usTakesEntries(ms);
+  if (isNseSymbol(symbol)) return nseTakesEntries(ms);
+  return true;
+}
+
+/**
  * Every intraday setup the live trader panel (with the 1-hour trend check)
  * would have put forward on history, at the candle it came from: long-only
  * for coins (CoinDCX spot can't short), both ways for stocks. After a
- * signal, the next few candles on the coin aren't counted again.
+ * signal, the next few candles on the coin aren't counted again. A stock
+ * setup counts only in the hours the live scanner takes trades: one near
+ * the close would otherwise be judged across the night's gap, which a live
+ * trade (closed before the close) never is.
  */
 export function panelSetupsOnHistory(
   symbol: string,
@@ -226,6 +242,7 @@ export function panelSetupsOnHistory(
   const macroAt = hourlyRegimeLookup(bars);
   const out: { i: number; regime: RegimeType; setups: StrategySetup[] }[] = [];
   for (let i = WARMUP_BARS; i < bars.length - 1; i++) {
+    if (!takesEntriesAt(symbol, (bars[i].timestampMs as number) + LAB_INTERVAL_MS)) continue;
     const regime = classifyRegime(bars[i]);
     const panel = runPersonaPanel(
       {
