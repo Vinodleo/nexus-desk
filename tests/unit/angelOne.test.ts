@@ -244,6 +244,35 @@ describe("stocks on the server", () => {
   });
 });
 
+describe("stock candles after a restart", () => {
+  it("are loaded outside market hours when none are held, at most hourly, without scanning stocks", async () => {
+    const { _resetServerScanner, runScanCycle, exitEdgeTable } = await import("../../server/scanner/scannerService");
+    const { setDeskState } = await import("../../server/scanner/deskState");
+    _resetServerScanner();
+    (await import("../../server/scanner/deskState"))._resetDeskStates();
+    const evening = Date.parse(`2026-09-23T16:10:00${IST}`);
+    setDeskState("owner", {
+      equity: 100000, riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.5 }, dailyRealizedPnl: 0,
+      autopilot: false, tradingMode: "PAPER" as const, killSwitch: false, scanning: true,
+      failureState: {
+        simulateAgentTimeout: false, simulateStaleMarketData: false, simulateDailyLossBreach: false,
+        simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false, globalKillSwitchActive: false,
+      },
+      quarantines: {}, promotedModel: null,
+    }, evening);
+    calls.length = 0;
+    await runScanCycle(evening);
+    const sbinCandles = () => calls.filter((c) => c.path.endsWith("/getCandleData") && c.body.symboltoken === "3045" && c.body.interval === "FIVE_MINUTE");
+    expect(sbinCandles().length).toBe(1);
+    // Held now: the next cycles don't ask again.
+    await runScanCycle(evening + 5 * 60_000);
+    expect(sbinCandles().length).toBe(1);
+    // And the traders' table measures them (SBIN's candles are there to replay).
+    const table = exitEdgeTable("owner", evening + 5 * 60_000)!;
+    expect(Object.keys(table.byKey).some((k) => k.startsWith("nse:"))).toBe(true);
+  });
+});
+
 describe("stock bid and ask", () => {
   beforeEach(async () => {
     (await import("../../server/scanner/scannerService"))._resetServerScanner();

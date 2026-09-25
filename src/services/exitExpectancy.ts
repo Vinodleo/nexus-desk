@@ -164,6 +164,8 @@ export function expectancyRows(table: ExpectancyTable) {
 }
 
 const cache = new Map<string, ExpectancyTable>();
+/** How many markets with candles each cached table was measured from. */
+const inputs = new Map<string, number>();
 
 /**
  * The table for this trail profile, measured on `symbols`' candles now and
@@ -177,14 +179,17 @@ export function getExpectancyTable(
   spreadFor?: (symbol: string) => number | undefined
 ): ExpectancyTable {
   const id = (profile ?? DEFAULT_TRAIL_PROFILE) as TrailProfileId;
-  const held = cache.get(id);
-  if (held && now - held.measuredAt < EXPECTANCY_TTL_MS && now >= held.measuredAt) return held;
   const sets = symbols.flatMap((symbol) => {
     const bars = getBars(symbol);
     return bars && bars.length > 0 ? [{ symbol, bars }] : [];
   });
+  const held = cache.get(id);
+  // Reused for the hour, unless markets gained candles since (stocks loaded
+  // after a restart): then measured again straight away.
+  if (held && now - held.measuredAt < EXPECTANCY_TTL_MS && now >= held.measuredAt && sets.length <= (inputs.get(id) ?? 0)) return held;
   const table = measureExpectancy(sets, id, now, spreadFor);
   cache.set(id, table);
+  inputs.set(id, sets.length);
   return table;
 }
 
@@ -196,6 +201,7 @@ export function cachedExpectancyTable(profile: string | undefined): ExpectancyTa
 /** Test hook. */
 export function _clearExpectancyCache(): void {
   cache.clear();
+  inputs.clear();
 }
 
 // ---------- the market-wide trend (Bitcoin) ----------

@@ -247,6 +247,10 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
   return record;
 }
 
+/** Stocks without candles are loaded outside market hours at most this often. */
+const STOCK_BACKFILL_GAP_MS = 60 * 60 * 1000;
+let lastStockBackfillAt = 0;
+
 /** Brings candles, trend and exchange rules up to date for the scanned coins. */
 async function refreshMarket(now: number): Promise<void> {
   universe = (await getCoinUniverse()).coins.map((c) => c.symbol);
@@ -255,10 +259,15 @@ async function refreshMarket(now: number): Promise<void> {
   // Coins with setups still being followed keep their candles too.
   const followed = [...users.values()].flatMap((u) => u.shadows.filter((s) => s.status === "open").map((s) => s.symbol));
   const open = isNseOpen(now);
-  // Stocks keep their candles overnight; they're fetched only while NSE is open.
+  // Stocks keep their candles overnight; they're fetched only while NSE is
+  // open. Except stocks with none at all (after a restart): their last
+  // session is loaded anyway (Angel One serves past candles any time), at
+  // most hourly, so the traders' stock record doesn't vanish until the open.
   market.keepOnly([...new Set([...universe, ...stockUniverse(), ...followed, MARKET_SYMBOL])]);
+  const missingStocks = !open && now - lastStockBackfillAt >= STOCK_BACKFILL_GAP_MS ? stockUniverse().filter((s) => !market.getBars(s)) : [];
+  if (missingStocks.length > 0) lastStockBackfillAt = now;
   const symbols = [...new Set([...scanList(now), ...followed, MARKET_SYMBOL])].filter((sym) => open || !isNseSymbol(sym));
-  await market.refresh(symbols, now);
+  await market.refresh([...symbols, ...missingStocks], now);
   await market.refreshMacro([...new Set([...scanList(now), MARKET_SYMBOL])], now);
 }
 
@@ -416,6 +425,7 @@ export function _resetServerScanner(): void {
   users.clear();
   observedSpreads.clear();
   market.keepOnly([]);
+  lastStockBackfillAt = 0;
   cycleStartedAt = null;
   universe = [];
   if (timer) clearTimeout(timer);
