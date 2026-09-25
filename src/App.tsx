@@ -1518,6 +1518,8 @@ export default function App() {
   const serverStatus = useServerStatus(isSettingsOpen);
   const tradeNotifications = useTradeNotifications();
   const appTheme = useTheme();
+  // Trades already in the Book when the app opened: only closes after that bump the Book tab.
+  const closedAtStartRef = useRef(closedTrades.length);
   tradePopupsOnRef.current = tradeNotifications.state === "on";
   const scanLocationRef = useRef(serverScanner.location);
   scanLocationRef.current = serverScanner.location;
@@ -1945,6 +1947,7 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         pendingQueueCount={pendingCount}
+        bookBumpKey={Math.max(0, closedTrades.length - closedAtStartRef.current)}
       />
 
       <SettingsSheet

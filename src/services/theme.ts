@@ -37,16 +37,29 @@ export function loadTheme(): ThemeId {
   }
 }
 
-/** Shows `id` now: the page's colours and the phone's status bar. */
-export function applyTheme(id: ThemeId): void {
+let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Shows `id` now: the page's colours and the phone's status bar. With
+ * `fade`, the colours cross-fade for a moment instead of jumping (not with
+ * reduced motion).
+ */
+export function applyTheme(id: ThemeId, opts: { fade?: boolean } = {}): void {
   const theme = THEMES.find((t) => t.id === id) ?? THEMES[0];
-  document.documentElement.dataset.theme = theme.id;
+  const root = document.documentElement;
+  const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (opts.fade && !reduced && root.dataset.theme !== theme.id) {
+    root.classList.add("nx-theme-fade");
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => root.classList.remove("nx-theme-fade"), 450);
+  }
+  root.dataset.theme = theme.id;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.bar);
 }
 
 /** Shows and saves `id`. */
 export function setTheme(id: ThemeId): void {
-  applyTheme(id);
+  applyTheme(id, { fade: true });
   try {
     localStorage.setItem(THEME_STORAGE_KEY, id);
   } catch {}

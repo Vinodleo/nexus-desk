@@ -8,6 +8,8 @@ interface BottomNavBarProps {
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
   pendingQueueCount: number;
+  /** Goes up by one each time a trade closes: the Book tab gives a small bump so you know where it went. */
+  bookBumpKey?: number;
 }
 
 const TABS: { id: TabType; label: string; icon: React.ComponentType<{ className?: string; strokeWidth?: number }> }[] = [
@@ -26,7 +28,7 @@ export function useTabSlide(activeTab: TabType): string | undefined {
   return useSlideFrom(activeTab, TAB_ORDER);
 }
 
-export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onTabChange, pendingQueueCount }) => {
+export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onTabChange, pendingQueueCount, bookBumpKey = 0 }) => {
   const activeIndex = Math.max(0, TAB_ORDER.indexOf(activeTab));
   return (
     <nav
@@ -58,7 +60,12 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onTabChan
               }`}
             >
               {/* Keyed on being active so the icon's bounce plays each time the tab is picked. */}
-              <span key={isActive ? "on" : "off"} className={`relative${isActive ? " nx-tab-bounce" : ""}`}>
+              {/* The Book tab also bumps when a trade closes (keyed on the count, so each close replays it). */}
+              <span
+                key={isActive ? "on" : id === "book" && bookBumpKey > 0 ? `bump-${bookBumpKey}` : "off"}
+                data-testid={`tab-icon-${id}`}
+                className={`relative${isActive || (id === "book" && bookBumpKey > 0) ? " nx-tab-bounce" : ""}`}
+              >
                 <Icon className="w-5 h-5" strokeWidth={isActive ? 2 : 1.6} />
                 {badge && (
                   <span

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight, AlertTriangle } from "lucide-react";
 import type { Position } from "../../types";
 import { useLiveTickers } from "../../hooks/useLiveTickers";
@@ -213,6 +213,67 @@ export const NewsPause: React.FC<{ window: EventWindow; now?: number }> = ({ win
 /** Money in a position: its entry price times the quantity still open. */
 export const moneyIn = (p: Position) => p.entryPrice * openQuantity(p);
 
+/**
+ * Where `price` sits on a trade's line from its original stop to its target,
+ * 0 (stop) to 1 (target), clamped; null when the line has no length.
+ */
+export function trackPoint(p: Pick<Position, "direction" | "stopLoss" | "initialStopLoss" | "takeProfit">, price: number): number | null {
+  const lo = p.initialStopLoss ?? p.stopLoss;
+  const hi = p.takeProfit;
+  const span = p.direction === "LONG" ? hi - lo : lo - hi;
+  if (!(span > 0) || !Number.isFinite(price)) return null;
+  const f = (p.direction === "LONG" ? price - lo : lo - price) / span;
+  return Math.max(0, Math.min(1, f));
+}
+
+/** How long a closed trade stays on the Floor while it animates away. */
+const CLOSE_ANIMATION_MS = 1300;
+
+/** How long a "Half banked" tag stays up after half is banked. */
+const BANKED_TAG_MS = 3300;
+
+/**
+ * The trade's line from stop to target: where the price is now (the marker
+ * glides as it moves), the run from entry in green or red, the entry and
+ * +1R ticks, and the stop once it has trailed up.
+ */
+const PositionTrack: React.FC<{ position: Position; bankedKey: number }> = ({ position: p, bankedKey }) => {
+  const now = trackPoint(p, p.currentPrice);
+  const entry = trackPoint(p, p.entryPrice);
+  if (now === null || entry === null) return null;
+  const risk = Math.abs(p.entryPrice - (p.initialStopLoss ?? p.stopLoss));
+  const oneR = trackPoint(p, p.direction === "LONG" ? p.entryPrice + risk : p.entryPrice - risk);
+  const stop = trackPoint(p, p.stopLoss);
+  const up = now >= entry;
+  const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
+  return (
+    <div className="relative h-5" aria-hidden="true" data-testid="position-track">
+      <div className="absolute inset-x-0 top-2 h-1 rounded-full bg-line" />
+      <div
+        className={`absolute top-2 h-1 rounded-full nx-glide-left ${up ? "bg-gain" : "bg-loss"}`}
+        style={{ left: pct(Math.min(entry, now)), width: pct(Math.abs(now - entry)) }}
+      />
+      <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-muted" style={{ left: pct(entry) }} />
+      {oneR !== null && oneR < 1 && <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-line" style={{ left: pct(oneR) }} />}
+      {stop !== null && stop > 0.001 && <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss" style={{ left: pct(stop) }} />}
+      <div
+        data-testid="position-marker"
+        className={`absolute top-[3px] w-3.5 h-3.5 -ml-[7px] rounded-full border-2 border-surface nx-glide-left ${up ? "bg-gain" : "bg-loss"}`}
+        style={{ left: pct(now) }}
+      />
+      {bankedKey > 0 && oneR !== null && (
+        <span
+          key={bankedKey}
+          className="nx-tag-pop absolute -top-5 whitespace-nowrap text-[11px] font-bold px-2 py-px rounded-full bg-surface border border-line text-gain"
+          style={{ left: pct(oneR) }}
+        >
+          Half banked ✓
+        </span>
+      )}
+    </div>
+  );
+};
+
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void; state?: ListItemState }> = ({
   position: p,
   onClose,
@@ -225,9 +286,29 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
     return () => clearTimeout(t);
   }, [confirming]);
 
+  // "Half banked" pops up when half is banked while this row is on screen.
+  const banked = (p.bankedQuantity ?? 0) > 0;
+  const wasBanked = useRef(banked);
+  const [bankedKey, setBankedKey] = useState(0);
+  useEffect(() => {
+    if (banked && !wasBanked.current) setBankedKey((k) => k + 1);
+    wasBanked.current = banked;
+  }, [banked]);
+  useEffect(() => {
+    if (bankedKey === 0) return;
+    const t = setTimeout(() => setBankedKey(0), BANKED_TAG_MS);
+    return () => clearTimeout(t);
+  }, [bankedKey]);
+
   const tone = pnlTone(p.unrealizedPnl);
+  const closing = state === "leave";
   return (
-    <li className={`nx-item${state === "enter" ? " nx-item-enter" : state === "leave" ? " nx-item-leave" : ""}`} aria-hidden={state === "leave" || undefined}>
+    <li
+      className={`nx-item${
+        state === "enter" ? " nx-item-enter" : closing ? ` nx-item-close ${p.unrealizedPnl >= 0 ? "nx-item-close-gain" : "nx-item-close-loss"}` : ""
+      }`}
+      aria-hidden={closing || undefined}
+    >
       <div className="flex flex-col gap-2 py-3.5 border-b border-line">
         <div className="flex items-baseline justify-between gap-3">
           <div className="min-w-0">
@@ -243,6 +324,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
           </Flash>
         </div>
+        <PositionTrack position={p} bankedKey={bankedKey} />
         <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted tabular-nums">
           <span>Entry {formatPrice(p.entryPrice)}</span>
           <Flash value={p.currentPrice} className="px-1 -mx-1 text-ink">
@@ -253,7 +335,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
           <span className={tone}>{formatPct(p.unrealizedPnlPercent)}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-muted">{positionNote(p)}</span>
+          <span className={`text-xs ${closing ? `font-semibold ${tone}` : "text-muted"}`}>{closing ? "Closed" : positionNote(p)}</span>
           <button
             type="button"
             onClick={() => {
@@ -290,7 +372,8 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
   const whole = formatMoney(Math.trunc(shownEquity), { decimals: 0 });
   const paise = Math.abs(shownEquity % 1).toFixed(2).slice(1); // ".96"
   const openPnl = positions.reduce((acc, p) => acc + (p.unrealizedPnl || 0), 0);
-  const rows = usePresenceList(positions, (p) => p.id);
+  // A closed trade holds its result for a moment, then slides away (nx-item-close).
+  const rows = usePresenceList(positions, (p) => p.id, CLOSE_ANIMATION_MS);
   const signedMoney = (n: number) => formatMoney(n, { signed: true });
 
   const guardianText =

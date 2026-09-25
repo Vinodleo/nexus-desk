@@ -3,7 +3,9 @@ import { act, cleanup, render, renderHook, screen } from "@testing-library/react
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAnimatedNumber, useFlash, usePresence } from "../../src/components/ledger/motion";
-import { LedgerFloor, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
+import { LedgerFloor, trackPoint, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
+import { BottomNavBar } from "../../src/components/BottomNavBar";
+import { setTheme } from "../../src/services/theme";
 import { Sheet } from "../../src/components/ledger/Sheet";
 import type { Position } from "../../src/types";
 
@@ -96,14 +98,33 @@ describe("the Floor", () => {
     expect(rowOf(container, "ZEC/INR")!.className).toContain("nx-item-enter");
   });
 
-  it("folds a closed position away in its place, then removes it", () => {
-    const { container, rerender } = render(createElement(LedgerFloor, floor({ positions: [pos("sol"), pos("zec"), pos("eth")] })));
+  it("holds a closed position in its place with its result, tinted, then slides it away", () => {
+    const { container, rerender } = render(createElement(LedgerFloor, floor({ positions: [pos("sol"), pos("zec", { unrealizedPnl: -3 }), pos("eth")] })));
     rerender(createElement(LedgerFloor, floor({ positions: [pos("sol"), pos("eth")] })));
     const symbols = () => [...container.querySelectorAll("li")].map((li) => li.textContent?.match(/^(\w+)\/INR/)?.[1]);
     expect(symbols()).toEqual(["SOL", "ZEC", "ETH"]);
-    expect(rowOf(container, "ZEC/INR")!.className).toContain("nx-item-leave");
-    act(() => vi.advanceTimersByTime(400));
+    const zec = rowOf(container, "ZEC/INR")!;
+    expect(zec.className).toContain("nx-item-close");
+    expect(zec.className).toContain("nx-item-close-loss");
+    expect(zec.textContent).toContain("Closed");
+    act(() => vi.advanceTimersByTime(700));
+    expect(symbols()).toEqual(["SOL", "ZEC", "ETH"]);
+    act(() => vi.advanceTimersByTime(700));
     expect(symbols()).toEqual(["SOL", "ETH"]);
+  });
+
+  it("shows where the price is between stop and target, and pops \"Half banked\" when half is banked", () => {
+    const { container, rerender } = render(createElement(LedgerFloor, floor({ positions: [pos("sol", { initialStopLoss: 98 })] })));
+    const marker = () => container.querySelector('[data-testid="position-marker"]') as HTMLElement;
+    // Stop 98, target 104: 101 is half-way.
+    expect(marker().style.left).toBe("50%");
+    rerender(createElement(LedgerFloor, floor({ positions: [pos("sol", { initialStopLoss: 98, currentPrice: 102.5 })] })));
+    expect(marker().style.left).toBe("75%");
+    expect(container.textContent).not.toContain("Half banked ✓");
+    rerender(createElement(LedgerFloor, floor({ positions: [pos("sol", { initialStopLoss: 98, currentPrice: 102.5, bankedQuantity: 0.5 })] })));
+    expect(container.textContent).toContain("Half banked ✓");
+    act(() => vi.advanceTimersByTime(3400));
+    expect(container.textContent).not.toContain("Half banked ✓");
   });
 
   it("flashes the price green when it ticks up and red when it ticks down", () => {
@@ -152,5 +173,42 @@ describe("the tabs", () => {
     expect(getByRole("button", { name: "Book" }).querySelector(".nx-tab-bounce")).not.toBeNull();
     expect(getByRole("button", { name: "Floor" }).querySelector(".nx-tab-bounce")).toBeNull();
     expect(getByRole("button", { name: "Queue, 2 waiting" }).querySelector(".nx-badge-pop")?.textContent).toBe("2");
+  });
+});
+
+describe("the trade line", () => {
+  it("runs from the original stop (0) to the target (1), either way round", () => {
+    const long = { direction: "LONG" as const, stopLoss: 99, initialStopLoss: 98, takeProfit: 104 };
+    expect(trackPoint(long, 98)).toBe(0);
+    expect(trackPoint(long, 101)).toBeCloseTo(0.5);
+    expect(trackPoint(long, 110)).toBe(1);
+    const short = { direction: "SHORT" as const, stopLoss: 102, takeProfit: 96 };
+    expect(trackPoint(short, 99)).toBeCloseTo(0.5);
+    expect(trackPoint({ direction: "LONG" as const, stopLoss: 100, takeProfit: 100 }, 100)).toBeNull();
+  });
+});
+
+describe("the tab bar", () => {
+  it("bumps the Book tab each time a trade closes, not when the app opens", () => {
+    const bar = (bookBumpKey: number) => createElement(BottomNavBar, { activeTab: "floor", onTabChange: vi.fn(), pendingQueueCount: 0, bookBumpKey });
+    const { rerender } = render(bar(0));
+    expect(screen.getByTestId("tab-icon-book").className).not.toContain("nx-tab-bounce");
+    rerender(bar(1));
+    const first = screen.getByTestId("tab-icon-book");
+    expect(first.className).toContain("nx-tab-bounce");
+    rerender(bar(2));
+    // A new element, so the bump plays again.
+    expect(screen.getByTestId("tab-icon-book")).not.toBe(first);
+  });
+});
+
+describe("a theme change", () => {
+  it("fades the colours for a moment instead of jumping", () => {
+    document.documentElement.dataset.theme = "ivory";
+    setTheme("graphite");
+    expect(document.documentElement.classList.contains("nx-theme-fade")).toBe(true);
+    act(() => vi.advanceTimersByTime(500));
+    expect(document.documentElement.classList.contains("nx-theme-fade")).toBe(false);
+    expect(document.documentElement.dataset.theme).toBe("graphite");
   });
 });
