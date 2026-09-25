@@ -56,7 +56,7 @@ describe("themes", () => {
     render(createElement(SettingsSheet, props({ theme: "ivory", onThemeChange })));
     expect(screen.getByRole("button", { name: "Ivory theme" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Blush theme" }));
-    expect(onThemeChange).toHaveBeenCalledWith("blush");
+    expect(onThemeChange).toHaveBeenCalledWith("blush", expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
   });
 
   it("has every colour token in every theme, and the page applies the saved one before drawing", () => {

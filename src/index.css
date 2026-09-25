@@ -340,9 +340,14 @@ html, body {
 .nx-flip-in { display: inline-block; animation: nx-flip-in 420ms ease-out both; }
 /* Bars that grow from the zero line leftwards (losses). */
 .nx-grow-left { transform-origin: right; animation: nx-grow 700ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
-/* A theme change fades between colours instead of jumping (set briefly on <html>). */
-html.nx-theme-fade, html.nx-theme-fade *, html.nx-theme-fade *::before, html.nx-theme-fade *::after {
-  transition: background-color 350ms ease, color 350ms ease, border-color 350ms ease, fill 350ms ease, stroke 350ms ease !important;
+/* A theme change: the new look grows as a circle over the old one (the
+   circle itself is run from services/theme.ts), and the picker's ring
+   glides to the new theme on its own. No cross-fade, so nothing turns grey. */
+::view-transition-old(root),
+::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-group(nx-theme-ring) { animation-duration: 480ms; animation-timing-function: cubic-bezier(0.3, 0.9, 0.3, 1.1); }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
 
 /* Settings opens as a circle from the gear, and closes back into it. */
