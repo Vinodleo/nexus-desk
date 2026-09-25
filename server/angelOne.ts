@@ -149,7 +149,24 @@ async function sessionJwt(now: number = Date.now(), fresh = false): Promise<stri
 // kind are spaced out so the scanner stays under those limits.
 const lastCallAt = new Map<string, number>();
 const queues = new Map<string, Promise<unknown>>();
-const GAP_MS: Record<string, number> = { historical: 350, quote: 150, search: 1100 };
+const GAP_MS: Record<string, number> = { historical: 400, quote: 150, search: 1100 };
+/** After Angel One says a kind of request is coming too fast, none of that kind is sent for this long. */
+const RATE_LIMIT_PAUSE_MS = 60_000;
+const pausedUntil = new Map<string, number>();
+/** A refused session is replaced by a new login at most this often. */
+const RELOGIN_MIN_GAP_MS = 60_000;
+let lastRelogin = 0;
+
+/** Angel One's "slow down" reply (HTTP 403 "exceeding access rate", or 429). */
+function isRateLimited(status: number, reply: { message?: string; errorcode?: string }): boolean {
+  return status === 429 || /access rate|rate limit|too many/i.test(reply.message ?? "");
+}
+
+/** A session Angel One no longer accepts (an expired or invalid token), as opposed to any other refusal. */
+function isSessionRefused(status: number, reply: { message?: string; errorcode?: string }): boolean {
+  if (isRateLimited(status, reply)) return false;
+  return status === 401 || /^AG800[123]$/.test(reply.errorcode ?? "") || /invalid token|token expired/i.test(reply.message ?? "");
+}
 
 function throttled<T>(kind: string, fn: () => Promise<T>): Promise<T> {
   const prev = queues.get(kind) ?? Promise.resolve();
@@ -163,10 +180,17 @@ function throttled<T>(kind: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-/** A SmartAPI call; logs in again once if the session was refused. */
+/**
+ * A SmartAPI call. Logs in again (at most once a minute) if the session was
+ * refused. When Angel One says requests are coming too fast, that kind of
+ * request pauses for a minute instead: logging in again then only adds to
+ * the count, and gets the login itself refused (as happened at the open).
+ */
 async function call<T>(kind: string, pathname: string, body: unknown): Promise<T> {
   const s = settings();
   if (!s) throw new Error("Angel One isn't set up.");
+  const paused = pausedUntil.get(kind) ?? 0;
+  if (Date.now() < paused) throw new Error(`Angel One asked to slow down; ${kind} requests resume in ${Math.ceil((paused - Date.now()) / 1000)}s.`);
   const attempt = async (fresh: boolean) => {
     const jwt = await sessionJwt(Date.now(), fresh);
     const res = await throttled(kind, () =>
@@ -175,14 +199,20 @@ async function call<T>(kind: string, pathname: string, body: unknown): Promise<T
     return { res, reply: await readReply<T>(res) };
   };
   let { res, reply } = await attempt(false);
-  const refused = res.status === 401 || res.status === 403 || /^AG80/.test(reply.errorcode ?? "") || /invalid token/i.test(reply.message ?? "");
-  if (refused) {
+  if (isSessionRefused(res.status, reply) && Date.now() - lastRelogin >= RELOGIN_MIN_GAP_MS) {
+    lastRelogin = Date.now();
     session = null;
     ({ res, reply } = await attempt(true));
+  }
+  if (isRateLimited(res.status, reply)) {
+    pausedUntil.set(kind, Date.now() + RATE_LIMIT_PAUSE_MS);
+    lastError = `Angel One asked to slow down (${kind} requests); pausing them for a minute.`;
   }
   if (!res.ok || reply.status === false || reply.data === undefined || reply.data === null) {
     throw new Error(`Angel One ${pathname.split("/").pop()}: ${reply.message || `HTTP ${res.status}`}${reply.errorcode ? ` (${reply.errorcode})` : ""}`);
   }
+  // Working again: an earlier problem no longer applies.
+  lastError = null;
   return reply.data;
 }
 
@@ -352,4 +382,6 @@ export function _resetAngelOne(): void {
   searching.clear();
   lastCallAt.clear();
   queues.clear();
+  pausedUntil.clear();
+  lastRelogin = 0;
 }

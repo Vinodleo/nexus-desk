@@ -39,6 +39,7 @@ function candles(from: number, to: number, step: number) {
 const calls: { path: string; body: any; auth?: string }[] = [];
 let jwtIssued = 0;
 let refuseNext = false;
+let rateLimitNext = 0;
 
 function angel(url: string, init?: RequestInit): Response {
   const p = new URL(url).pathname;
@@ -49,6 +50,10 @@ function angel(url: string, init?: RequestInit): Response {
   if (p.endsWith("/loginByPassword")) {
     jwtIssued++;
     return ok({ jwtToken: `jwt${jwtIssued}`, refreshToken: "r", feedToken: "f" });
+  }
+  if (rateLimitNext > 0) {
+    rateLimitNext--;
+    return new Response(JSON.stringify({ message: "Access denied because of exceeding access rate", status: false, errorcode: "" }), { status: 403 });
   }
   if (refuseNext) {
     refuseNext = false;
@@ -96,6 +101,7 @@ beforeEach(() => {
   angelOne._setAngelGaps(0);
   calls.length = 0;
   refuseNext = false;
+  rateLimitNext = 0;
 });
 
 describe("Angel One client", () => {
@@ -135,6 +141,23 @@ describe("Angel One client", () => {
     const prices = await angelOne.fetchStockPrices(["SBIN"]);
     expect(prices.SBIN).toBeGreaterThan(0);
     expect(jwtIssued).toBe(before + 1);
+  });
+
+  it("slows down when Angel One says requests come too fast, instead of logging in again", async () => {
+    await angelOne.fetchStockPrices(["SBIN"]);
+    const logins = jwtIssued;
+    rateLimitNext = 1;
+    await expect(angelOne.fetchStockPrices(["SBIN"])).rejects.toThrow(/exceeding access rate/);
+    // No new login: that only adds to the count and gets the login refused too.
+    expect(jwtIssued).toBe(logins);
+    expect(angelOne.angelStatus().lastError).toMatch(/slow down/);
+    // Quotes wait a minute; nothing is sent meanwhile.
+    calls.length = 0;
+    await expect(angelOne.fetchStockPrices(["SBIN"])).rejects.toThrow(/resume in \d+s/);
+    expect(calls.filter((c) => c.path.endsWith("/quote/"))).toHaveLength(0);
+    // Other kinds of request carry on, and a success clears the problem.
+    await angelOne.fetchStockCandles("SBIN", "FIVE_MINUTE", now - HOUR, now);
+    expect(angelOne.angelStatus().lastError).toBeNull();
   });
 
   it("reads market depth as an order book", async () => {

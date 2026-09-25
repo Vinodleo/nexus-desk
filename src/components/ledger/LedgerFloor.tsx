@@ -67,6 +67,9 @@ export interface LedgerFloorProps {
   watching?: CoinCoverage;
   /** Where scanning runs: on the server (even with the app closed) or in this browser. */
   scanLocation?: "checking" | "server" | "browser";
+  /** The server's last scan, and when its autopilot last opened a position (ms; 0 if none). */
+  lastServerScanAt?: number;
+  lastServerOpenAt?: number;
   /** A scheduled-news pause now, or the next one. */
   eventWindow?: EventWindow;
   pendingProposals: number;
@@ -169,6 +172,16 @@ const LiveCoverage: React.FC<{ scanLocation?: string }> = ({ scanLocation }) => 
 };
 
 const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/** "2:15 PM", or "24 Sep, 2:15 PM" for an earlier day. */
+const clockText = (ms: number, now = Date.now()) =>
+  new Date(ms).toDateString() === new Date(now).toDateString()
+    ? clock(ms)
+    : `${new Date(ms).toLocaleDateString([], { day: "numeric", month: "short" })}, ${clock(ms)}`;
+/** "just now", "4 min ago", "2 h ago". */
+const agoText = (ms: number, now = Date.now()) => {
+  const mins = Math.max(0, Math.round((now - ms) / 60000));
+  return mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+};
 /** Show the next pause this far ahead. */
 const NEXT_PAUSE_NOTICE_MS = 2 * 60 * 60 * 1000;
 
@@ -214,6 +227,9 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
           <span className="text-xs text-muted">
             {p.direction === "LONG" ? "Long" : "Short"} · {p.quantity} · {formatMoney(moneyIn(p), { decimals: 0 })} in
           </span>
+          {p.openedByServer && (
+            <div className="text-xs text-accent">Opened by the server at {clock(Date.parse(p.openTime))}</div>
+          )}
         </div>
         <div className={`font-display text-xl tabular-nums whitespace-nowrap ${tone}`}>
           {formatMoney(p.unrealizedPnl, { signed: true })}
@@ -313,6 +329,12 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
                   : "Approves trades within your limits"
                 : "Off · you approve every trade"}
             </div>
+            {props.autopilotOn && !props.stopped && props.scanLocation === "server" && !props.isLive && (
+              <div className="text-xs text-muted tabular-nums" aria-label="Server autopilot">
+                Server: last scan {props.lastServerScanAt ? agoText(props.lastServerScanAt) : "pending"} · last trade{" "}
+                {props.lastServerOpenAt ? clockText(props.lastServerOpenAt) : "none yet"}
+              </div>
+            )}
           </div>
           <Switch checked={props.autopilotOn} onChange={props.onAutopilotChange} label="Autopilot" disabled={props.stopped} />
         </div>

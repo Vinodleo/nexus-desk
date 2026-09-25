@@ -52,6 +52,7 @@ function readLastReportAt(): number {
 export function useServerScanner(desk: DeskSettings, onReport: (report: ServerScanReport) => void) {
   const [location, setLocation] = useState<ScanLocation>("checking");
   const [lastScanAt, setLastScanAt] = useState(0);
+  const [lastAutopilotOpenAt, setLastAutopilotOpenAt] = useState(0);
   const onReportRef = useRef(onReport);
   onReportRef.current = onReport;
   const lastAt = useRef(readLastReportAt());
@@ -87,16 +88,18 @@ export function useServerScanner(desk: DeskSettings, onReport: (report: ServerSc
         if (status) {
           setLocation(status.running ? "server" : "browser");
           setLastScanAt(status.lastScanAt ?? 0);
+          setLastAutopilotOpenAt(status.lastAutopilotOpenAt ?? 0);
         }
       }
     } catch {}
   }, []);
 
   const applyStatus = useCallback(
-    (status?: { running?: boolean; lastScanAt?: number; hasDesk?: boolean }) => {
+    (status?: { running?: boolean; lastScanAt?: number; hasDesk?: boolean; lastAutopilotOpenAt?: number }) => {
       if (!status) return;
       setLocation(status.running ? "server" : "browser");
       setLastScanAt(status.lastScanAt ?? 0);
+      setLastAutopilotOpenAt(status.lastAutopilotOpenAt ?? 0);
       if (status.hasDesk === false && !resending.current) {
         resending.current = true;
         void sendDesk().finally(() => (resending.current = false));
@@ -177,5 +180,5 @@ export function useServerScanner(desk: DeskSettings, onReport: (report: ServerSc
     }
   }, [take]);
 
-  return { location, lastScanAt, handleLiveReport, scanNow };
+  return { location, lastScanAt, lastAutopilotOpenAt, handleLiveReport, scanNow };
 }

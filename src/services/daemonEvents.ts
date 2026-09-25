@@ -24,6 +24,7 @@ export interface DaemonCloseEvent {
   stopAtExit?: number;
   fillAtExit?: number;
   riskAtOpen?: number;
+  openedByServer?: boolean;
 }
 
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -56,6 +57,7 @@ export function daemonEventToTrade(ev: DaemonCloseEvent): HistoricalTrade {
     ...(ev.stopAtExit !== undefined ? { stopAtExit: ev.stopAtExit } : {}),
     ...(ev.fillAtExit !== undefined ? { fillAtExit: ev.fillAtExit } : {}),
     ...(ev.riskAtOpen !== undefined ? { riskAtOpen: ev.riskAtOpen } : {}),
+    ...(ev.openedByServer ? { openedByServer: true } : {}),
     isSelfApproved: true,
   };
 }

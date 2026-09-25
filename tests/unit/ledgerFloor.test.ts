@@ -136,3 +136,32 @@ describe("LedgerFloor", () => {
     expect(p.onOpenQueue).toHaveBeenCalled();
   });
 });
+
+describe("what the server did while the app was closed", () => {
+  it("says when the server last scanned and traded, and marks the positions it opened", () => {
+    const now = Date.now();
+    render(
+      createElement(
+        LedgerFloor,
+        props({
+          scanLocation: "server",
+          lastServerScanAt: now - 4 * 60_000,
+          lastServerOpenAt: now - 30 * 60_000,
+          positions: [{ ...btc, openedByServer: true, openTime: new Date(now - 30 * 60_000).toISOString() }],
+        })
+      )
+    );
+    const line = screen.getByLabelText("Server autopilot").textContent ?? "";
+    expect(line).toMatch(/^Server: last scan 4 min ago · last trade \d/);
+    expect(screen.getByText(/^Opened by the server at /)).toBeTruthy();
+  });
+
+  it("says so when the server hasn't traded yet, and says nothing when autopilot is off", () => {
+    const { unmount } = render(createElement(LedgerFloor, props({ scanLocation: "server", lastServerScanAt: Date.now(), lastServerOpenAt: 0 })));
+    expect(screen.getByLabelText("Server autopilot").textContent).toMatch(/last scan just now · last trade none yet/);
+    unmount();
+    render(createElement(LedgerFloor, props({ scanLocation: "server", autopilotOn: false })));
+    expect(screen.queryByLabelText("Server autopilot")).toBeNull();
+    expect(screen.queryByText(/Opened by the server/)).toBeNull();
+  });
+});
