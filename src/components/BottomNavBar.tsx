@@ -1,4 +1,5 @@
-import React, { useRef } from "react";
+import React from "react";
+import { useSlideFrom } from "./ledger/motion";
 import { LayoutGrid, AlignLeft, BookOpen, TrendingUp, FlaskConical } from "lucide-react";
 
 export type TabType = "floor" | "queue" | "book" | "learning" | "lab";
@@ -20,19 +21,9 @@ const TABS: { id: TabType; label: string; icon: React.ComponentType<{ className?
 /** The tabs left to right, so a tab change can slide the right way. */
 export const TAB_ORDER: TabType[] = TABS.map((t) => t.id);
 
-/**
- * The class that slides a newly picked tab in from the side it sits on in
- * the bar: from the right when moving right, from the left when moving left,
- * nothing on first show. Stays the same until the tab changes again, so the
- * animation isn't restarted by other re-renders.
- */
+/** The class that slides a newly picked tab in from the side it sits on in the bar (see useSlideFrom). */
 export function useTabSlide(activeTab: TabType): string | undefined {
-  const last = useRef<{ tab: TabType; cls: string | undefined }>({ tab: activeTab, cls: undefined });
-  if (last.current.tab !== activeTab) {
-    const dir = TAB_ORDER.indexOf(activeTab) - TAB_ORDER.indexOf(last.current.tab);
-    last.current = { tab: activeTab, cls: dir >= 0 ? "nx-tab-from-right" : "nx-tab-from-left" };
-  }
-  return last.current.cls;
+  return useSlideFrom(activeTab, TAB_ORDER);
 }
 
 export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onTabChange, pendingQueueCount }) => {

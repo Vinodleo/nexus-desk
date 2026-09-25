@@ -175,3 +175,67 @@ describe("trades the server opened", () => {
     expect(screen.getByText(/autopilot \(server\)/)).toBeTruthy();
   });
 });
+
+describe("Book, Breakdown and Risk motion", () => {
+  const riskCalc: RiskCalculation = {
+    equity: 94483.96, maxRiskPerTradeFraction: 0.01, hardDailyLossLimit: 2500, currentDailyLoss: 500,
+    portfolioExposureFraction: 0.099, maxAllowedExposureFraction: 0.5, openPositionCount: 2, maxSimultaneousPositions: 3,
+    fractionalKellyFraction: 0.25, recommendedPositionSizeUnits: 0, recommendedDollarExposure: 0, riskDollars: 0,
+    passedAllChecks: true,
+  };
+  const noDrills: FailureInjectionState = {
+    globalKillSwitchActive: false, simulateAgentTimeout: false, simulateStaleMarketData: false,
+    simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
+  };
+  const risk = (over: Partial<RiskCalculation> = {}) =>
+    createElement(LedgerRisk, {
+      riskCalc: { ...riskCalc, ...over }, failureState: noDrills, onUpdateFailureState: vi.fn(), onResetFailures: vi.fn(),
+      stopped: false, onToggleStop: vi.fn(), coinDcxStatus: null,
+    });
+
+  it("slides the section pill across and the section in from its side", () => {
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: risk() }));
+    const pill = screen.getByTestId("book-section-pill");
+    expect(pill.style.transform).toBe("translateX(0%)");
+    fireEvent.click(screen.getByRole("tab", { name: "Risk" }));
+    expect(pill.style.transform).toBe("translateX(200%)");
+    expect(screen.getByRole("meter", { name: "Daily loss" }).closest(".nx-tab-from-right")).not.toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Trades" }));
+    expect(screen.getByRole("region", { name: "Closed trades" }).closest(".nx-tab-from-left")).not.toBeNull();
+  });
+
+  it("staggers the closed trades in", () => {
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW), trade("b", -5, NOW - 1000), trade("c", 3, NOW - 2000)], risk: null }));
+    const rows = screen.getByRole("region", { name: "Closed trades" }).querySelectorAll("li");
+    expect([...rows].map((li) => (li as HTMLElement).style.animationDelay)).toEqual(["0ms", "35ms", "70ms"]);
+    expect(rows[0].className).toContain("nx-row-in");
+  });
+
+  it("puts the win rate against break-even, and sizes each row's bar against the biggest", () => {
+    vi.mocked(apiFetch).mockResolvedValue({ ok: false } as Response);
+    render(
+      createElement(LedgerBook, {
+        trades: [trade("a", 100, NOW, { setupName: "Chen" }), trade("b", -300, NOW, { setupName: "Ito" }), trade("c", -50, NOW, { setupName: "Chen" })],
+        risk: null,
+      })
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+    const meter = screen.getByRole("meter", { name: "Win rate against break-even" });
+    expect(meter.getAttribute("aria-valuenow")).toBe("33");
+    expect(meter.parentElement!.textContent).toMatch(/won 33%.*break-even 64%/);
+    const byTrader = screen.getByLabelText("By trader");
+    const widths = [...byTrader.querySelectorAll("[data-testid=breakdown-bar] > div")].map((b) => (b as HTMLElement).style.width);
+    // Ito lost ₹300, the most; Chen made +₹50 net.
+    expect(widths).toEqual(["100%", `${(50 / 300) * 100}%`]);
+  });
+
+  it("pulses a meter near its limit a few times, and one at its limit for good", () => {
+    const { rerender } = render(risk({ currentDailyLoss: 500 }));
+    const track = () => screen.getByRole("meter", { name: "Daily loss" });
+    expect(track().className).not.toMatch(/nx-pulse/);
+    rerender(risk({ currentDailyLoss: 2100 }));
+    expect(track().className).toContain("nx-pulse-few");
+    rerender(risk({ currentDailyLoss: 2500 }));
+    expect(track().className).toContain("nx-pulse-slow");
+  });
+});

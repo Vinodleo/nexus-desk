@@ -298,7 +298,25 @@ function simulateAll(sets: LabDataset[], params: LabParams, model?: tf.LayersMod
   return toBacktestTrades(sets.flatMap((d) => simulateTunedBreakout(d.symbol, d.bars, params, model)));
 }
 
-async function learnFrom(sets: LabDataset[], label: { symbol: string; datasetName: string }): Promise<RealDataLearningResult> {
+/** How far a Lab run has got: what it's doing, and 0–1 of the way through. */
+export interface LabProgress {
+  step: string;
+  fraction: number;
+}
+export type LabProgressFn = (p: LabProgress) => void;
+
+/** Lets the screen redraw during long loops (only when someone is watching the progress). */
+const yieldToUi = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/** Reports a part of the run as `from`–`to` of the whole. */
+const within = (onProgress: LabProgressFn | undefined, from: number, to: number): LabProgressFn | undefined =>
+  onProgress && ((p) => onProgress({ step: p.step, fraction: from + (to - from) * p.fraction }));
+
+async function learnFrom(
+  sets: LabDataset[],
+  label: { symbol: string; datasetName: string },
+  onProgress?: LabProgressFn
+): Promise<RealDataLearningResult> {
   const split = (d: LabDataset) => Math.floor(d.bars.length * 0.7);
   const inSample = sets.map((d) => ({ symbol: d.symbol, bars: d.bars.slice(0, split(d)) }));
   const outOfSample = sets.map((d) => ({ symbol: d.symbol, bars: d.bars.slice(split(d)) }));
@@ -307,10 +325,17 @@ async function learnFrom(sets: LabDataset[], label: { symbol: string; datasetNam
   // 1. Grid search in-sample.
   let bestParams: LabParams = { ...DEFAULT_PARAMS, rsiThreshold: 60, minConfidence: 0.48 };
   let bestSharpe = -Infinity;
+  const GRID = 4 * 4 * 3 * 3;
+  let tried = 0;
   for (const sl of [1.2, 1.4, 1.6, 1.8]) {
     for (const tp of [2.0, 2.4, 2.8, 3.2]) {
       for (const surge of [1.1, 1.25, 1.5]) {
+        if (onProgress) {
+          onProgress({ step: `Tuning the stop and target · ${tried} of ${GRID}`, fraction: 0.5 * (tried / GRID) });
+          await yieldToUi();
+        }
         for (const rsiT of [50, 60, 70]) {
+          tried++;
           const params = { slMultiplier: sl, tpMultiplier: tp, volSurgeThreshold: surge, rsiThreshold: rsiT, minConfidence: 0.48 };
           const metrics = computeTradeMetrics(simulateAll(inSample, params));
           if (metrics.tradesCount >= minTrades && metrics.sharpeRatio > bestSharpe) {
@@ -331,9 +356,17 @@ async function learnFrom(sets: LabDataset[], label: { symbol: string; datasetNam
   });
 
   // 2. The confidence model, on what the live panel would have proposed.
+  if (onProgress) {
+    onProgress({ step: "Replaying the traders' setups", fraction: 0.5 });
+    await yieldToUi();
+  }
   const samples = inSample.flatMap((d) => replayPanel(d.symbol, d.bars));
   let model: tf.LayersModel | undefined;
   if (samples.length >= MIN_MODEL_SAMPLES) {
+    if (onProgress) {
+      onProgress({ step: `Training the confidence model on ${samples.length} setups`, fraction: 0.58 });
+      await yieldToUi();
+    }
     const trained = await trainMetaModel(samples.map((x) => x.features), samples.map((x) => (x.win ? 1 : 0)));
     if (trained) {
       model = trained as tf.LayersModel;
@@ -349,13 +382,23 @@ async function learnFrom(sets: LabDataset[], label: { symbol: string; datasetNam
   }
 
   // 3. Out-of-sample: default trader, then the tuned one with the model.
+  if (onProgress) {
+    onProgress({ step: "Testing on data it didn't train on", fraction: 0.86 });
+    await yieldToUi();
+  }
   const baselineOosTrades = simulateAll(outOfSample, DEFAULT_PARAMS);
   const learnedOosTrades = simulateAll(outOfSample, bestParams, model);
   const baseMetrics = computeTradeMetrics(baselineOosTrades);
   const learnedMetrics = computeTradeMetrics(learnedOosTrades);
 
+  if (onProgress) {
+    onProgress({ step: "Walk-forward test", fraction: 0.93 });
+    await yieldToUi();
+  }
   const first = sets[0].bars;
   const candlesCount = sets.reduce((a, d) => a + d.bars.length, 0);
+  const folds = computeWalkForwardFolds(sets, bestParams);
+  onProgress?.({ step: "Done", fraction: 1 });
   return {
     symbol: label.symbol,
     timeframe: LAB_INTERVAL,
@@ -372,7 +415,7 @@ async function learnFrom(sets: LabDataset[], label: { symbol: string; datasetNam
     inSampleTrades: rawInSampleTrades.slice(-20),
     outOfSampleTrades: learnedOosTrades,
     distilledLessons: lessons,
-    folds: computeWalkForwardFolds(sets, bestParams),
+    folds,
     isSynthetic: sets.some((d) => d.bars.some((b) => b.isSynthetic)),
     totalCandles: candlesCount,
     datasetName: label.datasetName,
@@ -383,34 +426,47 @@ async function learnFrom(sets: LabDataset[], label: { symbol: string; datasetNam
 }
 
 /** One coin's (or one CSV's) history. The candles must be 5 minutes apart, like live trading's. */
-export async function runRealDataWalkForward(candles: HistoricalCandle[], symbol: string = "BTC/INR"): Promise<RealDataLearningResult> {
+export async function runRealDataWalkForward(
+  candles: HistoricalCandle[],
+  symbol: string = "BTC/INR",
+  onProgress?: LabProgressFn
+): Promise<RealDataLearningResult> {
   const spacing = candleSpacingMs(candles.map((c) => c.timestamp));
   if (Math.abs(spacing - LAB_INTERVAL_MS) > LAB_INTERVAL_MS * 0.1) {
     throw new Error(
       `The Lab trains on 5-minute candles, like the live scanner; these are ${Math.round(spacing / 60000)} minutes apart.`
     );
   }
-  return learnFrom([{ symbol, bars: toLabBars(candles) }], { symbol, datasetName: `${symbol} (5m, ${candles.length} bars)` });
+  return learnFrom([{ symbol, bars: toLabBars(candles) }], { symbol, datasetName: `${symbol} (5m, ${candles.length} bars)` }, onProgress);
 }
 
 /**
  * Every coin that has real history (Binance, else Coinbase), trained
  * together. Coins with no real history are left out, not generated.
  */
-export async function runGlobalMarketTraining(symbols: string[], bars: number = 3000): Promise<RealDataLearningResult> {
+export async function runGlobalMarketTraining(
+  symbols: string[],
+  bars: number = 3000,
+  onProgress?: LabProgressFn
+): Promise<RealDataLearningResult> {
   const sets: LabDataset[] = [];
   const sources = new Set<string>();
-  for (const sym of symbols) {
+  for (const [i, sym] of symbols.entries()) {
+    onProgress?.({ step: `Loading history · ${sym.replace(/INR$/, "/INR")} (${i + 1} of ${symbols.length})`, fraction: 0.4 * (i / symbols.length) });
     const candles = await fetchRealHistoricalCandles(sym, "5m", bars, "BINANCE");
     if (candles.length < 200 || candles.some((c) => c.isSynthetic)) continue;
     sets.push({ symbol: sym, bars: toLabBars(candles) });
     if (candles[0].sourceExchange) sources.add(candles[0].sourceExchange);
   }
   if (sets.length === 0) throw new Error("Couldn't load real 5-minute history for any coin from Binance or Coinbase. Try again later.");
-  const result = await learnFrom(sets, {
-    symbol: "GLOBAL_MODEL",
-    datasetName: `Global Unified Model (${sets.length} markets, 5m)`,
-  });
+  const result = await learnFrom(
+    sets,
+    {
+      symbol: "GLOBAL_MODEL",
+      datasetName: `Global Unified Model (${sets.length} markets, 5m)`,
+    },
+    within(onProgress, 0.4, 1)
+  );
   result.sourceExchange = [...sources].join(" + ") || "Aggregated Global";
   return result;
 }

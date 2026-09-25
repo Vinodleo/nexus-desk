@@ -11,6 +11,9 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        // Registered from src/services/appUpdates.ts, which also keeps
+        // checking for new versions (an installed app is rarely relaunched).
+        injectRegister: false,
         includeAssets: ['apple-touch-icon.png', 'icon.svg'],
         manifest: {
           id: '/',
@@ -48,12 +51,18 @@ export default defineConfig(() => {
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10 MiB limit to accommodate TFJS
           // Trade notifications (Web Push) arrive through the service worker.
           importScripts: ['push-sw.js'],
+          // A new version takes over open pages straight away (they reload).
+          skipWaiting: true,
+          clientsClaim: true,
         },
         devOptions: {
           enabled: false,
         },
       }),
     ],
+    define: {
+      __APP_BUILT_AT__: JSON.stringify(new Date().toISOString()),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

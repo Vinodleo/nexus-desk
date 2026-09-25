@@ -5,6 +5,7 @@ import { TradeAutopsyCard } from "../TradeAutopsyCard";
 import { Card, StatTile } from "./ui";
 import { EXIT_LABEL, formatMoney, formatPct, formatPrice, pnlTone, stopSlip } from "./format";
 import { LedgerBreakdown } from "./LedgerBreakdown";
+import { Rolling, staggerDelay, useSlideFrom } from "./motion";
 
 export type BookFilter = "all" | "wins" | "losses";
 
@@ -70,11 +71,13 @@ const TradeRow: React.FC<{
   open: boolean;
   onToggle: () => void;
   onUpdateTrade?: (t: HistoricalTrade) => void;
-}> = ({ trade: t, open, onToggle, onUpdateTrade }) => {
+  /** Place in the list as it shows, for the stagger. */
+  index?: number;
+}> = ({ trade: t, open, onToggle, onUpdateTrade, index = 0 }) => {
   const tone = pnlTone(t.realizedPnl);
   const reason = EXIT_LABEL[t.exitReason] ?? t.exitReason;
   return (
-    <li className="border-b border-line">
+    <li className="border-b border-line nx-row-in" style={{ animationDelay: staggerDelay(index) }}>
       <button
         type="button"
         onClick={onToggle}
@@ -102,7 +105,7 @@ const TradeRow: React.FC<{
         </span>
       </button>
       {open && (
-        <div className="pb-4 flex flex-col gap-3">
+        <div className="pb-4 flex flex-col gap-3 nx-row-in">
           <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 text-xs tabular-nums">
             <div>
               <dt className="text-muted">Entry → exit</dt>
@@ -194,7 +197,7 @@ export const LedgerBookTrades: React.FC<{
           <div>
             <div className="text-xs text-muted">Net P&amp;L, closed trades</div>
             <div className={`font-display text-[34px] leading-tight tabular-nums ${pnlTone(summary.net)}`}>
-              {formatMoney(summary.net, { signed: true })}
+              <Rolling value={summary.net} format={(n) => formatMoney(n, { signed: true })} from={0} ms={700} />
             </div>
           </div>
           <div className="text-right text-xs text-muted tabular-nums">
@@ -241,7 +244,7 @@ export const LedgerBookTrades: React.FC<{
           {trades.length === 0 ? "No closed trades yet. They'll appear here as positions close." : "No trades match this filter."}
         </p>
       ) : (
-        <section aria-label="Closed trades" className="flex flex-col">
+        <section key={filter} aria-label="Closed trades" className="flex flex-col">
           {groups.map((g) => (
             <div key={g.label}>
               <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em] pt-2.5">{g.label}</div>
@@ -249,6 +252,7 @@ export const LedgerBookTrades: React.FC<{
                 {g.trades.map((t) => (
                   <TradeRow
                     key={t.id}
+                    index={filtered.indexOf(t) % PAGE}
                     trade={t}
                     open={openId === t.id}
                     onToggle={() => setOpenId(openId === t.id ? null : t.id)}
@@ -282,8 +286,12 @@ export interface LedgerBookProps {
   riskBlocked?: boolean;
 }
 
+type Section = "trades" | "breakdown" | "risk";
+const SECTIONS: readonly Section[] = ["trades", "breakdown", "risk"];
+
 export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, risk, riskBlocked }) => {
-  const [section, setSection] = useState<"trades" | "breakdown" | "risk">("trades");
+  const [section, setSection] = useState<Section>("trades");
+  const slideClass = useSlideFrom(section, SECTIONS);
   return (
     <div className="font-ui text-ink flex flex-col gap-4 pb-4 select-none">
       <header className="pt-1">
@@ -296,8 +304,16 @@ export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, r
             : "Limits and safety checks"}
         </div>
       </header>
-      <div className="flex p-1 rounded-full bg-surface border border-line" role="tablist" aria-label="Book sections">
-        {(["trades", "breakdown", "risk"] as const).map((s) => {
+      <div className="relative flex p-1 rounded-full bg-surface border border-line" role="tablist" aria-label="Book sections">
+        {/* The picked section's pill slides across. */}
+        <span aria-hidden="true" className="absolute inset-y-1 left-1 w-[calc((100%_-_0.5rem)/3)] pointer-events-none">
+          <span
+            data-testid="book-section-pill"
+            className="nx-segment-pill block h-full rounded-full bg-accent"
+            style={{ transform: `translateX(${SECTIONS.indexOf(section) * 100}%)` }}
+          />
+        </span>
+        {SECTIONS.map((s) => {
           const on = section === s;
           return (
             <button
@@ -306,8 +322,8 @@ export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, r
               role="tab"
               aria-selected={on}
               onClick={() => setSection(s)}
-              className={`flex-1 min-h-10 rounded-full text-sm font-semibold cursor-pointer flex items-center justify-center gap-1.5 ${
-                on ? "bg-accent text-on-accent" : "text-muted"
+              className={`relative flex-1 min-h-10 rounded-full text-sm font-semibold cursor-pointer flex items-center justify-center gap-1.5 transition-colors ${
+                on ? "text-on-accent" : "text-muted"
               }`}
             >
               {s === "trades" ? "Trades" : s === "breakdown" ? "Breakdown" : "Risk"}
@@ -318,13 +334,15 @@ export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, r
           );
         })}
       </div>
-      {section === "trades" ? (
-        <LedgerBookTrades trades={trades} onUpdateTrade={onUpdateTrade} />
-      ) : section === "breakdown" ? (
-        <LedgerBreakdown trades={trades} />
-      ) : (
-        risk
-      )}
+      <div key={section} className={slideClass}>
+        {section === "trades" ? (
+          <LedgerBookTrades trades={trades} onUpdateTrade={onUpdateTrade} />
+        ) : section === "breakdown" ? (
+          <LedgerBreakdown trades={trades} />
+        ) : (
+          risk
+        )}
+      </div>
     </div>
   );
 };

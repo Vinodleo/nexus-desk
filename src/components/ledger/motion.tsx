@@ -131,7 +131,42 @@ export function usePresenceList<T>(items: T[], keyOf: (item: T) => string, ms = 
   return out;
 }
 
-/** A number shown through `format` that glides to each new value. */
-export const Rolling: React.FC<{ value: number; format: (n: number) => string; ms?: number }> = ({ value, format, ms }) => (
-  <>{format(useAnimatedNumber(value, ms))}</>
-);
+/** A number shown through `format` that glides to each new value (counting up from `from` when first shown, if given). */
+export const Rolling: React.FC<{ value: number; format: (n: number) => string; ms?: number; from?: number }> = ({
+  value,
+  format,
+  ms,
+  from,
+}) => <>{format(useAnimatedNumber(value, ms, from))}</>;
+
+/**
+ * The class that slides newly picked content in from the side its choice
+ * sits on (in `order`): from the right when moving right, from the left when
+ * moving left, nothing on first show. Stays the same until the choice
+ * changes again, so other re-renders don't restart the animation.
+ */
+export function useSlideFrom<T>(value: T, order: readonly T[]): string | undefined {
+  const last = useRef<{ value: T; cls: string | undefined }>({ value, cls: undefined });
+  if (last.current.value !== value) {
+    const dir = order.indexOf(value) - order.indexOf(last.current.value);
+    last.current = { value, cls: dir >= 0 ? "nx-tab-from-right" : "nx-tab-from-left" };
+  }
+  return last.current.cls;
+}
+
+/** Delay for the i-th item of a list that staggers in (capped, so long lists don't wait). */
+export const staggerDelay = (i: number, stepMs = 35, max = 12) => `${Math.min(i, max) * stepMs}ms`;
+
+/**
+ * A bar that grows in from the left when it first shows and glides to new
+ * widths after. `fraction` is 0–1.
+ */
+export const GrowBar: React.FC<{ fraction: number; className?: string; delayMs?: number }> = ({ fraction, className = "", delayMs = 0 }) => {
+  const f = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
+  return (
+    <div
+      className={`h-full rounded-full nx-grow nx-width-glide ${className}`}
+      style={{ width: `${f * 100}%`, animationDelay: `${delayMs}ms` }}
+    />
+  );
+};

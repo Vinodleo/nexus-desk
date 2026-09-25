@@ -189,7 +189,7 @@ html, body {
   100% { transform: none; }
 }
 @keyframes nx-badge-pop {
-  0% { transform: scale(0.4); }
+  0% { transform: scale(0.4); opacity: 0; }
   60% { transform: scale(1.2); }
   100% { transform: none; }
 }
@@ -197,13 +197,52 @@ html, body {
 .nx-tab-from-left { animation: nx-tab-from-left 220ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
 .nx-tab-bounce { display: inline-block; animation: nx-tab-bounce 420ms ease-out both; }
 .nx-badge-pop { animation: nx-badge-pop 320ms ease-out both; }
+/* Bars (Breakdown, Risk meters, Lab progress) grow in from the left, then
+   glide to new widths. A meter near its limit pulses a few times; one at
+   its limit keeps a slow pulse. */
+@keyframes nx-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes nx-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes nx-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+.nx-grow { transform-origin: left; animation: nx-grow 700ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+.nx-width-glide { transition: width 500ms cubic-bezier(0.2, 0.8, 0.3, 1); }
+.nx-pulse-few { animation: nx-pulse 1.2s ease-in-out 3; }
+.nx-pulse-slow { animation: nx-pulse 2.4s ease-in-out infinite; }
+.nx-shimmer { position: relative; overflow: hidden; }
+.nx-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--nx-surface) 55%, transparent), transparent);
+  animation: nx-shimmer 1.4s ease-in-out infinite;
+}
+/* A sliding pill behind the picked option of a segmented control. */
+.nx-segment-pill { transition: transform 280ms cubic-bezier(0.3, 0.9, 0.3, 1.1); }
+
+/* The Queue's Undo bar rises from the bottom. */
+@keyframes nx-snack-in {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.nx-snack-in { animation: nx-snack-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
 .nx-tab-indicator { transition: transform 300ms cubic-bezier(0.3, 0.9, 0.3, 1.15); }
 
 @media (prefers-reduced-motion: reduce) {
   .nx-drop-in, .nx-lift-out, .nx-pop-in, .nx-fade-in, .nx-row-in, .nx-tick-in, .nx-glow,
   .nx-flash-up, .nx-flash-down, .nx-item-enter, .nx-item-leave,
   .nx-sheet-in, .nx-sheet-out, .nx-backdrop-in, .nx-backdrop-out, .nx-page-in, .nx-page-out,
-  .nx-tab-from-right, .nx-tab-from-left, .nx-tab-bounce, .nx-badge-pop { animation: none; }
+  .nx-tab-from-right, .nx-tab-from-left, .nx-tab-bounce, .nx-badge-pop, .nx-snack-in,
+  .nx-grow, .nx-pulse-few, .nx-pulse-slow { animation: none; }
+  .nx-shimmer::after { animation: none; display: none; }
+  .nx-width-glide, .nx-segment-pill { transition: none; }
   .nx-tab-indicator { transition: none; }
   .nx-drop-in { transform: translate(-50%, 0); }
 }

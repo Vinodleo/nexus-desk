@@ -152,3 +152,19 @@ describe("prices of cheap coins", () => {
     expect(Math.abs(setup.takeProfit - setup.entryPrice)).toBeGreaterThan(Math.abs(setup.entryPrice - setup.stopLoss));
   });
 });
+
+describe("Lab progress", () => {
+  it("reports each stage in order, ending at done", async () => {
+    // The test DOM has no WebGL; TensorFlow's CPU backend is enough here.
+    const tf = await import("@tensorflow/tfjs");
+    await tf.setBackend("cpu");
+    const seen: { step: string; fraction: number }[] = [];
+    await runRealDataWalkForward(candles(200), "SOL/INR", (p) => seen.push(p));
+    const fractions = seen.map((p) => p.fraction);
+    expect(fractions).toEqual([...fractions].sort((a, b) => a - b));
+    expect(seen[0].step).toMatch(/Tuning the stop and target · 0 of 144/);
+    expect(seen.some((p) => /Testing on data it didn't train on/.test(p.step))).toBe(true);
+    expect(seen.some((p) => p.step === "Walk-forward test")).toBe(true);
+    expect(seen.at(-1)).toEqual({ step: "Done", fraction: 1 });
+  });
+});

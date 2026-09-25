@@ -4,6 +4,7 @@ import { apiFetch } from "../../services/apiClient";
 import { MIN_EDGE_R } from "../../services/calibration";
 import { Card, StatTile } from "./ui";
 import { EXIT_LABEL, formatMoney, pnlTone, stopSlip } from "./format";
+import { GrowBar } from "./motion";
 
 // Where the book's money goes: average win against average loss, and the
 // same by trader, coin and exit. Plus the scanner's own record of each
@@ -73,13 +74,14 @@ const rSigned = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}
 const Rows: React.FC<{ title: string; rows: BreakdownRow[]; limit?: number }> = ({ title, rows, limit }) => {
   if (rows.length === 0) return null;
   const shown = limit ? rows.slice(0, limit) : rows;
+  const biggest = Math.max(...shown.map((r) => Math.abs(r.net)), 0);
   return (
     <Card aria-label={title} className="flex flex-col gap-1">
       <div className="text-sm font-semibold">{title}</div>
       <ul className="m-0 p-0 list-none flex flex-col">
-        {shown.map((r) => (
-          <li key={r.key} className="flex items-start justify-between gap-3 py-2 border-b border-line last:border-b-0">
-            <div className="min-w-0">
+        {shown.map((r, i) => (
+          <li key={r.key} className="flex flex-wrap items-start justify-between gap-3 py-2 border-b border-line last:border-b-0">
+            <div className="min-w-0 flex-1">
               <div className="text-sm truncate">{r.key}</div>
               <div className="text-xs text-muted tabular-nums">
                 {r.count} {r.count === 1 ? "trade" : "trades"} · {Math.round((r.wins / r.count) * 100)}% won
@@ -93,6 +95,10 @@ const Rows: React.FC<{ title: string; rows: BreakdownRow[]; limit?: number }> = 
               )}
             </div>
             <div className={`text-sm font-semibold tabular-nums shrink-0 ${pnlTone(r.net)}`}>{formatMoney(r.net, { signed: true, decimals: 0 })}</div>
+            {/* Its share of the money made or lost, against the biggest here. */}
+            <div className="basis-full h-1 -mt-1.5 rounded-full bg-inset overflow-hidden" data-testid="breakdown-bar" aria-hidden="true">
+              <GrowBar fraction={biggest > 0 ? Math.abs(r.net) / biggest : 0} className={r.net >= 0 ? "bg-gain" : "bg-loss"} delayMs={i * 60} />
+            </div>
           </li>
         ))}
       </ul>
@@ -220,6 +226,36 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
   );
 };
 
+/** The win rate against the rate that breaks even, as a bar with a mark. */
+export const WinRateBar: React.FC<{ winPct: number; breakEvenPct: number }> = ({ winPct, breakEvenPct }) => {
+  const ahead = winPct >= breakEvenPct;
+  return (
+    <div className="flex flex-col gap-1">
+      <div
+        className="relative h-2.5 rounded-full bg-inset"
+        role="meter"
+        aria-label="Win rate against break-even"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={winPct}
+      >
+        <div className="absolute inset-0 rounded-full overflow-hidden">
+          <GrowBar fraction={winPct / 100} className={ahead ? "bg-gain" : "bg-loss"} />
+        </div>
+        <span
+          aria-hidden="true"
+          className="absolute -top-1 -bottom-1 w-0.5 rounded-full bg-ink nx-fade-in"
+          style={{ left: `calc(${Math.max(0, Math.min(100, breakEvenPct))}% - 1px)`, animationDelay: "500ms" }}
+        />
+      </div>
+      <div className="flex justify-between text-[11px] text-muted tabular-nums">
+        <span className={ahead ? "text-gain" : "text-loss"}>won {winPct}%</span>
+        <span>break-even {breakEvenPct}%</span>
+      </div>
+    </div>
+  );
+};
+
 type Range = "week" | "all";
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -270,6 +306,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
               </>
             )}
           </div>
+          {summary.breakEvenWinPct !== null && <WinRateBar winPct={summary.winPct} breakEvenPct={summary.breakEvenWinPct} />}
           <div className="flex gap-2">
             <StatTile label="Avg win" value={formatMoney(summary.avgWin, { decimals: 0 })} valueClassName="text-base text-gain" />
             <StatTile label="Avg loss" value={formatMoney(summary.avgLoss, { decimals: 0 })} valueClassName="text-base text-loss" />

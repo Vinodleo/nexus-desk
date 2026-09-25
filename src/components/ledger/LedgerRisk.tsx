@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import type { CoinDcxServerStatus, FailureInjectionState, RiskCalculation } from "../../types";
 import { apiFetch } from "../../services/apiClient";
+import { GrowBar } from "./motion";
 import { Card, Switch } from "./ui";
 import { formatMoney } from "./format";
 
@@ -27,14 +28,15 @@ const Meter: React.FC<{ label: string; value: string; fraction: number }> = ({ l
         <span className="text-muted">{value}</span>
       </div>
       <div
-        className="h-1.5 rounded-full bg-inset overflow-hidden"
+        className={`h-1.5 rounded-full bg-inset overflow-hidden${f >= 1 ? " nx-pulse-slow" : f >= 0.8 ? " nx-pulse-few" : ""}`}
         role="meter"
         aria-label={label}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(f * 100)}
       >
-        <div className={`h-full rounded-full ${tone}`} style={{ width: `${f * 100}%` }} />
+        {/* Grows in, then glides; near the limit it pulses a few times, at the limit slowly for good. */}
+        <GrowBar fraction={f} className={tone} />
       </div>
     </div>
   );
