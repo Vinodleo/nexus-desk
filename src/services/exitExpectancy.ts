@@ -17,7 +17,10 @@ import { DEFAULT_TRAIL_PROFILE, type TrailProfileId } from "../shared/trailingSt
 // after fees and the market's bid-ask spread (a round trip buys at the ask
 // and sells at the bid), and records each trader's average result in R. A trader whose
 // setups lose money that way doesn't trade until they recover. Coins and
-// stocks are measured separately. Recomputed every hour.
+// stocks are measured separately, but judged together: a trader's result in
+// one market leans on their record in the other (partial pooling), so a few
+// lucky setups in one market can't outweigh a long losing record in the
+// other. Recomputed every hour.
 
 export interface TraderRecord {
   trades: number;
@@ -40,8 +43,13 @@ export interface ExpectancyTable {
 
 /** Setups a market needs across all its traders before the table is used for it. */
 export const MIN_MARKET_TRADES = 30;
-/** Each trader's average is shrunk toward break-even as if it had this many more trades at 0R. */
+/**
+ * A trader's result in a market is judged as if it had this many more setups
+ * at their record in the other market (break-even with none there).
+ */
 const PRIOR_TRADES = 8;
+/** A good record in the other market counts for this share: a trader still proves themselves in each market. */
+const GOOD_PRIOR_SHARE = 0.5;
 /** Recompute this often. */
 export const EXPECTANCY_TTL_MS = 60 * 60 * 1000;
 
@@ -94,6 +102,29 @@ export function shrunkR(rec: TraderRecord | undefined): number {
   return rec.totalR / (rec.trades + PRIOR_TRADES);
 }
 
+const otherMarket = (m: MarketKind): MarketKind => (m === "crypto" ? "nse" : "crypto");
+
+/**
+ * What a trader's record in the other market says about them here: their
+ * (shrunk) average there, a good one counting for half; 0 with none.
+ */
+export function crossMarketPrior(table: ExpectancyTable, market: MarketKind, setupName: string): number {
+  const other = table.byKey[`${otherMarket(market)}:${setupName}`];
+  if (!other || other.trades === 0) return 0;
+  const r = shrunkR(other);
+  return r > 0 ? r * GOOD_PRIOR_SHARE : r;
+}
+
+/**
+ * The result a trader is judged on in a market: their setups there, plus
+ * PRIOR_TRADES setups' worth of their record in the other market.
+ */
+export function judgedR(table: ExpectancyTable, market: MarketKind, setupName: string): number {
+  const rec = table.byKey[`${market}:${setupName}`];
+  const prior = crossMarketPrior(table, market, setupName);
+  return ((rec?.totalR ?? 0) + PRIOR_TRADES * prior) / ((rec?.trades ?? 0) + PRIOR_TRADES);
+}
+
 /** Setups measured for a market, across its traders. */
 export function marketTrades(table: ExpectancyTable, market: MarketKind): number {
   return Object.entries(table.byKey)
@@ -108,7 +139,7 @@ export function marketTrades(table: ExpectancyTable, market: MarketKind): number
 export function exitEdgeFor(table: ExpectancyTable | undefined, symbol: string, setupName: string): { r: number; trades: number } | null {
   if (!table || marketTrades(table, marketOf(symbol)) < MIN_MARKET_TRADES) return null;
   const rec = table.byKey[expectancyKey(symbol, setupName)];
-  return { r: shrunkR(rec), trades: rec?.trades ?? 0 };
+  return { r: judgedR(table, marketOf(symbol), setupName), trades: rec?.trades ?? 0 };
 }
 
 /** Rows for display: each market's traders, best first. */
@@ -124,7 +155,9 @@ export function expectancyRows(table: ExpectancyTable) {
         avgWinR: r.wins > 0 ? r.winR / r.wins : 0,
         avgLossR: r.trades - r.wins > 0 ? r.lossR / (r.trades - r.wins) : 0,
         avgR: r.trades > 0 ? r.totalR / r.trades : 0,
-        judgedR: shrunkR(r),
+        judgedR: judgedR(table, market as MarketKind, name.join(":")),
+        /** What their record in the other market adds (0 with none there). */
+        otherMarketR: crossMarketPrior(table, market as MarketKind, name.join(":")),
       };
     })
     .sort((a, b) => (a.market === b.market ? b.judgedR - a.judgedR : a.market.localeCompare(b.market)));

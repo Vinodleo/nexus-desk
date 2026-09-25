@@ -34,6 +34,8 @@ export interface ShadowSignal {
   /** Market regime at the signal, and the setup's indicator readings: the trade memory matches on these. */
   regime?: RegimeType;
   setupFeatures?: { adx: number; rsi: number; volumeSurgeRatio: number; vwapDistancePercent: number };
+  /** Bitcoin's move over the hour before the signal, in % (recorded from late September 2026). */
+  btcChange1hPct?: number;
   entryPrice: number;
   stopLoss: number;
   takeProfit: number;
@@ -60,11 +62,12 @@ export interface ShadowContext {
   scoreVersion?: number;
   features?: number[];
   regime?: RegimeType;
+  btcChange1hPct?: number | null;
 }
 
 export function shadowFromSetup(setup: StrategySetup, kind: ShadowKind, signalTime: number, ctx: ShadowContext = {}): ShadowSignal {
   const horizon = setup.horizon === "swing" ? "swing" : "intraday";
-  const { confidence, scorer, scoreVersion, features, regime } = ctx;
+  const { confidence, scorer, scoreVersion, features, regime, btcChange1hPct } = ctx;
   const f = setup.features;
   return {
     id: `${setup.symbol}|${setup.name}|${signalTime}`,
@@ -79,6 +82,7 @@ export function shadowFromSetup(setup: StrategySetup, kind: ShadowKind, signalTi
     ...(scoreVersion !== undefined ? { scoreVersion } : {}),
     ...(features ? { features } : {}),
     ...(regime ? { regime } : {}),
+    ...(typeof btcChange1hPct === "number" && Number.isFinite(btcChange1hPct) ? { btcChange1hPct: Number(btcChange1hPct.toFixed(3)) } : {}),
     ...(f
       ? { setupFeatures: { adx: f.adx, rsi: f.rsi, volumeSurgeRatio: f.volumeSurgeRatio, vwapDistancePercent: f.vwapDistancePercent } }
       : {}),
