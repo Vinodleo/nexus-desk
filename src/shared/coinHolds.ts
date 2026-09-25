@@ -1,4 +1,4 @@
-import { isNseSymbol } from "./nse";
+import { marketOf } from "./marketLimits";
 
 // Longer coin holds. CoinDCX's INR spreads run around 0.5–0.6%, paid on
 // every trade (it buys at the ask and sells at the bid). Sized on 5-minute
@@ -27,8 +27,8 @@ export const COIN_MIN_STOP_PCT = 0.012;
 export const HOUR_ATR_HOURS = 6;
 const CANDLES_PER_HOUR = 12;
 
-/** Whether this is a coin (planned on the hourly scale). */
-export const isCoin = (symbol: string | undefined): boolean => Boolean(symbol) && !isNseSymbol(symbol);
+/** Whether this is a coin (planned on the hourly scale); stocks, Indian or US, aren't. */
+export const isCoin = (symbol: string | undefined): boolean => Boolean(symbol) && marketOf(symbol) === "coins";
 
 /** How long a trade may run before the time limit applies. */
 export function holdMinutesFor(setup: { symbol?: string; horizon?: "intraday" | "swing" }): number {

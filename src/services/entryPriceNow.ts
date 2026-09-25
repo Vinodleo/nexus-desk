@@ -1,3 +1,4 @@
+import { isUsSymbol } from "../shared/usMarket";
 import { entryPriceFrom, isFreshQuote, type Quote } from "../shared/quotes";
 import { isNseSymbol } from "../shared/nse";
 import { fetchLiveOrderBook } from "./orderBookService";
@@ -6,8 +7,8 @@ import { liveMarketStream } from "./liveMarketStreamService";
 /**
  * The price a new position would open at now: the ask for a long (the bid
  * for a short). For a coin, from CoinDCX's order book; for a stock, from the
- * latest Angel One quote the server sent. The last trade when neither is at
- * hand.
+ * latest quote the server sent (Angel One for Indian stocks, Alpaca for US).
+ * The last trade when neither is at hand.
  */
 export async function entryPriceNow(
   symbol: string,
@@ -15,7 +16,7 @@ export async function entryPriceNow(
   notional: number,
   quote?: Quote
 ): Promise<number | undefined> {
-  if (isNseSymbol(symbol)) {
+  if (isNseSymbol(symbol) || isUsSymbol(symbol)) {
     if (isFreshQuote(quote)) return entryPriceFrom(direction, quote);
     return liveMarketStream.getLastPrice(symbol);
   }

@@ -18,7 +18,7 @@ function levels(side: BookLevel[]) {
 }
 
 /** Builds the scanner's order book from CoinDCX's, for a trade worth `notional` rupees. */
-export function toOrderBook(book: RawBook, notional: number, source: "coindcx" | "angelone" = "coindcx"): OrderBook {
+export function toOrderBook(book: RawBook, notional: number, source: "coindcx" | "angelone" | "alpaca" = "coindcx"): OrderBook {
   const s = bookStats(book, notional);
   return {
     bids: levels(book.bids),

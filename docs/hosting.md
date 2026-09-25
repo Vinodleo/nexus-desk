@@ -141,6 +141,13 @@ an https address. `fly.toml` holds the settings. The GitHub Action
    positions at 3:20. Settings → Server → Angel One shows whether it's
    connected.
 
+   `ALPACA_API_KEY_ID` and `ALPACA_API_SECRET_KEY` (Alpaca **paper** keys)
+   turn on US stocks, paper only: the server scans about 30 liquid US
+   stocks and ETFs from 9:30 to 3:30 New York time and closes them at 3:50,
+   with prices in rupees at the day's USD/INR reference rate
+   (`USD_INR_RATE` pins it instead). Settings → Server → Alpaca shows
+   whether it's connected.
+
    `GEMINI_API_KEY` comes from [AI Studio → Get API key](https://aistudio.google.com/apikey).
    Without it, the agents use their rule-based fallbacks. The other
    `LIVE_*` limits in `.env.example` can be added the same way.

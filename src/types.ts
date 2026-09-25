@@ -55,7 +55,7 @@ export interface OrderBook {
   midPrice: number;
   depthScore: number; // 0..100 liquidity metric
   /** "coindcx" or "angelone" (NSE depth) when read from the market; otherwise it was simulated. */
-  source?: "coindcx" | "angelone" | "simulated";
+  source?: "coindcx" | "angelone" | "alpaca" | "simulated";
   /** Spread as a share of the mid price. */
   spreadPct?: number;
   /** Price moved past the best level to buy and then sell the trade size, as a share of price. */

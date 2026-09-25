@@ -1,12 +1,15 @@
 import { isNseSymbol } from "./nse";
+import { isUsSymbol } from "./usMarket";
 
 // How much goes into each trade, and how many trades can be open at once,
-// set separately for coins (CoinDCX) and stocks (Angel One). You change them
+// set separately for coins (CoinDCX), Indian stocks (Angel One) and US
+// stocks (Alpaca, paper). You change them
 // in Settings, paper or live; the app and the server's autopilot both
 // apply them. (Live orders are also held to the server's own caps, the
 // LIVE_* settings, whatever these say.)
 
-export type MarketKey = "coins" | "stocks";
+export type MarketKey = "coins" | "stocks" | "us";
+export const MARKET_KEYS: MarketKey[] = ["coins", "stocks", "us"];
 
 export interface MarketLimit {
   /** Rupees put into each trade. A trade can be smaller, never larger. */
@@ -23,11 +26,13 @@ export const MAX_TRADES_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10];
 export const DEFAULT_MARKET_LIMITS: MarketLimits = {
   coins: { amountPerTradeInr: 5000, maxOpenTrades: 2 },
   stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2 },
+  us: { amountPerTradeInr: 5000, maxOpenTrades: 2 },
 };
 
-export const MARKET_LABEL: Record<MarketKey, string> = { coins: "coin", stocks: "stock" };
+export const MARKET_LABEL: Record<MarketKey, string> = { coins: "coin", stocks: "Indian stock", us: "US stock" };
 
-export const marketOf = (symbol: string | undefined): MarketKey => (isNseSymbol(symbol) ? "stocks" : "coins");
+/** Which market a symbol trades in: "AAPL.US" US stocks, "SBIN" Indian stocks, "BTC/INR" coins. */
+export const marketOf = (symbol: string | undefined): MarketKey => (isUsSymbol(symbol) ? "us" : isNseSymbol(symbol) ? "stocks" : "coins");
 
 /** Limits as saved or sent, kept to sensible values; anything missing or odd falls back to the default. */
 export function cleanMarketLimits(raw: unknown): MarketLimits {
@@ -41,7 +46,7 @@ export function cleanMarketLimits(raw: unknown): MarketLimits {
       maxOpenTrades: Number.isInteger(trades) && trades >= 1 && trades <= 20 ? trades : d.maxOpenTrades,
     };
   };
-  return { coins: one("coins"), stocks: one("stocks") };
+  return { coins: one("coins"), stocks: one("stocks"), us: one("us") };
 }
 
 /** Positions open in the same market as `symbol`. */

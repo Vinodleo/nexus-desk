@@ -103,7 +103,7 @@ describe("when setups win", () => {
     const mood = screen.getByLabelText("Market mood");
     expect(within(mood).getByText("Trending up").closest("li")!.textContent).toMatch(/28 setups · \d+% ahead · has an edge/);
     expect(within(mood).getByText("Quiet range").closest("li")!.textContent).toMatch(/too early/);
-    fireEvent.click(screen.getByRole("button", { name: "Stocks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Indian stocks" }));
     expect(within(screen.getByLabelText("Market mood")).getByText("Trending up").closest("li")!.textContent).toMatch(/3 setups · 0% ahead · too early/);
     expect(within(screen.getByLabelText("Market mood")).queryByText("Quiet range")).toBeNull();
   });

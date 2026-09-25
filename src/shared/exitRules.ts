@@ -9,6 +9,7 @@
 //   limit a position whose stop already locks in profit keeps running on that
 //   stop, up to HOLD_EXTENSION_MULTIPLE times the limit.
 
+import { isUsSymbol, usSquareOffDue, US_BREAKEVEN_BUFFER } from "./usMarket";
 import { floorToStep, type MarketRule } from "./marketRules";
 import { isNseSymbol, nseSquareOffDue } from "./nse";
 
@@ -21,7 +22,7 @@ export const NSE_BREAKEVEN_BUFFER = 0.003;
 
 /** The least a "locked" stop must be past entry for this symbol. */
 export function breakevenBuffer(symbol?: string): number {
-  return isNseSymbol(symbol) ? NSE_BREAKEVEN_BUFFER : BREAKEVEN_BUFFER;
+  return isUsSymbol(symbol) ? US_BREAKEVEN_BUFFER : isNseSymbol(symbol) ? NSE_BREAKEVEN_BUFFER : BREAKEVEN_BUFFER;
 }
 /** A winner may run to this many times its time limit before it's closed regardless. */
 export const HOLD_EXTENSION_MULTIPLE = 3;
@@ -71,8 +72,9 @@ export function stopLocksProfit(p: Pick<ExitState, "symbol" | "direction" | "ent
  * let one that has keep running, up to the extended limit.
  */
 export function holdingDecision(p: ExitState, nowMs: number = Date.now()): "hold" | "expire" {
-  // Stock positions are intraday: closed at 3:20 IST whatever else holds.
+  // Stock positions are intraday: closed at 3:20 IST (US: 3:50 New York) whatever else holds.
   if (isNseSymbol(p.symbol) && nseSquareOffDue(p.openTime, nowMs)) return "expire";
+  if (isUsSymbol(p.symbol) && usSquareOffDue(p.openTime, nowMs)) return "expire";
   const openedMs = p.openTime ? new Date(p.openTime).getTime() : nowMs;
   const elapsed = (nowMs - openedMs) / 60000;
   const limit = p.expectedHoldingTimeMinutes || DEFAULT_HOLD_MINUTES;

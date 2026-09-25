@@ -1,3 +1,4 @@
+import { isUsSymbol, US_ROUND_TRIP_RATE } from "../shared/usMarket";
 import type { MarketBar, StrategySetup } from "../types";
 import { bankPartial, holdingDecision, partialDue, type ExitState } from "../shared/exitRules";
 import { TRAIL_PROFILES, updateTrailingStop, type TrailProfileId, type TrailState } from "../shared/trailingStop";
@@ -16,7 +17,7 @@ import { isNseSymbol, nseRoundTripRate } from "../shared/nse";
 
 /** Fees in and out, as a share of the entry price: CoinDCX's, or Angel One's for a ₹10,000 stock trade. */
 const ROUND_TRIP_FEE = 0.001;
-const feeFor = (symbol: string) => (isNseSymbol(symbol) ? nseRoundTripRate(10_000) : ROUND_TRIP_FEE);
+const feeFor = (symbol: string) => (isUsSymbol(symbol) ? US_ROUND_TRIP_RATE : isNseSymbol(symbol) ? nseRoundTripRate(10_000) : ROUND_TRIP_FEE);
 
 export interface ExitResult {
   /** Net result in multiples of the initial risk, after fees. */

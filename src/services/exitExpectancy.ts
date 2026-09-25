@@ -4,6 +4,7 @@ import { decorateBarsWithIndicators } from "./marketDataService";
 import { tradesTooRarely } from "./tradingActivity";
 import { simulateExit } from "./exitComparison";
 import { isNseSymbol } from "../shared/nse";
+import { isUsSymbol } from "../shared/usMarket";
 import { DEFAULT_TRAIL_PROFILE, type TrailProfileId } from "../shared/trailingStop";
 
 // What each trader's setups actually earn with the live exits. The profit
@@ -53,8 +54,9 @@ const GOOD_PRIOR_SHARE = 0.5;
 /** Recompute this often. */
 export const EXPECTANCY_TTL_MS = 60 * 60 * 1000;
 
-export type MarketKind = "crypto" | "nse";
-const marketOf = (symbol: string): MarketKind => (isNseSymbol(symbol) ? "nse" : "crypto");
+export type MarketKind = "crypto" | "nse" | "us";
+export const MARKET_KINDS: MarketKind[] = ["crypto", "nse", "us"];
+const marketOf = (symbol: string): MarketKind => (isUsSymbol(symbol) ? "us" : isNseSymbol(symbol) ? "nse" : "crypto");
 
 export function expectancyKey(symbol: string, setupName: string): string {
   return `${marketOf(symbol)}:${setupName}`;
@@ -102,16 +104,20 @@ export function shrunkR(rec: TraderRecord | undefined): number {
   return rec.totalR / (rec.trades + PRIOR_TRADES);
 }
 
-const otherMarket = (m: MarketKind): MarketKind => (m === "crypto" ? "nse" : "crypto");
 
 /**
- * What a trader's record in the other market says about them here: their
- * (shrunk) average there, a good one counting for half; 0 with none.
+ * What a trader's record in the other markets says about them here: their
+ * (shrunk) average across them, a good one counting for half; 0 with none.
  */
 export function crossMarketPrior(table: ExpectancyTable, market: MarketKind, setupName: string): number {
-  const other = table.byKey[`${otherMarket(market)}:${setupName}`];
-  if (!other || other.trades === 0) return 0;
-  const r = shrunkR(other);
+  const others = MARKET_KINDS.filter((m) => m !== market)
+    .map((m) => table.byKey[`${m}:${setupName}`])
+    .filter((r): r is TraderRecord => !!r && r.trades > 0);
+  if (others.length === 0) return 0;
+  const pooled = others.reduce((a, r) => ({ ...a, trades: a.trades + r.trades, totalR: a.totalR + r.totalR }), {
+    trades: 0, totalR: 0, wins: 0, winR: 0, lossR: 0,
+  });
+  const r = shrunkR(pooled);
   return r > 0 ? r * GOOD_PRIOR_SHARE : r;
 }
 

@@ -1,3 +1,4 @@
+import { isUsSymbol, US_ROUND_TRIP_RATE } from "../shared/usMarket";
 import type { StrategySetup } from "../types";
 import { fitQuantity } from "../shared/marketRules";
 import { ruleFor } from "./marketRulesStore";
@@ -36,7 +37,8 @@ export function priceEntry(
 
   // Fees come off the reward and add to the loss, so a tight setup is judged
   // on what it actually pays.
-  const fees = entry * (isNseSymbol(setup.symbol) ? nseRoundTripRate(entry * units) : ROUND_TRIP_FEES);
+  const fees =
+    entry * (isUsSymbol(setup.symbol) ? US_ROUND_TRIP_RATE : isNseSymbol(setup.symbol) ? nseRoundTripRate(entry * units) : ROUND_TRIP_FEES);
   const rewardToRisk = (reward - fees) / (risk + fees);
   if (rewardToRisk < MIN_REWARD_TO_RISK_AT_ENTRY) {
     const movedPct = (Math.abs(entry - setup.entryPrice) / setup.entryPrice) * 100;

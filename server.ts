@@ -26,6 +26,9 @@ import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
 import { startStockPrices } from "./server/stockPrices";
 import { startQuotes } from "./server/quotes";
 import { angelStatus } from "./server/angelOne";
+import { alpacaStatus } from "./server/alpaca";
+import { fxStatus } from "./server/fx";
+import { startUsPrices } from "./server/usPrices";
 
 // Entry point: builds the Express app, mounts the route modules behind
 // Firebase auth, and starts the WebSocket fan-out, the CoinDCX price relay and
@@ -67,7 +70,7 @@ app.use(pushRouter);
 
 // Where the server runs and whether its saved state survives restarts.
 app.get("/api/server/status", (_req: Request, res: Response) => {
-  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus() });
+  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus(), alpaca: alpacaStatus(), fx: fxStatus() });
 });
 
 // Unknown API paths get a JSON 404 instead of falling through to the SPA's
@@ -127,6 +130,7 @@ async function startServer() {
   startExpiryGuard();
   startServerScanner();
   startStockPrices();
+  startUsPrices();
   startQuotes();
 }
 

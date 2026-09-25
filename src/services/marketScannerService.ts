@@ -1,3 +1,4 @@
+import { isUsSymbol, usTakesEntries, usTicker, US_UNIVERSE } from "../shared/usMarket";
 import {
   ExpectedValueAssessment,
   FailureInjectionState,
@@ -160,7 +161,8 @@ export async function scanSingleMarket(
 ): Promise<MarketScanResult> {
   const policy = options.riskPolicy || DEFAULT_RISK_POLICY;
   // CoinDCX's INR markets are spot: only long trades can be placed there.
-  const longOnly = symbolConfig.assetClass === "crypto";
+  // Coins are spot, and US stocks are bought only (an Indian LRS account can't sell short).
+  const longOnly = symbolConfig.assetClass === "crypto" || isUsSymbol(symbolConfig.symbol);
   const currentBar =
     bars && bars.length > 0 ? bars[bars.length - 1] : undefined;
   const price = currentBar ? currentBar.close : symbolConfig.basePrice;
@@ -427,7 +429,7 @@ export async function scanSingleMarket(
           1000 + Math.random() * 9000
         )}`,
         supervisorNotes: `${setup.name}, one of ${sourcePanel.supportingPersonas.length} agreeing trader(s) (${sourcePanel.totalVotesCast} voted, ${(sourcePanel.agreementScore * 100).toFixed(0)}% weighted agreement), in ${regime.replace(/_/g, " ")}. Meta-confidence ${(metaScore.confidence * 100).toFixed(0)}%, net EV +₹${evAssessment.expectedNetValue.toFixed(2)}. Allocated ${riskCalc.recommendedPositionSizeUnits} units (₹${riskCalc.riskDollars.toFixed(0)} risk). Placed in Queue for human authorization.`,
-        marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. ${orderBook.source === "coindcx" ? "CoinDCX order book: spread" : orderBook.source === "angelone" ? "NSE market depth: spread" : "Estimated spread"} ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}%, depth score ${orderBook.depthScore}/100${orderBook.depthInr !== undefined ? ` (${formatInr(orderBook.depthInr)} within 0.5% of the price)` : ""}.`,
+        marketAnalysisSummary: `Technical indicators show strong regime alignment. Support at ₹${(price * 0.985).toFixed(2)}, Resistance at ₹${(price * 1.015).toFixed(2)}. ${orderBook.source === "coindcx" ? "CoinDCX order book: spread" : orderBook.source === "angelone" ? "NSE market depth: spread" : orderBook.source === "alpaca" ? "US quote (IEX): spread" : "Estimated spread"} ${((orderBook.spread / (orderBook.midPrice || price || 1)) * 100).toFixed(3)}%, depth score ${orderBook.depthScore}/100${orderBook.depthInr !== undefined ? ` (${formatInr(orderBook.depthInr)} within 0.5% of the price)` : ""}.`,
         aiRecommendation:
           metaScore.confidence >= 0.60 ? "TRADE_FAVORED" : "CAUTION",
         modelUsed: "Multi-Agent Trader Panel v3.0",
@@ -440,7 +442,7 @@ export async function scanSingleMarket(
         dataQuality: {
           syntheticBarShare: syntheticBarShare(bars),
           seededExperienceShare: retrieval.seededShare,
-          simulatedOrderBook: orderBook.source !== "coindcx" && orderBook.source !== "angelone",
+          simulatedOrderBook: orderBook.source !== "coindcx" && orderBook.source !== "angelone" && orderBook.source !== "alpaca",
           ...(activity !== null ? { tradingActivity: Number(activity.toFixed(2)) } : {}),
         },
       };
@@ -538,7 +540,13 @@ export async function scanAllMarkets(
   ];
   const targetSymbols = options.symbols
     ? [...new Set(options.symbols.map((s) => (s === "XPR/INR" ? "XRP/INR" : s)))]
-        .filter((s) => SUPPORTED_SYMBOLS.some((c) => c.symbol === s) || isCryptoInrSymbol(s) || NSE_UNIVERSE[s] !== undefined)
+        .filter(
+          (s) =>
+            SUPPORTED_SYMBOLS.some((c) => c.symbol === s) ||
+            isCryptoInrSymbol(s) ||
+            NSE_UNIVERSE[s] !== undefined ||
+            (isUsSymbol(s) && US_UNIVERSE[usTicker(s)] !== undefined)
+        )
         .map(getSymbolConfig)
     : universe;
 
@@ -563,15 +571,18 @@ export async function scanAllMarkets(
     }
   }
 
-  // Stocks: only while NSE takes new intraday trades (9:15 to 3:00 IST, weekdays).
-  const equityMarketOpen = nseTakesEntries(options.now ?? Date.now());
+  // Stocks: only while their market takes new intraday trades (NSE 9:15 to
+  // 3:00 IST; US 9:30 to 3:30 New York time; weekdays).
+  const scanNow = options.now ?? Date.now();
+  const nseOpen = nseTakesEntries(scanNow);
+  const usOpen = usTakesEntries(scanNow);
   const outcomes: SymbolScanOutcome[] = [];
   const shadows: ShadowSignal[] = [];
 
   for (const symbolConfig of targetSymbols) {
     // Equities only get analysed while NSE takes new intraday trades —
     // crypto is unaffected, it trades 24/7.
-    if (symbolConfig.assetClass === "equity" && !equityMarketOpen) {
+    if (symbolConfig.assetClass === "equity" && !(isUsSymbol(symbolConfig.symbol) ? usOpen : nseOpen)) {
       continue;
     }
 
