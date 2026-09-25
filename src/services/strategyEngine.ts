@@ -1,4 +1,5 @@
 import { MarketBar, StrategySetup, RegimeType, StrategyFamily, TradeDirection, PromotedLabModel } from "../types";
+import { coinTargetDistance, planAtr, stopFloorPct } from "../shared/coinHolds";
 
 export interface CandidateEvaluationContext {
   symbol: string;
@@ -39,6 +40,8 @@ interface IndicatorSnapshot {
   rsi: number;
   adx: number;
   atr: number;
+  /** The ATR stops and targets are sized on: hourly for coins (shared/coinHolds). */
+  planAtr: number;
   bbUpper: number;
   bbLower: number;
   volumeSurgeRatio: number;
@@ -47,7 +50,7 @@ interface IndicatorSnapshot {
   recentLow: number;
 }
 
-function deriveSnapshot(bars: MarketBar[]): IndicatorSnapshot | null {
+function deriveSnapshot(bars: MarketBar[], symbol?: string): IndicatorSnapshot | null {
   if (bars.length < 5) return null;
   const current = bars[bars.length - 1];
   const price = current.close;
@@ -66,7 +69,8 @@ function deriveSnapshot(bars: MarketBar[]): IndicatorSnapshot | null {
   const vwapDistPercent = Number((((price - vwap) / vwap) * 100).toFixed(2));
   const recentHigh = Math.max(...bars.slice(-15, -1).map((b) => b.high));
   const recentLow = Math.min(...bars.slice(-15, -1).map((b) => b.low));
-  return { price, ema9, ema21, ema50, ema200, vwap, rsi, adx, atr, bbUpper, bbLower, volumeSurgeRatio, vwapDistPercent, recentHigh, recentLow };
+  const plan = planAtr(symbol, current);
+  return { price, ema9, ema21, ema50, ema200, vwap, rsi, adx, atr, planAtr: plan, bbUpper, bbLower, volumeSurgeRatio, vwapDistPercent, recentHigh, recentLow };
 }
 
 function baseFeatures(s: IndicatorSnapshot, emaAlignment: boolean) {
@@ -166,7 +170,7 @@ export const DEFAULT_TREND_TUNING: TrendTuning = {
 
 export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTuning = DEFAULT_TREND_TUNING): StrategySetup | null {
   const { symbol, timeframe, bars, regime, eventWindowActive } = ctx;
-  const s = deriveSnapshot(bars);
+  const s = deriveSnapshot(bars, symbol);
   if (!s) return null;
 
   const isBullTrend = s.ema9 > s.ema21 && s.ema21 > s.ema50 && s.price > s.vwap && s.adx >= tuning.minAdx;
@@ -174,8 +178,8 @@ export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTu
   const direction: TradeDirection = isBullTrend ? "LONG" : "SHORT";
   const qualifies = (isBullTrend || isBearTrend) && regime !== "high_volatility_choppy" && !eventWindowActive;
 
-  const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
-  const targetDistance = stopDistance * tuning.targetMult;
+  const stopDistance = Math.max(s.planAtr * tuning.stopAtrMult, s.price * stopFloorPct(symbol, tuning.stopPriceFloorPct));
+  const targetDistance = coinTargetDistance(symbol, stopDistance * tuning.targetMult, stopDistance);
   const entryPrice = s.price;
   const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
   const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
@@ -200,10 +204,11 @@ export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTu
     entryPrice,
     stopLoss,
     takeProfit,
-    riskRewardRatio: tuning.targetMult,
+    riskRewardRatio: Number((targetDistance / stopDistance).toFixed(1)),
     baseProbability: tuning.baseProbability,
     qualifies,
     disqualificationReason,
+    planAtr: s.planAtr,
     features: baseFeatures(s, isBullTrend || isBearTrend),
   };
 }
@@ -230,7 +235,7 @@ export interface BreakoutTuning {
 
 export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: BreakoutTuning): StrategySetup | null {
   const { symbol, timeframe, bars, eventWindowActive } = ctx;
-  const s = deriveSnapshot(bars);
+  const s = deriveSnapshot(bars, symbol);
   if (!s) return null;
 
   const isBullBreak = s.price > s.recentHigh && s.volumeSurgeRatio >= tuning.volSurgeThreshold;
@@ -241,8 +246,8 @@ export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: Brea
     ((isBullBreak && s.rsi >= tuning.rsiCeiling) || (isBearBreak && s.rsi <= 100 - tuning.rsiCeiling));
   const qualifies = (isBullBreak || isBearBreak) && !overextended && !eventWindowActive;
 
-  const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
-  const targetDistance = Math.max(s.atr * tuning.targetAtrMult, stopDistance * tuning.targetStopMultFloor);
+  const stopDistance = Math.max(s.planAtr * tuning.stopAtrMult, s.price * stopFloorPct(symbol, tuning.stopPriceFloorPct));
+  const targetDistance = coinTargetDistance(symbol, Math.max(s.planAtr * tuning.targetAtrMult, stopDistance * tuning.targetStopMultFloor), stopDistance);
   const entryPrice = s.price;
   const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
   const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
@@ -271,6 +276,7 @@ export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: Brea
     baseProbability: tuning.baseProbability,
     qualifies,
     disqualificationReason,
+    planAtr: s.planAtr,
     features: baseFeatures(s, s.ema9 > s.ema21),
   };
 }
@@ -292,7 +298,7 @@ export interface MeanReversionTuning {
 
 export function buildMeanReversionSetup(ctx: CandidateEvaluationContext, tuning: MeanReversionTuning): StrategySetup | null {
   const { symbol, timeframe, bars, regime, eventWindowActive } = ctx;
-  const s = deriveSnapshot(bars);
+  const s = deriveSnapshot(bars, symbol);
   if (!s) return null;
 
   const isRsiOverbought = s.rsi >= tuning.rsiOverbought;
@@ -301,8 +307,10 @@ export function buildMeanReversionSetup(ctx: CandidateEvaluationContext, tuning:
   const direction: TradeDirection = isRsiOverbought ? "SHORT" : "LONG";
   const qualifies = isRangeRegime && (isRsiOverbought || isRsiOversold) && s.adx < tuning.maxAdxForRange && !eventWindowActive;
 
-  const stopDistance = Math.max(s.atr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
-  const targetDistance = Math.abs(s.price - s.vwap);
+  const stopDistance = Math.max(s.planAtr * tuning.stopAtrMult, s.price * stopFloorPct(symbol, tuning.stopPriceFloorPct));
+  // Back to VWAP; a coin trade, held for hours, aims at least 2x its stop,
+  // or the spread eats a target that close.
+  const targetDistance = coinTargetDistance(symbol, Math.abs(s.price - s.vwap), stopDistance);
   const entryPrice = s.price;
   const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
   const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
@@ -329,6 +337,7 @@ export function buildMeanReversionSetup(ctx: CandidateEvaluationContext, tuning:
     baseProbability: tuning.baseProbability,
     qualifies,
     disqualificationReason,
+    planAtr: s.planAtr,
     features: baseFeatures(s, false),
   };
 }

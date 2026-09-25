@@ -243,3 +243,92 @@ describe("stocks on the server", () => {
     expect(isPastHoldingTime(pos, Date.parse(`2026-09-23T15:20:00${IST}`))).toBe(true);
   });
 });
+
+describe("stock bid and ask", () => {
+  beforeEach(async () => {
+    (await import("../../server/scanner/scannerService"))._resetServerScanner();
+    (await import("../../server/scanner/deskState"))._resetDeskStates();
+    (await import("../../server/scanner/autopilot"))._resetServerAutopilot();
+    (await import("../../server/guardian"))._resetGuardian();
+    (await import("../../server/quotes"))._resetQuotes();
+  });
+
+  const last = () => (candles(now - FIVE, now, FIVE).at(-1) as number[])[4];
+
+  it("come with each price, in the same one request", async () => {
+    const q = await angelOne.fetchStockQuotes(["SBIN"]);
+    expect(q.SBIN).toEqual({ ltp: last(), bid: last() - 0.05, ask: last() + 0.05 });
+    const quoteCalls = calls.filter((c) => c.path.endsWith("/quote/"));
+    expect(quoteCalls).toHaveLength(1);
+    expect(quoteCalls[0].body.mode).toBe("FULL");
+  });
+
+  it("judge a stock position on the bid, record the spread, and reach the app", async () => {
+    const guardian = await import("../../server/guardian");
+    const { pollStockPrices } = await import("../../server/stockPrices");
+    const { freshQuote } = await import("../../server/quoteStore");
+    const { typicalSpread } = await import("../../server/scanner/scannerService");
+    guardian.daemonPositions.set("s1", {
+      id: "s1", userId: "owner", symbol: "SBIN", direction: "LONG", entryPrice: 900, currentPrice: 900,
+      quantity: 10, stopLoss: 850, takeProfit: 2000, openTime: new Date(now).toISOString(), expectedHoldingTimeMinutes: 30,
+    });
+    await pollStockPrices(now);
+    expect(freshQuote("SBIN", now)).toMatchObject({ bid: last() - 0.05, ask: last() + 0.05 });
+    // What a long could be sold at, not the last trade.
+    expect(guardian.daemonPositions.get("s1")!.currentPrice).toBeCloseTo(last() - 0.05, 6);
+    expect(typicalSpread("SBIN")).toBeCloseTo(0.1 / last(), 9);
+    // A stock never read stands in with the other stocks' spread, not a coin's.
+    const { recordSpread } = await import("../../server/scanner/scannerService");
+    recordSpread("SOL/INR", 0.006);
+    expect(typicalSpread("TCS")).toBeCloseTo(0.1 / last(), 9);
+  });
+
+  it("open the server autopilot's stock trades at the ask", async () => {
+    const { setDeskState } = await import("../../server/scanner/deskState");
+    const { runScanCycle } = await import("../../server/scanner/scannerService");
+    const { pollStockPrices } = await import("../../server/stockPrices");
+    const desk = {
+      equity: 100000, riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.5 }, dailyRealizedPnl: 0,
+      autopilot: true, tradingMode: "PAPER" as const, killSwitch: false, scanning: true,
+      failureState: {
+        simulateAgentTimeout: false, simulateStaleMarketData: false, simulateDailyLossBreach: false,
+        simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false, globalKillSwitchActive: false,
+      },
+      quarantines: {}, promotedModel: null,
+    };
+    setDeskState("owner", desk, now);
+    await pollStockPrices(now);
+    // The book has since come back to the signal's candle close: the ask is
+    // there, below the last trade.
+    const { currentQuotes } = await import("../../server/quoteStore");
+    const ask = Number((last() / 1.0015).toFixed(2));
+    currentQuotes.set("SBIN", { bid: ask - 0.1, ask, at: now });
+    await runScanCycle(now);
+    const { daemonPositions } = await import("../../server/guardian");
+    const opened = [...daemonPositions.values()].find((p) => p.symbol === "SBIN")!;
+    expect(opened.entryPrice).toBeCloseTo(ask, 6);
+    const { currentPrices } = await import("../../server/realtime");
+    expect(currentPrices.SBIN).toBeCloseTo(last(), 6);
+  });
+
+  it("make the autopilot pass on a stock whose ask leaves too little reward", async () => {
+    const { setDeskState } = await import("../../server/scanner/deskState");
+    const { runScanCycle, reportsSince } = await import("../../server/scanner/scannerService");
+    const { pollStockPrices } = await import("../../server/stockPrices");
+    setDeskState("owner", {
+      equity: 100000, riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.5 }, dailyRealizedPnl: 0,
+      autopilot: true, tradingMode: "PAPER" as const, killSwitch: false, scanning: true,
+      failureState: {
+        simulateAgentTimeout: false, simulateStaleMarketData: false, simulateDailyLossBreach: false,
+        simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false, globalKillSwitchActive: false,
+      },
+      quarantines: {}, promotedModel: null,
+    }, now);
+    await pollStockPrices(now);
+    await runScanCycle(now);
+    const sbin = reportsSince("owner", 0)[0].newProposals.find((p) => p.symbol === "SBIN")!;
+    expect(sbin.status).toBe("DEFERRED");
+    expect(sbin.deferralReason).toMatch(/reward is left after fees/);
+
+  });
+});

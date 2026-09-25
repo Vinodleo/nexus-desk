@@ -1,3 +1,4 @@
+import { hourlyAtrSeries } from "../shared/coinHolds";
 import { MarketBar, OrderBook, RegimeType } from "../types";
 import { averageTrueRange, directionalIndex } from "./indicators";
 import { NSE_UNIVERSE } from "../shared/nse";
@@ -415,6 +416,7 @@ export function decorateBarsWithIndicators(
   const rsi = calculateRSI(closes, 14);
   const atr = averageTrueRange(bars);
   const { adx } = directionalIndex(bars);
+  const atrHour = hourlyAtrSeries(bars);
   let vwapDay = -1;
   let cumulativeVolumeWeight = 0;
   let cumulativeVolume = 0;
@@ -443,6 +445,7 @@ export function decorateBarsWithIndicators(
       ema200: round(ema200[idx]),
       rsi: Number(rsi[idx].toFixed(1)),
       atr: round(barAtr),
+      ...(atrHour[idx] !== undefined ? { atrHour: round(atrHour[idx] as number) } : {}),
       adx: adx[idx] === undefined ? undefined : Number((adx[idx] as number).toFixed(1)),
       bbUpper: round((ema21[idx] || c) + dev * 2),
       bbLower: round((ema21[idx] || c) - dev * 2),

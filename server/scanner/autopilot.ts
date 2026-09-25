@@ -103,7 +103,7 @@ export function runServerAutopilot(
   for (const a of accepted) {
     const position = positionFromProposal(a, {
       id: newPositionId(now),
-      atr: atrForExits(deps.barAtr(a.proposal.symbol), a.proposal.setup.entryPrice),
+      atr: atrForExits(a.proposal.setup, deps.barAtr(a.proposal.symbol)),
       trailProfile: desk.trailProfile ?? DEFAULT_TRAIL_PROFILE,
       now,
     });

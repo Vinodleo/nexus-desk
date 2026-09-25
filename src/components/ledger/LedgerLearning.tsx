@@ -42,7 +42,7 @@ export const SkippedSetups: React.FC<{ shadows: ShadowSignal[] }> = ({ shadows }
       <div>
         <div className="text-sm font-semibold">What skipped setups did</div>
         <div className="text-xs text-muted mt-0.5 leading-relaxed">
-          Every setup is followed on real prices until it would have hit its target or stop (intraday ones for 30 minutes).
+          Every setup is followed on real prices until it would have hit its target or stop (as long as a real trade would run: 4 hours for a coin, 30 minutes for a stock).
           {open > 0 && ` ${open} still being followed.`}
         </div>
       </div>

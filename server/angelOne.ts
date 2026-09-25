@@ -344,6 +344,33 @@ export async function fetchStockPrices(symbols: string[]): Promise<Record<string
   return prices;
 }
 
+export interface StockQuote {
+  ltp: number;
+  /** Best bid and offer, when the book has both sides. */
+  bid?: number;
+  ask?: number;
+}
+
+/**
+ * Latest traded price with the best bid and offer, per stock: one FULL quote
+ * request per 50 stocks, the same count as prices alone.
+ */
+export async function fetchStockQuotes(symbols: string[]): Promise<Record<string, StockQuote>> {
+  const out: Record<string, StockQuote> = {};
+  for (const { symbol, row } of await quotes(symbols, "FULL")) {
+    const ltp = Number(row.ltp);
+    if (!(ltp > 0)) continue;
+    const best = (side?: { price?: number; quantity?: number }[], pick: (a: number, b: number) => number = Math.max) => {
+      const prices = (side ?? []).filter((l) => Number(l.price) > 0 && Number(l.quantity) > 0).map((l) => Number(l.price));
+      return prices.length > 0 ? prices.reduce((a, b) => pick(a, b)) : undefined;
+    };
+    const bid = best(row.depth?.buy, Math.max);
+    const ask = best(row.depth?.sell, Math.min);
+    out[symbol] = bid !== undefined && ask !== undefined && ask >= bid ? { ltp, bid, ask } : { ltp };
+  }
+  return out;
+}
+
 /** The best five bids and offers for a stock, as an order book. */
 export async function fetchStockDepth(symbol: string, now: number = Date.now()): Promise<RawBook | null> {
   const [q] = await quotes([symbol], "FULL");

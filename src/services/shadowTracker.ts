@@ -1,3 +1,4 @@
+import { holdMinutesFor } from "../shared/coinHolds";
 import type { MarketBar, RegimeType, StrategySetup, TradeDirection } from "../types";
 import type { SkipReason } from "./scanOutcome";
 import { SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
@@ -49,8 +50,6 @@ export interface ShadowSignal {
 
 /** Round-trip fees as a share of the entry price (CoinDCX taker, both sides). */
 export const ROUND_TRIP_FEE = 0.001;
-const INTRADAY_LIMIT_MS = 30 * 60 * 1000;
-const SWING_LIMIT_MS = 3 * 24 * 60 * 60 * 1000;
 /** Enough history for win-chance calibration, still small in localStorage. */
 const MAX_KEPT = 1500;
 const STORAGE_KEY = "nexus_shadow_signals_v1";
@@ -87,7 +86,8 @@ export function shadowFromSetup(setup: StrategySetup, kind: ShadowKind, signalTi
     stopLoss: setup.stopLoss,
     takeProfit: setup.takeProfit,
     signalTime,
-    expiresAt: signalTime + (horizon === "swing" ? SWING_LIMIT_MS : INTRADAY_LIMIT_MS),
+    // Followed as long as a real trade from it would run (4 hours for a coin).
+    expiresAt: signalTime + holdMinutesFor(setup) * 60 * 1000,
     status: "open",
   };
 }

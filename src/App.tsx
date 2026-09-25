@@ -78,6 +78,7 @@ import { blendedExitPrice, holdingDecision, openQuantity, planPartialQuantity, r
 import { ruleFor } from "./services/marketRulesStore";
 import { daemonEventToTrade, type DaemonCloseEvent } from "./services/daemonEvents";
 import type { Quote } from "./shared/quotes";
+import { entryPriceNow } from "./services/entryPriceNow";
 import { LOSS_STREAK_LIMIT, cooldownUntil, lossStreak } from "./services/lossGuards";
 import { getExpectancyTable, marketTrendFrom } from "./services/exitExpectancy";
 import { fetchServerDeskControls, loadDeskControls, saveDeskControls } from "./services/deskControls";
@@ -100,6 +101,7 @@ import { useEventWindow } from "./hooks/useEventWindow";
 import { useTrailProfile } from "./hooks/useTrailProfile";
 import { showLocalTradePopup, useTradeNotifications } from "./hooks/useTradeNotifications";
 import { tradeClosedMessage } from "./shared/tradeMessages";
+import { holdMinutesFor, trailsAsRunner } from "./shared/coinHolds";
 import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, newPositionId, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows } from "./services/experienceMemory";
@@ -107,18 +109,7 @@ import { experiencesFromShadows } from "./services/experienceMemory";
 // ATR recorded on a position for its trailing-stop rules.
 function atrForExits(proposal: TradeProposal): number {
   const bars = liveMarketStream.getBars(proposal.symbol);
-  return sharedAtrForExits(bars?.at(-1)?.atr, proposal.setup.entryPrice);
-}
-
-/**
- * The price a new position would open at now: the order book's ask for a
- * long (the bid for a short), since CoinDCX's INR spreads are wide; the last
- * trade when the book can't be read (and for stocks).
- */
-async function entryPriceNow(symbol: string, direction: "LONG" | "SHORT", notional: number): Promise<number | undefined> {
-  const book = await fetchLiveOrderBook(symbol, notional).catch(() => null);
-  if (book && book.asks.length > 0 && book.bids.length > 0) return direction === "LONG" ? book.asks[0].price : book.bids[0].price;
-  return liveMarketStream.getLastPrice(symbol);
+  return sharedAtrForExits(proposal.setup, bars?.at(-1)?.atr);
 }
 
 export default function App() {
@@ -1037,10 +1028,7 @@ export default function App() {
 
       const currentAtr = atrForExits(proposal);
 
-      const isTrendOrSwing =
-        proposal.setup.family === "trend_following" ||
-        proposal.setup.family === "breakout_confirmation" ||
-        proposal.setup.horizon === "swing";
+      const isTrendOrSwing = trailsAsRunner(proposal.setup);
 
       const isLiveExecution = tradingMode === "LIVE_COINDCX";
 
@@ -1078,7 +1066,7 @@ export default function App() {
       // has already run too far.
       const priced = priceEntry(
         proposal.setup,
-        await entryPriceNow(proposal.symbol, proposal.setup.direction, units * proposal.setup.entryPrice),
+        await entryPriceNow(proposal.symbol, proposal.setup.direction, units * proposal.setup.entryPrice, quotesRef.current.get(proposal.symbol)),
         units,
         proposal.riskCalc.riskDollars
       );
@@ -1115,7 +1103,7 @@ export default function App() {
         unrealizedPnl: 0,
         unrealizedPnlPercent: 0,
         openTime: new Date().toISOString(),
-        expectedHoldingTimeMinutes: proposal.setup.horizon === "swing" ? 4320 : 30,
+        expectedHoldingTimeMinutes: holdMinutesFor(proposal.setup),
         metaConfidence: proposal.metaScore.confidence,
         isSelfApproved: isAutonomousSelfApproved,
         highestPrice: entryPrice,
@@ -1266,7 +1254,7 @@ export default function App() {
             async (p) =>
               [
                 `${p.symbol}|${p.setup.direction}`,
-                await entryPriceNow(p.symbol, p.setup.direction, p.riskCalc.recommendedPositionSizeUnits * p.setup.entryPrice),
+                await entryPriceNow(p.symbol, p.setup.direction, p.riskCalc.recommendedPositionSizeUnits * p.setup.entryPrice, quotesRef.current.get(p.symbol)),
               ] as const
           )
         )

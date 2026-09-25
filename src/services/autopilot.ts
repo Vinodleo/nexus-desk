@@ -4,6 +4,7 @@ import { priceEntry } from "./entryPricing";
 import { ruleFor } from "./marketRulesStore";
 import { isBuiltOnSyntheticPrices } from "./dataProvenance";
 import { openQuantity, planPartialQuantity } from "../shared/exitRules";
+import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
 
 // Self-Approve (autopilot): which proposals it opens on its own. Shared by the
 // app and the server scanner, so a trade is let through by the same rules
@@ -159,9 +160,7 @@ export function selectAutopilotTrades(
  * to be floored at 0.3% of price, and the exit rules were tuned with that
  * floor, so it's kept.
  */
-export function atrForExits(barAtr: number | undefined, entryPrice: number): number {
-  return Math.max(barAtr ?? 0, entryPrice * 0.003);
-}
+export { atrForExits };
 
 /** The position autopilot opens for an accepted proposal. */
 export function positionFromProposal(
@@ -169,7 +168,7 @@ export function positionFromProposal(
   opts: { id: string; atr: number; trailProfile: string; now?: number }
 ): Position {
   const { setup } = proposal;
-  const runner = setup.family === "trend_following" || setup.family === "breakout_confirmation" || setup.horizon === "swing";
+  const runner = trailsAsRunner(setup);
   return {
     id: opts.id,
     symbol: proposal.symbol,
@@ -186,7 +185,7 @@ export function positionFromProposal(
     unrealizedPnl: 0,
     unrealizedPnlPercent: 0,
     openTime: new Date(opts.now ?? Date.now()).toISOString(),
-    expectedHoldingTimeMinutes: setup.horizon === "swing" ? 4320 : 30,
+    expectedHoldingTimeMinutes: holdMinutesFor(setup),
     metaConfidence: proposal.metaScore.confidence,
     isSelfApproved: true,
     highestPrice: entryPrice,

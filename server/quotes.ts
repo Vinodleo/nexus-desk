@@ -3,6 +3,7 @@ import { daemonPositions, evaluateDaemonPositions } from "./guardian";
 import { broadcast } from "./realtime";
 import { isFreshQuote, spreadPct, type Quote } from "../src/shared/quotes";
 import { recordSpread } from "./scanner/scannerService";
+import { currentQuotes, freshQuote } from "./quoteStore";
 
 // Best bid and ask for every coin a position is held in, read from CoinDCX's
 // order book every few seconds. The guardian judges positions on these (the
@@ -11,15 +12,9 @@ import { recordSpread } from "./scanner/scannerService";
 
 const POLL_MS = 3000;
 
-export const currentQuotes = new Map<string, Quote>();
+export { currentQuotes, freshQuote };
 
-/** A fresh quote for `symbol`, if there is one. */
-export function freshQuote(symbol: string, now: number = Date.now()): Quote | undefined {
-  const q = currentQuotes.get(symbol);
-  return isFreshQuote(q, now) ? q : undefined;
-}
-
-/** Coins held in a guarded position (CoinDCX INR coins only; stocks trade on tight spreads). */
+/** Coins held in a guarded position (stocks get theirs with their prices: server/stockPrices.ts). */
 function heldCoins(): string[] {
   return [...new Set([...daemonPositions.values()].map((p) => p.symbol))].filter((s) => /^[A-Z0-9]{1,15}\/INR$/.test(s));
 }

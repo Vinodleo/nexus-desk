@@ -1,4 +1,7 @@
-import { angelConfigured, fetchStockPrices } from "./angelOne";
+import { angelConfigured, fetchStockQuotes } from "./angelOne";
+import { currentQuotes } from "./quoteStore";
+import { recordSpread } from "./scanner/scannerService";
+import { spreadPct, type Quote } from "../src/shared/quotes";
 import { broadcast, currentPrices } from "./realtime";
 import { daemonPositions, evaluateDaemonPositions } from "./guardian";
 import { isNseOpen, isNseSymbol } from "../src/shared/nse";
@@ -8,6 +11,12 @@ import { stockUniverse } from "./scanner/scannerService";
 // open: the same job the CoinDCX relay does for coins. Each price goes to the
 // position guardian (stops, targets, trailing), to the scanner's entry price,
 // and to every open app.
+//
+// With each price come the best bid and offer (Angel One's FULL quote, one
+// request per 50 stocks like prices alone). As for coins, positions are
+// judged on the price they could be closed at (the bid for a long), new ones
+// open at the ask, and each stock's spread is recorded for the traders'
+// replay.
 
 const POLL_MS = 5000;
 
@@ -17,12 +26,23 @@ export async function pollStockPrices(now: number = Date.now()): Promise<number>
   const held = [...daemonPositions.values()].map((p) => p.symbol).filter(isNseSymbol);
   const symbols = [...new Set([...stockUniverse(), ...held])];
   if (symbols.length === 0) return 0;
-  const prices = await fetchStockPrices(symbols);
-  for (const [sym, price] of Object.entries(prices)) {
-    currentPrices[sym] = price;
-    evaluateDaemonPositions(sym, price);
+  const rows = await fetchStockQuotes(symbols);
+  const prices: Record<string, number> = {};
+  const quotes: Record<string, Quote> = {};
+  for (const [sym, row] of Object.entries(rows)) {
+    prices[sym] = row.ltp;
+    currentPrices[sym] = row.ltp;
+    let quote: Quote | undefined;
+    if (row.bid !== undefined && row.ask !== undefined) {
+      quote = { bid: row.bid, ask: row.ask, at: now };
+      currentQuotes.set(sym, quote);
+      recordSpread(sym, spreadPct(quote));
+      quotes[sym] = quote;
+    }
+    evaluateDaemonPositions(sym, row.ltp, quote);
   }
   if (Object.keys(prices).length > 0) broadcast({ type: "TICK", data: prices });
+  if (Object.keys(quotes).length > 0) broadcast({ type: "QUOTE", data: quotes });
   return Object.keys(prices).length;
 }
 
