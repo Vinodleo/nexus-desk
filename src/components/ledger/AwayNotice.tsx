@@ -3,38 +3,10 @@ import { Check, RefreshCw } from "lucide-react";
 import type { AwayNoticeState } from "../../hooks/useAwayNotice";
 import { formatAway } from "../../services/awaySummary";
 import { EXIT_LABEL, formatMoney, pnlTone } from "./format";
+import { prefersReducedMotion, useAnimatedNumber } from "./motion";
 
 /** How long the "Back online" pill stays up. */
 export const PILL_MS = 3500;
-
-const reducedMotion = () => {
-  try {
-    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  } catch {
-    return false;
-  }
-};
-
-/** Counts from 0 up to `value` over `ms` (straight to it with reduced motion). */
-function useCountUp(value: number, ms = 700): number {
-  const [shown, setShown] = useState(() => (reducedMotion() ? value : 0));
-  useEffect(() => {
-    if (reducedMotion() || typeof requestAnimationFrame !== "function") {
-      setShown(value);
-      return;
-    }
-    const start = performance.now();
-    let frame = 0;
-    const step = (now: number) => {
-      const t = Math.min(1, (now - start) / ms);
-      setShown(value * (1 - Math.pow(1 - t, 3)));
-      if (t < 1) frame = requestAnimationFrame(step);
-    };
-    frame = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(frame);
-  }, [value, ms]);
-  return shown;
-}
 
 // What's shown on unlocking the phone: a small pill that drops in from the
 // top ("Syncing…", then "Back online"), or, when trades opened or closed
@@ -67,7 +39,7 @@ const AwayPill: React.FC<{ notice: Extract<AwayNoticeState, { phase: "syncing" |
 
   useEffect(() => {
     if (!leaving) return;
-    const t = setTimeout(onDismiss, reducedMotion() ? 0 : 260);
+    const t = setTimeout(onDismiss, prefersReducedMotion() ? 0 : 260);
     return () => clearTimeout(t);
   }, [leaving, onDismiss]);
 
@@ -122,7 +94,7 @@ const AwayCard: React.FC<{
 }> = ({ notice, onDismiss, onOpenBook }) => {
   const titleId = useId();
   const { summary } = notice;
-  const net = useCountUp(summary.netPnl);
+  const net = useAnimatedNumber(summary.netPnl, 700, 0);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onDismiss();
@@ -203,7 +175,7 @@ const AwayCard: React.FC<{
             type="button"
             autoFocus
             onClick={onDismiss}
-            className="flex-1 h-11 rounded-full bg-accent text-on-accent text-sm font-semibold cursor-pointer"
+            className="flex-1 h-11 rounded-full bg-accent text-on-accent text-sm font-semibold cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
           >
             Got it
           </button>

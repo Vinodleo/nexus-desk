@@ -1,8 +1,10 @@
 import React, { useEffect, useId } from "react";
 import { X } from "lucide-react";
+import { usePresence } from "./motion";
 
 // A pop-up in the Private Ledger style: a bottom sheet on phones, a centred
 // card on wider screens. Closes on the backdrop, the X button or Escape.
+// Slides up (pops in on wider screens) and back down when closed.
 export const Sheet: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -12,6 +14,7 @@ export const Sheet: React.FC<{
   footer?: React.ReactNode;
 }> = ({ isOpen, onClose, title, subtitle, children, footer }) => {
   const titleId = useId();
+  const { mounted, leaving } = usePresence(isOpen);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -20,16 +23,22 @@ export const Sheet: React.FC<{
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!mounted) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 font-ui text-ink">
-      <div className="absolute inset-0 bg-ink/40" onClick={onClose} aria-hidden="true" />
+      <div
+        className={`absolute inset-0 bg-ink/40 ${leaving ? "nx-backdrop-out" : "nx-backdrop-in"}`}
+        onClick={leaving ? undefined : onClose}
+        aria-hidden="true"
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative w-full max-w-lg max-h-[90vh] flex flex-col bg-canvas rounded-t-3xl sm:rounded-3xl shadow-xl"
+        className={`relative w-full max-w-lg max-h-[90vh] flex flex-col bg-canvas rounded-t-3xl sm:rounded-3xl shadow-xl ${
+          leaving ? "nx-sheet-out pointer-events-none" : "nx-sheet-in"
+        }`}
       >
         <div className="w-10 h-1 rounded-full bg-line mx-auto mt-2.5 sm:hidden" aria-hidden="true" />
         <header className="flex items-start justify-between gap-3 px-5 pt-3 sm:pt-5 pb-3">
