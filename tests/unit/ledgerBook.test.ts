@@ -377,3 +377,44 @@ describe("traders with your exits, by market", () => {
     expect(screen.getByTestId("trader-list").textContent).toContain("judged −0.29R · other markets −0.70R");
   });
 });
+
+describe("traders re-ranked by a re-measure", () => {
+  const row = (trader: string, judgedR: number) => ({
+    market: "crypto", trader, trades: 40, winPct: 30, avgWinR: 1, avgLossR: -0.5, avgR: judgedR, judgedR, otherMarketR: 0,
+  });
+  const table = (at: number, rows: ReturnType<typeof row>[]) => ({ profile: "tight", measuredAt: at, symbols: 96, minMarketTrades: 30, rows });
+  const offsetTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetTop");
+
+  afterEach(() => {
+    if (offsetTop) Object.defineProperty(HTMLElement.prototype, "offsetTop", offsetTop);
+    delete (HTMLElement.prototype as any).animate;
+    vi.useRealTimers();
+  });
+
+  it("glide into their new places, with a chip saying who moved and by how much", async () => {
+    // jsdom has no layout: a row's place is its position in the list.
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get() {
+        return this.parentElement ? [...this.parentElement.children].indexOf(this) * 60 : 0;
+      },
+    });
+    const animate = vi.fn();
+    (HTMLElement.prototype as any).animate = animate;
+    const { TraderRecord } = await import("../../src/components/ledger/LedgerBreakdown");
+    const first = table(1, [row("Priya Momentum Scalp", -0.28), row("Diego Aggressive Breakout", -0.3)]);
+    const { rerender, container } = render(createElement(TraderRecord, { table: first as any }));
+    expect(screen.queryByTestId("trader-moved")).toBeNull();
+    // The same measure fetched again: nothing moves.
+    rerender(createElement(TraderRecord, { table: { ...first } as any }));
+    expect(animate).not.toHaveBeenCalled();
+    // The next hour's measure: Diego climbs past Priya.
+    rerender(createElement(TraderRecord, { table: table(2, [row("Diego Aggressive Breakout", -0.18), row("Priya Momentum Scalp", -0.31)]) as any }));
+    const names = [...container.querySelectorAll("[data-flip]")].map((n) => (n as HTMLElement).dataset.flip);
+    expect(names).toEqual(["Diego Aggressive Breakout", "Priya Momentum Scalp"]);
+    const glides = animate.mock.calls.map(([frames]) => frames[0].transform);
+    expect(glides).toEqual(expect.arrayContaining(["translateY(60px)", "translateY(-60px)"]));
+    const chips = screen.getAllByTestId("trader-moved").map((c) => c.textContent);
+    expect(chips).toEqual(["↑ +0.12R", "↓ −0.03R"]);
+  });
+});

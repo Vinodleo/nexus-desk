@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { HistoricalTrade } from "../../types";
 import { apiFetch } from "../../services/apiClient";
 import { MIN_EDGE_R } from "../../services/calibration";
 import { Card, StatTile } from "./ui";
 import { EXIT_LABEL, formatMoney, pnlTone, stopSlip } from "./format";
-import { GrowBar, useSlideFrom } from "./motion";
+import { GrowBar, prefersReducedMotion, useSlideFrom } from "./motion";
 import { ChevronDown } from "lucide-react";
 import { MIN_CONDITION_SETUPS, type ConditionBreakdown } from "../../services/conditionStats";
 
@@ -283,14 +283,81 @@ export const StatusChip: React.FC<{ paused: boolean }> = ({ paused }) => {
   );
 };
 
+/** How long a "who moved" chip stays up after a re-measure. */
+const MOVE_CHIP_MS = 8000;
+
+/**
+ * Rows marked `data-flip="<key>"` inside `ref` glide from where they were
+ * to where they are now whenever `trigger` changes (a re-measure that
+ * re-ranks the traders); other re-renders (opening a trader, say) don't
+ * animate. Positions are read relative to the list, so scrolling doesn't
+ * count as moving.
+ */
+function useReorderGlide(ref: React.RefObject<HTMLElement | null>, trigger: unknown) {
+  const last = useRef<{ trigger: unknown; tops: Map<string, number> } | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rows = [...el.querySelectorAll<HTMLElement>("[data-flip]")];
+    const tops = new Map(rows.map((n) => [n.dataset.flip!, n.offsetTop]));
+    const before = last.current;
+    if (before && before.trigger !== trigger && !prefersReducedMotion()) {
+      for (const n of rows) {
+        const was = before.tops.get(n.dataset.flip!);
+        const now = tops.get(n.dataset.flip!)!;
+        if (was === undefined || Math.abs(was - now) < 1 || typeof n.animate !== "function") continue;
+        n.animate([{ transform: `translateY(${was - now}px)` }, { transform: "none" }], {
+          duration: 550,
+          easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+        });
+      }
+    }
+    last.current = { trigger, tops };
+  });
+}
+
+/**
+ * How much each trader's judged result moved at the last re-measure
+ * ("market:trader" → change in R), for the "who moved" chips; cleared after
+ * a few seconds. Nothing on the first measure seen.
+ */
+function useJudgedMoves(table: EdgeTable | null): Map<string, number> {
+  const prev = useRef<{ at: number; judged: Map<string, number> } | null>(null);
+  const [moves, setMoves] = useState<Map<string, number>>(new Map());
+  const latest = useRef(table);
+  latest.current = table;
+  // Keyed on the measure's time: the same measure fetched again changes nothing.
+  useEffect(() => {
+    const table = latest.current;
+    if (!table) return;
+    const judged = new Map(table.rows.map((r) => [`${r.market}:${r.trader}`, r.judgedR]));
+    const before = prev.current;
+    prev.current = { at: table.measuredAt, judged };
+    if (!before || before.at === table.measuredAt) return;
+    const next = new Map<string, number>();
+    for (const [key, r] of judged) {
+      const was = before.judged.get(key);
+      if (was !== undefined && Math.abs(r - was) >= 0.01) next.set(key, r - was);
+    }
+    setMoves(next);
+    const t = setTimeout(() => setMoves(new Map()), MOVE_CHIP_MS);
+    return () => clearTimeout(t);
+  }, [table?.measuredAt]);
+  return moves;
+}
+
 const MARKET_TAB = { crypto: "Coins", nse: "India", us: "US" } as const;
 type EdgeMarket = EdgeRow["market"];
 
 /** The scanner's record of each trader with your exits: who may trade now, one market at a time. */
-const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
+export const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
   const [picked, setPicked] = useState<EdgeMarket | null>(null);
   const [openTrader, setOpenTrader] = useState<string | null>(null);
   const touchX = useRef<number | null>(null);
+  // A re-measure re-ranks the traders: rows glide to their new places, and a chip says who moved.
+  const listRef = useRef<HTMLUListElement | null>(null);
+  useReorderGlide(listRef, table?.measuredAt);
+  const moves = useJudgedMoves(table);
   const markets = table ? (["crypto", "nse", "us"] as const).filter((m) => table.rows.some((r) => r.market === m)) : [];
   const market = picked && markets.includes(picked as never) ? picked : markets[0];
   const slideClass = useSlideFrom(market, markets);
@@ -372,13 +439,14 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
             {measured} setups so far; trading isn't limited by this until there are {table.minMarketTrades}.
           </div>
         )}
-        <ul className="m-0 p-0 list-none flex flex-col">
+        <ul ref={listRef} className="relative m-0 p-0 list-none flex flex-col">
           {rows.map((r, i) => {
             const paused = judging && r.judgedR < MIN_EDGE_R;
             const open = openTrader === r.trader;
+            const moved = moves.get(`${r.market}:${r.trader}`);
             const everywhere = markets.map((m) => ({ m, row: table.rows.find((x) => x.market === m && x.trader === r.trader) }));
             return (
-              <li key={r.trader} className="py-2 border-b border-line last:border-b-0">
+              <li key={r.trader} data-flip={r.trader} className="py-2 border-b border-line last:border-b-0 bg-surface">
                 <button
                   type="button"
                   aria-expanded={open}
@@ -388,6 +456,14 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
                   <span className="min-w-0 flex-1 block">
                     <span className="flex items-center gap-1 text-sm">
                       <span className="truncate">{r.trader}</span>
+                      {moved !== undefined && (
+                        <span
+                          data-testid="trader-moved"
+                          className={`shrink-0 text-[11px] font-bold nx-badge-pop ${moved > 0 ? "text-gain" : "text-loss"}`}
+                        >
+                          {moved > 0 ? "↑" : "↓"} {rSigned(moved)}
+                        </span>
+                      )}
                       <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
                     </span>
                     <TraderBar judgedR={r.judgedR} ownR={r.avgR} otherR={r.otherMarketR} delayMs={i * 60} />
