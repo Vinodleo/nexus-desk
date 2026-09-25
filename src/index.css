@@ -69,3 +69,156 @@ html, body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--nx-muted);
 }
+
+/* The notice shown on unlocking (AwayNotice): a pill that drops in from the
+   top, a card that pops up over a soft backdrop, and a glow on the header
+   badge. Plain CSS so it stays smooth on a phone. */
+@keyframes nx-drop-in {
+  0% { transform: translate(-50%, -140%); opacity: 0; }
+  60% { transform: translate(-50%, 8%); opacity: 1; }
+  100% { transform: translate(-50%, 0); opacity: 1; }
+}
+@keyframes nx-lift-out {
+  to { transform: translate(-50%, -140%); opacity: 0; }
+}
+@keyframes nx-pop-in {
+  0% { transform: translateY(24px) scale(0.94); opacity: 0; }
+  70% { transform: translateY(-3px) scale(1.01); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes nx-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes nx-row-in {
+  from { transform: translateY(6px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes nx-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+@keyframes nx-tick-in {
+  0% { transform: scale(0.4) rotate(-30deg); opacity: 0; }
+  70% { transform: scale(1.15); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes nx-glow {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--nx-gain) 55%, transparent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+.nx-drop-in { animation: nx-drop-in 520ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.nx-lift-out { animation: nx-lift-out 260ms ease-in both; }
+.nx-pop-in { animation: nx-pop-in 420ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
+.nx-fade-in { animation: nx-fade-in 240ms ease-out both; }
+.nx-row-in { animation: nx-row-in 320ms ease-out both; }
+.nx-countdown { transform-origin: left; animation: nx-countdown linear both; }
+.nx-tick-in { animation: nx-tick-in 360ms ease-out both; }
+.nx-glow { animation: nx-glow 900ms ease-out 2; }
+
+/* Price flashes: a figure tints green or red for a moment when it moves. */
+@keyframes nx-flash-up {
+  0% { background-color: color-mix(in srgb, var(--nx-gain) 22%, transparent); }
+  100% { background-color: transparent; }
+}
+@keyframes nx-flash-down {
+  0% { background-color: color-mix(in srgb, var(--nx-loss) 22%, transparent); }
+  100% { background-color: transparent; }
+}
+.nx-flash-up { animation: nx-flash-up 700ms ease-out both; }
+.nx-flash-down { animation: nx-flash-down 700ms ease-out both; }
+
+/* List rows (open positions): a new one grows in with a short highlight; a
+   closed one fades and folds away. The row is a one-row grid whose child has
+   min-height 0, so the height can animate. */
+@keyframes nx-item-enter {
+  0% { grid-template-rows: 0fr; opacity: 0; transform: translateX(-12px); background-color: var(--nx-accent-soft); }
+  45% { grid-template-rows: 1fr; opacity: 1; transform: none; background-color: var(--nx-accent-soft); }
+  100% { grid-template-rows: 1fr; opacity: 1; transform: none; background-color: transparent; }
+}
+@keyframes nx-item-leave {
+  0% { grid-template-rows: 1fr; opacity: 1; }
+  40% { grid-template-rows: 1fr; opacity: 0; transform: translateX(16px); }
+  100% { grid-template-rows: 0fr; opacity: 0; transform: translateX(16px); }
+}
+.nx-item { display: grid; grid-template-rows: 1fr; }
+.nx-item > * { min-height: 0; overflow: hidden; }
+.nx-item-enter { animation: nx-item-enter 1400ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+.nx-item-leave { animation: nx-item-leave 320ms ease-in both; pointer-events: none; }
+
+/* Sheets: slide up from the bottom on a phone, pop in on a wider screen;
+   the backdrop fades. Leaving plays the same in reverse. */
+@keyframes nx-sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+@keyframes nx-sheet-pop {
+  from { transform: translateY(12px) scale(0.97); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.nx-sheet-in { animation: nx-sheet-up 300ms cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.nx-sheet-out { animation: nx-sheet-up 220ms ease-in reverse both; }
+@media (min-width: 640px) {
+  .nx-sheet-in { animation-name: nx-sheet-pop; animation-duration: 240ms; }
+  .nx-sheet-out { animation-name: nx-sheet-pop; }
+}
+/* Full-screen pages (Settings): rise and fade in, sink and fade out. */
+@keyframes nx-page-rise {
+  from { transform: translateY(6%); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.nx-page-in { animation: nx-page-rise 280ms cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.nx-page-out { animation: nx-page-rise 200ms ease-in reverse both; }
+.nx-backdrop-in { animation: nx-fade-in 240ms ease-out both; }
+.nx-backdrop-out { animation: nx-fade-in 220ms ease-in reverse both; }
+
+/* Tabs: the new tab slides in from the side it sits on in the bottom bar;
+   the bar's indicator slides across and the picked icon gives a small bounce. */
+@keyframes nx-tab-from-right {
+  from { transform: translateX(18px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes nx-tab-from-left {
+  from { transform: translateX(-18px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes nx-tab-bounce {
+  0% { transform: none; }
+  35% { transform: translateY(-4px) scale(1.12); }
+  65% { transform: translateY(1px) scale(0.97); }
+  100% { transform: none; }
+}
+@keyframes nx-badge-pop {
+  0% { transform: scale(0.4); }
+  60% { transform: scale(1.2); }
+  100% { transform: none; }
+}
+.nx-tab-from-right { animation: nx-tab-from-right 220ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+.nx-tab-from-left { animation: nx-tab-from-left 220ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+.nx-tab-bounce { display: inline-block; animation: nx-tab-bounce 420ms ease-out both; }
+.nx-badge-pop { animation: nx-badge-pop 320ms ease-out both; }
+.nx-tab-indicator { transition: transform 300ms cubic-bezier(0.3, 0.9, 0.3, 1.15); }
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-drop-in, .nx-lift-out, .nx-pop-in, .nx-fade-in, .nx-row-in, .nx-tick-in, .nx-glow,
+  .nx-flash-up, .nx-flash-down, .nx-item-enter, .nx-item-leave,
+  .nx-sheet-in, .nx-sheet-out, .nx-backdrop-in, .nx-backdrop-out, .nx-page-in, .nx-page-out,
+  .nx-tab-from-right, .nx-tab-from-left, .nx-tab-bounce, .nx-badge-pop { animation: none; }
+  .nx-tab-indicator { transition: none; }
+  .nx-drop-in { transform: translate(-50%, 0); }
+}
+
+/* Press feedback: buttons give a little when pressed, like a native app.
+   Unlayered, so it adds scale to the transitions Tailwind's classes set
+   (which list the colours this keeps). */
+button {
+  transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, opacity, box-shadow, scale;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+button:not(:disabled):active {
+  scale: 0.96;
+}
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled):active { scale: none; }
+}

@@ -9,6 +9,7 @@ import type { NotifyState } from "../../hooks/useTradeNotifications";
 import { EXPOSURE_CHOICES, ORDER_VALUE_CHOICES, type RiskLimits } from "../../hooks/useRiskPolicy";
 import { formatMoney } from "./format";
 import type { ServerStatus } from "../../hooks/useServerStatus";
+import { usePresence } from "./motion";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -87,6 +88,8 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
   const { currentUser, userRole, logout } = useAuth();
   const pwa = usePWAInstall();
   const [confirmLive, setConfirmLive] = useState(false);
+  // Slides up when opened and back down when closed.
+  const presence = usePresence(props.isOpen);
 
   useEffect(() => {
     if (!props.isOpen) setConfirmLive(false);
@@ -99,7 +102,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
     return () => window.removeEventListener("keydown", onKey);
   }, [props.isOpen, props.onClose]);
 
-  if (!props.isOpen) return null;
+  if (!presence.mounted) return null;
 
   const isLive = props.tradingMode === "LIVE_COINDCX";
   const status = props.coinDcxStatus;
@@ -125,7 +128,9 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
       : "Connect";
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Settings" className="fixed inset-0 z-50 bg-canvas text-ink font-ui overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label="Settings" className={`fixed inset-0 z-50 bg-canvas text-ink font-ui overflow-y-auto ${
+        presence.leaving ? "nx-page-out pointer-events-none" : "nx-page-in"
+      }`}>
       <div className="max-w-lg mx-auto px-5 pt-4 pb-10 flex flex-col gap-4">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">

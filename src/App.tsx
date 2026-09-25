@@ -49,7 +49,7 @@ import { liveMarketStream } from "./services/liveMarketStreamService";
 import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
 
 import { LoginScreen } from './components/LoginScreen';
-import { BottomNavBar, TabType } from "./components/BottomNavBar";
+import { BottomNavBar, TabType, useTabSlide } from "./components/BottomNavBar";
 import { LedgerFloor } from "./components/ledger/LedgerFloor";
 import { SettingsSheet } from "./components/ledger/SettingsSheet";
 import { useZerodhaConnection } from "./hooks/useZerodhaConnection";
@@ -64,6 +64,8 @@ import { promoteCandidateModel } from "./services/mlService";
 import { SecurityConsoleModal } from "./components/SecurityConsoleModal";
 import { useAuth } from "./context/AuthContext";
 import { useBackgroundExecution } from "./hooks/useBackgroundExecution";
+import { useAwayNotice } from "./hooks/useAwayNotice";
+import { AwayNotice } from "./components/ledger/AwayNotice";
 import { BackgroundExecutionModal } from "./components/BackgroundExecutionModal";
 import {
   playTradeExecutionSound,
@@ -125,6 +127,7 @@ export default function App() {
 
   // Navigation: Floor, Queue, Book, Lab, Learning
   const [activeTab, setActiveTab] = useState<TabType>("floor");
+  const tabSlideClass = useTabSlide(activeTab);
   // Autopilot and the kill switch, as last left on this device (off until known).
   const savedControls = React.useMemo(() => loadDeskControls(), []);
   const [decisionMode, setDecisionMode] = useState<DecisionMode>(savedControls?.autopilot ? "AUTO_WITHIN_LIMITS" : "MANUAL");
@@ -217,22 +220,17 @@ export default function App() {
     if (!isPlaying) return;
   }, [isPlaying]);
 
-  // Fast-Forward Reconcile missed ticks when device screen is unlocked
+  // On unlocking the phone: a pill, or a "While you were away" card when
+  // trades opened or closed meanwhile (see useAwayNotice).
+  const activePositionsRef = React.useRef<Position[]>([]);
+  const closedTradesRef = React.useRef<HistoricalTrade[]>([]);
+  const away = useAwayNotice(activePositionsRef, closedTradesRef);
   const handleReconcileMissedTicks = useCallback(
     (missedCycles: number, elapsedMs: number) => {
       if (!isPlaying || missedCycles <= 0) return;
-
-      setExecutionToast({
-        id: `toast-reconcile-${Date.now()}`,
-        title: "■ Background Resynced",
-        message: `Device was locked for ${Math.round(
-          elapsedMs / 1000
-        )}s. Live market feeds re-established.`,
-        type: "INFO",
-        timestamp: new Date().toLocaleTimeString(),
-      });
+      away.onUnlock(elapsedMs);
     },
-    [isPlaying]
+    [isPlaying, away.onUnlock]
   );
 
   const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState<boolean>(false);
@@ -299,12 +297,10 @@ export default function App() {
   const closingPositionIds = useRef<Set<string>>(new Set());
   // Trade pop-ups switched on for this phone (Settings); read when the app closes a trade itself.
   const tradePopupsOnRef = useRef(false);
-  const activePositionsRef = React.useRef<Position[]>([]);
   React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
     loadStoredClosedTrades()
   );
-  const closedTradesRef = React.useRef<HistoricalTrade[]>([]);
   // Trailing-stop profile for new positions (chosen in the Lab's exit comparison).
   const { profile: trailProfileId, setProfile: setTrailProfileId } = useTrailProfile();
   const trailProfileRef = React.useRef(trailProfileId);
@@ -1718,6 +1714,8 @@ export default function App() {
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col pb-20 bg-canvas text-ink font-ui">
 
+      <AwayNotice notice={away.notice} onDismiss={away.dismiss} onOpenBook={() => setActiveTab("book")} />
+
       {/* Main Content Area */}
       <main className="flex-1 max-w-2xl w-full mx-auto space-y-4 px-5 pt-4">
         {/* Latest desk notification */}
@@ -1762,173 +1760,177 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === "floor" && (
-          <LedgerFloor
-            scanLocation={serverScanner.location}
-            lastServerScanAt={serverScanner.lastScanAt}
-            lastServerOpenAt={serverScanner.lastAutopilotOpenAt}
-            eventWindow={eventWindow}
-            isLive={tradingMode === "LIVE_COINDCX"}
-            equity={currentRiskCalculation.equity}
-            dailyPnl={dailyRealizedPnl}
-            allTimePnl={allTimeRealizedPnl}
-            autopilotOn={decisionMode === "AUTO_WITHIN_LIMITS"}
-            onAutopilotChange={(on) => handleDecisionModeChange(on ? "AUTO_WITHIN_LIMITS" : "MANUAL")}
-            exposureFraction={currentRiskCalculation.portfolioExposureFraction}
-            dailyLossLeft={currentRiskCalculation.hardDailyLossLimit - currentRiskCalculation.currentDailyLoss}
-            stopped={killSwitchActive}
-            onToggleStop={handleToggleKillSwitch}
-            positions={activePositions}
-            onClosePosition={handleClosePosition}
-            guardianOnline={guardianOnline}
-            liveTradingEnabled={coinDcxStatus?.liveRisk ? Boolean(coinDcxStatus.liveRisk.enabled) : null}
-            pendingProposals={pendingCount}
-            scan={{
-              analyzed: sampleTelemetry.analyzedCount,
-              selected: sampleTelemetry.selectedCount,
-              rejected: sampleTelemetry.rejectedCount,
-              skipReasons: sampleTelemetry.skipReasons,
-            }}
-            onOpenQueue={() => setActiveTab("queue")}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-          />
-        )}
+        {/* Each tab slides in from the side it's on in the bottom bar. */}
+        <div key={activeTab} className={tabSlideClass}>
+          {activeTab === "floor" && (
+            <LedgerFloor
+              scanLocation={serverScanner.location}
+              lastServerScanAt={serverScanner.lastScanAt}
+              lastServerOpenAt={serverScanner.lastAutopilotOpenAt}
+              syncGlowKey={away.glowKey}
+              eventWindow={eventWindow}
+              isLive={tradingMode === "LIVE_COINDCX"}
+              equity={currentRiskCalculation.equity}
+              dailyPnl={dailyRealizedPnl}
+              allTimePnl={allTimeRealizedPnl}
+              autopilotOn={decisionMode === "AUTO_WITHIN_LIMITS"}
+              onAutopilotChange={(on) => handleDecisionModeChange(on ? "AUTO_WITHIN_LIMITS" : "MANUAL")}
+              exposureFraction={currentRiskCalculation.portfolioExposureFraction}
+              dailyLossLeft={currentRiskCalculation.hardDailyLossLimit - currentRiskCalculation.currentDailyLoss}
+              stopped={killSwitchActive}
+              onToggleStop={handleToggleKillSwitch}
+              positions={activePositions}
+              onClosePosition={handleClosePosition}
+              guardianOnline={guardianOnline}
+              liveTradingEnabled={coinDcxStatus?.liveRisk ? Boolean(coinDcxStatus.liveRisk.enabled) : null}
+              pendingProposals={pendingCount}
+              scan={{
+                analyzed: sampleTelemetry.analyzedCount,
+                selected: sampleTelemetry.selectedCount,
+                rejected: sampleTelemetry.rejectedCount,
+                skipReasons: sampleTelemetry.skipReasons,
+              }}
+              onOpenQueue={() => setActiveTab("queue")}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+            />
+          )}
 
-        {activeTab === "queue" && (
-          <LedgerQueue
-            proposals={proposalQueue}
-            onApprove={handleApproveProposal}
-            onReject={handleRejectProposal}
-            onApproveAll={() => {
-              const pendingProposals = proposalQueue.filter(
-                (p) => p.status === "PENDING_APPROVAL"
-              );
-              if (pendingProposals.length > 0) {
-                handleBatchApproveAllProposals(pendingProposals);
-              }
-            }}
-            onScan={handleTriggerScanner}
-            isScanning={isScanningMarkets}
-            continuousScan={isContinuousScanActive}
-            onContinuousScanChange={setIsContinuousScanActive}
-            autopilotOn={decisionMode === "AUTO_WITHIN_LIMITS"}
-            memoryCount={experiences.length}
-            isLive={tradingMode === "LIVE_COINDCX"}
-          />
-        )}
-
-        {activeTab === "book" && (
-          <LedgerBook
-            trades={closedTrades}
-            onUpdateTrade={(updatedTrade) => {
-              setClosedTrades((prev) =>
-                prev.map((t) => (t.id === updatedTrade.id ? updatedTrade : t))
-              );
-            }}
-            riskBlocked={
-              !currentRiskCalculation.passedAllChecks ||
-              failureState.simulateStaleMarketData ||
-              failureState.simulateDailyLossBreach ||
-              failureState.simulateOrderBookThinLiquidity
-            }
-            risk={
-              <LedgerRisk
-                riskCalc={currentRiskCalculation}
-                failureState={failureState}
-                onUpdateFailureState={(key, val) =>
-                  setFailureState((prev) => ({ ...prev, [key]: val }))
-                }
-                onResetFailures={() =>
-                  setFailureState((prev) => ({
-                    ...prev,
-                    simulateAgentTimeout: false,
-                    simulateStaleMarketData: false,
-                    simulateDailyLossBreach: false,
-                    simulateOrderBookThinLiquidity: false,
-                    simulateConflictingSignals: false,
-                  }))
-                }
-                stopped={killSwitchActive}
-                onToggleStop={handleToggleKillSwitch}
-                coinDcxStatus={coinDcxStatus}
-                onRefreshCoinDcxStatus={refreshCoinDcxStatus}
-                onRefreshBalance={fetchCoinDcxBalance}
-              />
-            }
-          />
-        )}
-
-        {activeTab === "learning" && (
-          <LedgerLearning
-            experiences={experiences}
-            autopilotTrades={selfApprovedWins + selfApprovedLosses}
-            autopilotWins={selfApprovedWins}
-            promotedLabModel={promotedLabModel}
-            onOpenLab={() => setActiveTab("lab")}
-          />
-        )}
-
-        {activeTab === "lab" && (
-          <LedgerLab
-            promotedLabModel={promotedLabModel}
-            trailProfile={trailProfileId}
-            onTrailProfileChange={setTrailProfileId}
-            onPromote={(result) => {
-              if (result.isSynthetic) {
-                setExecutionToast({
-                  id: `toast-${Date.now()}`,
-                  title: "Promotion blocked: generated data",
-                  message: "This Lab result was trained on generated candles, not market history. Retrain on real data to promote.",
-                  type: "WARNING",
-                  timestamp: new Date().toLocaleTimeString(),
-                });
-                return;
-              }
-              const promoted: PromotedLabModel = {
-                promotedAt: new Date().toISOString(),
-                datasetName: result.datasetName || `${result.symbol} Custom`,
-                accuracyPct: result.learnedMetrics.accuracyPercent,
-                winRatePct: result.learnedMetrics.winRate,
-                sharpeRatio: result.learnedMetrics.sharpeRatio,
-                totalCandlesEvaluated: result.totalCandles || result.candlesCount,
-                distilledRulesCount: result.distilledLessons.length,
-                distilledLessons: result.distilledLessons,
-                sourceExchange: result.sourceExchange,
-                isSynthetic: result.isSynthetic,
-                optimizedParameters: result.optimizedParameters,
-                hasTrainedModel: false,
-              };
-              const finish = (withModel: boolean) => {
-                setPromotedLabModel(
-                  withModel ? { ...promoted, hasTrainedModel: true, featureVersion: result.featureVersion } : promoted
+          {activeTab === "queue" && (
+            <LedgerQueue
+              proposals={proposalQueue}
+              onApprove={handleApproveProposal}
+              onReject={handleRejectProposal}
+              onApproveAll={() => {
+                const pendingProposals = proposalQueue.filter(
+                  (p) => p.status === "PENDING_APPROVAL"
                 );
-                handleUpdateModelAccuracy({
+                if (pendingProposals.length > 0) {
+                  handleBatchApproveAllProposals(pendingProposals);
+                }
+              }}
+              onScan={handleTriggerScanner}
+              isScanning={isScanningMarkets}
+              continuousScan={isContinuousScanActive}
+              onContinuousScanChange={setIsContinuousScanActive}
+              autopilotOn={decisionMode === "AUTO_WITHIN_LIMITS"}
+              memoryCount={experiences.length}
+              isLive={tradingMode === "LIVE_COINDCX"}
+            />
+          )}
+
+          {activeTab === "book" && (
+            <LedgerBook
+              trades={closedTrades}
+              onUpdateTrade={(updatedTrade) => {
+                setClosedTrades((prev) =>
+                  prev.map((t) => (t.id === updatedTrade.id ? updatedTrade : t))
+                );
+              }}
+              riskBlocked={
+                !currentRiskCalculation.passedAllChecks ||
+                failureState.simulateStaleMarketData ||
+                failureState.simulateDailyLossBreach ||
+                failureState.simulateOrderBookThinLiquidity
+              }
+              risk={
+                <LedgerRisk
+                  riskCalc={currentRiskCalculation}
+                  failureState={failureState}
+                  onUpdateFailureState={(key, val) =>
+                    setFailureState((prev) => ({ ...prev, [key]: val }))
+                  }
+                  onResetFailures={() =>
+                    setFailureState((prev) => ({
+                      ...prev,
+                      simulateAgentTimeout: false,
+                      simulateStaleMarketData: false,
+                      simulateDailyLossBreach: false,
+                      simulateOrderBookThinLiquidity: false,
+                      simulateConflictingSignals: false,
+                    }))
+                  }
+                  stopped={killSwitchActive}
+                  onToggleStop={handleToggleKillSwitch}
+                  coinDcxStatus={coinDcxStatus}
+                  onRefreshCoinDcxStatus={refreshCoinDcxStatus}
+                  onRefreshBalance={fetchCoinDcxBalance}
+                />
+              }
+            />
+          )}
+
+          {activeTab === "learning" && (
+            <LedgerLearning
+              experiences={experiences}
+              autopilotTrades={selfApprovedWins + selfApprovedLosses}
+              autopilotWins={selfApprovedWins}
+              promotedLabModel={promotedLabModel}
+              onOpenLab={() => setActiveTab("lab")}
+            />
+          )}
+
+          {activeTab === "lab" && (
+            <LedgerLab
+              promotedLabModel={promotedLabModel}
+              trailProfile={trailProfileId}
+              onTrailProfileChange={setTrailProfileId}
+              onPromote={(result) => {
+                if (result.isSynthetic) {
+                  setExecutionToast({
+                    id: `toast-${Date.now()}`,
+                    title: "Promotion blocked: generated data",
+                    message: "This Lab result was trained on generated candles, not market history. Retrain on real data to promote.",
+                    type: "WARNING",
+                    timestamp: new Date().toLocaleTimeString(),
+                  });
+                  return;
+                }
+                const promoted: PromotedLabModel = {
+                  promotedAt: new Date().toISOString(),
+                  datasetName: result.datasetName || `${result.symbol} Custom`,
                   accuracyPct: result.learnedMetrics.accuracyPercent,
                   winRatePct: result.learnedMetrics.winRate,
                   sharpeRatio: result.learnedMetrics.sharpeRatio,
-                  datasetName: result.datasetName || `${result.symbol} Custom`,
-                  lastUpdated: new Date().toISOString(),
                   totalCandlesEvaluated: result.totalCandles || result.candlesCount,
+                  distilledRulesCount: result.distilledLessons.length,
+                  distilledLessons: result.distilledLessons,
+                  sourceExchange: result.sourceExchange,
+                  isSynthetic: result.isSynthetic,
+                  optimizedParameters: result.optimizedParameters,
+                  hasTrainedModel: false,
+                };
+                const finish = (withModel: boolean) => {
+                  setPromotedLabModel(
+                    withModel ? { ...promoted, hasTrainedModel: true, featureVersion: result.featureVersion } : promoted
+                  );
+                  handleUpdateModelAccuracy({
+                    accuracyPct: result.learnedMetrics.accuracyPercent,
+                    winRatePct: result.learnedMetrics.winRate,
+                    sharpeRatio: result.learnedMetrics.sharpeRatio,
+                    datasetName: result.datasetName || `${result.symbol} Custom`,
+                    lastUpdated: new Date().toISOString(),
+                    totalCandlesEvaluated: result.totalCandles || result.candlesCount,
+                  });
+                };
+                // The Lab's model goes live first, so the scanner never pairs
+                // this promotion with an older model file.
+                if (result.featureVersion) void promoteCandidateModel().then(finish);
+                else finish(false);
+              }}
+              onRevert={() => {
+                setPromotedLabModel(null);
+                saveStoredPromotedLabModel(null);
+                setExecutionToast({
+                  id: `toast-${Date.now()}`,
+                  title: "Lab model removed",
+                  message: "The desk is back on the built-in rules, adjusted by live learning.",
+                  type: "INFO",
+                  timestamp: new Date().toLocaleTimeString(),
                 });
-              };
-              // The Lab's model goes live first, so the scanner never pairs
-              // this promotion with an older model file.
-              if (result.featureVersion) void promoteCandidateModel().then(finish);
-              else finish(false);
-            }}
-            onRevert={() => {
-              setPromotedLabModel(null);
-              saveStoredPromotedLabModel(null);
-              setExecutionToast({
-                id: `toast-${Date.now()}`,
-                title: "Lab model removed",
-                message: "The desk is back on the built-in rules, adjusted by live learning.",
-                type: "INFO",
-                timestamp: new Date().toLocaleTimeString(),
-              });
-            }}
-          />
-        )}
+              }}
+            />
+          )}
+        </div>
       </main>
 
       {/* Fixed Bottom Navigation Bar (Screenshots 1-7) */}

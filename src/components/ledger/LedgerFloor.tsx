@@ -5,6 +5,7 @@ import { useLiveTickers } from "../../hooks/useLiveTickers";
 import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../services/liveMarketStreamService";
 import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
+import { Flash, Rolling, useAnimatedNumber, usePresenceList, type ListItemState } from "./motion";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
 import type { EventWindow } from "../../shared/eventCalendar";
 import { openQuantity } from "../../shared/exitRules";
@@ -57,6 +58,8 @@ export interface LedgerFloorProps {
   onClosePosition: (pos: Position) => void;
   /** null while the first guardian sync is still in flight. */
   guardianOnline: boolean | null;
+  /** Bumped after a short phone lock: the header badge glows once to show prices are live again. */
+  syncGlowKey?: number;
   /** Whether the server allows live orders at all (null until known). */
   liveTradingEnabled: boolean | null;
   /** Prices for the market line (BTC and ETH). Omit to follow the live stream. */
@@ -210,7 +213,11 @@ export const NewsPause: React.FC<{ window: EventWindow; now?: number }> = ({ win
 /** Money in a position: its entry price times the quantity still open. */
 export const moneyIn = (p: Position) => p.entryPrice * openQuantity(p);
 
-const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void }> = ({ position: p, onClose }) => {
+const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void; state?: ListItemState }> = ({
+  position: p,
+  onClose,
+  state = "stay",
+}) => {
   const [confirming, setConfirming] = useState(false);
   useEffect(() => {
     if (!confirming) return;
@@ -220,45 +227,50 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
 
   const tone = pnlTone(p.unrealizedPnl);
   return (
-    <li className="flex flex-col gap-2 py-3.5 border-b border-line">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="min-w-0">
-          <span className="text-base font-semibold">{p.symbol}</span>{" "}
-          <span className="text-xs text-muted">
-            {p.direction === "LONG" ? "Long" : "Short"} · {p.quantity} · {formatMoney(moneyIn(p), { decimals: 0 })} in
-          </span>
-          {p.openedByServer && (
-            <div className="text-xs text-accent">Opened by the server at {clock(Date.parse(p.openTime))}</div>
-          )}
+    <li className={`nx-item${state === "enter" ? " nx-item-enter" : state === "leave" ? " nx-item-leave" : ""}`} aria-hidden={state === "leave" || undefined}>
+      <div className="flex flex-col gap-2 py-3.5 border-b border-line">
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-base font-semibold">{p.symbol}</span>{" "}
+            <span className="text-xs text-muted">
+              {p.direction === "LONG" ? "Long" : "Short"} · {p.quantity} · {formatMoney(moneyIn(p), { decimals: 0 })} in
+            </span>
+            {p.openedByServer && (
+              <div className="text-xs text-accent">Opened by the server at {clock(Date.parse(p.openTime))}</div>
+            )}
+          </div>
+          <Flash value={p.currentPrice} className={`font-display text-xl tabular-nums whitespace-nowrap px-1 -mx-1 ${tone}`}>
+            <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
+          </Flash>
         </div>
-        <div className={`font-display text-xl tabular-nums whitespace-nowrap ${tone}`}>
-          {formatMoney(p.unrealizedPnl, { signed: true })}
+        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted tabular-nums">
+          <span>Entry {formatPrice(p.entryPrice)}</span>
+          <Flash value={p.currentPrice} className="px-1 -mx-1 text-ink">
+            Now {formatPrice(p.currentPrice)}
+          </Flash>
+          <span>Stop {formatPrice(p.stopLoss)}</span>
+          <span>Target {formatPrice(p.takeProfit)}</span>
+          <span className={tone}>{formatPct(p.unrealizedPnlPercent)}</span>
         </div>
-      </div>
-      <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted tabular-nums">
-        <span>Entry {formatPrice(p.entryPrice)}</span>
-        <span>Stop {formatPrice(p.stopLoss)}</span>
-        <span>Target {formatPrice(p.takeProfit)}</span>
-        <span className={tone}>{formatPct(p.unrealizedPnlPercent)}</span>
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-muted">{positionNote(p)}</span>
-        <button
-          type="button"
-          onClick={() => {
-            if (confirming) {
-              setConfirming(false);
-              onClose(p);
-            } else {
-              setConfirming(true);
-            }
-          }}
-          className={`shrink-0 min-h-[36px] px-3 -mr-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
-            confirming ? "bg-danger-soft text-loss border border-danger-line" : "text-accent hover:bg-accent-soft"
-          }`}
-        >
-          {confirming ? "Tap again to close" : "Close"}
-        </button>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted">{positionNote(p)}</span>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirming) {
+                setConfirming(false);
+                onClose(p);
+              } else {
+                setConfirming(true);
+              }
+            }}
+            className={`shrink-0 min-h-[36px] px-3 -mr-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
+              confirming ? "bg-danger-soft text-loss border border-danger-line" : "text-accent hover:bg-accent-soft"
+            }`}
+          >
+            {confirming ? "Tap again to close" : "Close"}
+          </button>
+        </div>
       </div>
     </li>
   );
@@ -273,9 +285,13 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
     positions,
   } = props;
 
-  const whole = formatMoney(Math.trunc(equity), { decimals: 0 });
-  const paise = Math.abs(equity % 1).toFixed(2).slice(1); // ".96"
+  // Equity and P&L glide to new values; positions animate in and out.
+  const shownEquity = Math.round(useAnimatedNumber(equity) * 100) / 100;
+  const whole = formatMoney(Math.trunc(shownEquity), { decimals: 0 });
+  const paise = Math.abs(shownEquity % 1).toFixed(2).slice(1); // ".96"
   const openPnl = positions.reduce((acc, p) => acc + (p.unrealizedPnl || 0), 0);
+  const rows = usePresenceList(positions, (p) => p.id);
+  const signedMoney = (n: number) => formatMoney(n, { signed: true });
 
   const guardianText =
     props.guardianOnline === null ? "Guardian connecting" : props.guardianOnline ? "Guardian online" : "Guardian unreachable";
@@ -288,9 +304,10 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         <h1 className="m-0 font-display text-[22px] font-semibold">Nexus Desk</h1>
         <div className="flex items-center gap-2">
           <span
+            key={props.syncGlowKey ?? 0}
             className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
               isLive ? "bg-warn-soft text-warn" : "bg-accent-soft text-accent"
-            }`}
+            }${props.syncGlowKey ? " nx-glow" : ""}`}
           >
             {isLive ? "Live" : "Paper"}
           </span>
@@ -308,10 +325,10 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] tabular-nums">
           <span>
-            Today <strong className={pnlTone(dailyPnl)}>{formatMoney(dailyPnl, { signed: true })}</strong>
+            Today <strong className={pnlTone(dailyPnl)}><Rolling value={dailyPnl} format={signedMoney} /></strong>
           </span>
           <span>
-            All time <strong className={pnlTone(allTimePnl)}>{formatMoney(allTimePnl, { signed: true })}</strong>
+            All time <strong className={pnlTone(allTimePnl)}><Rolling value={allTimePnl} format={signedMoney} /></strong>
           </span>
         </div>
       </section>
@@ -382,18 +399,18 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
           title="Open positions"
           right={
             positions.length > 0 ? (
-              <span className={`text-[13px] tabular-nums ${pnlTone(openPnl)}`}>{formatMoney(openPnl, { signed: true })}</span>
+              <span className={`text-[13px] tabular-nums ${pnlTone(openPnl)}`}><Rolling value={openPnl} format={signedMoney} /></span>
             ) : undefined
           }
         />
-        {positions.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="text-sm text-muted py-4 m-0 border-b border-line">
             No open positions. {props.autopilotOn ? "Autopilot will open trades that pass every check." : "Approved proposals appear here."}
           </p>
         ) : (
           <ul className="list-none m-0 p-0">
-            {positions.map((p) => (
-              <PositionRow key={p.id} position={p} onClose={props.onClosePosition} />
+            {rows.map(({ item: p, key, state }) => (
+              <PositionRow key={key} position={p} onClose={props.onClosePosition} state={state} />
             ))}
           </ul>
         )}
