@@ -340,6 +340,8 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
             <div className="text-xs text-muted">
               {props.stopped
                 ? "Stopped · no new trades until you resume"
+                : props.autopilotOn && props.isLive
+                ? "Paper only · in Live mode it places no trades: you approve each real order. It trades paper again when you switch back."
                 : props.autopilotOn
                 ? props.scanLocation === "server" && !props.isLive
                   ? "Approves trades within your limits · runs on the server, even with the app closed"

@@ -243,3 +243,21 @@ describe("swiping", () => {
     expect(p.onApprove).not.toHaveBeenCalled();
   });
 });
+
+describe("the Queue in Live mode", () => {
+  it("says each trade needs you, and offers no approve-all", () => {
+    render(
+      createElement(
+        LedgerQueue,
+        props([proposal("a", "XRP/INR", 0.55), proposal("b", "ETH/INR", 0.61), proposal("c", "SOL/INR", 0.58)], {
+          autopilotOn: true,
+          isLive: true,
+          onApproveAll: undefined,
+        })
+      )
+    );
+    expect(screen.getByText(/Live mode: autopilot places no real orders/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Approve all/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve live trade" })).toBeTruthy();
+  });
+});

@@ -165,3 +165,14 @@ describe("what the server did while the app was closed", () => {
     expect(screen.queryByText(/Opened by the server/)).toBeNull();
   });
 });
+
+describe("autopilot in Live mode", () => {
+  it("says it's paper only and places no real orders", () => {
+    const { container } = render(createElement(LedgerFloor, props({ isLive: true, autopilotOn: true, scanLocation: "server" })));
+    const card = container.querySelector('[aria-label="Autopilot"]')!;
+    expect(card.textContent).toMatch(/Paper only · in Live mode it places no trades: you approve each real order/);
+    // No claim that the server trades for you.
+    expect(card.textContent).not.toMatch(/runs on the server/);
+    expect(screen.queryByLabelText("Server autopilot")).toBeNull();
+  });
+});

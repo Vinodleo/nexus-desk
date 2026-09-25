@@ -285,7 +285,11 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
 
       {props.autopilotOn && (
         <div className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-accent-soft text-accent text-[13px] leading-snug">
-          <span>Autopilot is on. Trades that pass every check open by themselves; the ones here need you.</span>
+          <span>
+            {props.isLive
+              ? "Live mode: autopilot places no real orders. Each trade here opens on CoinDCX only when you approve it."
+              : "Autopilot is on. Trades that pass every check open by themselves; the ones here need you."}
+          </span>
           {props.onApproveAll && readyCount > 1 && (
             <button type="button" onClick={props.onApproveAll} className="shrink-0 font-semibold underline cursor-pointer">
               Approve all {readyCount}
