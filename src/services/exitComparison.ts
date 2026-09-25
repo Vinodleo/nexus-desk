@@ -76,14 +76,17 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
     const bar = bars[j];
     const adverse = dir > 0 ? bar.low : bar.high;
     const favourable = dir > 0 ? bar.high : bar.low;
-    // 1. With the stop and target as they stood: a gap through the stop fills
-    //    at the open; otherwise the dip is checked before the rise.
+    // 1. With the stop as it stood: a gap through the stop fills at the
+    //    open; otherwise the dip is checked before the rise.
     if (crossedStop(bar.open)) return finish(bar.open, stopReason());
     if (crossedStop(adverse)) return finish(p.stopLoss, stopReason());
-    if (reachedTarget(favourable)) return finish(Math.max(p.takeProfit * dir, bar.open * dir) * dir, "TAKE_PROFIT");
-    // 2. The rise: bank half at +1R, then trail from the best price.
+    // 2. The rise, in the order the live guardian handles a price: bank half
+    //    at +1R, trail from the best price, then check the target. A runner
+    //    reaching its first target doesn't close there: its stop locks at the
+    //    target and the target moves out, as it does live.
     if (partialDue(p, favourable)) Object.assign(p, bankPartial(p, entry + dir * risk));
     updateTrailingStop(p, favourable);
+    if (reachedTarget(favourable)) return finish(Math.max(p.takeProfit * dir, bar.open * dir) * dir, "TAKE_PROFIT");
     // A stop raised by the rise that the candle then fell back through.
     if (crossedStop(bar.close)) return finish(p.stopLoss, stopReason());
     // 3. The time limit, at the candle's close.

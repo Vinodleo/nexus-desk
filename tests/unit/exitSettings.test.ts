@@ -45,8 +45,26 @@ describe("playing a setup out on candles", () => {
       [1008, 1008, 1002, 1003], // pullback
       [1003, 1021, 1003, 1020], // then the target
     ]);
-    expect(simulateExit(setup(), path, 0, "tight")!.reason).toBe("TRAILING_STOP");
-    expect(simulateExit(setup(), path, 0, "patient")!.reason).toBe("TAKE_PROFIT");
+    const tight = simulateExit(setup(), path, 0, "tight")!;
+    expect(tight.reason).toBe("TRAILING_STOP");
+    // Patient rides to the target, where (a coin trade being a runner) its
+    // stop locks; history ends there, so it's judged at the last price.
+    const patient = simulateExit(setup(), path, 0, "patient")!;
+    expect(patient.r).toBeGreaterThan(tight.r);
+    expect(patient.r).toBeCloseTo((0.5 * 10 + 0.5 * 20) / 10 - 0.1, 5); // half at +1R, half at the 1020 target, less fees
+  });
+
+  it("lets a runner that reaches its target keep running, as the live guardian does", () => {
+    const path = candles([
+      [1000, 1001, 999, 1000],
+      [1000, 1021, 1000, 1020], // the first target: the stop locks at 1020, the target moves out
+      [1020, 1045, 1020, 1044], // runs on
+      [1044, 1044, 1010, 1012], // and falls back to the locked stop
+    ]);
+    const r = simulateExit(setup(), path, 0, "tight")!;
+    expect(r.reason).toBe("TRAILING_STOP");
+    // Half banked at +1R; the rest left above the first target, never below it.
+    expect(r.r).toBeGreaterThanOrEqual((0.5 * 10 + 0.5 * 20) / 10 - 0.1 - 1e-9);
   });
 
   it("closes at the time limit: 4 hours for a coin, 30 minutes for a stock", () => {

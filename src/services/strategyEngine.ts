@@ -1,5 +1,5 @@
 import { MarketBar, StrategySetup, RegimeType, StrategyFamily, TradeDirection, PromotedLabModel } from "../types";
-import { COIN_REVERSION_MIN_R, isCoin, planAtr, stopFloorPct } from "../shared/coinHolds";
+import { coinTargetDistance, planAtr, stopFloorPct } from "../shared/coinHolds";
 
 export interface CandidateEvaluationContext {
   symbol: string;
@@ -179,7 +179,7 @@ export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTu
   const qualifies = (isBullTrend || isBearTrend) && regime !== "high_volatility_choppy" && !eventWindowActive;
 
   const stopDistance = Math.max(s.planAtr * tuning.stopAtrMult, s.price * stopFloorPct(symbol, tuning.stopPriceFloorPct));
-  const targetDistance = stopDistance * tuning.targetMult;
+  const targetDistance = coinTargetDistance(symbol, stopDistance * tuning.targetMult, stopDistance);
   const entryPrice = s.price;
   const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
   const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
@@ -204,7 +204,7 @@ export function buildTrendSetup(ctx: CandidateEvaluationContext, tuning: TrendTu
     entryPrice,
     stopLoss,
     takeProfit,
-    riskRewardRatio: tuning.targetMult,
+    riskRewardRatio: Number((targetDistance / stopDistance).toFixed(1)),
     baseProbability: tuning.baseProbability,
     qualifies,
     disqualificationReason,
@@ -247,7 +247,7 @@ export function buildBreakoutSetup(ctx: CandidateEvaluationContext, tuning: Brea
   const qualifies = (isBullBreak || isBearBreak) && !overextended && !eventWindowActive;
 
   const stopDistance = Math.max(s.planAtr * tuning.stopAtrMult, s.price * stopFloorPct(symbol, tuning.stopPriceFloorPct));
-  const targetDistance = Math.max(s.planAtr * tuning.targetAtrMult, stopDistance * tuning.targetStopMultFloor);
+  const targetDistance = coinTargetDistance(symbol, Math.max(s.planAtr * tuning.targetAtrMult, stopDistance * tuning.targetStopMultFloor), stopDistance);
   const entryPrice = s.price;
   const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
   const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
@@ -308,9 +308,9 @@ export function buildMeanReversionSetup(ctx: CandidateEvaluationContext, tuning:
   const qualifies = isRangeRegime && (isRsiOverbought || isRsiOversold) && s.adx < tuning.maxAdxForRange && !eventWindowActive;
 
   const stopDistance = Math.max(s.planAtr * tuning.stopAtrMult, s.price * stopFloorPct(symbol, tuning.stopPriceFloorPct));
-  // Back to VWAP; a coin trade, held for hours, aims at least 1.5x its stop,
+  // Back to VWAP; a coin trade, held for hours, aims at least 2x its stop,
   // or the spread eats a target that close.
-  const targetDistance = isCoin(symbol) ? Math.max(Math.abs(s.price - s.vwap), stopDistance * COIN_REVERSION_MIN_R) : Math.abs(s.price - s.vwap);
+  const targetDistance = coinTargetDistance(symbol, Math.abs(s.price - s.vwap), stopDistance);
   const entryPrice = s.price;
   const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
   const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);

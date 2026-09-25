@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   COIN_HOLD_MINUTES,
   COIN_MIN_STOP_PCT,
+  COIN_MIN_TARGET_R,
   COIN_REVERSION_MIN_R,
   atrForExits,
   holdMinutesFor,
@@ -74,11 +75,13 @@ describe("coin trades", () => {
     expect(stopPct(coin)).toBeGreaterThanOrEqual(COIN_MIN_STOP_PCT - 1e-4);
     expect(stopPct(stock)).toBeLessThan(0.01);
     expect(coin.planAtr).toBeGreaterThan(stock.planAtr!);
-    // The target keeps the trader's own multiple of the stop.
-    expect((coin.takeProfit - coin.entryPrice) / (coin.entryPrice - coin.stopLoss)).toBeCloseTo(1.6, 1);
+    // Priya's own 1.6× target is widened to the coin minimum of 2×; a stock keeps 1.6×.
+    expect((coin.takeProfit - coin.entryPrice) / (coin.entryPrice - coin.stopLoss)).toBeCloseTo(COIN_MIN_TARGET_R, 1);
+    expect((stock.takeProfit - stock.entryPrice) / (stock.entryPrice - stock.stopLoss)).toBeCloseTo(1.6, 1);
+    expect(coin.riskRewardRatio).toBeCloseTo(2, 1);
   });
 
-  it("aim a range trade at least 1.5× its stop, since VWAP is often closer than the spread allows", () => {
+  it("aim a range trade at least 2× its stop, since VWAP is often closer than the spread allows", () => {
     const bars = trendBars().map((b) => ({ ...b, rsi: 30, adx: 15, vwap: b.close * 1.001 }));
     const setup = buildMeanReversionSetup(
       { symbol: "SOL/INR", timeframe: "5m", bars, regime: "ranging_tight", eventWindowActive: false },

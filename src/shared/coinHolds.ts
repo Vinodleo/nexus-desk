@@ -93,8 +93,19 @@ function fiveMinutesApart(bars: { timestampMs?: number }[]): boolean {
   return Math.abs(median - 5 * 60 * 1000) <= 30 * 1000;
 }
 
-/** A coin range trade aims at least this many times its stop (its VWAP target is often closer). */
-export const COIN_REVERSION_MIN_R = 1.5;
+/**
+ * Every coin trade aims to make at least this many times what it risks.
+ * Scalpers' wins were too small for their losses (Priya: +0.54R wins
+ * against −1.04R losses), so their targets were the first thing costs ate.
+ */
+export const COIN_MIN_TARGET_R = 2;
+/** Range (reversion) trades: their VWAP target is often closer, so the same minimum applies. */
+export const COIN_REVERSION_MIN_R = COIN_MIN_TARGET_R;
+
+/** A target distance widened, for a coin, to at least COIN_MIN_TARGET_R times the stop. */
+export function coinTargetDistance(symbol: string | undefined, targetDistance: number, stopDistance: number): number {
+  return isCoin(symbol) ? Math.max(targetDistance, stopDistance * COIN_MIN_TARGET_R) : targetDistance;
+}
 
 /**
  * The ATR a new position trails by: the one its setup was planned on (hourly
