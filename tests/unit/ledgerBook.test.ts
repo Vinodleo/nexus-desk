@@ -266,3 +266,51 @@ describe("trader bars", () => {
     expect(container.firstElementChild!.className).toContain("nx-flip-in");
   });
 });
+
+describe("linked stops", () => {
+  const at = (h: number, m: number) => new Date(2026, 8, 25, h, m).getTime();
+  const stop = (id: string, symbol: string, pnl: number, ms: number) => trade(id, pnl, ms, { symbol, exitReason: "STOP_LOSS" });
+
+  it("gather three or more stops within minutes of each other in one market into one market dip", async () => {
+    const { groupLinkedStops } = await import("../../src/components/ledger/LedgerBook");
+    const items = groupLinkedStops([
+      stop("ondo", "ONDO/INR", -308.61, at(19, 48)),
+      stop("ada", "ADA/INR", -256.61, at(19, 35)),
+      stop("sol", "SOL/INR", -273.95, at(19, 34)),
+      stop("shib", "SHIB/INR", -285.08, at(19, 33)),
+      stop("hype", "HYPE/INR", -161.47, at(17, 47)),
+      stop("pepe", "PEPE/INR", -324.15, at(17, 47)),
+      trade("xrp", 120.4, at(17, 40), { symbol: "XRP/INR", exitReason: "TRAILING_STOP" }),
+    ]);
+    expect(items.map((i) => (i.kind === "dip" ? `dip:${i.trades.map((t) => t.id).join("+")}` : i.trade.id))).toEqual([
+      "ondo",
+      "dip:ada+sol+shib",
+      "hype",
+      "pepe",
+      "xrp",
+    ]);
+    // A stock stop at the same minute isn't the same market.
+    expect(groupLinkedStops([stop("a", "ADA/INR", -1, at(19, 35)), stop("b", "SBIN", -1, at(19, 34)), stop("c", "SOL/INR", -1, at(19, 33))]).every((i) => i.kind === "trade")).toBe(true);
+  });
+
+  it("fold into one card in the Book that fans out when tapped", () => {
+    const now = Date.now();
+    render(
+      createElement(LedgerBook, {
+        trades: [
+          trade("ada", -256.61, now - 60_000, { symbol: "ADA/INR" }),
+          trade("sol", -273.95, now - 120_000, { symbol: "SOL/INR" }),
+          trade("shib", -285.08, now - 180_000, { symbol: "SHIB/INR" }),
+        ],
+        risk: null,
+      })
+    );
+    const card = screen.getByRole("button", { name: /Market dip · 3 stops/ });
+    expect(card.textContent).toContain("−₹815.64");
+    expect(card.textContent).toMatch(/ADA, SOL, SHIB within 2 minutes/);
+    expect(screen.queryByText("ADA/INR")).toBeNull();
+    fireEvent.click(card);
+    expect(screen.getByText("ADA/INR")).toBeTruthy();
+    expect(card.getAttribute("aria-expanded")).toBe("true");
+  });
+});
