@@ -1518,6 +1518,16 @@ export default function App() {
   const serverStatus = useServerStatus(isSettingsOpen);
   const tradeNotifications = useTradeNotifications();
   const appTheme = useTheme();
+  // Trades already in the Book when the app opened: only closes after that bump the Book tab.
+  const closedAtStartRef = useRef(closedTrades.length);
+  // Today's closes, oldest first, for the Floor's line through the day.
+  const todayCloses = useMemo(() => {
+    const start = new Date().setHours(0, 0, 0, 0);
+    return closedTrades
+      .filter((t) => (t.closedAtMs ?? 0) >= start)
+      .map((t) => ({ at: t.closedAtMs as number, pnl: t.realizedPnl }))
+      .sort((a, b) => a.at - b.at);
+  }, [closedTrades]);
   tradePopupsOnRef.current = tradeNotifications.state === "on";
   const scanLocationRef = useRef(serverScanner.location);
   scanLocationRef.current = serverScanner.location;
@@ -1775,6 +1785,8 @@ export default function App() {
               isLive={tradingMode === "LIVE_COINDCX"}
               equity={currentRiskCalculation.equity}
               dailyPnl={dailyRealizedPnl}
+              dailyLossLimit={currentRiskCalculation.hardDailyLossLimit}
+              todayCloses={todayCloses}
               allTimePnl={allTimeRealizedPnl}
               autopilotOn={decisionMode === "AUTO_WITHIN_LIMITS"}
               onAutopilotChange={(on) => handleDecisionModeChange(on ? "AUTO_WITHIN_LIMITS" : "MANUAL")}
@@ -1945,6 +1957,7 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         pendingQueueCount={pendingCount}
+        bookBumpKey={Math.max(0, closedTrades.length - closedAtStartRef.current)}
       />
 
       <SettingsSheet

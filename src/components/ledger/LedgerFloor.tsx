@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight, AlertTriangle } from "lucide-react";
 import type { Position } from "../../types";
 import { useLiveTickers } from "../../hooks/useLiveTickers";
 import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../services/liveMarketStreamService";
 import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
-import { Flash, Rolling, useAnimatedNumber, usePresenceList, type ListItemState } from "./motion";
+import { Flash, GrowBar, Rolling, useAnimatedNumber, usePresenceList, type ListItemState } from "./motion";
+import { isNseOpen } from "../../shared/nse";
+import { isUsOpen } from "../../shared/usMarket";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
 import type { EventWindow } from "../../shared/eventCalendar";
 import { openQuantity } from "../../shared/exitRules";
@@ -75,6 +77,10 @@ export interface LedgerFloorProps {
   lastServerOpenAt?: number;
   /** A scheduled-news pause now, or the next one. */
   eventWindow?: EventWindow;
+  /** Today's loss limit in full, for the meter under "Daily loss left". */
+  dailyLossLimit?: number;
+  /** Trades closed today, oldest first: when (ms) and their P&L, for today's line. */
+  todayCloses?: { at: number; pnl: number }[];
   pendingProposals: number;
   scan: FloorScanSummary;
   onOpenQueue: () => void;
@@ -210,8 +216,181 @@ export const NewsPause: React.FC<{ window: EventWindow; now?: number }> = ({ win
   return null;
 };
 
+/** The next time `isOpen` turns true after `now` (5-minute steps, up to a week); null if not found. */
+export function nextOpenAt(isOpen: (ms: number) => boolean, now: number = Date.now()): number | null {
+  const step = 5 * 60 * 1000;
+  for (let t = Math.ceil(now / step) * step; t < now + 7 * 24 * 60 * 60 * 1000; t += step) if (isOpen(t)) return t;
+  return null;
+}
+
+/** "9:15 AM" today, "Mon 9:15 AM" on another day. */
+const openText = (ms: number, now: number) =>
+  new Date(ms).toDateString() === new Date(now).toDateString()
+    ? clock(ms)
+    : `${new Date(ms).toLocaleDateString([], { weekday: "short" })} ${clock(ms)}`;
+
+const MARKETS: { id: string; label: string; isOpen: (ms: number) => boolean }[] = [
+  { id: "coins", label: "Coins", isOpen: () => true },
+  { id: "india", label: "India", isOpen: isNseOpen },
+  { id: "us", label: "US", isOpen: isUsOpen },
+];
+
+/**
+ * Which markets are open now: a filled dot when open, a hollow one with the
+ * next opening time when closed. A market that opens while this is on
+ * screen pulses a ring a few times.
+ */
+export const MarketChips: React.FC<{ now?: number }> = ({ now: fixedNow }) => {
+  const [tick, setTick] = useState(() => fixedNow ?? Date.now());
+  useEffect(() => {
+    if (fixedNow !== undefined) return setTick(fixedNow);
+    const t = setInterval(() => setTick(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, [fixedNow]);
+  const now = fixedNow ?? tick;
+  const wasOpen = useRef<Record<string, boolean> | null>(null);
+  const opened = useRef<Record<string, number>>({});
+  const open = Object.fromEntries(MARKETS.map((m) => [m.id, m.isOpen(now)]));
+  if (wasOpen.current) {
+    for (const m of MARKETS) if (open[m.id] && !wasOpen.current[m.id]) opened.current[m.id] = (opened.current[m.id] ?? 0) + 1;
+  }
+  wasOpen.current = open;
+  return (
+    <div aria-label="Markets" className="flex flex-wrap gap-1.5">
+      {MARKETS.map((m) => {
+        const on = open[m.id];
+        const next = on || m.id === "coins" ? null : nextOpenAt(m.isOpen, now);
+        const text = m.id === "coins" ? "24/7" : on ? "open" : next ? openText(next, now) : "closed";
+        return (
+          <span
+            key={m.id}
+            data-testid={`market-${m.id}`}
+            data-open={on}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full border border-line transition-colors ${
+              on ? "bg-surface text-ink" : "text-muted"
+            }`}
+          >
+            <span className="relative w-2 h-2">
+              {on && opened.current[m.id] && (
+                <span key={opened.current[m.id]} aria-hidden="true" className="absolute inset-0 rounded-full bg-gain nx-ring-once" />
+              )}
+              <span className={`absolute inset-0 rounded-full border-[1.5px] transition-colors ${on ? "bg-gain border-gain" : "border-muted"}`} />
+            </span>
+            {m.label} · {text}
+          </span>
+        );
+      })}
+    </div>
+  );
+};
+
+/**
+ * Today's P&L through the day: 0 at midnight, a step at each close, and
+ * where it stands now with the open trades. Draws itself when shown; the
+ * "now" dot pulses.
+ */
+export const TodayLine: React.FC<{ closes: { at: number; pnl: number }[]; openPnl: number; now?: number }> = ({ closes, openPnl, now = Date.now() }) => {
+  const start = new Date(now).setHours(0, 0, 0, 0);
+  const pts: [number, number][] = [[start, 0]];
+  let sum = 0;
+  for (const c of closes) {
+    if (c.at < start || c.at > now) continue;
+    sum += c.pnl;
+    pts.push([c.at, sum]);
+  }
+  pts.push([now, sum + openPnl]);
+  if (pts.length < 3 && openPnl === 0) return null;
+  const W = 300;
+  const H = 56;
+  const values = pts.map(([, v]) => v);
+  const lo = Math.min(0, ...values);
+  const hi = Math.max(0, ...values);
+  const span = hi - lo || 1;
+  const x = (t: number) => ((t - start) / Math.max(1, now - start)) * W;
+  const y = (v: number) => 4 + (1 - (v - lo) / span) * (H - 8);
+  const d = pts.map(([t, v], i) => `${i === 0 ? "M" : "L"}${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const end = pts[pts.length - 1][1];
+  const tone = end >= 0 ? "text-gain" : "text-loss";
+  return (
+    <div className={`relative ${tone}`} data-testid="today-line">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block w-full h-14" aria-label="Today's P&L through the day">
+        <line x1="0" x2={W} y1={y(0)} y2={y(0)} className="stroke-line" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
+        <path d={d} pathLength={1} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="nx-draw" />
+      </svg>
+      <span className="absolute w-2 h-2 -ml-1 -mt-1 rounded-full bg-current" style={{ left: "100%", top: `${(y(end) / H) * 100}%` }}>
+        <span aria-hidden="true" className="absolute inset-0 rounded-full bg-current nx-ring" />
+      </span>
+      <div className="flex justify-between text-[11px] text-muted mt-1">
+        <span>Midnight</span>
+        <span>Now</span>
+      </div>
+    </div>
+  );
+};
+
 /** Money in a position: its entry price times the quantity still open. */
 export const moneyIn = (p: Position) => p.entryPrice * openQuantity(p);
+
+/**
+ * Where `price` sits on a trade's line from its original stop to its target,
+ * 0 (stop) to 1 (target), clamped; null when the line has no length.
+ */
+export function trackPoint(p: Pick<Position, "direction" | "stopLoss" | "initialStopLoss" | "takeProfit">, price: number): number | null {
+  const lo = p.initialStopLoss ?? p.stopLoss;
+  const hi = p.takeProfit;
+  const span = p.direction === "LONG" ? hi - lo : lo - hi;
+  if (!(span > 0) || !Number.isFinite(price)) return null;
+  const f = (p.direction === "LONG" ? price - lo : lo - price) / span;
+  return Math.max(0, Math.min(1, f));
+}
+
+/** How long a closed trade stays on the Floor while it animates away. */
+const CLOSE_ANIMATION_MS = 1300;
+
+/** How long a "Half banked" tag stays up after half is banked. */
+const BANKED_TAG_MS = 3300;
+
+/**
+ * The trade's line from stop to target: where the price is now (the marker
+ * glides as it moves), the run from entry in green or red, the entry and
+ * +1R ticks, and the stop once it has trailed up.
+ */
+const PositionTrack: React.FC<{ position: Position; bankedKey: number }> = ({ position: p, bankedKey }) => {
+  const now = trackPoint(p, p.currentPrice);
+  const entry = trackPoint(p, p.entryPrice);
+  if (now === null || entry === null) return null;
+  const risk = Math.abs(p.entryPrice - (p.initialStopLoss ?? p.stopLoss));
+  const oneR = trackPoint(p, p.direction === "LONG" ? p.entryPrice + risk : p.entryPrice - risk);
+  const stop = trackPoint(p, p.stopLoss);
+  const up = now >= entry;
+  const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
+  return (
+    <div className="relative h-5" aria-hidden="true" data-testid="position-track">
+      <div className="absolute inset-x-0 top-2 h-1 rounded-full bg-line" />
+      <div
+        className={`absolute top-2 h-1 rounded-full nx-glide-left ${up ? "bg-gain" : "bg-loss"}`}
+        style={{ left: pct(Math.min(entry, now)), width: pct(Math.abs(now - entry)) }}
+      />
+      <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-muted" style={{ left: pct(entry) }} />
+      {oneR !== null && oneR < 1 && <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-line" style={{ left: pct(oneR) }} />}
+      {stop !== null && stop > 0.001 && <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss" style={{ left: pct(stop) }} />}
+      <div
+        data-testid="position-marker"
+        className={`absolute top-[3px] w-3.5 h-3.5 -ml-[7px] rounded-full border-2 border-surface nx-glide-left ${up ? "bg-gain" : "bg-loss"}`}
+        style={{ left: pct(now) }}
+      />
+      {bankedKey > 0 && oneR !== null && (
+        <span
+          key={bankedKey}
+          className="nx-tag-pop absolute -top-5 whitespace-nowrap text-[11px] font-bold px-2 py-px rounded-full bg-surface border border-line text-gain"
+          style={{ left: pct(oneR) }}
+        >
+          Half banked ✓
+        </span>
+      )}
+    </div>
+  );
+};
 
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void; state?: ListItemState }> = ({
   position: p,
@@ -225,9 +404,29 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
     return () => clearTimeout(t);
   }, [confirming]);
 
+  // "Half banked" pops up when half is banked while this row is on screen.
+  const banked = (p.bankedQuantity ?? 0) > 0;
+  const wasBanked = useRef(banked);
+  const [bankedKey, setBankedKey] = useState(0);
+  useEffect(() => {
+    if (banked && !wasBanked.current) setBankedKey((k) => k + 1);
+    wasBanked.current = banked;
+  }, [banked]);
+  useEffect(() => {
+    if (bankedKey === 0) return;
+    const t = setTimeout(() => setBankedKey(0), BANKED_TAG_MS);
+    return () => clearTimeout(t);
+  }, [bankedKey]);
+
   const tone = pnlTone(p.unrealizedPnl);
+  const closing = state === "leave";
   return (
-    <li className={`nx-item${state === "enter" ? " nx-item-enter" : state === "leave" ? " nx-item-leave" : ""}`} aria-hidden={state === "leave" || undefined}>
+    <li
+      className={`nx-item${
+        state === "enter" ? " nx-item-enter" : closing ? ` nx-item-close ${p.unrealizedPnl >= 0 ? "nx-item-close-gain" : "nx-item-close-loss"}` : ""
+      }`}
+      aria-hidden={closing || undefined}
+    >
       <div className="flex flex-col gap-2 py-3.5 border-b border-line">
         <div className="flex items-baseline justify-between gap-3">
           <div className="min-w-0">
@@ -243,6 +442,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
           </Flash>
         </div>
+        <PositionTrack position={p} bankedKey={bankedKey} />
         <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted tabular-nums">
           <span>Entry {formatPrice(p.entryPrice)}</span>
           <Flash value={p.currentPrice} className="px-1 -mx-1 text-ink">
@@ -253,7 +453,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
           <span className={tone}>{formatPct(p.unrealizedPnlPercent)}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-muted">{positionNote(p)}</span>
+          <span className={`text-xs ${closing ? `font-semibold ${tone}` : "text-muted"}`}>{closing ? "Closed" : positionNote(p)}</span>
           <button
             type="button"
             onClick={() => {
@@ -290,7 +490,8 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
   const whole = formatMoney(Math.trunc(shownEquity), { decimals: 0 });
   const paise = Math.abs(shownEquity % 1).toFixed(2).slice(1); // ".96"
   const openPnl = positions.reduce((acc, p) => acc + (p.unrealizedPnl || 0), 0);
-  const rows = usePresenceList(positions, (p) => p.id);
+  // A closed trade holds its result for a moment, then slides away (nx-item-close).
+  const rows = usePresenceList(positions, (p) => p.id, CLOSE_ANIMATION_MS);
   const signedMoney = (n: number) => formatMoney(n, { signed: true });
 
   const guardianText =
@@ -317,6 +518,8 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         </div>
       </header>
 
+      <MarketChips />
+
       <section aria-label="Account" className="flex flex-col gap-1.5">
         <div className="text-[13px] text-muted">{isLive ? "CoinDCX equity" : "Paper equity"}</div>
         <div className="font-display text-[46px] leading-[1.05] tracking-[-0.01em] tabular-nums">
@@ -331,6 +534,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
             All time <strong className={pnlTone(allTimePnl)}><Rolling value={allTimePnl} format={signedMoney} /></strong>
           </span>
         </div>
+        {props.todayCloses && <TodayLine closes={props.todayCloses} openPnl={openPnl} />}
       </section>
 
       <Card aria-label="Autopilot" className="flex flex-col gap-3">
@@ -364,11 +568,20 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
             label={`In trades · ${(props.exposureFraction * 100).toFixed(1)}%`}
             value={formatMoney(props.positions.reduce((a, p) => a + moneyIn(p), 0), { decimals: 0 })}
           />
-          <StatTile
-            label="Daily loss left"
-            value={formatMoney(Math.max(0, props.dailyLossLeft), { decimals: 0 })}
-            valueClassName={props.dailyLossLeft <= 0 ? "text-loss" : ""}
-          />
+          <div className="flex-1 basis-0 min-w-0 bg-inset rounded-[10px] px-2.5 py-2">
+            <div className="text-[11px] text-muted">Daily loss left</div>
+            <div className={`font-display text-lg tabular-nums truncate ${props.dailyLossLeft <= 0 ? "text-loss" : ""}`}>
+              {formatMoney(Math.max(0, props.dailyLossLeft), { decimals: 0 })}
+            </div>
+            {props.dailyLossLimit !== undefined && props.dailyLossLimit > 0 && (
+              <div className="h-1 mt-1 rounded-full bg-line overflow-hidden" data-testid="loss-meter">
+                <GrowBar
+                  fraction={props.dailyLossLeft / props.dailyLossLimit}
+                  className={props.dailyLossLeft / props.dailyLossLimit <= 0.25 ? "bg-warn" : "bg-accent"}
+                />
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={props.onToggleStop}

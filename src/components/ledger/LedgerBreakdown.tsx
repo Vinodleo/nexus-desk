@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { HistoricalTrade } from "../../types";
 import { apiFetch } from "../../services/apiClient";
 import { MIN_EDGE_R } from "../../services/calibration";
@@ -135,6 +135,8 @@ interface CoinActivity {
   coins: { symbol: string; activity: number | null; spreadPct: number | null }[];
 }
 
+const MEASURES_REFRESH_MS = 5 * 60 * 1000;
+
 /** What the server measures: each trader's record with your exits, each coin's trading costs, and when setups win. */
 function useScannerMeasures() {
   const [measures, setMeasures] = useState<{ table: EdgeTable | null; activity: CoinActivity | null; conditions: ConditionBreakdown | null }>({
@@ -144,12 +146,17 @@ function useScannerMeasures() {
   });
   useEffect(() => {
     let cancelled = false;
-    apiFetch("/api/scanner/exit-edge")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => !cancelled && setMeasures({ table: body?.table ?? null, activity: body?.activity ?? null, conditions: body?.conditions ?? null }))
-      .catch(() => {});
+    const load = () =>
+      apiFetch("/api/scanner/exit-edge")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => !cancelled && body && setMeasures({ table: body.table ?? null, activity: body.activity ?? null, conditions: body.conditions ?? null }))
+        .catch(() => {});
+    void load();
+    // The records are re-measured hourly; looking again every few minutes shows a trader crossing the line.
+    const t = setInterval(load, MEASURES_REFRESH_MS);
     return () => {
       cancelled = true;
+      clearInterval(t);
     };
   }, []);
   return measures;
@@ -186,6 +193,51 @@ const CoinCosts: React.FC<{ activity: CoinActivity | null }> = ({ activity }) =>
   );
 };
 
+/** The traders' bars run from −1.5R to +0.5R. */
+const BAR_MIN_R = -1.5;
+const BAR_MAX_R = 0.5;
+/** Where a result in R sits on a trader's bar, 0–100 (%). */
+export const barPct = (r: number) => Math.max(0, Math.min(100, ((r - BAR_MIN_R) / (BAR_MAX_R - BAR_MIN_R)) * 100));
+
+/**
+ * A trader's judged result as a bar from zero, grown in when shown: red to
+ * the left, green to the right, against the line they must cross to trade.
+ * The hollow dot is their record in this market alone.
+ */
+export const TraderBar: React.FC<{ judgedR: number; ownR: number; delayMs?: number }> = ({ judgedR, ownR, delayMs = 0 }) => {
+  const zero = barPct(0);
+  const at = barPct(judgedR);
+  const style = { animationDelay: `${delayMs}ms` };
+  return (
+    <div className="relative h-3.5 my-1" aria-hidden="true" data-testid="trader-bar">
+      <div className="absolute inset-x-0 top-[5px] h-1 rounded-full bg-inset" />
+      {judgedR < 0 ? (
+        <div className="absolute top-[5px] h-1 rounded-full bg-loss nx-grow-left" style={{ right: `${100 - zero}%`, width: `${zero - at}%`, ...style }} />
+      ) : (
+        <div className="absolute top-[5px] h-1 rounded-full bg-gain nx-grow" style={{ left: `${zero}%`, width: `${at - zero}%`, ...style }} />
+      )}
+      <div className="absolute top-0 h-3.5 w-px bg-muted" style={{ left: `${zero}%` }} />
+      <div className="absolute -top-0.5 h-[18px] w-0.5 -ml-px bg-gain" style={{ left: `${barPct(MIN_EDGE_R)}%` }} />
+      <div className="absolute top-0.5 w-2.5 h-2.5 -ml-[5px] rounded-full border-2 border-muted bg-surface" style={{ left: `${barPct(ownR)}%` }} />
+    </div>
+  );
+};
+
+/** "Paused" or "Trading": flips over to its new face when it changes while on screen. */
+export const StatusChip: React.FC<{ paused: boolean }> = ({ paused }) => {
+  const prev = useRef(paused);
+  const flips = useRef(0);
+  if (prev.current !== paused) {
+    flips.current++;
+    prev.current = paused;
+  }
+  return (
+    <span key={flips.current} className={`text-xs ${paused ? "text-loss" : "text-gain"}${flips.current > 0 ? " nx-flip-in" : ""}`}>
+      {paused ? "Paused" : "Trading"}
+    </span>
+  );
+};
+
 /** The scanner's record of each trader with your exits: who may trade now. */
 const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
   if (!table || table.rows.length === 0) return null;
@@ -193,6 +245,11 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
   return (
     <Card aria-label="Traders with your exits" className="flex flex-col gap-1">
       <div className="text-sm font-semibold">Traders with your exits</div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
+        <span className="flex items-center gap-1"><span className="w-3 h-1 rounded-full bg-loss" />judged</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full border-2 border-muted" />this market alone</span>
+        <span className="flex items-center gap-1"><span className="w-0.5 h-3 bg-gain" />trades above {rSigned(MIN_EDGE_R)}</span>
+      </div>
       <div className="text-xs text-muted">
         Every setup each trader found over the last day ({table.symbols} markets), played out with your {table.profile} trailing stop, the half
         banked at +1R and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)} doesn't trade until they recover. Each
@@ -212,12 +269,13 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
               </div>
             )}
             <ul className="m-0 p-0 list-none flex flex-col">
-              {rows.map((r) => {
+              {rows.map((r, i) => {
                 const paused = judging && r.judgedR < MIN_EDGE_R;
                 return (
                   <li key={r.trader} className="flex items-start justify-between gap-3 py-2 border-b border-line last:border-b-0">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm truncate">{r.trader}</div>
+                      <TraderBar judgedR={r.judgedR} ownR={r.avgR} delayMs={i * 60} />
                       <div className="text-xs text-muted tabular-nums">
                         {r.trades} setups · {r.winPct}% won · win {rSigned(r.avgWinR)} · loss {rSigned(r.avgLossR)}
                       </div>
@@ -228,7 +286,11 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
                     </div>
                     <div className="text-right shrink-0">
                       <div className={`text-sm font-semibold tabular-nums ${pnlTone(r.avgR)}`}>{rSigned(r.avgR)}</div>
-                      {judging && <div className={`text-xs ${paused ? "text-loss" : "text-gain"}`}>{paused ? "Paused" : "Trading"}</div>}
+                      {judging && (
+                        <div>
+                          <StatusChip paused={paused} />
+                        </div>
+                      )}
                     </div>
                   </li>
                 );

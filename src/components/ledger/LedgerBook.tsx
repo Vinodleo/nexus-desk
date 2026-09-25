@@ -50,6 +50,47 @@ export function dayLabel(ms: number | undefined, now = Date.now()): string {
   return new Date(ms).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
+/** Stops this close together, in one market, count as one market dip. */
+export const LINKED_STOP_GAP_MS = 5 * 60 * 1000;
+/** A dip needs at least this many stops. */
+export const LINKED_STOP_MIN = 3;
+
+const marketKind = (symbol: string) => (/\.US$/.test(symbol) ? "us" : symbol.includes("/") ? "coins" : "stocks");
+const isStopLoss = (t: HistoricalTrade) => t.realizedPnl < 0 && /STOP/.test(t.exitReason);
+
+export type BookItem = { kind: "trade"; trade: HistoricalTrade } | { kind: "dip"; trades: HistoricalTrade[] };
+
+/**
+ * Trades newest first, with runs of losing stops that hit within a few
+ * minutes of each other in one market gathered into one "market dip": the
+ * market fell and took them together, which is one event, not several
+ * separate mistakes.
+ */
+export function groupLinkedStops(trades: HistoricalTrade[]): BookItem[] {
+  const out: BookItem[] = [];
+  let run: HistoricalTrade[] = [];
+  const flush = () => {
+    if (run.length >= LINKED_STOP_MIN) out.push({ kind: "dip", trades: run });
+    else run.forEach((t) => out.push({ kind: "trade", trade: t }));
+    run = [];
+  };
+  for (const t of trades) {
+    const last = run[run.length - 1];
+    const linked =
+      last &&
+      isStopLoss(t) &&
+      t.closedAtMs !== undefined &&
+      last.closedAtMs !== undefined &&
+      Math.abs(last.closedAtMs - t.closedAtMs) <= LINKED_STOP_GAP_MS &&
+      marketKind(t.symbol) === marketKind(last.symbol);
+    if (!linked) flush();
+    if (isStopLoss(t) && t.closedAtMs !== undefined) run.push(t);
+    else out.push({ kind: "trade", trade: t });
+  }
+  flush();
+  return out;
+}
+
 function heldFor(t: HistoricalTrade): string {
   let mins = t.holdingDurationMinutes;
   if (typeof mins !== "number" && t.openedAtMs && t.closedAtMs) mins = Math.round((t.closedAtMs - t.openedAtMs) / 60000);
@@ -249,16 +290,26 @@ export const LedgerBookTrades: React.FC<{
             <div key={g.label}>
               <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em] pt-2.5">{g.label}</div>
               <ul className="list-none m-0 p-0">
-                {g.trades.map((t) => (
-                  <TradeRow
-                    key={t.id}
-                    index={filtered.indexOf(t) % PAGE}
-                    trade={t}
-                    open={openId === t.id}
-                    onToggle={() => setOpenId(openId === t.id ? null : t.id)}
-                    onUpdateTrade={onUpdateTrade}
-                  />
-                ))}
+                {groupLinkedStops(g.trades).map((item) =>
+                  item.kind === "dip" ? (
+                    <DipGroup
+                      key={`dip-${item.trades[0].id}`}
+                      trades={item.trades}
+                      openId={openId}
+                      onToggle={(id) => setOpenId(openId === id ? null : id)}
+                      onUpdateTrade={onUpdateTrade}
+                    />
+                  ) : (
+                    <TradeRow
+                      key={item.trade.id}
+                      index={filtered.indexOf(item.trade) % PAGE}
+                      trade={item.trade}
+                      open={openId === item.trade.id}
+                      onToggle={() => setOpenId(openId === item.trade.id ? null : item.trade.id)}
+                      onUpdateTrade={onUpdateTrade}
+                    />
+                  )
+                )}
               </ul>
             </div>
           ))}
@@ -274,6 +325,52 @@ export const LedgerBookTrades: React.FC<{
         </section>
       )}
     </div>
+  );
+};
+
+/**
+ * A market dip: several stops that hit together, folded into one card.
+ * Tap to fan the trades out (they stagger in), tap again to fold them.
+ */
+const DipGroup: React.FC<{ trades: HistoricalTrade[]; openId: string | null; onToggle: (id: string) => void; onUpdateTrade?: (t: HistoricalTrade) => void }> = ({
+  trades,
+  openId,
+  onToggle,
+  onUpdateTrade,
+}) => {
+  const [open, setOpen] = useState(false);
+  const total = trades.reduce((a, t) => a + t.realizedPnl, 0);
+  const times = trades.map((t) => t.closedAtMs as number);
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+  const mins = Math.max(1, Math.round((last - first) / 60000));
+  const names = trades.map((t) => t.symbol.split("/")[0].replace(/\.US$/, "")).join(", ");
+  const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return (
+    <li className="border-b border-line nx-row-in">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="w-full my-2 p-3 rounded-xl bg-warn-soft text-warn-ink text-left cursor-pointer flex flex-col gap-1"
+      >
+        <span className="flex items-baseline justify-between gap-3">
+          <strong className="text-sm">Market dip · {trades.length} stops</strong>
+          <span className="font-display text-[19px] tabular-nums text-loss">{formatMoney(total, { signed: true })}</span>
+        </span>
+        <span className="text-xs">
+          {names} within {mins} {mins === 1 ? "minute" : "minutes"} ({hhmm(first)}–{hhmm(last)}): the market fell and took them together.{" "}
+          {open ? "Tap to fold." : "Tap to see each."}
+        </span>
+      </button>
+      {open && (
+        <ul className="list-none m-0 p-0 pl-3 ml-1.5 border-l-2 border-danger-line">
+          {trades.map((t, i) => (
+            <TradeRow key={t.id} index={i} trade={t} open={openId === t.id} onToggle={() => onToggle(t.id)} onUpdateTrade={onUpdateTrade} />
+          ))}
+        </ul>
+      )}
+    </li>
   );
 };
 
