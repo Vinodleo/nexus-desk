@@ -63,6 +63,19 @@ describe("trade pop-ups", () => {
     expect(result.current.state).toBe("on");
   });
 
+  it("use a running worker even when `ready` never settles (seen after an app update)", async () => {
+    vi.useFakeTimers();
+    const sub = { endpoint: "https://push.example/3", toJSON: () => ({}) };
+    fakeBrowser({ ready: new Promise(() => {}), registration: { active: {}, pushManager: { getSubscription: async () => sub } } });
+    api.apiFetch.mockImplementation(async () => new Response(JSON.stringify({ subscribed: true }), { status: 200 }));
+    const { result } = renderHook(() => useTradeNotifications());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(result.current.state).toBe("on");
+    expect(result.current.error).toBe("");
+  });
+
   it("register a missing worker when switched on, then subscribe", async () => {
     let activate!: (r: unknown) => void;
     const ready = new Promise((r) => (activate = r));

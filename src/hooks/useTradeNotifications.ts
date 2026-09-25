@@ -27,20 +27,36 @@ const SERVER_WAIT_MS = 10000;
 
 const timeout = <T,>(ms: number) => new Promise<T | null>((resolve) => setTimeout(() => resolve(null), ms));
 
+/** How often to look at the registration while waiting for the worker. */
+const WORKER_POLL_MS = 500;
+
+/** This page's registration, if its worker is running. */
+async function activeRegistration(): Promise<ServiceWorkerRegistration | undefined> {
+  const reg = await navigator.serviceWorker.getRegistration().catch(() => undefined);
+  return reg?.active ? reg : undefined;
+}
+
 /**
- * The app's service worker, which receives the pushes. `ready` never settles
- * while there's no active worker (not registered yet, still installing, or
- * its install failed), so this waits a limited time, then says why. With
- * `register`, a missing worker is registered first (the same one the app
- * registers at start-up).
+ * The app's service worker, which receives the pushes. A running worker is
+ * used straight away. Otherwise (not registered yet, still installing, or
+ * its install failed) this waits a limited time, then says why. It watches
+ * the registration as well as `ready`, which has been seen never to settle
+ * with the worker running. With `register`, a missing worker is registered
+ * first (the same one the app registers at start-up).
  */
 export async function pushWorker(opts: { register?: boolean; waitMs?: number } = {}): Promise<ServiceWorkerRegistration> {
   const sw = navigator.serviceWorker;
+  const running = await activeRegistration();
+  if (running) return running;
   if (opts.register && !(await sw.getRegistration().catch(() => undefined))) {
     await sw.register("/sw.js", { scope: "/" }).catch(() => undefined);
   }
-  const reg = await Promise.race([sw.ready, timeout<ServiceWorkerRegistration>(opts.waitMs ?? WORKER_WAIT_MS)]);
-  if (reg) return reg;
+  const ready = sw.ready.catch(() => null);
+  const deadline = Date.now() + (opts.waitMs ?? WORKER_WAIT_MS);
+  while (Date.now() < deadline) {
+    const reg = (await Promise.race([ready, timeout<ServiceWorkerRegistration>(WORKER_POLL_MS)])) ?? (await activeRegistration());
+    if (reg) return reg;
+  }
   const found = await sw.getRegistration().catch(() => undefined);
   throw new Error(
     !found

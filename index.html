@@ -22,16 +22,6 @@
   </head>
   <body class="bg-[#F6F3EE] text-[#1C1B18] antialiased overflow-x-hidden w-full">
     <div id="root" class="w-full overflow-x-hidden min-h-screen bg-[#F6F3EE]"></div>
-    
-    <script>
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-          for(let registration of registrations) {
-            registration.unregister();
-          }
-        });
-      }
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
