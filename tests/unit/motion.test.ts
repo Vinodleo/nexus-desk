@@ -127,3 +127,30 @@ describe("the Floor", () => {
     expect(container.textContent).toContain("₹1,100.00");
   });
 });
+
+describe("the tabs", () => {
+  it("slide in from the side they sit on in the bar, and not on first show", async () => {
+    const { useTabSlide } = await import("../../src/components/BottomNavBar");
+    const { result, rerender } = renderHook(({ tab }) => useTabSlide(tab), { initialProps: { tab: "floor" as any } });
+    expect(result.current).toBeUndefined();
+    rerender({ tab: "book" });
+    expect(result.current).toBe("nx-tab-from-right");
+    // Other re-renders keep it, so the slide isn't restarted.
+    rerender({ tab: "book" });
+    expect(result.current).toBe("nx-tab-from-right");
+    rerender({ tab: "queue" });
+    expect(result.current).toBe("nx-tab-from-left");
+  });
+
+  it("the bar's indicator moves to the picked tab, and its icon bounces", async () => {
+    const { BottomNavBar } = await import("../../src/components/BottomNavBar");
+    const bar = (activeTab: any) => createElement(BottomNavBar, { activeTab, onTabChange: () => {}, pendingQueueCount: 2 });
+    const { rerender, getByTestId, getByRole } = render(bar("floor"));
+    expect(getByTestId("tab-indicator").style.transform).toBe("translateX(0%)");
+    rerender(bar("book"));
+    expect(getByTestId("tab-indicator").style.transform).toBe("translateX(200%)");
+    expect(getByRole("button", { name: "Book" }).querySelector(".nx-tab-bounce")).not.toBeNull();
+    expect(getByRole("button", { name: "Floor" }).querySelector(".nx-tab-bounce")).toBeNull();
+    expect(getByRole("button", { name: "Queue, 2 waiting" }).querySelector(".nx-badge-pop")?.textContent).toBe("2");
+  });
+});
