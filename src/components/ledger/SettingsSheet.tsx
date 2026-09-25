@@ -45,7 +45,8 @@ export interface SettingsSheetProps {
   from?: { left: number; top: number; width: number; height: number } | null;
   /** This device's colour theme, and choosing another. */
   theme?: ThemeId;
-  onThemeChange?: (id: ThemeId) => void;
+  /** `from` is the tapped theme's centre on screen: the new look grows from there. */
+  onThemeChange?: (id: ThemeId, from?: { x: number; y: number }) => void;
 }
 
 /** "45 sec", "12 min", "3 h", "2 days". */
@@ -491,6 +492,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                     data-testid="theme-ring"
                     className="nx-segment-pill absolute top-0 left-0 h-full rounded-[14px] border-2 border-accent pointer-events-none z-10"
                     style={{
+                      viewTransitionName: "nx-theme-ring",
                       width: "calc((100% - 20px) / 3)",
                       transform: `translateX(calc(${Math.max(0, THEMES.findIndex((t) => t.id === props.theme))} * (100% + 10px)))`,
                     }}
@@ -507,7 +509,10 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                         type="button"
                         aria-pressed={on}
                         aria-label={`${t.name} theme`}
-                        onClick={() => props.onThemeChange!(t.id)}
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          props.onThemeChange!(t.id, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+                        }}
                         className="relative flex flex-col gap-1.5 p-1.5 rounded-[14px] border-2 border-transparent bg-surface text-left cursor-pointer"
                       >
                         <span

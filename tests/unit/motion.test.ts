@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAnimatedNumber, useFlash, usePresence } from "../../src/components/ledger/motion";
 import { LedgerFloor, trackPoint, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
 import { BottomNavBar } from "../../src/components/BottomNavBar";
-import { setTheme } from "../../src/services/theme";
 import { Sheet } from "../../src/components/ledger/Sheet";
 import type { Position } from "../../src/types";
 
@@ -203,13 +202,31 @@ describe("the tab bar", () => {
 });
 
 describe("a theme change", () => {
-  it("fades the colours for a moment instead of jumping", () => {
+  it("grows the new look as a circle from the tapped theme with the browser's page transition, where it has one", async () => {
+    const { useTheme } = await import("../../src/hooks/useTheme");
+    const start = vi.fn((cb: () => void) => {
+      cb();
+      return { ready: Promise.resolve() };
+    });
+    (document as any).startViewTransition = start;
     document.documentElement.dataset.theme = "ivory";
-    setTheme("graphite");
-    expect(document.documentElement.classList.contains("nx-theme-fade")).toBe(true);
-    act(() => vi.advanceTimersByTime(500));
-    expect(document.documentElement.classList.contains("nx-theme-fade")).toBe(false);
+    const { result } = renderHook(() => useTheme());
+    const animate = vi.fn();
+    (document.documentElement as any).animate = animate;
+    await act(async () => result.current.setTheme("graphite", { x: 120, y: 300 }));
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(animate).toHaveBeenCalledWith(
+      { clipPath: [expect.stringContaining("circle(0px at 120px 300px)"), expect.stringMatching(/^circle\(\d+(\.\d+)?px at 120px 300px\)$/)] },
+      expect.objectContaining({ pseudoElement: "::view-transition-new(root)" })
+    );
     expect(document.documentElement.dataset.theme).toBe("graphite");
+    expect(result.current.theme).toBe("graphite");
+    // No colour fading (light into dark looked muddy half-way).
+    expect(document.documentElement.classList.contains("nx-theme-fade")).toBe(false);
+    delete (document as any).startViewTransition;
+    // Without it, the theme just switches.
+    act(() => result.current.setTheme("blush"));
+    expect(document.documentElement.dataset.theme).toBe("blush");
   });
 });
 

@@ -37,30 +37,49 @@ export function loadTheme(): ThemeId {
   }
 }
 
-let fadeTimer: ReturnType<typeof setTimeout> | undefined;
-
 /**
- * Shows `id` now: the page's colours and the phone's status bar. With
- * `fade`, the colours cross-fade for a moment instead of jumping (not with
- * reduced motion).
+ * Shows `id` now: the page's colours and the phone's status bar.
  */
-export function applyTheme(id: ThemeId, opts: { fade?: boolean } = {}): void {
+export function applyTheme(id: ThemeId): void {
   const theme = THEMES.find((t) => t.id === id) ?? THEMES[0];
   const root = document.documentElement;
-  const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (opts.fade && !reduced && root.dataset.theme !== theme.id) {
-    root.classList.add("nx-theme-fade");
-    clearTimeout(fadeTimer);
-    fadeTimer = setTimeout(() => root.classList.remove("nx-theme-fade"), 450);
-  }
   root.dataset.theme = theme.id;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.bar);
 }
 
 /** Shows and saves `id`. */
 export function setTheme(id: ThemeId): void {
-  applyTheme(id, { fade: true });
+  applyTheme(id);
   try {
     localStorage.setItem(THEME_STORAGE_KEY, id);
   } catch {}
+}
+
+/**
+ * Runs `change` (which switches the theme) so the new look grows as a circle
+ * from `from` (the tapped theme, in page pixels) over the old one, where the
+ * browser can (the View Transitions API); straight away otherwise, or with
+ * reduced motion. Nothing is blended: fading light into dark (each element's
+ * colours, or the whole page) passes through a muddy grey half-way.
+ */
+export function withThemeTransition(change: () => void, from?: { x: number; y: number }): void {
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => { ready: Promise<void> } };
+  const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (typeof doc.startViewTransition !== "function" || reduced) {
+    change();
+    return;
+  }
+  const t = doc.startViewTransition(change);
+  const x = from?.x ?? window.innerWidth / 2;
+  const y = from?.y ?? window.innerHeight / 2;
+  // Far enough to cover the farthest corner.
+  const r = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+  void t.ready
+    .then(() =>
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] },
+        { duration: 480, easing: "cubic-bezier(0.4, 0, 0.2, 1)", pseudoElement: "::view-transition-new(root)" }
+      )
+    )
+    .catch(() => {});
 }
