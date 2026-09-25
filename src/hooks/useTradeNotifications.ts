@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../services/apiClient";
 import type { TradeMessage } from "../shared/tradeMessages";
 
@@ -20,8 +20,49 @@ function keyBytes(base64url: string): Uint8Array {
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 
+/** How long to wait for the app's service worker before saying why it isn't there. */
+export const WORKER_WAIT_MS = 8000;
+/** How long to wait for the server before giving up on a check. */
+const SERVER_WAIT_MS = 10000;
+
+const timeout = <T,>(ms: number) => new Promise<T | null>((resolve) => setTimeout(() => resolve(null), ms));
+
+/**
+ * The app's service worker, which receives the pushes. `ready` never settles
+ * while there's no active worker (not registered yet, still installing, or
+ * its install failed), so this waits a limited time, then says why. With
+ * `register`, a missing worker is registered first (the same one the app
+ * registers at start-up).
+ */
+export async function pushWorker(opts: { register?: boolean; waitMs?: number } = {}): Promise<ServiceWorkerRegistration> {
+  const sw = navigator.serviceWorker;
+  if (opts.register && !(await sw.getRegistration().catch(() => undefined))) {
+    await sw.register("/sw.js", { scope: "/" }).catch(() => undefined);
+  }
+  const reg = await Promise.race([sw.ready, timeout<ServiceWorkerRegistration>(opts.waitMs ?? WORKER_WAIT_MS)]);
+  if (reg) return reg;
+  const found = await sw.getRegistration().catch(() => undefined);
+  throw new Error(
+    !found
+      ? "The app's background worker isn't installed on this phone. Tap the switch to try again, or close the app fully and reopen it."
+      : found.installing || found.waiting
+      ? "The app is still installing its offline files. Try again in a minute."
+      : "The app's background worker isn't running. Close the app fully and reopen it, then try again."
+  );
+}
+
+/** The server call, or null if it doesn't answer in time. */
+async function serverCall(path: string, body?: unknown): Promise<Response | null> {
+  const call = apiFetch(path, body === undefined ? {} : {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => null);
+  return Promise.race([call, timeout<Response>(SERVER_WAIT_MS)]);
+}
+
 async function currentSubscription(): Promise<PushSubscription | null> {
-  const reg = await navigator.serviceWorker.ready;
+  const reg = await pushWorker();
   return reg.pushManager.getSubscription();
 }
 
@@ -32,7 +73,7 @@ async function currentSubscription(): Promise<PushSubscription | null> {
 export async function showLocalTradePopup(msg: TradeMessage): Promise<void> {
   if (!supported() || Notification.permission !== "granted") return;
   try {
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await pushWorker();
     await reg.showNotification(msg.title, {
       body: msg.body,
       tag: msg.tag,
@@ -46,30 +87,33 @@ export async function showLocalTradePopup(msg: TradeMessage): Promise<void> {
 export function useTradeNotifications() {
   const [state, setState] = useState<NotifyState>(() => (supported() ? "working" : "unsupported"));
   const [error, setError] = useState("");
+  /** Set once the switch is used: the start-up check then no longer sets the state. */
+  const acted = useRef(false);
 
-  // Where things stand on this device.
+  // Where things stand on this device. Never left on "Checking…": a worker
+  // or server that doesn't answer in time leaves the switch off, with why.
   useEffect(() => {
     if (!supported()) return;
     let cancelled = false;
+    const stale = () => cancelled || acted.current;
     (async () => {
-      if (Notification.permission === "denied") return !cancelled && setState("blocked");
-      const sub = await currentSubscription().catch(() => null);
-      if (!sub) return !cancelled && setState("off");
-      // Make sure the server still has it (it forgets devices that went away).
-      const res = await apiFetch("/api/push/status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoint: sub.endpoint }),
-      }).catch(() => null);
-      const known = res?.ok ? (await res.json()).subscribed : true;
-      if (!known) {
-        await apiFetch("/api/push/subscribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription: sub.toJSON() }),
-        }).catch(() => null);
+      if (Notification.permission === "denied") return !stale() && setState("blocked");
+      let sub: PushSubscription | null;
+      try {
+        sub = await currentSubscription();
+      } catch (err: any) {
+        if (!stale()) {
+          setError(err?.message || "");
+          setState("off");
+        }
+        return;
       }
-      if (!cancelled) setState("on");
+      if (!sub) return !stale() && setState("off");
+      // Make sure the server still has it (it forgets devices that went away).
+      const res = await serverCall("/api/push/status", { endpoint: sub.endpoint });
+      const known = res?.ok ? (await res.json().catch(() => ({ subscribed: true }))).subscribed : true;
+      if (!known) await serverCall("/api/push/subscribe", { subscription: sub.toJSON() });
+      if (!stale()) setState("on");
     })();
     return () => {
       cancelled = true;
@@ -78,6 +122,7 @@ export function useTradeNotifications() {
 
   const enable = useCallback(async () => {
     if (!supported()) return;
+    acted.current = true;
     setError("");
     setState("working");
     try {
@@ -86,19 +131,16 @@ export function useTradeNotifications() {
         setState(permission === "denied" ? "blocked" : "off");
         return;
       }
-      const keyRes = await apiFetch("/api/push/key");
-      if (!keyRes.ok) throw new Error("The server didn't give its notification key.");
+      const keyRes = await serverCall("/api/push/key");
+      if (!keyRes?.ok) throw new Error("The server didn't give its notification key. Try again.");
       const { publicKey } = await keyRes.json();
-      const reg = await navigator.serviceWorker.ready;
+      // Registers the worker if it's missing, and waits a little longer for it.
+      const reg = await pushWorker({ register: true, waitMs: 15000 });
       const sub =
         (await reg.pushManager.getSubscription()) ??
         (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) }));
-      const res = await apiFetch("/api/push/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription: sub.toJSON() }),
-      });
-      if (!res.ok) throw new Error("The server didn't accept this device.");
+      const res = await serverCall("/api/push/subscribe", { subscription: sub.toJSON() });
+      if (!res?.ok) throw new Error("The server didn't accept this phone. Try again.");
       setState("on");
     } catch (err: any) {
       setError(err?.message || "Couldn't turn notifications on.");
@@ -108,17 +150,17 @@ export function useTradeNotifications() {
 
   const disable = useCallback(async () => {
     if (!supported()) return;
+    acted.current = true;
     setState("working");
+    setError("");
     try {
       const sub = await currentSubscription();
       if (sub) {
-        await apiFetch("/api/push/unsubscribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endpoint: sub.endpoint }),
-        }).catch(() => null);
+        await serverCall("/api/push/unsubscribe", { endpoint: sub.endpoint });
         await sub.unsubscribe();
       }
+    } catch {
+      // Nothing subscribed that can be reached: it's off either way.
     } finally {
       setState("off");
     }
