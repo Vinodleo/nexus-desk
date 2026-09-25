@@ -85,3 +85,23 @@ describe("LedgerLab", () => {
     expect(isResultPromoted(r as any, null)).toBe(false);
   });
 });
+
+describe("LedgerLab progress", () => {
+  it("shows how far training has got, then the result", async () => {
+    service.fetchRealHistoricalCandles.mockResolvedValue([{ isSynthetic: false, sourceExchange: "Binance" }]);
+    let finish!: (r: unknown) => void;
+    service.runRealDataWalkForward.mockImplementation((_c: unknown, _s: unknown, onProgress: (p: any) => void) => {
+      onProgress({ step: "Tuning the stop and target · 72 of 144", fraction: 0.25 });
+      return new Promise((r) => (finish = r));
+    });
+    render(createElement(LedgerLab, { promotedLabModel: null, onPromote: vi.fn(), onRevert: vi.fn() }));
+    fireEvent.click(screen.getByRole("button", { name: "Train on BTC/INR" }));
+    const bar = await screen.findByRole("progressbar", { name: "Training progress" });
+    // 15% for loading the history, then the run's 25% of the rest.
+    expect(bar.getAttribute("aria-valuenow")).toBe("36");
+    expect(screen.getByRole("status").textContent).toMatch(/Tuning the stop and target · 72 of 144/);
+    finish(result());
+    expect(await screen.findByRole("button", { name: "Promote to live" })).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+});

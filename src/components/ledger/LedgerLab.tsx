@@ -7,10 +7,12 @@ import {
   runGlobalMarketTraining,
   runRealDataWalkForward,
   type HistoricalSource,
+  type LabProgress,
   type RealDataLearningResult,
 } from "../../services/realDataBacktestService";
 import { liveMarketStream } from "../../services/liveMarketStreamService";
 import { Card } from "./ui";
+import { GrowBar, staggerDelay } from "./motion";
 import { ExitSettings } from "./ExitSettings";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
@@ -56,13 +58,17 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
   </label>
 );
 
-const CompareRow: React.FC<{ label: string; before: string; after: string; better: boolean | null }> = ({
+const CompareRow: React.FC<{ label: string; before: string; after: string; better: boolean | null; index?: number }> = ({
   label,
   before,
   after,
   better,
+  index = 0,
 }) => (
-  <div className="flex justify-between gap-3 text-[13px] tabular-nums py-1.5 border-b border-line last:border-b-0">
+  <div
+    className="flex justify-between gap-3 text-[13px] tabular-nums py-1.5 border-b border-line last:border-b-0 nx-row-in"
+    style={{ animationDelay: staggerDelay(index + 1, 70) }}
+  >
     <span>{label}</span>
     <span>
       <span className="text-muted">{before}</span> →{" "}
@@ -71,11 +77,45 @@ const CompareRow: React.FC<{ label: string; before: string; after: string; bette
   </div>
 );
 
+/** Reports a part of a run as `from`–`to` of the whole. */
+const withinProgress =
+  (onProgress: (p: LabProgress) => void, from: number, to: number) =>
+  (p: LabProgress) =>
+    onProgress({ step: p.step, fraction: from + (to - from) * p.fraction });
+
+/** How far a training run has got, with what it's doing now. */
+export const LabProgressBar: React.FC<{ progress: LabProgress }> = ({ progress }) => {
+  const pct = Math.round(Math.max(0, Math.min(1, progress.fraction)) * 100);
+  return (
+    <div className="flex flex-col gap-1.5 nx-row-in" role="status" aria-live="polite">
+      <div className="flex justify-between gap-3 text-xs tabular-nums">
+        <span className="text-ink truncate">{progress.step}</span>
+        <span className="text-muted shrink-0">{pct}%</span>
+      </div>
+      <div
+        className="h-2 rounded-full bg-inset overflow-hidden"
+        role="progressbar"
+        aria-label="Training progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+      >
+        <div className="h-full nx-shimmer nx-width-glide rounded-full" style={{ width: `${Math.max(pct, 4)}%` }}>
+          <GrowBar fraction={1} className="bg-accent" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted, onPromote, onRevert, trailProfile, onTrailProfileChange }) => {
   const [source, setSource] = useState<HistoricalSource>("BINANCE");
   const [market, setMarket] = useState("BTCINR");
   const [bars, setBars] = useState(3000);
   const [busy, setBusy] = useState<null | "one" | "all" | "csv">(null);
+  const [progress, setProgress] = useState<LabProgress | null>(null);
+  /** Bumped per result, so a new result's reveal plays again. */
+  const [resultKey, setResultKey] = useState(0);
   const [result, setResult] = useState<RealDataLearningResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmRevert, setConfirmRevert] = useState(false);
@@ -83,20 +123,24 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
   const run = async (kind: "one" | "all" | "csv", work: () => Promise<RealDataLearningResult>) => {
     setBusy(kind);
     setError(null);
+    setProgress({ step: "Starting", fraction: 0 });
     try {
       setResult(await work());
+      setResultKey((k) => k + 1);
     } catch (err: any) {
       console.error("Lab training failed", err);
       setError(err?.message || "Training failed. Try again.");
     } finally {
       setBusy(null);
+      setProgress(null);
     }
   };
 
   const trainOne = () =>
     run("one", async () => {
+      setProgress({ step: `Loading ${marketLabel(market)} history`, fraction: 0.02 });
       const candles = await fetchRealHistoricalCandles(market, "5m", bars, source);
-      const r = await runRealDataWalkForward(candles, market);
+      const r = await runRealDataWalkForward(candles, market, withinProgress(setProgress, 0.15, 1));
       const from = candles[0]?.sourceExchange || (source === "COINBASE" ? "Coinbase" : "Binance");
       r.sourceExchange = from;
       r.isSynthetic = candles.some((c) => c.isSynthetic);
@@ -106,7 +150,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
     });
 
   const trainAll = () =>
-    run("all", () => runGlobalMarketTraining(liveMarketStream.getCryptoSymbols().slice(0, GLOBAL_TRAINING_COINS), bars));
+    run("all", () => runGlobalMarketTraining(liveMarketStream.getCryptoSymbols().slice(0, GLOBAL_TRAINING_COINS), bars, setProgress));
 
   const onCsv = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -120,7 +164,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
         return;
       }
       void run("csv", async () => {
-        const r = await runRealDataWalkForward(candles, file.name.replace(/\.csv$/i, ""));
+        const r = await runRealDataWalkForward(candles, file.name.replace(/\.csv$/i, ""), setProgress);
         r.datasetName = `CSV: ${file.name} (${candles.length} bars)`;
         r.sourceExchange = "Your CSV";
         r.isSynthetic = false;
@@ -265,11 +309,12 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
             <input type="file" accept=".csv,text/csv" onChange={onCsv} className="hidden" aria-label="Upload a CSV of candles" />
           </label>
         </div>
+        {busy && progress && <LabProgressBar progress={progress} />}
         {error && <div className="text-xs text-loss">{error}</div>}
       </Card>
 
       {result && b && l && (
-        <Card aria-label="Result" className="flex flex-col gap-3">
+        <Card key={resultKey} aria-label="Result" className="flex flex-col gap-3 nx-pop-in">
           <div>
             <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em]">Candidate</div>
             <div className="text-[15px] font-semibold mt-0.5">{result.datasetName}</div>
@@ -291,24 +336,27 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
           <div className="flex flex-col">
             <div className="text-xs text-muted pb-1">Before learning → after, on data it didn't train on</div>
             <CompareRow
+              index={0}
               label="Accuracy"
               before={`${b.accuracyPercent}%`}
               after={`${l.accuracyPercent}%`}
               better={l.accuracyPercent === b.accuracyPercent ? null : l.accuracyPercent > b.accuracyPercent}
             />
             <CompareRow
+              index={1}
               label="Win rate"
               before={`${b.winRate}%`}
               after={`${l.winRate}%`}
               better={l.winRate === b.winRate ? null : l.winRate > b.winRate}
             />
             <CompareRow
+              index={2}
               label="Worst drop"
               before={`${b.maxDrawdownPercent}%`}
               after={`${l.maxDrawdownPercent}%`}
               better={l.maxDrawdownPercent === b.maxDrawdownPercent ? null : l.maxDrawdownPercent < b.maxDrawdownPercent}
             />
-            <CompareRow label="Trades" before={`${b.tradesCount}`} after={`${l.tradesCount}`} better={null} />
+            <CompareRow index={3} label="Trades" before={`${b.tradesCount}`} after={`${l.tradesCount}`} better={null} />
           </div>
 
           {result.folds.length > 0 && (
@@ -320,12 +368,13 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
                 </span>
               </div>
               <div className="flex gap-1.5">
-                {result.folds.map((f) => (
+                {result.folds.map((f, i) => (
                   <div
                     key={f.fold}
+                    style={{ animationDelay: `${400 + i * 110}ms` }}
                     title={`${f.testRange}: ${f.outOfSampleAccuracy}% accuracy`}
                     aria-label={`Period ${f.fold} ${f.passed ? "passed" : "failed"}`}
-                    className={`flex-1 h-7 rounded-md flex items-center justify-center ${
+                    className={`flex-1 h-7 rounded-md flex items-center justify-center nx-badge-pop ${
                       f.passed ? "bg-accent-soft text-gain" : "bg-danger-soft text-loss"
                     }`}
                   >
@@ -343,8 +392,12 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
             <div className="flex flex-col gap-1.5">
               <div className="text-[13px] font-semibold">What it learned</div>
               <ul className="list-none m-0 p-0 flex flex-col gap-1.5">
-                {result.distilledLessons.slice(0, 5).map((lesson) => (
-                  <li key={lesson.id} className="text-[13px] leading-relaxed bg-inset rounded-[10px] px-3 py-2">
+                {result.distilledLessons.slice(0, 5).map((lesson, i) => (
+                  <li
+                    key={lesson.id}
+                    className="text-[13px] leading-relaxed bg-inset rounded-[10px] px-3 py-2 nx-row-in"
+                    style={{ animationDelay: `${900 + i * 80}ms` }}
+                  >
                     {lesson.rule}
                   </li>
                 ))}
