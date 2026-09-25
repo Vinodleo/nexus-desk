@@ -239,3 +239,30 @@ describe("Book, Breakdown and Risk motion", () => {
     expect(track().className).toContain("nx-pulse-slow");
   });
 });
+
+describe("trader bars", () => {
+  it("grow from zero, red to the left or green to the right, against the line to trade", async () => {
+    const { TraderBar, barPct } = await import("../../src/components/ledger/LedgerBreakdown");
+    expect(barPct(-1.5)).toBe(0);
+    expect(barPct(0)).toBe(75);
+    expect(barPct(3)).toBe(100);
+    const { container, rerender } = render(createElement(TraderBar, { judgedR: -0.3, ownR: 0.06 }));
+    const fill = () => container.querySelector('[data-testid="trader-bar"] > div:nth-child(2)') as HTMLElement;
+    expect(fill().className).toContain("nx-grow-left");
+    expect(fill().className).toContain("bg-loss");
+    expect(fill().style.width).toBe("15%");
+    rerender(createElement(TraderBar, { judgedR: 0.2, ownR: 0.2 }));
+    expect(fill().className).toContain("bg-gain");
+    expect(fill().style.left).toBe("75%");
+  });
+
+  it("flip their chip between Paused and Trading when it changes on screen, not when first shown", async () => {
+    const { StatusChip } = await import("../../src/components/ledger/LedgerBreakdown");
+    const { container, rerender } = render(createElement(StatusChip, { paused: true }));
+    expect(container.textContent).toBe("Paused");
+    expect(container.firstElementChild!.className).not.toContain("nx-flip-in");
+    rerender(createElement(StatusChip, { paused: false }));
+    expect(container.textContent).toBe("Trading");
+    expect(container.firstElementChild!.className).toContain("nx-flip-in");
+  });
+});
