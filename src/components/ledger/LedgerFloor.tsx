@@ -312,15 +312,25 @@ export const TodayLine: React.FC<{ closes: { at: number; pnl: number }[]; openPn
   const end = pts[pts.length - 1][1];
   const tone = end >= 0 ? "text-gain" : "text-loss";
   return (
-    <div className={`relative ${tone}`} data-testid="today-line">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block w-full h-14" aria-label="Today's P&L through the day">
-        <line x1="0" x2={W} y1={y(0)} y2={y(0)} className="stroke-line" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
-        <path d={d} pathLength={1} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="nx-draw" />
-      </svg>
-      <span className="absolute w-2 h-2 -ml-1 -mt-1 rounded-full bg-current" style={{ left: "100%", top: `${(y(end) / H) * 100}%` }}>
-        <span aria-hidden="true" className="absolute inset-0 rounded-full bg-current nx-ring" />
-      </span>
-      <div className="flex justify-between text-[11px] text-muted mt-1">
+    <div className={tone} data-testid="today-line">
+      {/* The chart and its "now" dot share this box, so the dot sits on the line's end. The dot stays inside the
+          right edge; the labels sit below, clear of it. */}
+      <div className="relative h-14 pr-1.5">
+        <div className="h-full nx-reveal">
+          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block w-full h-full" aria-label="Today's P&L through the day">
+            <line x1="0" x2={W} y1={y(0)} y2={y(0)} className="stroke-line" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
+            <path d={d} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          </svg>
+        </div>
+        <span
+          data-testid="today-dot"
+          className="absolute right-0 w-2.5 h-2.5 -mt-[5px] rounded-full bg-current"
+          style={{ top: `${(y(end) / H) * 100}%` }}
+        >
+          <span aria-hidden="true" className="absolute inset-0 rounded-full bg-current nx-ring" />
+        </span>
+      </div>
+      <div className="flex justify-between text-[11px] text-muted mt-1.5">
         <span>Midnight</span>
         <span>Now</span>
       </div>

@@ -319,12 +319,12 @@ html, body {
   100% { opacity: 0; transform: translate(-50%, 0); }
 }
 .nx-tag-pop { animation: nx-tag-pop 3200ms ease-out both; }
-/* A line chart that draws itself (the path needs pathLength="1"). */
-@keyframes nx-draw {
-  from { stroke-dashoffset: 1; }
-  to { stroke-dashoffset: 0; }
+/* A chart that draws itself left to right (revealed, so it works for any line). */
+@keyframes nx-reveal {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
 }
-.nx-draw { stroke-dasharray: 1; animation: nx-draw 1400ms ease-out both; }
+.nx-reveal { animation: nx-reveal 1400ms ease-out both; }
 /* A dot that pulses a ring now and then (today's line, a market opening). */
 @keyframes nx-ring {
   0% { transform: scale(1); opacity: 0.45; }
@@ -347,7 +347,7 @@ html.nx-theme-fade, html.nx-theme-fade *, html.nx-theme-fade *::before, html.nx-
 
 @media (prefers-reduced-motion: reduce) {
   .nx-item-enter > *::after { animation: none; display: none; }
-  .nx-item-close, .nx-tag-pop, .nx-draw, .nx-ring, .nx-ring-once, .nx-flip-in, .nx-grow-left { animation: none; }
+  .nx-item-close, .nx-tag-pop, .nx-reveal, .nx-ring, .nx-ring-once, .nx-flip-in, .nx-grow-left { animation: none; }
   .nx-item-close { display: none; }
   .nx-glide-left { transition: none; }
 }
