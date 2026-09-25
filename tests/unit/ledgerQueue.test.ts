@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createElement } from "react";
+import { act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LedgerQueue, describeProposal, type LedgerQueueProps } from "../../src/components/ledger/LedgerQueue";
+import { LedgerQueue, UNDO_MS, describeProposal, type LedgerQueueProps } from "../../src/components/ledger/LedgerQueue";
+import { swipeOutcome } from "../../src/components/ledger/SwipeCard";
 import type { TradeProposal } from "../../src/types";
 
 afterEach(cleanup);
@@ -112,5 +114,132 @@ describe("LedgerQueue", () => {
     expect(p.onScan).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("switch", { name: "Keep scanning" }));
     expect(p.onContinuousScanChange).toHaveBeenCalledWith(true);
+  });
+});
+
+// Swipe right to approve, left to skip; either waits behind Undo first.
+
+// jsdom has no PointerEvent; a MouseEvent with a pointer id is enough here.
+if (typeof window !== "undefined" && !(window as any).PointerEvent) {
+  (window as any).PointerEvent = class extends MouseEvent {
+    pointerId: number;
+    pointerType: string;
+    constructor(type: string, init: any = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 1;
+      this.pointerType = init.pointerType ?? "touch";
+    }
+  };
+}
+
+function swipe(dx: number, dy = 0) {
+  const card = screen.getByTestId("swipe-card");
+  fireEvent.pointerDown(card, { pointerId: 1, clientX: 200, clientY: 300 });
+  for (let k = 1; k <= 4; k++) fireEvent.pointerMove(card, { pointerId: 1, clientX: 200 + (dx * k) / 4, clientY: 300 + (dy * k) / 4 });
+  fireEvent.pointerUp(card, { pointerId: 1, clientX: 200 + dx, clientY: 300 + dy });
+  act(() => vi.advanceTimersByTime(300)); // flies off
+}
+
+describe("swiping", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("commits past a clear distance or a quick flick, and springs back otherwise", () => {
+    expect(swipeOutcome(150, 320, 0.1)).toBe("right");
+    expect(swipeOutcome(-150, 320, -0.1)).toBe("left");
+    expect(swipeOutcome(90, 320, 0.1)).toBeNull();
+    expect(swipeOutcome(70, 320, 1)).toBe("right");
+    expect(swipeOutcome(40, 320, 2)).toBeNull();
+    // A flick back the other way doesn't count.
+    expect(swipeOutcome(70, 320, -1)).toBeNull();
+  });
+
+  it("approves after the undo time, not before", () => {
+    vi.useFakeTimers();
+    const p = props([proposal("b", "ETH/INR", 0.61)]);
+    render(createElement(LedgerQueue, p));
+    swipe(180);
+    expect(screen.getByRole("status").textContent).toMatch(/Approving Buy ETH\/INR/);
+    expect(screen.queryByRole("article", { name: "Buy ETH/INR" })).toBeNull();
+    // The wait starts once the card has flown off (inside swipe()).
+    act(() => vi.advanceTimersByTime(UNDO_MS - 400));
+    expect(p.onApprove).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(400));
+    expect(p.onApprove).toHaveBeenCalledTimes(1);
+    expect((p.onApprove as any).mock.calls[0][0].id).toBe("b");
+  });
+
+  it("puts the card back on Undo, and nothing is approved", () => {
+    vi.useFakeTimers();
+    const p = props([proposal("b", "ETH/INR", 0.61)]);
+    render(createElement(LedgerQueue, p));
+    swipe(180);
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("article", { name: "Buy ETH/INR" })).toBeTruthy();
+    act(() => vi.advanceTimersByTime(UNDO_MS * 2));
+    expect(p.onApprove).not.toHaveBeenCalled();
+    expect(p.onReject).not.toHaveBeenCalled();
+  });
+
+  it("skips with a swipe left, also after the undo time", () => {
+    vi.useFakeTimers();
+    const p = props([proposal("b", "ETH/INR", 0.61)]);
+    render(createElement(LedgerQueue, p));
+    swipe(-180);
+    expect(screen.getByRole("status").textContent).toMatch(/Skipping Buy ETH\/INR/);
+    act(() => vi.advanceTimersByTime(UNDO_MS));
+    expect(p.onReject).toHaveBeenCalledWith("b", "Skipped by you in the queue");
+  });
+
+  it("ignores a short drag, a scroll, and the tap that ends a swipe", () => {
+    vi.useFakeTimers();
+    const p = props([proposal("b", "ETH/INR", 0.61)]);
+    render(createElement(LedgerQueue, p));
+    swipe(60);
+    swipe(30, 200);
+    expect(screen.queryByRole("status")).toBeNull();
+    // A drag that ends over the Approve button doesn't also press it.
+    const button = screen.getByRole("button", { name: "Approve paper trade" });
+    fireEvent.pointerDown(button, { pointerId: 2, clientX: 100, clientY: 300 });
+    fireEvent.pointerMove(button, { pointerId: 2, clientX: 140, clientY: 300 });
+    fireEvent.pointerUp(button, { pointerId: 2, clientX: 140, clientY: 300 });
+    fireEvent.click(button);
+    expect(p.onApprove).not.toHaveBeenCalled();
+    // The next real tap works.
+    fireEvent.pointerDown(button, { pointerId: 3, clientX: 100, clientY: 300 });
+    fireEvent.pointerUp(button, { pointerId: 3, clientX: 100, clientY: 300 });
+    fireEvent.click(button);
+    expect(p.onApprove).toHaveBeenCalledTimes(1);
+  });
+
+  it("won't approve a live trade by swipe; the button does that", () => {
+    vi.useFakeTimers();
+    const p = props([proposal("b", "ETH/INR", 0.61)], { isLive: true });
+    render(createElement(LedgerQueue, p));
+    expect(screen.getByText(/live trades are approved with the button/)).toBeTruthy();
+    swipe(220);
+    act(() => vi.advanceTimersByTime(UNDO_MS * 2));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(p.onApprove).not.toHaveBeenCalled();
+  });
+
+  it("lets a waiting swipe through when leaving the Queue or swiping the next card", () => {
+    vi.useFakeTimers();
+    const p = props([proposal("a", "XRP/INR", 0.55), proposal("b", "ETH/INR", 0.61)]);
+    const { unmount } = render(createElement(LedgerQueue, p));
+    swipe(180); // ETH, the best, is on top
+    swipe(-180); // then XRP
+    expect((p.onApprove as any).mock.calls.map((c: any) => c[0].id)).toEqual(["b"]);
+    unmount();
+    expect(p.onReject).toHaveBeenCalledWith("a", "Skipped by you in the queue");
+  });
+
+  it("drops it if the proposal expired while waiting", () => {
+    vi.useFakeTimers();
+    const p = props([proposal("b", "ETH/INR", 0.61)]);
+    const { rerender } = render(createElement(LedgerQueue, p));
+    swipe(180);
+    rerender(createElement(LedgerQueue, { ...p, proposals: [proposal("b", "ETH/INR", 0.61, { status: "EXPIRED" as any })] }));
+    act(() => vi.advanceTimersByTime(UNDO_MS));
+    expect(p.onApprove).not.toHaveBeenCalled();
   });
 });

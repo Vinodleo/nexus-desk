@@ -1,9 +1,15 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Clock, ChevronRight } from "lucide-react";
 import type { TradeProposal } from "../../types";
 import { DataQualityNotice } from "../DataQualityNotice";
 import { RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPrice } from "./format";
+import { SwipeCard } from "./SwipeCard";
+
+/** How long a swiped proposal waits, with Undo, before it's approved or skipped. */
+export const UNDO_MS = 5000;
+
+type PendingSwipe = { proposal: TradeProposal; action: "approve" | "skip"; seq: number };
 
 export interface LedgerQueueProps {
   proposals: TradeProposal[];
@@ -146,6 +152,35 @@ const ProposalCard: React.FC<{
   );
 };
 
+/** "Approving Buy SOL/INR · Undo", with a bar running down to when it goes through. */
+const UndoBar: React.FC<{ pending: PendingSwipe; onUndo: () => void }> = ({ pending, onUndo }) => {
+  const action = describeProposal(pending.proposal).action;
+  return (
+    <div className="fixed inset-x-0 bottom-24 z-40 flex justify-center px-4 pointer-events-none">
+      <div
+        role="status"
+        className="nx-snack-in pointer-events-auto relative overflow-hidden w-full max-w-sm flex items-center justify-between gap-3 pl-4 pr-2 py-2 rounded-2xl bg-ink text-canvas shadow-lg"
+      >
+        <span className="min-w-0 text-[13px] truncate">
+          {pending.action === "approve" ? "Approving" : "Skipping"} <strong>{action}</strong>
+        </span>
+        <button
+          type="button"
+          onClick={onUndo}
+          className="shrink-0 min-h-9 px-3.5 rounded-full text-[13px] font-semibold text-accent-soft hover:bg-canvas/10 cursor-pointer"
+        >
+          Undo
+        </button>
+        <span
+          aria-hidden="true"
+          className="absolute left-0 bottom-0 h-[2px] w-full bg-canvas/50 nx-countdown"
+          style={{ animationDuration: `${UNDO_MS}ms` }}
+        />
+      </div>
+    </div>
+  );
+};
+
 export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
   // Highest chance of a win first; expected value breaks ties.
   const waiting = useMemo(
@@ -164,22 +199,77 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
     [props.proposals]
   );
 
+  const [pending, setPending] = useState<PendingSwipe | null>(null);
+  const [returnedId, setReturnedId] = useState<string | null>(null);
+  const pendingRef = useRef<PendingSwipe | null>(null);
+  pendingRef.current = pending;
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const focused = waiting.find((p) => p.id === focusedId) ?? waiting[0];
-  const others = waiting.filter((p) => p !== focused);
-  const heldCount = waiting.filter((p) => p.status === "DEFERRED").length;
-  const readyCount = waiting.length - heldCount;
+  const shown = waiting.filter((p) => p.id !== pending?.proposal.id);
+  const focused = shown.find((p) => p.id === focusedId) ?? shown[0];
+  const others = shown.filter((p) => p !== focused);
+  const heldCount = shown.filter((p) => p.status === "DEFERRED").length;
+  const readyCount = shown.length - heldCount;
 
   // Once a proposal leaves the queue, forget that it was being approved.
   useEffect(() => {
     if (busyId && !waiting.some((p) => p.id === busyId)) setBusyId(null);
   }, [busyId, waiting]);
 
+  // A swipe waits UNDO_MS behind an Undo bar before it counts. Leaving the
+  // Queue, or swiping another card, lets the waiting one go through at once.
+  const latest = useRef(props);
+  latest.current = props;
+  const seq = useRef(0);
+
+  const carryOut = useCallback((sw: PendingSwipe) => {
+    const { proposals, onApprove, onReject } = latest.current;
+    // Only if it's still waiting: it may have expired or been handled meanwhile.
+    const now = proposals.find((p) => p.id === sw.proposal.id && (p.status === "PENDING_APPROVAL" || p.status === "DEFERRED"));
+    if (!now) return;
+    if (sw.action === "approve") onApprove(now);
+    else onReject(now.id, "Skipped by you in the queue");
+  }, []);
+
+  const swiped = (proposal: TradeProposal, action: PendingSwipe["action"]) => {
+    if (pendingRef.current) carryOut(pendingRef.current);
+    const next = { proposal, action, seq: ++seq.current };
+    pendingRef.current = next;
+    setPending(next);
+    setFocusedId(null);
+  };
+
+  useEffect(() => {
+    if (!pending) return;
+    const t = setTimeout(() => {
+      if (pendingRef.current?.seq !== pending.seq) return;
+      pendingRef.current = null;
+      setPending(null);
+      carryOut(pending);
+    }, UNDO_MS);
+    return () => clearTimeout(t);
+  }, [pending, carryOut]);
+
+  useEffect(
+    () => () => {
+      if (pendingRef.current) carryOut(pendingRef.current);
+    },
+    [carryOut]
+  );
+
+  const undo = () => {
+    const sw = pendingRef.current;
+    if (!sw) return;
+    pendingRef.current = null;
+    setPending(null);
+    setFocusedId(sw.proposal.id);
+    setReturnedId(sw.proposal.id);
+  };
+
   const subtitle =
-    waiting.length === 0
+    shown.length === 0
       ? "Nothing waiting for you"
-      : `${waiting.length} waiting${heldCount > 0 ? ` · ${heldCount} held by autopilot` : ""}`;
+      : `${shown.length} waiting${heldCount > 0 ? ` · ${heldCount} held by autopilot` : ""}`;
 
   return (
     <div className="font-ui text-ink flex flex-col gap-4 pb-4 select-none">
@@ -205,17 +295,30 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
       )}
 
       {focused ? (
-        <ProposalCard
-          key={focused.id}
-          proposal={focused}
-          busy={busyId === focused.id}
-          isLive={Boolean(props.isLive)}
-          onApprove={() => {
-            setBusyId(focused.id);
-            props.onApprove(focused);
-          }}
-          onSkip={() => props.onReject(focused.id, "Skipped by you in the queue")}
-        />
+        <div key={focused.id} className={`flex flex-col gap-2${returnedId === focused.id ? " nx-pop-in" : ""}`}>
+          {/* Swipe right to approve (paper only: live orders need the button), left to skip. */}
+          <SwipeCard
+            onSwipeRight={props.isLive ? undefined : () => swiped(focused, "approve")}
+            onSwipeLeft={() => swiped(focused, "skip")}
+            rightLabel="Approve"
+            leftLabel="Skip"
+            disabled={busyId === focused.id}
+          >
+            <ProposalCard
+              proposal={focused}
+              busy={busyId === focused.id}
+              isLive={Boolean(props.isLive)}
+              onApprove={() => {
+                setBusyId(focused.id);
+                props.onApprove(focused);
+              }}
+              onSkip={() => props.onReject(focused.id, "Skipped by you in the queue")}
+            />
+          </SwipeCard>
+          <div className="text-center text-[11px] text-muted">
+            {props.isLive ? "Swipe left to skip · live trades are approved with the button" : "Swipe right to approve · left to skip"}
+          </div>
+        </div>
       ) : (
         <section className="bg-surface border border-line rounded-[18px] p-[18px] flex flex-col gap-2">
           <h2 className="m-0 font-display text-xl font-semibold">
@@ -255,6 +358,8 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
           })}
         </ul>
       )}
+
+      {pending && <UndoBar key={pending.seq} pending={pending} onUndo={undo} />}
 
       {recentlyApproved.length > 0 && (
         <section aria-label="Recently approved" className="flex flex-col">

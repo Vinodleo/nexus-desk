@@ -197,13 +197,19 @@ html, body {
 .nx-tab-from-left { animation: nx-tab-from-left 220ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
 .nx-tab-bounce { display: inline-block; animation: nx-tab-bounce 420ms ease-out both; }
 .nx-badge-pop { animation: nx-badge-pop 320ms ease-out both; }
+/* The Queue's Undo bar rises from the bottom. */
+@keyframes nx-snack-in {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.nx-snack-in { animation: nx-snack-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
 .nx-tab-indicator { transition: transform 300ms cubic-bezier(0.3, 0.9, 0.3, 1.15); }
 
 @media (prefers-reduced-motion: reduce) {
   .nx-drop-in, .nx-lift-out, .nx-pop-in, .nx-fade-in, .nx-row-in, .nx-tick-in, .nx-glow,
   .nx-flash-up, .nx-flash-down, .nx-item-enter, .nx-item-leave,
   .nx-sheet-in, .nx-sheet-out, .nx-backdrop-in, .nx-backdrop-out, .nx-page-in, .nx-page-out,
-  .nx-tab-from-right, .nx-tab-from-left, .nx-tab-bounce, .nx-badge-pop { animation: none; }
+  .nx-tab-from-right, .nx-tab-from-left, .nx-tab-bounce, .nx-badge-pop, .nx-snack-in { animation: none; }
   .nx-tab-indicator { transition: none; }
   .nx-drop-in { transform: translate(-50%, 0); }
 }
