@@ -5,6 +5,7 @@ import { MIN_EDGE_R } from "../../services/calibration";
 import { Card, StatTile } from "./ui";
 import { EXIT_LABEL, formatMoney, pnlTone, stopSlip } from "./format";
 import { GrowBar } from "./motion";
+import { MIN_CONDITION_SETUPS, type ConditionBreakdown } from "../../services/conditionStats";
 
 // Where the book's money goes: average win against average loss, and the
 // same by trader, coin and exit. Plus the scanner's own record of each
@@ -116,6 +117,8 @@ interface EdgeRow {
   avgLossR: number;
   avgR: number;
   judgedR: number;
+  /** What the trader's record in the other market adds to judgedR (0 with none there). */
+  otherMarketR?: number;
 }
 interface EdgeTable {
   profile: string;
@@ -130,14 +133,18 @@ interface CoinActivity {
   coins: { symbol: string; activity: number | null; spreadPct: number | null }[];
 }
 
-/** What the server measures: each trader's record with your exits, and each coin's trading costs. */
+/** What the server measures: each trader's record with your exits, each coin's trading costs, and when setups win. */
 function useScannerMeasures() {
-  const [measures, setMeasures] = useState<{ table: EdgeTable | null; activity: CoinActivity | null }>({ table: null, activity: null });
+  const [measures, setMeasures] = useState<{ table: EdgeTable | null; activity: CoinActivity | null; conditions: ConditionBreakdown | null }>({
+    table: null,
+    activity: null,
+    conditions: null,
+  });
   useEffect(() => {
     let cancelled = false;
     apiFetch("/api/scanner/exit-edge")
       .then((r) => (r.ok ? r.json() : null))
-      .then((body) => !cancelled && setMeasures({ table: body?.table ?? null, activity: body?.activity ?? null }))
+      .then((body) => !cancelled && setMeasures({ table: body?.table ?? null, activity: body?.activity ?? null, conditions: body?.conditions ?? null }))
       .catch(() => {});
     return () => {
       cancelled = true;
@@ -186,7 +193,9 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
       <div className="text-sm font-semibold">Traders with your exits</div>
       <div className="text-xs text-muted">
         Every setup each trader found over the last day ({table.symbols} markets), played out with your {table.profile} trailing stop, the half
-        banked at +1R and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)} doesn't trade until they recover.
+        banked at +1R and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)} doesn't trade until they recover. Each
+        market's result is judged together with the trader's record in the other market (8 setups' worth; a good one counts for half), so a
+        few lucky setups can't outweigh a long losing record.
       </div>
       {markets.map((m) => {
         const rows = table.rows.filter((r) => r.market === m);
@@ -209,6 +218,10 @@ const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
                       <div className="text-sm truncate">{r.trader}</div>
                       <div className="text-xs text-muted tabular-nums">
                         {r.trades} setups · {r.winPct}% won · win {rSigned(r.avgWinR)} · loss {rSigned(r.avgLossR)}
+                      </div>
+                      <div className="text-xs text-muted tabular-nums">
+                        judged {rSigned(r.judgedR)}
+                        {r.otherMarketR ? ` with their ${m === "crypto" ? "stocks" : "coins"} record (${rSigned(r.otherMarketR)})` : ""}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
@@ -253,6 +266,85 @@ export const WinRateBar: React.FC<{ winPct: number; breakEvenPct: number }> = ({
         <span>break-even {breakEvenPct}%</span>
       </div>
     </div>
+  );
+};
+
+type ConditionMarket = "all" | "coins" | "stocks";
+
+/**
+ * Every followed setup by the conditions it appeared in: where setups have
+ * an edge and where they lose, coins and stocks pooled or each.
+ */
+export const WhenSetupsWin: React.FC<{ data: ConditionBreakdown | null }> = ({ data }) => {
+  const [market, setMarket] = useState<ConditionMarket>("all");
+  if (!data || data.setups === 0) return null;
+  const since = data.since ? new Date(data.since).toLocaleDateString([], { day: "numeric", month: "short" }) : null;
+  return (
+    <Card aria-label="When setups win" className="flex flex-col gap-2">
+      <div className="text-sm font-semibold">When setups win</div>
+      <div className="text-xs text-muted">
+        Every setup the scanner followed, taken or not ({data.setups}
+        {since ? ` since ${since}` : ""}), grouped by the conditions it appeared in: how often it ended ahead and its average after fees
+        and spreads. Coins and stocks together, or each. Under {MIN_CONDITION_SETUPS} setups is too early to read.
+      </div>
+      <div className="flex gap-2" role="group" aria-label="Market">
+        {(
+          [
+            ["all", "Both"],
+            ["coins", "Coins"],
+            ["stocks", "Stocks"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={market === id}
+            onClick={() => setMarket(id)}
+            className={`min-h-8 px-3 rounded-full border text-xs font-semibold cursor-pointer ${
+              market === id ? "bg-accent-soft border-accent text-accent" : "border-line text-ink"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {data.groups.map((g) => {
+        const rows = g.rows.map((r) => ({ label: r.label, cell: r[market] })).filter((r) => r.cell.setups > 0);
+        if (rows.length === 0) return null;
+        const biggest = Math.max(...rows.map((r) => Math.abs(r.cell.avgR)), 0);
+        return (
+          <div key={g.id} className="flex flex-col" aria-label={g.title}>
+            <div className="text-xs font-semibold text-muted mt-2">{g.title}</div>
+            <ul className="m-0 p-0 list-none flex flex-col">
+              {rows.map((r, i) => {
+                const enough = r.cell.setups >= MIN_CONDITION_SETUPS;
+                const edge = enough && r.cell.avgR >= MIN_EDGE_R;
+                return (
+                  <li key={r.label} className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 py-1.5 border-b border-line last:border-b-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm truncate">{r.label}</div>
+                      <div className="text-xs text-muted tabular-nums">
+                        {r.cell.setups} setups · {r.cell.winPct}% ahead{!enough ? " · too early" : edge ? " · has an edge" : ""}
+                      </div>
+                    </div>
+                    <div className={`text-sm font-semibold tabular-nums shrink-0 ${enough ? pnlTone(r.cell.avgR) : "text-muted"}`}>
+                      {rSigned(r.cell.avgR)}
+                    </div>
+                    <div className="basis-full h-1 rounded-full bg-inset overflow-hidden" aria-hidden="true">
+                      <GrowBar
+                        fraction={biggest > 0 ? Math.abs(r.cell.avgR) / biggest : 0}
+                        className={!enough ? "bg-line" : r.cell.avgR >= 0 ? "bg-gain" : "bg-loss"}
+                        delayMs={i * 50}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
+    </Card>
   );
 };
 
@@ -324,6 +416,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
       )}
 
       <TraderRecord table={measures.table} />
+      <WhenSetupsWin data={measures.conditions} />
       <Rows title="By trader" rows={byTrader} />
       <Rows title="By coin" rows={byCoin} limit={8} />
       <CoinCosts activity={measures.activity} />

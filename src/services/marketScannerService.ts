@@ -394,6 +394,7 @@ export async function scanSingleMarket(
         scoreVersion: scorer === "heuristic" ? HEURISTIC_SCORE_VERSION : undefined,
         features: signalFeatures,
         regime,
+        btcChange1hPct: options.marketTrend?.change1hPct,
       }
     );
     shadows.push(shadow);

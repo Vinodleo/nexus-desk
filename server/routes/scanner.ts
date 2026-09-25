@@ -3,7 +3,8 @@ import type { AuthedRequest } from "../auth";
 import type { PromotedLabModel } from "../../src/types";
 import { validate, deskStateBody, scannerReportsQuery } from "../validation";
 import { getDeskState, setDeskState } from "../scanner/deskState";
-import { coinActivity, exitEdgeTable, reportsSince, scanNow, scannerStatus, shadowsFor } from "../scanner/scannerService";
+import { coinActivity, exitEdgeTable, reportsSince, scanNow, scannerStatus, shadowsFor, typicalSpread } from "../scanner/scannerService";
+import { conditionBreakdown } from "../../src/services/conditionStats";
 import { MIN_TRADING_ACTIVITY } from "../../src/services/tradingActivity";
 import { expectancyRows, MIN_MARKET_TRADES } from "../../src/services/exitExpectancy";
 import { getEvents } from "../eventCalendar";
@@ -46,11 +47,14 @@ router.get("/api/scanner/shadows", (req: Request, res: Response) => {
 router.get("/api/scanner/exit-edge", (req: Request, res: Response) => {
   const table = exitEdgeTable(uidOf(req));
   const activity = { minActivity: MIN_TRADING_ACTIVITY, coins: coinActivity() };
-  if (!table) return res.json({ success: true, table: null, activity });
+  // When setups win: this user's followed setups by condition, after fees and spreads.
+  const conditions = conditionBreakdown(shadowsFor(uidOf(req)), typicalSpread);
+  if (!table) return res.json({ success: true, table: null, activity, conditions });
   res.json({
     success: true,
     table: { profile: table.profile, measuredAt: table.measuredAt, symbols: table.symbols, minMarketTrades: MIN_MARKET_TRADES, rows: expectancyRows(table) },
     activity,
+    conditions,
   });
 });
 
