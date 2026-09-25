@@ -89,9 +89,17 @@ describe("measuring traders with the live exits", () => {
     const t0 = Date.now();
     const a = getExpectancyTable(["SOL/INR"], getBars, "tight", t0);
     expect(getExpectancyTable(["SOL/INR"], getBars, "tight", t0 + 60_000)).toBe(a);
-    expect(getBars).toHaveBeenCalledTimes(1);
     expect(getExpectancyTable(["SOL/INR"], getBars, "patient", t0)).not.toBe(a);
     expect(getExpectancyTable(["SOL/INR"], getBars, "tight", t0 + EXPECTANCY_TTL_MS)).not.toBe(a);
+  });
+
+  it("is measured again at once when more markets have candles (stocks loaded after a restart)", () => {
+    const bars = candles(300, (i) => 10000 * Math.pow(1.002, i));
+    const t0 = Date.now() + 10 * EXPECTANCY_TTL_MS;
+    const coinsOnly = getExpectancyTable(["SOL/INR", "SBIN"], (s) => (s === "SOL/INR" ? bars : null), "balanced", t0);
+    const both = getExpectancyTable(["SOL/INR", "SBIN"], () => bars, "balanced", t0 + 60_000);
+    expect(both).not.toBe(coinsOnly);
+    expect(getExpectancyTable(["SOL/INR", "SBIN"], () => bars, "balanced", t0 + 120_000)).toBe(both);
   });
 });
 
