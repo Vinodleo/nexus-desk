@@ -393,8 +393,9 @@ export function closedTradesFor(uid: string): DaemonClosedTrade[] {
  * Starts guarding a position the server's autopilot opened, and tells the
  * owner's open apps. It stays guarded until the app has it (see the sync).
  */
-export function openServerPosition(uid: string, position: DaemonPosition): void {
-  const pos: DaemonPosition = { ...position, userId: uid, isLiveOrder: false, openedByServer: true, clientSeen: false };
+export function openServerPosition(uid: string, position: DaemonPosition, opts: { live?: boolean } = {}): void {
+  // Live only when the server itself just placed and registered the order (server/liveEntry.ts).
+  const pos: DaemonPosition = { ...position, userId: uid, isLiveOrder: !!opts.live, openedByServer: true, clientSeen: false };
   daemonPositions.set(pos.id, pos);
   saveDaemonStateToDisk();
   broadcastToUser(uid, { type: "POSITION_OPENED", data: pos });

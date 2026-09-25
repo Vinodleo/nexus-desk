@@ -6,7 +6,8 @@ import { useAuth } from "../../context/AuthContext";
 import { usePWAInstall } from "../../hooks/usePWAInstall";
 import { RoundIconButton, Switch } from "./ui";
 import type { NotifyState } from "../../hooks/useTradeNotifications";
-import { EXPOSURE_CHOICES, ORDER_VALUE_CHOICES, type RiskLimits } from "../../hooks/useRiskPolicy";
+import type { RiskLimits } from "../../hooks/useRiskPolicy";
+import { AMOUNT_CHOICES, MAX_TRADES_CHOICES, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
 import { formatMoney } from "./format";
 import type { ServerStatus } from "../../hooks/useServerStatus";
 import { usePresence } from "./motion";
@@ -115,6 +116,71 @@ const AppVersionRow: React.FC = () => {
   );
 };
 
+/**
+ * Amount per trade and trades open at once, for one market. Changeable any
+ * time, paper or live; the server's autopilot uses them too.
+ */
+const MarketLimitRows: React.FC<{
+  market: MarketKey;
+  title: string;
+  venue: string;
+  limits: MarketLimits;
+  onChange: (next: MarketLimits) => void;
+  /** In Live mode, the server's cap per live order: a larger amount is flagged. */
+  liveCapInr?: number;
+}> = ({ market, title, venue, limits, onChange, liveCapInr }) => {
+  const mine = limits[market];
+  const set = (patch: Partial<MarketLimits[MarketKey]>) => onChange({ ...limits, [market]: { ...mine, ...patch } });
+  const overCap = liveCapInr !== undefined && mine.amountPerTradeInr > liveCapInr;
+  const withCurrent = (choices: number[], current: number) => (choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b));
+  return (
+    <>
+      <Row
+        label={`${title}: amount per trade`}
+        sub={
+          overCap ? (
+            <span className="text-loss">
+              Above the server's {formatMoney(liveCapInr!, { decimals: 0 })} cap per live order: live orders this size are refused
+            </span>
+          ) : (
+            venue
+          )
+        }
+      >
+        <select
+          aria-label={`${title}: amount per trade`}
+          value={mine.amountPerTradeInr}
+          onChange={(e) => set({ amountPerTradeInr: Number(e.target.value) })}
+          className={selectClass}
+        >
+          {withCurrent(AMOUNT_CHOICES, mine.amountPerTradeInr).map((v) => (
+            <option key={v} value={v}>
+              {formatMoney(v, { decimals: 0 })}
+            </option>
+          ))}
+        </select>
+      </Row>
+      <Row
+        label={`${title}: trades at once`}
+        sub={`Up to ${formatMoney(mine.amountPerTradeInr * mine.maxOpenTrades, { decimals: 0 })} in ${title.toLowerCase()} at a time`}
+      >
+        <select
+          aria-label={`${title}: trades at once`}
+          value={mine.maxOpenTrades}
+          onChange={(e) => set({ maxOpenTrades: Number(e.target.value) })}
+          className={selectClass}
+        >
+          {withCurrent(MAX_TRADES_CHOICES, mine.maxOpenTrades).map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </Row>
+    </>
+  );
+};
+
 export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
   const { currentUser, userRole, logout } = useAuth();
   const pwa = usePWAInstall();
@@ -216,39 +282,23 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               <span>{formatMoney(liveRisk.maxOrderNotionalInr, { decimals: 0 })}</span>
             </Row>
           )}
-          <Row label="Largest trade" sub="Most money in any one position">
-            <select
-              aria-label="Largest trade"
-              value={props.riskLimits.maxOrderValueInr}
-              onChange={(e) => props.onRiskLimitsChange({ maxOrderValueInr: Number(e.target.value) })}
-              className={selectClass}
-            >
-              {ORDER_VALUE_CHOICES.map((v) => (
-                <option key={v} value={v}>
-                  {formatMoney(v, { decimals: 0 })}
-                </option>
-              ))}
-            </select>
-          </Row>
-          <Row label="Most in open trades" sub="Share of your equity across all positions">
-            <select
-              aria-label="Most in open trades"
-              value={props.riskLimits.maxAllowedExposureFraction}
-              onChange={(e) => props.onRiskLimitsChange({ maxAllowedExposureFraction: Number(e.target.value) })}
-              className={selectClass}
-            >
-              {EXPOSURE_CHOICES.map((v) => (
-                <option key={v} value={v}>
-                  {Math.round(v * 100)}%
-                </option>
-              ))}
-            </select>
-          </Row>
+          <MarketLimitRows
+            market="coins"
+            title="Coins"
+            venue="CoinDCX"
+            limits={props.riskLimits.marketLimits}
+            onChange={(marketLimits) => props.onRiskLimitsChange({ marketLimits })}
+            liveCapInr={isLive && typeof liveRisk?.maxOrderNotionalInr === "number" ? liveRisk.maxOrderNotionalInr : undefined}
+          />
+          <MarketLimitRows
+            market="stocks"
+            title="Stocks"
+            venue={isLive ? "Angel One · paper only for now" : "Angel One"}
+            limits={props.riskLimits.marketLimits}
+            onChange={(marketLimits) => props.onRiskLimitsChange({ marketLimits })}
+          />
           <Row label="Daily loss limit">
             <span>{formatMoney(props.dailyLossLimit, { decimals: 0 })}</span>
-          </Row>
-          <Row label="Max open positions">
-            <span>{props.maxOpenPositions}</span>
           </Row>
         </Group>
 

@@ -167,12 +167,16 @@ describe("what the server did while the app was closed", () => {
 });
 
 describe("autopilot in Live mode", () => {
-  it("says it's paper only and places no real orders", () => {
-    const { container } = render(createElement(LedgerFloor, props({ isLive: true, autopilotOn: true, scanLocation: "server" })));
-    const card = container.querySelector('[aria-label="Autopilot"]')!;
-    expect(card.textContent).toMatch(/Paper only · in Live mode it places no trades: you approve each real order/);
-    // No claim that the server trades for you.
-    expect(card.textContent).not.toMatch(/runs on the server/);
+  it("says the server places real orders when it allows live orders, and that trades wait when it doesn't", () => {
+    const { container, rerender } = render(
+      createElement(LedgerFloor, props({ isLive: true, autopilotOn: true, scanLocation: "server", liveTradingEnabled: true }))
+    );
+    const card = () => container.querySelector('[aria-label="Autopilot"]')!;
+    expect(card().textContent).toMatch(/Live · places real CoinDCX orders from the server within your limits, even with the app closed/);
+    expect(card().textContent).toMatch(/stock trades wait for you/);
+    expect(screen.getByLabelText("Server autopilot")).toBeTruthy();
+    rerender(createElement(LedgerFloor, props({ isLive: true, autopilotOn: true, scanLocation: "server", liveTradingEnabled: false })));
+    expect(card().textContent).toMatch(/Live orders are blocked on the server, so live trades wait for you/);
     expect(screen.queryByLabelText("Server autopilot")).toBeNull();
   });
 });

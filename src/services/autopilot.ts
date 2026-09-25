@@ -5,6 +5,7 @@ import { ruleFor } from "./marketRulesStore";
 import { isBuiltOnSyntheticPrices } from "./dataProvenance";
 import { openQuantity, planPartialQuantity } from "../shared/exitRules";
 import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
+import { MARKET_LABEL, marketOf, type MarketKey } from "../shared/marketLimits";
 
 // Self-Approve (autopilot): which proposals it opens on its own. Shared by the
 // app and the server scanner, so a trade is let through by the same rules
@@ -79,6 +80,8 @@ export function selectAutopilotTrades(
   // against at scan time: several proposals from one scan could each pass
   // alone and together break the position or exposure limit.
   let positionCount = book.positions.length;
+  const openByMarket: Record<MarketKey, number> = { coins: 0, stocks: 0 };
+  for (const p of book.positions) openByMarket[marketOf(p.symbol)]++;
   let exposure = book.positions.reduce((acc, p) => acc + openQuantity(p) * p.currentPrice, 0);
   let hourly = book.openedLastHour;
   const held = new Set(book.positions.map((p) => p.symbol));
@@ -123,8 +126,13 @@ export function selectAutopilotTrades(
     }
     const added = priced.units * priced.entryPrice;
 
-    const tooMany = positionCount + 1 > policy.maxSimultaneousPositions;
-    const tooExposed = (exposure + added) / policy.equity > policy.maxAllowedExposureFraction;
+    // Per market when set in Settings (amount per trade × trades at once bounds exposure then).
+    const market = marketOf(proposal.symbol);
+    const marketLimit = policy.marketLimits?.[market];
+    const tooMany = marketLimit
+      ? openByMarket[market] + 1 > marketLimit.maxOpenTrades
+      : positionCount + 1 > policy.maxSimultaneousPositions;
+    const tooExposed = !marketLimit && (exposure + added) / policy.equity > policy.maxAllowedExposureFraction;
     const alreadyHeld = held.has(proposal.symbol);
     const overHourly = hourly + 1 > policy.autopilotMaxApprovalsPerHour;
     // A split or thin panel vote is left for a human.
@@ -134,7 +142,12 @@ export function selectAutopilotTrades(
 
     if (tooMany || tooExposed || alreadyHeld || overHourly || lacksConsensus) {
       const reasons: string[] = [];
-      if (tooMany) reasons.push(`would exceed max ${policy.maxSimultaneousPositions} simultaneous positions`);
+      if (tooMany)
+        reasons.push(
+          marketLimit
+            ? `would exceed ${marketLimit.maxOpenTrades} open ${MARKET_LABEL[market]} trade${marketLimit.maxOpenTrades === 1 ? "" : "s"} at once`
+            : `would exceed max ${policy.maxSimultaneousPositions} simultaneous positions`
+        );
       if (tooExposed) reasons.push(`would exceed max ${(policy.maxAllowedExposureFraction * 100).toFixed(0)}% portfolio exposure`);
       if (alreadyHeld) reasons.push(`already holding a ${proposal.symbol} position`);
       if (overHourly) reasons.push(`would exceed ${policy.autopilotMaxApprovalsPerHour} autonomous approvals/hour`);
@@ -148,6 +161,7 @@ export function selectAutopilotTrades(
 
     accepted.push({ proposal, entryPrice: priced.entryPrice, units: priced.units });
     positionCount += 1;
+    openByMarket[market] += 1;
     exposure += added;
     hourly += 1;
     held.add(proposal.symbol);

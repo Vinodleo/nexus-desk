@@ -245,7 +245,7 @@ describe("swiping", () => {
 });
 
 describe("the Queue in Live mode", () => {
-  it("says each trade needs you, and offers no approve-all", () => {
+  it("says the server's autopilot places live orders, and offers no approve-all", () => {
     render(
       createElement(
         LedgerQueue,
@@ -256,7 +256,7 @@ describe("the Queue in Live mode", () => {
         })
       )
     );
-    expect(screen.getByText(/Live mode: autopilot places no real orders/)).toBeTruthy();
+    expect(screen.getByText(/Live mode: the server's autopilot places real CoinDCX orders within your limits/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Approve all/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Approve live trade" })).toBeTruthy();
   });

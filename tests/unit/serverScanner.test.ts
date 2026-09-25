@@ -228,14 +228,13 @@ describe("server autopilot", () => {
     expect(daemonPositions.size).toBe(1);
   });
 
-  it("leaves proposals for the app when autopilot is off, stopped, or trading live", async () => {
+  it("leaves proposals for the app when autopilot is off or stopped", async () => {
     const { runScanCycle, reportsSince, _resetServerScanner } = await import("../../server/scanner/scannerService");
     const { daemonPositions } = await import("../../server/guardian");
     for (const settings of [
       { ...on, autopilot: false },
       { ...on, killSwitch: true },
       { ...on, failureState: { ...desk.failureState, globalKillSwitchActive: true } },
-      { ...on, tradingMode: "LIVE_COINDCX" },
     ]) {
       _resetServerScanner();
       await post("/api/desk/state", settings);
@@ -243,6 +242,21 @@ describe("server autopilot", () => {
       for (const p of reportsSince("owner", 0).flatMap((r) => r.newProposals)) expect(p.status).toBe("PENDING_APPROVAL");
       expect(daemonPositions.size).toBe(0);
     }
+  });
+
+  it("in Live mode, places nothing while the server blocks live orders, and says so", async () => {
+    const { runScanCycle, reportsSince, _resetServerScanner } = await import("../../server/scanner/scannerService");
+    const { daemonPositions } = await import("../../server/guardian");
+    _resetServerScanner();
+    await post("/api/desk/state", { ...on, tradingMode: "LIVE_COINDCX" });
+    await runScanCycle(now);
+    const proposals = reportsSince("owner", 0).flatMap((r) => r.newProposals);
+    expect(proposals.length).toBeGreaterThan(0);
+    for (const p of proposals) {
+      expect(p.status).toBe("DEFERRED");
+      expect(p.deferralReason).toMatch(/Live orders are blocked on the server/);
+    }
+    expect(daemonPositions.size).toBe(0);
   });
 
   it("defers with the reason when a limit would be broken", async () => {
