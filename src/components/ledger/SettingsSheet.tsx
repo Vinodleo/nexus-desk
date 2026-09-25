@@ -13,6 +13,8 @@ import type { ServerStatus } from "../../hooks/useServerStatus";
 import { usePresence } from "./motion";
 import { builtAtText, checkForUpdate, type UpdateCheck } from "../../services/appUpdates";
 import { THEMES, type ThemeId } from "../../services/theme";
+import { nseTakesEntries } from "../../shared/nse";
+import { usTakesEntries } from "../../shared/usMarket";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -453,9 +455,11 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               !props.serverStatus?.alpaca?.configured
                 ? "US stocks (paper): add ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY on the server"
                 : props.serverStatus.alpaca.lastError ??
-                  `US stocks scanned 9:30–3:30 New York time (7:00 pm–1:00 am IST, 8:00 pm–2:00 am in winter)${
-                    props.serverStatus.fx ? ` · $1 = ${formatMoney(props.serverStatus.fx.usdInr)}` : ""
-                  }`
+                  `${
+                    usTakesEntries()
+                      ? "Scanning now, until 3:30 New York time"
+                      : "Market closed · scans 9:30–3:30 New York time (7:00 pm–1:00 am IST, 8:00 pm–2:00 am in winter)"
+                  }${props.serverStatus.fx ? ` · $1 = ${formatMoney(props.serverStatus.fx.usdInr)}` : ""}`
             }
           >
             {!props.serverStatus?.alpaca?.configured ? (
@@ -472,9 +476,9 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               !props.serverStatus?.angelOne?.configured
                 ? "Indian stocks: add the ANGEL_* settings on the server (see docs/hosting.md)"
                 : props.serverStatus.angelOne.lastError ??
-                  (props.serverStatus.angelOne.loggedIn
-                    ? `Nifty 50 stocks scanned 9:15–3:00 IST · ${props.serverStatus.angelOne.stocksKnown} found`
-                    : "Logs in by itself when NSE opens")
+                  (nseTakesEntries()
+                    ? `Scanning now, until 3:00 IST · Nifty 50, ${props.serverStatus.angelOne.stocksKnown} found`
+                    : "Market closed · scans the Nifty 50 from 9:15 to 3:00 IST on weekdays")
             }
           >
             {!props.serverStatus?.angelOne?.configured ? (
