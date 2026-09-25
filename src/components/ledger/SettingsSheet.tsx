@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, RefreshCw, ChevronRight } from "lucide-react";
+import { X, RefreshCw, ChevronRight, Check } from "lucide-react";
 import type { CoinDcxAccountBalance, CoinDcxServerStatus, TradingExecutionMode } from "../../types";
 import type { ZerodhaStatus } from "../../hooks/useZerodhaConnection";
 import { useAuth } from "../../context/AuthContext";
@@ -12,6 +12,7 @@ import { formatMoney } from "./format";
 import type { ServerStatus } from "../../hooks/useServerStatus";
 import { usePresence } from "./motion";
 import { builtAtText, checkForUpdate, type UpdateCheck } from "../../services/appUpdates";
+import { THEMES, type ThemeId } from "../../services/theme";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -38,6 +39,9 @@ export interface SettingsSheetProps {
   /** Where scanning runs, and when the server last scanned. */
   scanLocation?: "checking" | "server" | "browser";
   lastServerScanAt?: number;
+  /** This device's colour theme, and choosing another. */
+  theme?: ThemeId;
+  onThemeChange?: (id: ThemeId) => void;
 }
 
 /** "45 sec", "12 min", "3 h", "2 days". */
@@ -377,6 +381,54 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
                   disabled={["unsupported", "blocked", "working"].includes(props.notifications.state)}
                 />
               </Row>
+            </Group>
+          </>
+        )}
+
+        {props.theme && props.onThemeChange && (
+          <>
+            <Label>Appearance</Label>
+            <Group>
+              <div className="py-3">
+                <div className="text-sm">Theme</div>
+                <div className="text-xs text-muted mt-0.5">On this phone. Your other devices keep their own.</div>
+                <div className="grid grid-cols-3 gap-2.5 mt-3" role="group" aria-label="Theme">
+                  {THEMES.map((t) => {
+                    const on = props.theme === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        aria-pressed={on}
+                        aria-label={`${t.name} theme`}
+                        onClick={() => props.onThemeChange!(t.id)}
+                        className={`relative flex flex-col gap-1.5 p-1.5 rounded-[14px] border-2 bg-surface text-left cursor-pointer transition-colors ${
+                          on ? "border-accent" : "border-transparent"
+                        }`}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="flex flex-col gap-1.5 h-14 rounded-[9px] p-2 border"
+                          style={{ background: t.swatch.canvas, borderColor: t.swatch.line }}
+                        >
+                          <span className="block h-2 w-4/5 rounded-[3px] border" style={{ background: t.swatch.surface, borderColor: t.swatch.line }} />
+                          <span className="block h-2 w-1/2 rounded-[3px] border" style={{ background: t.swatch.surface, borderColor: t.swatch.line }} />
+                          <span className="block h-2 w-5 rounded-full" style={{ background: t.swatch.accent }} />
+                        </span>
+                        <span className="px-0.5">
+                          <span className="block text-xs font-semibold">{t.name}</span>
+                          <span className="block text-[11px] text-muted">{t.hint}</span>
+                        </span>
+                        {on && (
+                          <span className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-accent text-on-accent flex items-center justify-center">
+                            <Check className="w-3 h-3" strokeWidth={3} />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </Group>
           </>
         )}

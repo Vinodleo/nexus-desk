@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="bg-[#F6F3EE]">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -20,8 +20,19 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
-  <body class="bg-[#F6F3EE] text-[#1C1B18] antialiased overflow-x-hidden w-full">
-    <div id="root" class="w-full overflow-x-hidden min-h-screen bg-[#F6F3EE]"></div>
+  <body class="bg-canvas text-ink antialiased overflow-x-hidden w-full">
+    <div id="root" class="w-full overflow-x-hidden min-h-screen bg-canvas"></div>
+    <script>
+      // The theme chosen in Settings (src/services/theme.ts), before the app draws.
+      try {
+        var t = localStorage.getItem("nexus_theme");
+        var bars = { ivory: "#F6F3EE", graphite: "#141311", blush: "#FBF0F2" };
+        if (bars[t]) {
+          document.documentElement.dataset.theme = t;
+          document.querySelector('meta[name="theme-color"]').setAttribute("content", bars[t]);
+        }
+      } catch (e) {}
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
