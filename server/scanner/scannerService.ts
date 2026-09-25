@@ -13,13 +13,19 @@ import type { SymbolScanOutcome } from "../../src/services/scanOutcome";
 import { getCoinUniverse } from "../coinUniverse";
 import { currentEventWindow } from "../eventCalendar";
 import { getMarketRules } from "../marketRules";
-import { fetchOrderBook } from "../coindcxMarketData";
+import { fetchOrderBook, recentBook } from "../coindcxMarketData";
+import { entryPriceFrom } from "../../src/shared/quotes";
 import { angelConfigured, fetchStockDepth } from "../angelOne";
 import { NSE_SYMBOLS, isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardian";
 import { broadcastToUser, currentPrices } from "../realtime";
 import { dailyPnlToday, deskFirstSeenAt, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
 import { runServerAutopilot, serverQuarantines } from "./autopilot";
+import { getExpectancyTable, marketTrendFrom } from "../../src/services/exitExpectancy";
+import { tradingActivity } from "../../src/services/tradingActivity";
+
+/** Bitcoin: its trend decides whether coin longs are taken, so its candles are always kept. */
+const MARKET_SYMBOL = "BTC/INR";
 import { ServerMarketData } from "./marketData";
 
 // The scanner, run on the server after every 5-minute candle close, so coins
@@ -110,18 +116,46 @@ function asPosition(p: DaemonPosition): Position {
   };
 }
 
+/** A book read during the scan prices an entry for this long after. */
+const ENTRY_BOOK_MAX_AGE_MS = 60_000;
+
+/** Each coin's bid-ask spread (share of price), averaged over the books read; the trader replay charges it. */
+const observedSpreads = new Map<string, number>();
+
+export function recordSpread(symbol: string, spread: number): void {
+  if (!(spread >= 0) || !Number.isFinite(spread)) return;
+  const held = observedSpreads.get(symbol);
+  observedSpreads.set(symbol, held === undefined ? spread : held * 0.7 + spread * 0.3);
+}
+
+/** A coin's typical spread; for one never read, the middle of the others'. */
+export function typicalSpread(symbol: string): number | undefined {
+  const own = observedSpreads.get(symbol);
+  if (own !== undefined || isNseSymbol(symbol)) return own;
+  const all = [...observedSpreads.entries()].filter(([s]) => !isNseSymbol(s)).map(([, v]) => v).sort((a, b) => a - b);
+  return all.length > 0 ? all[Math.floor(all.length / 2)] : undefined;
+}
+
 async function getOrderBook(symbol: string, notional: number) {
   if (isNseSymbol(symbol)) {
     const book = await fetchStockDepth(symbol).catch(() => null);
     return book ? toOrderBook(book, notional, "angelone") : null;
   }
   const result = await fetchOrderBook(symbol.split("/")[0]);
-  return "book" in result ? toOrderBook(result.book, notional) : null;
+  if (!("book" in result)) return null;
+  const orderBook = toOrderBook(result.book, notional);
+  if (orderBook.spreadPct !== undefined) recordSpread(symbol, orderBook.spreadPct);
+  return orderBook;
 }
 
 /** Stocks the scanner covers: the Nifty 50 when Angel One is set up. */
 export function stockUniverse(): string[] {
   return angelConfigured() ? NSE_SYMBOLS : [];
+}
+
+/** Everything with candles to measure traders on: coins, and stocks (whose candles are kept overnight). */
+function measuredSymbols(): string[] {
+  return [...universe, ...stockUniverse()];
 }
 
 /** The coins, plus the stocks while NSE is open. */
@@ -163,6 +197,9 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     cryptoSymbols: universe,
     equitySymbols: stockUniverse(),
     now,
+    // Each trader's last day with your exits; remeasured hourly.
+    exitExpectancy: getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk.trailProfile, now, typicalSpread),
+    marketTrend: marketTrendFrom(market.getBars(MARKET_SYMBOL), market.macroRegimes()[MARKET_SYMBOL]),
     barsMap,
     activePositions: [...daemonPositions.values()].filter((p) => p.userId === uid).map(asPosition),
     dailyRealizedPnl: serverDailyPnl(uid, desk, now),
@@ -181,7 +218,15 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
   });
   // Self-Approve: opens what autopilot accepts and marks each proposal.
   const newProposals = runServerAutopilot(uid, desk, report.newProposals, riskPolicy, {
-    livePrice: (s) => currentPrices[s] ?? market.getBars(s)?.at(-1)?.close,
+    // A coin opens at the ask (or bid, for a short) from the order book the
+    // scan just read; otherwise at the latest trade or candle close.
+    livePrice: (s, direction) => {
+      const book = isNseSymbol(s) ? null : recentBook(s.split("/")[0], ENTRY_BOOK_MAX_AGE_MS);
+      if (book && book.bids.length > 0 && book.asks.length > 0) {
+        return entryPriceFrom(direction, { bid: book.bids[0][0], ask: book.asks[0][0], at: book.fetchedAt });
+      }
+      return currentPrices[s] ?? market.getBars(s)?.at(-1)?.close;
+    },
     barAtr: (s) => market.getBars(s)?.at(-1)?.atr,
   }, now);
   const record: ServerScanReport = { at: now, outcomes: report.outcomes, newProposals };
@@ -201,10 +246,10 @@ async function refreshMarket(now: number): Promise<void> {
   const followed = [...users.values()].flatMap((u) => u.shadows.filter((s) => s.status === "open").map((s) => s.symbol));
   const open = isNseOpen(now);
   // Stocks keep their candles overnight; they're fetched only while NSE is open.
-  market.keepOnly([...new Set([...universe, ...stockUniverse(), ...followed])]);
-  const symbols = [...new Set([...scanList(now), ...followed])].filter((sym) => open || !isNseSymbol(sym));
+  market.keepOnly([...new Set([...universe, ...stockUniverse(), ...followed, MARKET_SYMBOL])]);
+  const symbols = [...new Set([...scanList(now), ...followed, MARKET_SYMBOL])].filter((sym) => open || !isNseSymbol(sym));
   await market.refresh(symbols, now);
-  await market.refreshMacro(scanList(now), now);
+  await market.refreshMacro([...new Set([...scanList(now), MARKET_SYMBOL])], now);
 }
 
 /** One cycle: fresh candles, then every scanning user's scan and shadow tracking. */
@@ -279,6 +324,23 @@ export function reportsSince(uid: string, since: number): ServerScanReport[] {
   return (users.get(uid)?.reports ?? []).filter((r) => r.at > since);
 }
 
+/**
+ * Each watched coin's trading costs: how often it traded over the last two
+ * hours (share of minutes) and its bid-ask spread when a book has been read.
+ */
+export function coinActivity(): { symbol: string; activity: number | null; spreadPct: number | null }[] {
+  return universe
+    .map((symbol) => ({ symbol, activity: tradingActivity(market.getBars(symbol)), spreadPct: observedSpreads.get(symbol) ?? null }))
+    .filter((c) => c.activity !== null || c.spreadPct !== null)
+    .sort((a, b) => (b.spreadPct ?? 0) - (a.spreadPct ?? 0) || (a.activity ?? 1) - (b.activity ?? 1));
+}
+
+/** Each trader's recent results with this user's exits (measured on the next scan if not yet). */
+export function exitEdgeTable(uid: string, now: number = Date.now()) {
+  const desk = getDeskState(uid);
+  return universe.length > 0 ? getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk?.trailProfile, now, typicalSpread) : null;
+}
+
 export function shadowsFor(uid: string): ShadowSignal[] {
   return users.get(uid)?.shadows ?? [];
 }
@@ -340,6 +402,7 @@ export function startServerScanner(): void {
 /** Test hooks. */
 export function _resetServerScanner(): void {
   users.clear();
+  observedSpreads.clear();
   cycleStartedAt = null;
   universe = [];
   if (timer) clearTimeout(timer);

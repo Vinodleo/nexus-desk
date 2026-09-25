@@ -40,10 +40,12 @@ function toMs(t: unknown): number {
  */
 function readCandle(c: unknown): MarketBar | null {
   let t: unknown, o: unknown, h: unknown, l: unknown, cl: unknown, v: unknown;
+  let active: unknown;
   if (Array.isArray(c)) [t, o, h, l, cl, v] = c;
   else if (c && typeof c === "object") {
     const r = c as Record<string, unknown>;
     [t, o, h, l, cl, v] = [r.time ?? r.t ?? r.timestamp, r.open ?? r.o, r.high ?? r.h, r.low ?? r.l, r.close ?? r.c, r.volume ?? r.v];
+    active = r.activeMinutes;
   } else return null;
   const timestampMs = toMs(t);
   const bar = {
@@ -54,6 +56,7 @@ function readCandle(c: unknown): MarketBar | null {
     low: Number(l),
     close: Number(cl),
     volume: Number(v) || 0,
+    ...(typeof active === "number" && Number.isFinite(active) ? { activeMinutes: active } : {}),
   };
   if (!Number.isFinite(timestampMs) || !(bar.close > 0) || !(bar.high >= bar.low)) return null;
   bar.time = new Date(timestampMs).toISOString();

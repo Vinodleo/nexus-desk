@@ -31,6 +31,8 @@ import { shadowFromSetup, type ShadowSignal } from "./shadowTracker";
 import { DEFAULT_MIN_CONFIDENCE, HEURISTIC_SCORE_VERSION, MIN_EDGE_R, type Calibrator, type ConfidenceScorer } from "./calibration";
 import { META_FEATURE_VERSION, metaFeatures } from "./metaFeatures";
 import { NSE_UNIVERSE, nseTakesEntries } from "../shared/nse";
+import { exitEdgeFor, marketIsFalling, type ExpectancyTable, type MarketTrend } from "./exitExpectancy";
+import { MIN_TRADING_ACTIVITY, tradingActivity } from "./tradingActivity";
 
 // A Lab model trained on generated candles says nothing about the real
 // market, so the live desk ignores it (default hurdle, no persona tuning, no
@@ -107,6 +109,10 @@ export interface ScanMarketOptions {
   equitySymbols?: string[];
   /** The time of the scan (default now): decides whether the stock market is open. */
   now?: number;
+  /** Each trader's recent results with the live exits; a trader losing money that way doesn't trade. */
+  exitExpectancy?: ExpectancyTable;
+  /** Bitcoin's trend: coin longs wait while it's falling. */
+  marketTrend?: MarketTrend;
   useLabModel?: boolean;
   /** A scheduled-news pause in force now (see shared/eventCalendar): the event officer vetoes new trades. */
   eventWindow?: { active: boolean; headline?: string };
@@ -272,6 +278,11 @@ export async function scanSingleMarket(
     predictions = predictConfidenceBatch(tfjsModel, candidateFeatures);
   }
 
+  // Coins that go minutes without a trade jump between trades, so their
+  // stops fill past where they're set.
+  const activity = symbolConfig.assetClass === "crypto" ? tradingActivity(bars) : null;
+  const tradesTooRarely = activity !== null && activity < MIN_TRADING_ACTIVITY;
+
   // Why each qualified setup didn't become a proposal, in panel order.
   const candidateSkips: SkipReason[] = [];
   const shadows: ShadowSignal[] = [];
@@ -354,19 +365,28 @@ export async function scanSingleMarket(
         metaScore.confidence >= (promotedModel?.optimizedParameters?.minConfidence ?? 0)
       : metaScore.confidence >= requiredConfidence;
 
-    const skipsBefore = candidateSkips.length;
-    if (!riskCalc.passedAllChecks) {
-      candidateSkips.push(skipReasonForRisk(riskCalc.rejectionCode));
-    } else if (!evAssessment.isPositiveEdge) {
-      candidateSkips.push("negative_ev");
-    } else if (riskCalc.recommendedPositionSizeUnits <= 0) {
-      candidateSkips.push("below_min_size");
-    } else if (!passesConfidence) {
-      candidateSkips.push("low_confidence");
+    // Coin longs wait while Bitcoin falls: alts fall with it, and their
+    // stops go together.
+    const marketFalling = symbolConfig.assetClass === "crypto" && setup.direction === "LONG" && marketIsFalling(options.marketTrend);
+    // What this trader's setups have earned lately with the live exits (the
+    // trailing stop, banking half, the time limit), not at their targets.
+    const exitEdge = setup.horizon === "swing" ? null : exitEdgeFor(options.exitExpectancy, symbolConfig.symbol, setup.name);
+    if (exitEdge) {
+      metaScore.confidenceRationale = `${metaScore.confidenceRationale} With your exits, ${setup.name} averaged ${exitEdge.r >= 0 ? "+" : ""}${exitEdge.r.toFixed(2)}R over ${exitEdge.trades} recent setups.`;
     }
+
+    let skip: SkipReason | null = null;
+    if (!riskCalc.passedAllChecks) skip = skipReasonForRisk(riskCalc.rejectionCode);
+    else if (marketFalling) skip = "market_down";
+    else if (tradesTooRarely) skip = "thin_trading";
+    else if (exitEdge && exitEdge.r < MIN_EDGE_R) skip = "no_exit_edge";
+    else if (!evAssessment.isPositiveEdge) skip = "negative_ev";
+    else if (riskCalc.recommendedPositionSizeUnits <= 0) skip = "below_min_size";
+    else if (!passesConfidence) skip = "low_confidence";
+    if (skip) candidateSkips.push(skip);
     const shadow = shadowFromSetup(
       setup,
-      candidateSkips.length > skipsBefore ? candidateSkips[candidateSkips.length - 1] : "proposed",
+      skip ?? "proposed",
       candleCloseMs,
       {
         confidence: metaScore.confidence,
@@ -378,12 +398,7 @@ export async function scanSingleMarket(
     );
     shadows.push(shadow);
 
-    if (
-      evAssessment.isPositiveEdge &&
-      riskCalc.passedAllChecks &&
-      riskCalc.recommendedPositionSizeUnits > 0 &&
-      passesConfidence
-    ) {
+    if (!skip) {
       const sanitizedId = symbolConfig.symbol
         .replace(/[^a-zA-Z0-9]/g, "")
         .toLowerCase();
@@ -416,6 +431,7 @@ export async function scanSingleMarket(
           metaScore.confidence >= 0.60 ? "TRADE_FAVORED" : "CAUTION",
         modelUsed: "Multi-Agent Trader Panel v3.0",
         failureConditionRisk: `Adverse move against ${setup.direction} invalidating level @ ₹${setup.stopLoss.toFixed(2)}.`,
+        ...(exitEdge ? { exitEdge: { r: Number(exitEdge.r.toFixed(3)), trades: exitEdge.trades } } : {}),
         ensembleAgreement: sourcePanel.agreementScore,
         supportingPersonas: sourcePanel.supportingPersonas,
         dissentingPersonas: sourcePanel.dissentingPersonas,
@@ -424,6 +440,7 @@ export async function scanSingleMarket(
           syntheticBarShare: syntheticBarShare(bars),
           seededExperienceShare: retrieval.seededShare,
           simulatedOrderBook: orderBook.source !== "coindcx" && orderBook.source !== "angelone",
+          ...(activity !== null ? { tradingActivity: Number(activity.toFixed(2)) } : {}),
         },
       };
       passing.push({ proposal, shadow });

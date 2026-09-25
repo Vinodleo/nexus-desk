@@ -115,3 +115,49 @@ describe("LedgerRisk", () => {
     expect(apiFetch).toHaveBeenCalledWith("/api/coindcx/validate-keys", { method: "POST" });
   });
 });
+
+describe("the Book's breakdown tab", () => {
+  it("explains wins against losses, and shows which traders the scanner lets trade", async () => {
+    vi.mocked(apiFetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          table: {
+            profile: "tight",
+            measuredAt: NOW,
+            symbols: 40,
+            minMarketTrades: 30,
+            rows: [
+              { market: "crypto", trader: "Priya Momentum Scalp", trades: 30, winPct: 60, avgWinR: 0.4, avgLossR: -0.3, avgR: 0.12, judgedR: 0.09 },
+              { market: "crypto", trader: "Chen Conservative Trend", trades: 20, winPct: 40, avgWinR: 0.3, avgLossR: -0.9, avgR: -0.42, judgedR: -0.3 },
+            ],
+          },
+          activity: {
+            minActivity: 0.5,
+            coins: [
+              { symbol: "BTC/INR", activity: 0.98, spreadPct: 0.0059 },
+              { symbol: "ZEC/INR", activity: 0.38, spreadPct: 0.004 },
+            ],
+          },
+        })
+      )
+    );
+    render(
+      createElement(LedgerBook, {
+        trades: [trade("a", 36, NOW, { riskAtOpen: 60 }), trade("b", 36, NOW, { riskAtOpen: 60 }), trade("c", -64, NOW, { setupName: "Chen", riskAtOpen: 60 })],
+        risk: null,
+      })
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+    expect(screen.getByText(/breaking even takes winning/).textContent).toMatch(/64%.*You won 67%/);
+    expect(await screen.findByText("Traders with your exits")).toBeTruthy();
+    expect(screen.getByText("Paused")).toBeTruthy();
+    expect(screen.getByText("Trading")).toBeTruthy();
+    expect(screen.getByLabelText("By trader").textContent).toMatch(/Chen.*−₹64/);
+    // Each coin's spread and activity; coins that trade too rarely are marked skipped.
+    const costs = screen.getByLabelText("What coins cost to trade").textContent ?? "";
+    expect(costs).toMatch(/BTC\/INRspread 0\.59% · trades in 98% of minutes/);
+    expect(costs).toMatch(/ZEC\/INRspread 0\.40% · trades in 38% of minutes · skipped/);
+    expect(costs.match(/skipped/g)).toHaveLength(1);
+  });
+});

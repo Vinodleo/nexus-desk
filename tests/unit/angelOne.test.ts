@@ -29,8 +29,9 @@ const isoIst = (ms: number) => new Date(ms + 5.5 * HOUR).toISOString().slice(0, 
 function candles(from: number, to: number, step: number) {
   const out: unknown[] = [];
   for (let t = Math.ceil(from / step) * step; t <= to; t += step) {
-    const c = 800 + ((t - (now - 8 * 24 * HOUR)) / FIVE) * 0.05;
-    out.push([isoIst(t), c - 0.1, c + 0.3, c - 0.3, c, 50000 + ((t / FIVE) % 50) * 100]);
+    // A strong trend, 0.15% a candle (well clear of stock trading costs), at ₹905 now.
+    const c = 905 * Math.pow(1.0015, (t - now) / FIVE);
+    out.push([isoIst(t), c * 0.9997, c * 1.0005, c * 0.9995, c, 50000 + ((t / FIVE) % 50) * 100]);
   }
   return out;
 }

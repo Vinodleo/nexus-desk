@@ -3,6 +3,7 @@ import { daemonPositions, evaluateDaemonPositions } from "./guardian";
 import { getCoinUniverse } from "./coinUniverse";
 import { DEFAULT_COINS } from "../src/shared/coinUniverse";
 import { broadcast, currentPrices } from "./realtime";
+import { freshQuote } from "./quotes";
 
 // Streams live CoinDCX prices into currentPrices, the position guardian and
 // every authenticated WebSocket client.
@@ -94,8 +95,10 @@ export function startCoinDcxRelay() {
 
     currentPrices[sym] = price;
 
-    // Evaluate 24/7 server position guardian stops on every live tick
-    evaluateDaemonPositions(sym, price);
+    // The guardian judges positions on the order book's bid/ask while it's
+    // fresh (server/quotes); trade prints, which jump between the two, only
+    // when it isn't.
+    if (!freshQuote(sym)) evaluateDaemonPositions(sym, price);
 
     broadcast({ type: 'TICK', data: { [sym]: price }, is24h: source === 'price-change' });
   }

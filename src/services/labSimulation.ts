@@ -8,6 +8,7 @@ import { resolveShadow, shadowFromSetup } from "./shadowTracker";
 import { metaFeatures } from "./metaFeatures";
 import { predictConfidenceBatch } from "./mlService";
 import { SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
+import { isNseSymbol } from "../shared/nse";
 
 // The Lab's replay of live trading on historical 5-minute candles: the same
 // indicators, the same setup builders (the live trader panel, and the
@@ -209,11 +210,16 @@ export interface PanelSample {
 }
 
 /**
- * Every intraday setup the live trader panel (long-only, with the 1-hour
- * trend check) would have put forward on history, at the candle it came
- * from. After a signal, the next few candles on the coin aren't counted again.
+ * Every intraday setup the live trader panel (with the 1-hour trend check)
+ * would have put forward on history, at the candle it came from: long-only
+ * for coins (CoinDCX spot can't short), both ways for stocks. After a
+ * signal, the next few candles on the coin aren't counted again.
  */
-export function panelSetupsOnHistory(symbol: string, bars: MarketBar[]): { i: number; regime: RegimeType; setups: StrategySetup[] }[] {
+export function panelSetupsOnHistory(
+  symbol: string,
+  bars: MarketBar[],
+  longOnly: boolean = !isNseSymbol(symbol)
+): { i: number; regime: RegimeType; setups: StrategySetup[] }[] {
   const macroAt = hourlyRegimeLookup(bars);
   const out: { i: number; regime: RegimeType; setups: StrategySetup[] }[] = [];
   for (let i = WARMUP_BARS; i < bars.length - 1; i++) {
@@ -225,7 +231,7 @@ export function panelSetupsOnHistory(symbol: string, bars: MarketBar[]): { i: nu
         bars: bars.slice(i - WINDOW_BARS + 1, i + 1),
         regime,
         eventWindowActive: false,
-        longOnly: true,
+        longOnly,
         macroRegime: macroAt((bars[i].timestampMs as number) + LAB_INTERVAL_MS),
       },
       (setup) => computeMetaLabelScore({ setup, regime, empiricalWinRate: 0.5, sampleCount: 0, similarityScore: 1 }),

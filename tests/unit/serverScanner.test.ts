@@ -209,8 +209,8 @@ describe("server autopilot", () => {
       clientSeen: false,
       trailProfile: "balanced",
     });
-    // Entered at the latest price (with no live tick, the last candle's close), sized within limits.
-    expect(opened[0].entryPrice).toBe(proposal.setup.entryPrice);
+    // Bought at the ask of the order book the scan read (bids 11,598, asks 11,600), sized within limits.
+    expect(opened[0].entryPrice).toBe(11600);
     expect(opened[0].quantity * opened[0].entryPrice).toBeLessThanOrEqual(10000);
 
     // The next scan holds SOL already: nothing more is opened.
@@ -279,6 +279,8 @@ describe("server autopilot", () => {
 
   it("pauses after three losses in a row, until the app starts a fresh count", async () => {
     await post("/api/desk/state", { ...on, lossStreak: 1 });
+    // Closes count only after the app's last update, so they must land after it.
+    await new Promise((r) => setTimeout(r, 5));
     // Two more losses on other coins while the app is closed.
     await guardianLoss("l1", "ETH/INR");
     await guardianLoss("l2", "BTC/INR");

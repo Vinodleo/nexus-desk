@@ -3,29 +3,13 @@ import { ChevronDown } from "lucide-react";
 import type { HistoricalTrade } from "../../types";
 import { TradeAutopsyCard } from "../TradeAutopsyCard";
 import { Card, StatTile } from "./ui";
-import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
+import { EXIT_LABEL, formatMoney, formatPct, formatPrice, pnlTone, stopSlip } from "./format";
+import { LedgerBreakdown } from "./LedgerBreakdown";
 
 export type BookFilter = "all" | "wins" | "losses";
 
-/**
- * For a stop exit: how far past the stop the position actually sold, as a %
- * of the stop (0 when it sold at or better than the stop). Null when the
- * trade didn't close on its stop or predates recording these.
- */
-export function stopSlip(t: HistoricalTrade): { pct: number } | null {
-  if (t.exitReason !== "STOP_LOSS" && t.exitReason !== "TRAILING_STOP") return null;
-  if (t.stopAtExit === undefined || t.fillAtExit === undefined || !(t.stopAtExit > 0)) return null;
-  const worse = t.direction === "LONG" ? t.stopAtExit - t.fillAtExit : t.fillAtExit - t.stopAtExit;
-  return { pct: Math.max(0, (worse / t.stopAtExit) * 100) };
-}
+export { stopSlip };
 
-const EXIT_LABEL: Record<HistoricalTrade["exitReason"], string> = {
-  TAKE_PROFIT: "Take profit",
-  STOP_LOSS: "Stop loss",
-  TRAILING_STOP: "Trailing stop",
-  MANUAL: "Closed by you",
-  EXPIRY_TIME: "Time limit",
-};
 
 /** Totals for the summary card. Wins and losses are by net P&L after fees. */
 export function summarizeTrades(trades: HistoricalTrade[]) {
@@ -299,17 +283,21 @@ export interface LedgerBookProps {
 }
 
 export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, risk, riskBlocked }) => {
-  const [section, setSection] = useState<"trades" | "risk">("trades");
+  const [section, setSection] = useState<"trades" | "breakdown" | "risk">("trades");
   return (
     <div className="font-ui text-ink flex flex-col gap-4 pb-4 select-none">
       <header className="pt-1">
         <h1 className="m-0 font-display text-[26px] font-semibold">Book</h1>
         <div className="text-[13px] text-muted">
-          {section === "trades" ? "Every closed trade, newest first" : "Limits and safety checks"}
+          {section === "trades"
+            ? "Every closed trade, newest first"
+            : section === "breakdown"
+            ? "Where the money is made and lost"
+            : "Limits and safety checks"}
         </div>
       </header>
       <div className="flex p-1 rounded-full bg-surface border border-line" role="tablist" aria-label="Book sections">
-        {(["trades", "risk"] as const).map((s) => {
+        {(["trades", "breakdown", "risk"] as const).map((s) => {
           const on = section === s;
           return (
             <button
@@ -322,7 +310,7 @@ export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, r
                 on ? "bg-accent text-on-accent" : "text-muted"
               }`}
             >
-              {s === "trades" ? "Trades" : "Risk"}
+              {s === "trades" ? "Trades" : s === "breakdown" ? "Breakdown" : "Risk"}
               {s === "risk" && riskBlocked && (
                 <span className="w-2 h-2 rounded-full bg-loss" aria-label="blocked" />
               )}
@@ -330,7 +318,13 @@ export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, r
           );
         })}
       </div>
-      {section === "trades" ? <LedgerBookTrades trades={trades} onUpdateTrade={onUpdateTrade} /> : risk}
+      {section === "trades" ? (
+        <LedgerBookTrades trades={trades} onUpdateTrade={onUpdateTrade} />
+      ) : section === "breakdown" ? (
+        <LedgerBreakdown trades={trades} />
+      ) : (
+        risk
+      )}
     </div>
   );
 };

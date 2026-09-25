@@ -72,10 +72,12 @@ import {
 } from "./utils/audioFeedback";
 import { apiFetch } from "./services/apiClient";
 import { computeClosedTradePnl } from "./shared/tradeMath";
-import { blendedExitPrice, holdingDecision, openQuantity, planPartialQuantity } from "./shared/exitRules";
+import { blendedExitPrice, holdingDecision, openQuantity, planPartialQuantity, riskAtOpen } from "./shared/exitRules";
 import { ruleFor } from "./services/marketRulesStore";
 import { daemonEventToTrade, type DaemonCloseEvent } from "./services/daemonEvents";
+import type { Quote } from "./shared/quotes";
 import { LOSS_STREAK_LIMIT, cooldownUntil, lossStreak } from "./services/lossGuards";
+import { getExpectancyTable, marketTrendFrom } from "./services/exitExpectancy";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { adoptServerOpened, useGuardianSync } from "./hooks/useGuardianSync";
@@ -83,7 +85,7 @@ import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 import { useLiveFeed } from "./hooks/useLiveFeed";
 import {
   applyTickToPosition,
-  priceForPosition,
+  markPriceFor,
   type SuspectTick,
   type TickExitReason,
 } from "./services/positionTick";
@@ -101,6 +103,17 @@ import { experiencesFromShadows } from "./services/experienceMemory";
 function atrForExits(proposal: TradeProposal): number {
   const bars = liveMarketStream.getBars(proposal.symbol);
   return sharedAtrForExits(bars?.at(-1)?.atr, proposal.setup.entryPrice);
+}
+
+/**
+ * The price a new position would open at now: the order book's ask for a
+ * long (the bid for a short), since CoinDCX's INR spreads are wide; the last
+ * trade when the book can't be read (and for stocks).
+ */
+async function entryPriceNow(symbol: string, direction: "LONG" | "SHORT", notional: number): Promise<number | undefined> {
+  const book = await fetchLiveOrderBook(symbol, notional).catch(() => null);
+  if (book && book.asks.length > 0 && book.bids.length > 0) return direction === "LONG" ? book.asks[0].price : book.bids[0].price;
+  return liveMarketStream.getLastPrice(symbol);
 }
 
 export default function App() {
@@ -386,44 +399,60 @@ export default function App() {
   // server-scanner hook exists.
   const liveScanReportRef = useRef<(r: ServerScanReport) => void>(() => {});
 
+  // Best bid and ask for held coins, from the server. Positions are judged on
+  // what they could be closed at (the bid for a long), not on trade prints,
+  // which jump between the bid and the ask.
+  const quotesRef = useRef<Map<string, Quote>>(new Map());
+
+  // New prices for the open positions: stops, trailing, targets and banking.
+  const applyMarks = (prices: Record<string, number>) => {
+    const seq = ++tickSeq.current;
+    setActivePositions((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next: Position[] = [];
+      for (const pos of prev) {
+        const out = applyTickToPosition(pos, markPriceFor(pos, prices, quotesRef.current), pendingSuspectPrices.current, seq);
+        if (out.kind === "exit") {
+          const { position, price, reason } = out;
+          // closePositionWithAutopsy de-duplicates, so a repeated updater run is harmless.
+          setTimeout(() => closePositionRef.current(position, price, reason), 10);
+          changed = true;
+          continue;
+        }
+        if (out.kind === "updated" && out.changed) changed = true;
+        if (out.kind === "updated" && out.banked) {
+          const p = out.position;
+          setTimeout(
+            () =>
+              setExecutionToast({
+                id: `toast-banked-${p.id}`,
+                title: `Banked half of ${p.symbol}`,
+                message: `${p.bankedQuantity} closed at ₹${p.bankedPrice} (+1R). The stop is past break-even; the rest runs on the trailing stop.`,
+                type: "SUCCESS",
+                timestamp: new Date().toLocaleTimeString(),
+              }),
+            10
+          );
+        }
+        next.push(out.position);
+      }
+      return changed ? next : prev;
+    });
+  };
+
   useLiveFeed({
     onScanReport: (r) => liveScanReportRef.current(r),
     onServerOpen: applyServerOpen,
     onTick: (prices) => {
-      const seq = ++tickSeq.current;
       setLivePrices((prev) => ({ ...prev, ...prices }));
-      setActivePositions((prev) => {
-        if (prev.length === 0) return prev;
-        let changed = false;
-        const next: Position[] = [];
-        for (const pos of prev) {
-          const out = applyTickToPosition(pos, priceForPosition(pos, prices), pendingSuspectPrices.current, seq);
-          if (out.kind === "exit") {
-            const { position, price, reason } = out;
-            // closePositionWithAutopsy de-duplicates, so a repeated updater run is harmless.
-            setTimeout(() => closePositionRef.current(position, price, reason), 10);
-            changed = true;
-            continue;
-          }
-          if (out.kind === "updated" && out.changed) changed = true;
-          if (out.kind === "updated" && out.banked) {
-            const p = out.position;
-            setTimeout(
-              () =>
-                setExecutionToast({
-                  id: `toast-banked-${p.id}`,
-                  title: `Banked half of ${p.symbol}`,
-                  message: `${p.bankedQuantity} closed at ₹${p.bankedPrice} (+1R). The stop is past break-even; the rest runs on the trailing stop.`,
-                  type: "SUCCESS",
-                  timestamp: new Date().toLocaleTimeString(),
-                }),
-              10
-            );
-          }
-          next.push(out.position);
-        }
-        return changed ? next : prev;
-      });
+      applyMarks(prices);
+    },
+    onQuote: (quotes) => {
+      for (const [symbol, q] of Object.entries(quotes)) {
+        if (q && q.bid > 0 && q.ask >= q.bid) quotesRef.current.set(symbol, q);
+      }
+      applyMarks({});
     },
     onServerClose: (ev) => {
       console.log("[Daemon Position Guardian] Server closed trade event received:", ev);
@@ -827,6 +856,7 @@ export default function App() {
         holdingDurationMinutes: durationMins,
         isSelfApproved: pos.isSelfApproved,
         stopAtExit: pos.stopLoss,
+        riskAtOpen: riskAtOpen(pos),
         fillAtExit: exitPrice,
       };
 
@@ -933,7 +963,7 @@ export default function App() {
 
   // Execute Limit Order & Start Trade Upon Approval (Manual or Autonomous Self-Approval)
   const handleApproveProposal = useCallback(
-    (proposal: TradeProposal, isAutonomousSelfApproved: boolean = false) => {
+    async (proposal: TradeProposal, isAutonomousSelfApproved: boolean = false) => {
       if (userRole === "auditor") {
         setExecutionToast({
           id: `toast-${Date.now()}`,
@@ -1011,11 +1041,12 @@ export default function App() {
         return;
       }
 
-      // Enter at the live price, not the (older) candle close the signal
-      // came from; skip it if price has already run too far.
+      // Enter at the price it would really fill at now (the ask for a long),
+      // not the (older) candle close the signal came from; skip it if price
+      // has already run too far.
       const priced = priceEntry(
         proposal.setup,
-        liveMarketStream.getLastPrice(proposal.symbol),
+        await entryPriceNow(proposal.symbol, proposal.setup.direction, units * proposal.setup.entryPrice),
         units,
         proposal.riskCalc.riskDollars
       );
@@ -1182,7 +1213,7 @@ export default function App() {
   // left PENDING_APPROVAL for a human to review manually, rather than being silently approved
   // or silently dropped.
   const handleBatchApproveAllProposals = useCallback(
-    (proposalsToApprove: TradeProposal[]) => {
+    async (proposalsToApprove: TradeProposal[]) => {
       if (killSwitchActive || proposalsToApprove.length === 0) return;
 
       // Drop anything already claimed by a manual approval (or a previous,
@@ -1196,6 +1227,19 @@ export default function App() {
       claimable.forEach((p) => inFlightProposalIds.current.add(p.id));
       proposalsToApprove = claimable;
 
+      // What each would really open at now (the ask for a long).
+      const entryPrices = new Map(
+        await Promise.all(
+          claimable.map(
+            async (p) =>
+              [
+                `${p.symbol}|${p.setup.direction}`,
+                await entryPriceNow(p.symbol, p.setup.direction, p.riskCalc.recommendedPositionSizeUnits * p.setup.entryPrice),
+              ] as const
+          )
+        )
+      );
+
       const { accepted, deferred } = selectAutopilotTrades(
         proposalsToApprove,
         {
@@ -1204,7 +1248,7 @@ export default function App() {
           quarantines: symbolQuarantines,
         },
         riskPolicy,
-        (symbol) => liveMarketStream.getLastPrice(symbol)
+        (symbol, direction) => entryPrices.get(`${symbol}|${direction}`) ?? liveMarketStream.getLastPrice(symbol)
       );
 
       // Deferred means "revisit later," not "claimed forever" — release
@@ -1387,6 +1431,13 @@ export default function App() {
       quarantines: symbolQuarantinesRef.current,
       getOrderBook: fetchLiveOrderBook,
       eventWindow: eventWindowRef.current,
+      // Each trader's last day with your exits (remeasured hourly), and Bitcoin's trend.
+      exitExpectancy: getExpectancyTable(
+        liveMarketStream.getCryptoSymbols(),
+        (s) => liveMarketStream.getBars(s),
+        trailProfileRef.current
+      ),
+      marketTrend: marketTrendFrom(liveMarketStream.getBars("BTC/INR"), liveMarketStream.getMacroRegime("BTC/INR")),
       calibrators: {
         heuristic: buildCalibrator(shadowStore.all(), "heuristic"),
         tfjs: buildCalibrator(shadowStore.all(), "tfjs"),

@@ -58,6 +58,12 @@ export function describeCandleError(r: CandleFetchResult): string {
 const BOOK_CACHE_MS = 2000;
 const bookCache = new Map<string, RawBook>();
 
+/** The last order book read for a coin, if it's no older than `maxAgeMs`. */
+export function recentBook(coin: string, maxAgeMs: number, now: number = Date.now()): RawBook | null {
+  const book = bookCache.get(`I-${coin}_INR`);
+  return book && now - book.fetchedAt <= maxAgeMs ? book : null;
+}
+
 /** A coin's live INR order book, or an error message. */
 export async function fetchOrderBook(coin: string): Promise<{ book: RawBook } | { error: string }> {
   const pair = `I-${coin}_INR`;

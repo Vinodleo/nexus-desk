@@ -1,6 +1,7 @@
 import type { Position } from "../types";
 import { bankPartial, blendedExitPrice, partialDue } from "../shared/exitRules";
 import { exitAt, updateTrailingStop, type TrailExitReason } from "../shared/trailingStop";
+import { closeoutPrice, isFreshQuote, type Quote } from "../shared/quotes";
 
 // The browser book's per-tick position logic: price-sanity guard, trailing
 // stop / profit lock (scalp and trend-runner modes, long and short), and
@@ -29,6 +30,21 @@ export function priceForPosition(pos: Pick<Position, "symbol">, prices: Record<s
   if (inr) return inr;
   const usdt = prices[`${pos.symbol.split("/")[0]}/USDT`];
   return usdt ? usdt * USDT_INR_FALLBACK_RATE : undefined;
+}
+
+/**
+ * The price to judge a position on: with a fresh quote, what it could be
+ * closed at (the bid for a long, the ask for a short); otherwise the latest
+ * trade price.
+ */
+export function markPriceFor(
+  pos: Pick<Position, "symbol" | "direction">,
+  prices: Record<string, number>,
+  quotes: Map<string, Quote>,
+  now: number = Date.now()
+): number | undefined {
+  const q = quotes.get(pos.symbol);
+  return isFreshQuote(q, now) ? closeoutPrice(pos.direction, q) : priceForPosition(pos, prices);
 }
 
 /** A rejected "implausible" price awaiting confirmation, and which tick batch saw it. */

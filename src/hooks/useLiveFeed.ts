@@ -3,6 +3,7 @@ import { apiFetch, authenticateSocket } from "../services/apiClient";
 import type { DaemonCloseEvent } from "../services/daemonEvents";
 import type { ServerScanReport } from "./useServerScanner";
 import type { Position } from "../types";
+import type { Quote } from "../shared/quotes";
 
 export interface LiveExitUpdate {
   status: "OPEN" | "EXIT_PENDING" | "CLOSED" | "EXIT_FAILED";
@@ -23,6 +24,8 @@ export interface LiveFeedHandlers {
   onScanReport?: (report: ServerScanReport) => void;
   /** The server's autopilot opened a position. */
   onServerOpen?: (position: Position) => void;
+  /** Best bid and ask for held coins ("BTC/INR" -> quote). */
+  onQuote?: (quotes: Record<string, Quote>) => void;
 }
 
 const REST_BACKSTOP_MS = 6000;
@@ -56,6 +59,8 @@ export function useLiveFeed(handlers: LiveFeedHandlers) {
           handlersRef.current.onScanReport?.(msg.data);
         } else if (msg.type === "POSITION_OPENED" && msg.data?.id) {
           handlersRef.current.onServerOpen?.(msg.data);
+        } else if (msg.type === "QUOTE" && msg.data && typeof msg.data === "object") {
+          handlersRef.current.onQuote?.(msg.data);
         }
       } catch (err) {
         console.error("WS parse error", err);

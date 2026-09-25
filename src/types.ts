@@ -26,6 +26,8 @@ export interface MarketBar {
   low: number;
   close: number;
   volume: number;
+  /** Minutes of this 5-minute candle that had trades (CoinDCX coins; built from 1-minute candles). */
+  activeMinutes?: number;
   vwap?: number;
   ema9?: number;
   ema21?: number;
@@ -168,6 +170,8 @@ export interface ProposalDataQuality {
   seededExperienceShare: number;
   /** Order-book spread/depth used for costs and the liquidity check is simulated, not CoinDCX's. */
   simulatedOrderBook: boolean;
+  /** Share of the last two hours' minutes the coin traded in (coins only). */
+  tradingActivity?: number;
 }
 
 export interface TradeProposal {
@@ -197,6 +201,8 @@ export interface TradeProposal {
   dissentingPersonas?: string[];
   personaVotesCast?: number;
   /** Why autopilot passed this one to manual review instead of self-approving it. Unset means it hasn't been evaluated by autopilot yet, or it was approved. */
+  /** How the setup's trader has done lately with the live exits, in R after fees. */
+  exitEdge?: { r: number; trades: number };
   deferralReason?: string;
 }
 
@@ -312,6 +318,8 @@ export interface HistoricalTrade {
   /** Where the stop was when the trade closed, and the price the (rest of the) position actually sold at: a fast move can go past the stop between price checks. */
   stopAtExit?: number;
   fillAtExit?: number;
+  /** Rupees at stake when it opened (distance to the first stop × quantity): 1R, to read results in R. */
+  riskAtOpen?: number;
   isWin: boolean;
   exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL" | "EXPIRY_TIME";
   openedAt: string;
