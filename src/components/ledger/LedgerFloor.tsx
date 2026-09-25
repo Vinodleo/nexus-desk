@@ -57,6 +57,8 @@ export interface LedgerFloorProps {
   onClosePosition: (pos: Position) => void;
   /** null while the first guardian sync is still in flight. */
   guardianOnline: boolean | null;
+  /** Bumped after a short phone lock: the header badge glows once to show prices are live again. */
+  syncGlowKey?: number;
   /** Whether the server allows live orders at all (null until known). */
   liveTradingEnabled: boolean | null;
   /** Prices for the market line (BTC and ETH). Omit to follow the live stream. */
@@ -288,9 +290,10 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         <h1 className="m-0 font-display text-[22px] font-semibold">Nexus Desk</h1>
         <div className="flex items-center gap-2">
           <span
+            key={props.syncGlowKey ?? 0}
             className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
               isLive ? "bg-warn-soft text-warn" : "bg-accent-soft text-accent"
-            }`}
+            }${props.syncGlowKey ? " nx-glow" : ""}`}
           >
             {isLive ? "Live" : "Paper"}
           </span>

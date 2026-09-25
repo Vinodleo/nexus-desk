@@ -64,6 +64,8 @@ import { promoteCandidateModel } from "./services/mlService";
 import { SecurityConsoleModal } from "./components/SecurityConsoleModal";
 import { useAuth } from "./context/AuthContext";
 import { useBackgroundExecution } from "./hooks/useBackgroundExecution";
+import { useAwayNotice } from "./hooks/useAwayNotice";
+import { AwayNotice } from "./components/ledger/AwayNotice";
 import { BackgroundExecutionModal } from "./components/BackgroundExecutionModal";
 import {
   playTradeExecutionSound,
@@ -217,22 +219,17 @@ export default function App() {
     if (!isPlaying) return;
   }, [isPlaying]);
 
-  // Fast-Forward Reconcile missed ticks when device screen is unlocked
+  // On unlocking the phone: a pill, or a "While you were away" card when
+  // trades opened or closed meanwhile (see useAwayNotice).
+  const activePositionsRef = React.useRef<Position[]>([]);
+  const closedTradesRef = React.useRef<HistoricalTrade[]>([]);
+  const away = useAwayNotice(activePositionsRef, closedTradesRef);
   const handleReconcileMissedTicks = useCallback(
     (missedCycles: number, elapsedMs: number) => {
       if (!isPlaying || missedCycles <= 0) return;
-
-      setExecutionToast({
-        id: `toast-reconcile-${Date.now()}`,
-        title: "■ Background Resynced",
-        message: `Device was locked for ${Math.round(
-          elapsedMs / 1000
-        )}s. Live market feeds re-established.`,
-        type: "INFO",
-        timestamp: new Date().toLocaleTimeString(),
-      });
+      away.onUnlock(elapsedMs);
     },
-    [isPlaying]
+    [isPlaying, away.onUnlock]
   );
 
   const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState<boolean>(false);
@@ -299,12 +296,10 @@ export default function App() {
   const closingPositionIds = useRef<Set<string>>(new Set());
   // Trade pop-ups switched on for this phone (Settings); read when the app closes a trade itself.
   const tradePopupsOnRef = useRef(false);
-  const activePositionsRef = React.useRef<Position[]>([]);
   React.useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
     loadStoredClosedTrades()
   );
-  const closedTradesRef = React.useRef<HistoricalTrade[]>([]);
   // Trailing-stop profile for new positions (chosen in the Lab's exit comparison).
   const { profile: trailProfileId, setProfile: setTrailProfileId } = useTrailProfile();
   const trailProfileRef = React.useRef(trailProfileId);
@@ -1718,6 +1713,8 @@ export default function App() {
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col pb-20 bg-canvas text-ink font-ui">
 
+      <AwayNotice notice={away.notice} onDismiss={away.dismiss} onOpenBook={() => setActiveTab("book")} />
+
       {/* Main Content Area */}
       <main className="flex-1 max-w-2xl w-full mx-auto space-y-4 px-5 pt-4">
         {/* Latest desk notification */}
@@ -1767,6 +1764,7 @@ export default function App() {
             scanLocation={serverScanner.location}
             lastServerScanAt={serverScanner.lastScanAt}
             lastServerOpenAt={serverScanner.lastAutopilotOpenAt}
+            syncGlowKey={away.glowKey}
             eventWindow={eventWindow}
             isLive={tradingMode === "LIVE_COINDCX"}
             equity={currentRiskCalculation.equity}

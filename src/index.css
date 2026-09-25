@@ -69,3 +69,54 @@ html, body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--nx-muted);
 }
+
+/* The notice shown on unlocking (AwayNotice): a pill that drops in from the
+   top, a card that pops up over a soft backdrop, and a glow on the header
+   badge. Plain CSS so it stays smooth on a phone. */
+@keyframes nx-drop-in {
+  0% { transform: translate(-50%, -140%); opacity: 0; }
+  60% { transform: translate(-50%, 8%); opacity: 1; }
+  100% { transform: translate(-50%, 0); opacity: 1; }
+}
+@keyframes nx-lift-out {
+  to { transform: translate(-50%, -140%); opacity: 0; }
+}
+@keyframes nx-pop-in {
+  0% { transform: translateY(24px) scale(0.94); opacity: 0; }
+  70% { transform: translateY(-3px) scale(1.01); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes nx-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes nx-row-in {
+  from { transform: translateY(6px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes nx-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+@keyframes nx-tick-in {
+  0% { transform: scale(0.4) rotate(-30deg); opacity: 0; }
+  70% { transform: scale(1.15); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes nx-glow {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--nx-gain) 55%, transparent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+.nx-drop-in { animation: nx-drop-in 520ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.nx-lift-out { animation: nx-lift-out 260ms ease-in both; }
+.nx-pop-in { animation: nx-pop-in 420ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
+.nx-fade-in { animation: nx-fade-in 240ms ease-out both; }
+.nx-row-in { animation: nx-row-in 320ms ease-out both; }
+.nx-countdown { transform-origin: left; animation: nx-countdown linear both; }
+.nx-tick-in { animation: nx-tick-in 360ms ease-out both; }
+.nx-glow { animation: nx-glow 900ms ease-out 2; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-drop-in, .nx-lift-out, .nx-pop-in, .nx-fade-in, .nx-row-in, .nx-tick-in, .nx-glow { animation: none; }
+  .nx-drop-in { transform: translate(-50%, 0); }
+}
