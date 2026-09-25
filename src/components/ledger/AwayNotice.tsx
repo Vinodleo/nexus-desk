@@ -120,7 +120,7 @@ const AwayCard: React.FC<{
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 font-ui text-ink">
-      <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm nx-fade-in" onClick={onDismiss} aria-hidden="true" />
+      <div className="absolute inset-0 bg-scrim/30 backdrop-blur-sm nx-fade-in" onClick={onDismiss} aria-hidden="true" />
       <div
         role="dialog"
         aria-modal="true"

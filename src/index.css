@@ -26,6 +26,51 @@
   --nx-warn-ink: #5E3F0C;
   --nx-danger-soft: #FBEFEC;
   --nx-danger-line: #E7C5BE;
+  /* Dims the page behind a sheet or notice. */
+  --nx-scrim: #1C1B18;
+}
+
+/* Graphite: dark, warm charcoal. */
+html[data-theme="graphite"] {
+  color-scheme: dark;
+  --nx-canvas: #141311;
+  --nx-surface: #1D1C19;
+  --nx-inset: #262420;
+  --nx-line: #35322D;
+  --nx-ink: #F2EDE4;
+  --nx-muted: #A59F95;
+  --nx-gain: #63C391;
+  --nx-loss: #F08C7C;
+  --nx-accent: #8FB9E6;
+  --nx-on-accent: #0F1D2B;
+  --nx-accent-soft: #1C2A39;
+  --nx-warn: #E0B267;
+  --nx-warn-soft: #2E2517;
+  --nx-warn-ink: #F1D39C;
+  --nx-danger-soft: #2D1C19;
+  --nx-danger-line: #5A322B;
+  --nx-scrim: #000000;
+}
+
+/* Blush: light pink with a raspberry accent. */
+html[data-theme="blush"] {
+  --nx-canvas: #FBF0F2;
+  --nx-surface: #FFFFFF;
+  --nx-inset: #F8E6EA;
+  --nx-line: #F0D4DA;
+  --nx-ink: #2A1A1F;
+  --nx-muted: #74606A;
+  --nx-gain: #1E6B47;
+  --nx-loss: #A33A2C;
+  --nx-accent: #B0406E;
+  --nx-on-accent: #FFFFFF;
+  --nx-accent-soft: #F9DEE8;
+  --nx-warn: #8A5A12;
+  --nx-warn-soft: #FBF1E2;
+  --nx-warn-ink: #5E3F0C;
+  --nx-danger-soft: #FCE9E5;
+  --nx-danger-line: #EDC3BB;
+  --nx-scrim: #2A1A1F;
 }
 
 @theme inline {
@@ -45,6 +90,7 @@
   --color-warn-ink: var(--nx-warn-ink);
   --color-danger-soft: var(--nx-danger-soft);
   --color-danger-line: var(--nx-danger-line);
+  --color-scrim: var(--nx-scrim);
 }
 
 html, body {

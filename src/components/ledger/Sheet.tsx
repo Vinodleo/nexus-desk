@@ -28,7 +28,7 @@ export const Sheet: React.FC<{
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 font-ui text-ink">
       <div
-        className={`absolute inset-0 bg-ink/40 ${leaving ? "nx-backdrop-out" : "nx-backdrop-in"}`}
+        className={`absolute inset-0 bg-scrim/40 ${leaving ? "nx-backdrop-out" : "nx-backdrop-in"}`}
         onClick={leaving ? undefined : onClose}
         aria-hidden="true"
       />

@@ -45,6 +45,7 @@ import { addSkipCounts } from "./services/scanOutcome";
 import { priceEntry } from "./services/entryPricing";
 import { shadowStore } from "./services/shadowTracker";
 import { useRiskPolicy } from "./hooks/useRiskPolicy";
+import { useTheme } from "./hooks/useTheme";
 import { liveMarketStream } from "./services/liveMarketStreamService";
 import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
 
@@ -1516,6 +1517,7 @@ export default function App() {
   liveScanReportRef.current = serverScanner.handleLiveReport;
   const serverStatus = useServerStatus(isSettingsOpen);
   const tradeNotifications = useTradeNotifications();
+  const appTheme = useTheme();
   tradePopupsOnRef.current = tradeNotifications.state === "on";
   const scanLocationRef = useRef(serverScanner.location);
   scanLocationRef.current = serverScanner.location;
@@ -1947,6 +1949,8 @@ export default function App() {
 
       <SettingsSheet
         isOpen={isSettingsOpen}
+        theme={appTheme.theme}
+        onThemeChange={appTheme.setTheme}
         notifications={tradeNotifications}
         serverStatus={serverStatus}
         scanLocation={serverScanner.location}
