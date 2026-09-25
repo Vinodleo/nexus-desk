@@ -109,3 +109,30 @@ describe("Settings: trade size per market", () => {
     expect(screen.getByText("Angel One · paper only for now")).toBeTruthy();
   });
 });
+
+describe("Settings: market rows say whether each market is being scanned", () => {
+  const status = (over = {}) => ({
+    startedAt: 0, uptimeSec: 60, storage: { dir: "/data", kept: true, note: "On a mounted volume" },
+    angelOne: { configured: true, loggedIn: true, lastLoginAt: 0, lastError: null, stocksKnown: 50 },
+    alpaca: { configured: true, accountStatus: "ACTIVE", lastError: null },
+    fx: { usdInr: 95.82, at: 0, source: "ECB reference rate" },
+    ...over,
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("says the market is closed after hours, even when logged in", () => {
+    // Thursday 21:30 IST = 12:00 New York: NSE closed, US open.
+    vi.useFakeTimers({ now: Date.parse("2026-09-24T16:00:00Z"), toFake: ["Date"] });
+    const text = render(createElement(SettingsSheet, props({ serverStatus: status() as any }))).container.textContent ?? "";
+    expect(text).toContain("Market closed · scans the Nifty 50 from 9:15 to 3:00 IST on weekdays");
+    expect(text).toContain("Scanning now, until 3:30 New York time");
+  });
+
+  it("says it's scanning during the session", () => {
+    // Thursday 11:00 IST = 01:30 New York: NSE open, US closed.
+    vi.useFakeTimers({ now: Date.parse("2026-09-24T05:30:00Z"), toFake: ["Date"] });
+    const text = render(createElement(SettingsSheet, props({ serverStatus: status() as any }))).container.textContent ?? "";
+    expect(text).toContain("Scanning now, until 3:00 IST · Nifty 50, 50 found");
+    expect(text).toContain("Market closed · scans 9:30–3:30 New York time");
+  });
+});
