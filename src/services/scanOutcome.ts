@@ -29,7 +29,7 @@ export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
   already_open: "Already holding this coin",
   below_min_size: "Size below exchange minimum",
   thin_market: "Too little on the order book",
-  wide_spread: "Spread too wide for the stop",
+  wide_spread: "Fees and spread too big for the stop",
   no_shorting: "Short setup: CoinDCX spot can't short",
   weaker_setup: "A better setup on the same coin was chosen",
   outvoted: "Outvoted by traders on the other side",

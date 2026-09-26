@@ -31,7 +31,7 @@ function candles(from: number, to: number, step: number) {
   for (let t = Math.ceil(from / step) * step; t <= to; t += step) {
     // A strong trend, 0.15% a candle (well clear of stock trading costs), at ₹905 now.
     const c = 905 * Math.pow(1.0015, (t - now) / FIVE);
-    out.push([isoIst(t), c * 0.9997, c * 1.0005, c * 0.9995, c, 50000 + ((t / FIVE) % 50) * 100]);
+    out.push([isoIst(t), c * 0.9997, c * 1.004, c * 0.996, c, 50000 + ((t / FIVE) % 50) * 100]);
   }
   return out;
 }
@@ -66,7 +66,7 @@ function angel(url: string, init?: RequestInit): Response {
     return ok(candles(istToMs(body.fromdate), istToMs(body.todate), body.interval === "ONE_HOUR" ? HOUR : FIVE));
   }
   if (p.endsWith("/quote/")) {
-    const last = (candles(now - FIVE, now, FIVE).at(-1) as number[])[4];
+    const last = (candles(now - FIVE, now, FIVE).at(-1) as number[])[4] * (1 + quoteRunUp);
     return ok({
       fetched: [{ tradingSymbol: "SBIN-EQ", symbolToken: "3045", ltp: last, depth: { buy: [{ price: last - 0.05, quantity: 5000 }], sell: [{ price: last + 0.05, quantity: 5000 }] } }],
       unfetched: [],
@@ -74,6 +74,9 @@ function angel(url: string, init?: RequestInit): Response {
   }
   return new Response("not found", { status: 404 });
 }
+
+/** How far the quoted price has run above the last candle's close (0 = none). */
+let quoteRunUp = 0;
 
 let angelOne: typeof import("../../server/angelOne");
 
@@ -353,7 +356,13 @@ describe("stock bid and ask", () => {
       },
       quarantines: {}, promotedModel: null,
     }, now);
-    await pollStockPrices(now);
+    // The price has run well up since the signal's candle closed.
+    quoteRunUp = 0.012;
+    try {
+      await pollStockPrices(now);
+    } finally {
+      quoteRunUp = 0;
+    }
     await runScanCycle(now);
     const sbin = reportsSince("owner", 0)[0].newProposals.find((p) => p.symbol === "SBIN")!;
     expect(sbin.status).toBe("DEFERRED");
