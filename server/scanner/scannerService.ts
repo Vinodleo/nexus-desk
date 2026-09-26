@@ -28,6 +28,7 @@ import { closedTradesFor, daemonPositions, type DaemonPosition } from "../guardi
 import { broadcastToUser, currentPrices } from "../realtime";
 import { dailyPnlToday, deskFirstSeenAt, istDay, scanningDesks, getDeskState, type DeskState } from "./deskState";
 import { lastServerOpenAt, runServerAutopilot, serverQuarantines } from "./autopilot";
+import { announceSwings } from "./swingAlerts";
 import { getExpectancyTable, marketTrendFrom } from "../../src/services/exitExpectancy";
 import { tradingActivity } from "../../src/services/tradingActivity";
 
@@ -281,6 +282,8 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     barAtr: (s) => market.getBars(s)?.at(-1)?.atr,
     bars: (s) => market.getBars(s) ?? undefined,
   }, now);
+  // Swing setups always wait for you: a pop-up so they don't expire unseen.
+  announceSwings(uid, newProposals, now);
   const record: ServerScanReport = { at: now, outcomes: report.outcomes, newProposals };
   state.reports = [...state.reports, record].slice(-MAX_REPORTS);
   state.shadows = keepServerShadows(state.shadows, report.shadows, now);
