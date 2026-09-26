@@ -11,18 +11,35 @@ import { marketOf } from "../src/shared/marketLimits";
 // ahead on the server's checks as before, and it's counted as not reviewed.
 //
 // Setup: GEMINI_API_KEY (Google AI Studio) on the server. Optional:
-// GEMINI_REVIEW_MODELS (comma-separated, tried in order) and
+// GEMINI_REVIEW_MODELS (comma-separated, tried in order; one at Google's limit is
+// skipped for a while and the next carries on) and
 // GEMINI_REVIEW_DAILY_LIMIT (reviews per day, India time).
 
-/** Flash-Lite first: Google's free tier gives it the most requests a day. */
-const DEFAULT_REVIEW_MODELS = ["gemini-3.1-flash-lite", "gemini-3.8-flash"];
+/**
+ * Newest Flash first. Google's free tier gives each model its own small
+ * allowance (about 5 a minute and 20 a day for a Flash), so when one is used
+ * up the next carries on, down to the Flash-Lites (15 a minute, many more a
+ * day). A name Google doesn't know is skipped for a day.
+ */
+const DEFAULT_REVIEW_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+];
 /** Stays under the free tier's daily requests for Flash-Lite. */
 export const DEFAULT_REVIEW_DAILY_LIMIT = 300;
 /** At most about nine a minute (the free tier allows ten or more). */
 const MIN_GAP_MS = 6500;
 const TIMEOUT_MS = 20_000;
-/** After Google says "too many", wait this long before asking again. */
-const LIMIT_COOLDOWN_MS = 5 * 60_000;
+/** After Google says a model's per-minute limit is reached, skip that model this long. */
+const MINUTE_LIMIT_COOLDOWN_MS = 60_000;
+/** After its daily limit, try it again this often (Google resets it at midnight Pacific time). */
+const DAY_LIMIT_COOLDOWN_MS = 60 * 60_000;
+/** A model Google doesn't know is skipped this long. */
+const MISSING_MODEL_COOLDOWN_MS = 24 * 60 * 60_000;
 /** Candles shown to Gemini: three hours of 5-minute ones. */
 const CANDLES_SHOWN = 36;
 
@@ -70,12 +87,15 @@ interface DayCounts {
   unreviewed: number;
   /** Times Google said the free tier's limit was reached. */
   limitHits: number;
+  /** Answers per model. */
+  byModel: Record<string, number>;
 }
 
-const fresh = (day: string): DayCounts => ({ day, reviewed: 0, taken: 0, skipped: 0, unreviewed: 0, limitHits: 0 });
+const fresh = (day: string): DayCounts => ({ day, reviewed: 0, taken: 0, skipped: 0, unreviewed: 0, limitHits: 0, byModel: {} });
 let counts = fresh("");
 let lastCallAt = 0;
-let cooldownUntil = 0;
+/** Models Google said are at their limit, until when. */
+const cooldownUntil = new Map<string, number>();
 let lastError: string | null = null;
 let last: { symbol: string; outcome: ReviewOutcome; reason: string; at: number } | null = null;
 let minGapMs = MIN_GAP_MS;
@@ -94,7 +114,7 @@ export function reviewerStatus(now: number = Date.now()) {
     models: reviewModels(),
     dailyLimit: reviewDailyLimit(),
     ...c,
-    limitReached: c.reviewed >= reviewDailyLimit() || now < cooldownUntil,
+    limitReached: c.reviewed >= reviewDailyLimit() || reviewModels().every((m) => now < (cooldownUntil.get(m) ?? 0)),
     lastError,
     last,
   };
@@ -169,6 +189,7 @@ const geminiGenerate: GenerateFn = async ({ model, system, prompt }) => {
 };
 
 const statusOf = (err: any): number | undefined => err?.status ?? err?.statusCode ?? err?.code;
+const isDailyLimit = (err: any) => /per ?day|daily/i.test(String(err?.message ?? ""));
 const isLimit = (err: any) => statusOf(err) === 429 || /quota|rate.?limit|resource_exhausted/i.test(String(err?.message ?? ""));
 const isMissingModel = (err: any) => statusOf(err) === 404 || /not found|not supported|unknown model/i.test(String(err?.message ?? ""));
 const shortError = (err: any) => String(err?.message ?? err).replace(/\s+/g, " ").slice(0, 160);
@@ -202,7 +223,8 @@ export async function reviewTrade(
   if (!reviewerConfigured()) return { outcome: "unreviewed", reason: "Gemini isn't set up", off: true };
   const c = today(now);
   if (c.reviewed >= reviewDailyLimit()) return unreviewed(c, proposal.symbol, `today's ${reviewDailyLimit()} reviews are used up`, now);
-  if (now < cooldownUntil) return unreviewed(c, proposal.symbol, "Google's free-tier limit was reached; trying again shortly", now);
+  const models = reviewModels().filter((m) => now >= (cooldownUntil.get(m) ?? 0));
+  if (models.length === 0) return unreviewed(c, proposal.symbol, "Google's free-tier limit was reached for every model; trying again shortly", now);
 
   const wait = lastCallAt + minGapMs - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -210,7 +232,8 @@ export async function reviewTrade(
 
   const prompt = reviewPrompt(proposal, bars);
   let failure = "no answer";
-  for (const model of reviewModels()) {
+  let limited = false;
+  for (const model of models) {
     try {
       const text = await withTimeout(generate({ model, system: SYSTEM, prompt }), TIMEOUT_MS);
       const reply = JSON.parse(text);
@@ -218,6 +241,7 @@ export async function reviewTrade(
       const reason = String(reply.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || (reply.take ? "Looks fine." : "Chart argues against it.");
       const outcome: ReviewOutcome = reply.take ? "take" : "skip";
       c.reviewed++;
+      c.byModel[model] = (c.byModel[model] ?? 0) + 1;
       if (reply.take) c.taken++;
       else c.skipped++;
       lastError = null;
@@ -225,16 +249,23 @@ export async function reviewTrade(
       return { outcome, reason, model };
     } catch (err: any) {
       if (isLimit(err)) {
+        // This model is used up for now; the next one carries on.
         c.limitHits++;
-        cooldownUntil = now + LIMIT_COOLDOWN_MS;
-        lastError = "Google's free-tier limit reached";
-        return unreviewed(c, proposal.symbol, "Google's free-tier limit was reached", now);
+        cooldownUntil.set(model, now + (isDailyLimit(err) ? DAY_LIMIT_COOLDOWN_MS : MINUTE_LIMIT_COOLDOWN_MS));
+        limited = true;
+        failure = "Google's free-tier limit was reached";
+        continue;
       }
-      failure = isMissingModel(err) ? `model ${model} isn't available (set GEMINI_REVIEW_MODELS)` : shortError(err);
+      if (isMissingModel(err)) {
+        // A wrong or retired name: don't keep asking it on every trade.
+        cooldownUntil.set(model, now + MISSING_MODEL_COOLDOWN_MS);
+        failure = `model ${model} isn't available (check GEMINI_REVIEW_MODELS)`;
+      } else failure = shortError(err);
       console.warn(`[Reviewer] ${model}: ${failure}`);
     }
   }
-  lastError = failure;
+  // Every model at its limit isn't a fault: Settings shows "Limit reached".
+  lastError = limited && failure === "Google's free-tier limit was reached" ? null : failure;
   return unreviewed(c, proposal.symbol, failure, now);
 }
 
@@ -242,7 +273,7 @@ export async function reviewTrade(
 export function _resetReviewer(opts: { minGapMs?: number } = {}): void {
   counts = fresh("");
   lastCallAt = 0;
-  cooldownUntil = 0;
+  cooldownUntil.clear();
   lastError = null;
   last = null;
   minGapMs = opts.minGapMs ?? MIN_GAP_MS;

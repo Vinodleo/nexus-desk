@@ -64,7 +64,7 @@ const deps = { livePrice: () => 1001, barAtr: () => 5, bars: () => bars };
 
 beforeEach(async () => {
   vi.stubEnv("GEMINI_API_KEY", "test-key");
-  vi.stubEnv("GEMINI_REVIEW_MODELS", "");
+  vi.stubEnv("GEMINI_REVIEW_MODELS", "gemini-3.8-flash,gemini-3.1-flash-lite");
   vi.stubEnv("GEMINI_REVIEW_DAILY_LIMIT", "");
   (await import("../../server/tradeReviewer"))._resetReviewer({ minGapMs: 0 });
   (await import("../../server/guardian"))._resetGuardian();
@@ -86,7 +86,7 @@ describe("Gemini's review", () => {
     const generate = vi.fn(async ({ prompt }: { prompt: string }) =>
       JSON.parse(prompt).symbol === "SOL/INR" ? '{"take": true, "reason": "Clean pullback in an uptrend."}' : '{"take": false, "reason": "Straight into resistance."}'
     );
-    expect(await reviewTrade(proposal("SOL/INR"), bars, now, generate)).toMatchObject({ outcome: "take", model: "gemini-3.1-flash-lite" });
+    expect(await reviewTrade(proposal("SOL/INR"), bars, now, generate)).toMatchObject({ outcome: "take", model: "gemini-3.8-flash" });
     expect(await reviewTrade(proposal("ETH/INR"), bars, now, generate)).toMatchObject({ outcome: "skip", reason: "Straight into resistance." });
     const sent = JSON.parse(generate.mock.calls[0][0].prompt);
     expect(sent).toMatchObject({ symbol: "SOL/INR", direction: "LONG", trader: "Chen Conservative Trend", entry: 1000, stop: 980, target: 1060 });
@@ -95,25 +95,72 @@ describe("Gemini's review", () => {
     expect(reviewerStatus(now)).toMatchObject({ configured: true, reviewed: 2, taken: 1, skipped: 1, unreviewed: 0, lastError: null });
   });
 
+  it("goes through the Flashes, newest first, then the Flash-Lites, unless GEMINI_REVIEW_MODELS says otherwise", async () => {
+    const { reviewModels } = await import("../../server/tradeReviewer");
+    vi.stubEnv("GEMINI_REVIEW_MODELS", "");
+    expect(reviewModels()).toEqual([
+      "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+    ]);
+    vi.stubEnv("GEMINI_REVIEW_MODELS", " gemini-3.8-flash , gemini-3.5-flash-lite ");
+    expect(reviewModels()).toEqual(["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
+  });
+
   it("tries the next model when one isn't available", async () => {
     const { reviewTrade } = await import("../../server/tradeReviewer");
     const generate = vi.fn(async ({ model }: { model: string }) => {
-      if (model === "gemini-3.1-flash-lite") throw Object.assign(new Error("models/gemini-3.1-flash-lite is not found"), { status: 404 });
+      if (model === "gemini-3.8-flash") throw Object.assign(new Error("models/gemini-3.8-flash is not found"), { status: 404 });
       return '{"take": true, "reason": "ok"}';
     });
-    expect(await reviewTrade(proposal("SOL/INR"), bars, now, generate)).toMatchObject({ outcome: "take", model: "gemini-3.8-flash" });
+    expect(await reviewTrade(proposal("SOL/INR"), bars, now, generate)).toMatchObject({ outcome: "take", model: "gemini-3.1-flash-lite" });
+    // And doesn't ask the missing one again on the next trade.
+    await reviewTrade(proposal("ETH/INR"), bars, now + 60 * 60_000, generate);
+    expect(generate.mock.calls.filter((c) => c[0].model === "gemini-3.8-flash")).toHaveLength(1);
   });
 
-  it("backs off when Google's free tier says no, and lets the trade go ahead unreviewed", async () => {
+  it("moves on to Flash-Lite when 3.8 Flash is at Google's limit, and goes back to it later", async () => {
+    const { reviewTrade, reviewerStatus } = await import("../../server/tradeReviewer");
+    let flashFull = true;
+    const generate = vi.fn(async ({ model }: { model: string }) => {
+      if (model === "gemini-3.8-flash" && flashFull) {
+        throw Object.assign(new Error("RESOURCE_EXHAUSTED: Quota exceeded for GenerateRequestsPerMinutePerProjectPerModel"), { status: 429 });
+      }
+      return '{"take": true, "reason": "ok"}';
+    });
+    expect(await reviewTrade(proposal("SOL/INR"), bars, now, generate)).toMatchObject({ outcome: "take", model: "gemini-3.1-flash-lite" });
+    // Within the minute, 3.8 Flash isn't asked again.
+    expect(await reviewTrade(proposal("ETH/INR"), bars, now + 30_000, generate)).toMatchObject({ model: "gemini-3.1-flash-lite" });
+    expect(generate.mock.calls.map((c) => c[0].model)).toEqual(["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite"]);
+    // After it, 3.8 Flash is first again.
+    flashFull = false;
+    expect(await reviewTrade(proposal("XRP/INR"), bars, now + 61_000, generate)).toMatchObject({ model: "gemini-3.8-flash" });
+    expect(reviewerStatus(now + 61_000)).toMatchObject({
+      reviewed: 3, limitHits: 1, unreviewed: 0, lastError: null, limitReached: false,
+      byModel: { "gemini-3.8-flash": 1, "gemini-3.1-flash-lite": 2 },
+    });
+  });
+
+  it("rests a model an hour after its daily limit", async () => {
+    const { reviewTrade } = await import("../../server/tradeReviewer");
+    const generate = vi.fn(async ({ model }: { model: string }) => {
+      if (model === "gemini-3.8-flash") throw Object.assign(new Error("Quota exceeded for GenerateRequestsPerDayPerProjectPerModel-FreeTier"), { status: 429 });
+      return '{"take": true, "reason": "ok"}';
+    });
+    await reviewTrade(proposal("SOL/INR"), bars, now, generate);
+    await reviewTrade(proposal("ETH/INR"), bars, now + 30 * 60_000, generate);
+    expect(generate.mock.calls.filter((c) => c[0].model === "gemini-3.8-flash")).toHaveLength(1);
+    await reviewTrade(proposal("XRP/INR"), bars, now + 61 * 60_000, generate);
+    expect(generate.mock.calls.filter((c) => c[0].model === "gemini-3.8-flash")).toHaveLength(2);
+  });
+
+  it("lets the trade go ahead unreviewed when every model is at its limit, and waits before asking again", async () => {
     const { reviewTrade, reviewerStatus } = await import("../../server/tradeReviewer");
     const generate = vi.fn(async () => {
       throw Object.assign(new Error("RESOURCE_EXHAUSTED: quota exceeded"), { status: 429 });
     });
     expect(await reviewTrade(proposal("SOL/INR"), bars, now, generate)).toMatchObject({ outcome: "unreviewed" });
-    // A minute later it doesn't ask again yet.
-    expect(await reviewTrade(proposal("ETH/INR"), bars, now + 60_000, generate)).toMatchObject({ outcome: "unreviewed" });
-    expect(generate).toHaveBeenCalledTimes(1);
-    expect(reviewerStatus(now + 60_000)).toMatchObject({ limitHits: 1, unreviewed: 2, limitReached: true });
+    expect(await reviewTrade(proposal("ETH/INR"), bars, now + 30_000, generate)).toMatchObject({ outcome: "unreviewed" });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(reviewerStatus(now + 30_000)).toMatchObject({ limitHits: 2, unreviewed: 2, limitReached: true, lastError: null });
   });
 
   it("stops at the daily cap, and starts again the next day (India time)", async () => {
@@ -173,6 +220,12 @@ describe("Settings' Gemini row", () => {
     expect(reviewerSummary(null).badge).toBe("checking");
     expect(reviewerSummary({ ...base }).badge).toBe("off");
     expect(reviewerSummary({ ...base, reviewer })).toEqual({ sub: "Today 12/300 reviewed · 9 taken · 3 skipped", badge: "working" });
+    expect(reviewerSummary({ ...base, reviewer: { ...reviewer, byModel: { "gemini-3.8-flash": 12 } } }).sub).toBe(
+      "Today 12/300 reviewed by 3.8 Flash · 9 taken · 3 skipped"
+    );
+    expect(reviewerSummary({ ...base, reviewer: { ...reviewer, byModel: { "gemini-3.8-flash": 5, "gemini-3.1-flash-lite": 7 } } }).sub).toBe(
+      "Today 12/300 reviewed · 9 taken · 3 skipped · 3.8 Flash 5, 3.1 Flash-Lite 7"
+    );
     expect(reviewerSummary({ ...base, reviewer: { ...reviewer, limitHits: 2, unreviewed: 4, limitReached: true } }).sub).toBe(
       "Today 12/300 reviewed · 9 taken · 3 skipped · 4 went ahead unreviewed · Google's limit hit 2×"
     );
