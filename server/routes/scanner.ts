@@ -3,7 +3,7 @@ import type { AuthedRequest } from "../auth";
 import type { PromotedLabModel } from "../../src/types";
 import { validate, deskStateBody, scannerReportsQuery } from "../validation";
 import { getDeskState, setDeskState } from "../scanner/deskState";
-import { coinActivity, exitEdgeTable, reportsSince, scanNow, scannerStatus, shadowsFor, typicalSpread } from "../scanner/scannerService";
+import { coinActivity, exitEdgeTable, reportsSince, scanNow, scannerStatus, shadowsFor, shadowsForDevice, typicalSpread } from "../scanner/scannerService";
 import { conditionBreakdown } from "../../src/services/conditionStats";
 import { MIN_TRADING_ACTIVITY } from "../../src/services/tradingActivity";
 import { expectancyRows, MIN_MARKET_TRADES } from "../../src/services/exitExpectancy";
@@ -40,7 +40,7 @@ router.get("/api/scanner/reports", validate({ query: scannerReportsQuery }), (re
 
 // Every setup the server is following or has followed (for the Learning tab).
 router.get("/api/scanner/shadows", (req: Request, res: Response) => {
-  res.json({ success: true, shadows: shadowsFor(uidOf(req)) });
+  res.json({ success: true, shadows: shadowsForDevice(uidOf(req)) });
 });
 
 // How each trader's setups have done lately with your exits (the Book's breakdown).

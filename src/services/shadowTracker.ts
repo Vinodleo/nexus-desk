@@ -53,7 +53,7 @@ export interface ShadowSignal {
 /** Round-trip fees as a share of the entry price (CoinDCX taker, both sides). */
 export const ROUND_TRIP_FEE = 0.001;
 /** Enough history for win-chance calibration, still small in localStorage. */
-const MAX_KEPT = 1500;
+export const MAX_KEPT = 1500;
 const STORAGE_KEY = "nexus_shadow_signals_v1";
 
 export interface ShadowContext {
