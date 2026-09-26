@@ -4,6 +4,8 @@ import {
   COIN_MIN_STOP_PCT,
   COIN_MIN_TARGET_R,
   COIN_REVERSION_MIN_R,
+  NSE_HOLD_MINUTES,
+  NSE_MIN_STOP_PCT,
   atrForExits,
   holdMinutesFor,
   hourlyAtrSeries,
@@ -16,7 +18,8 @@ import { positionFromProposal } from "../../src/services/autopilot";
 import type { MarketBar, TradeProposal } from "../../src/types";
 
 // Coin trades are planned on the hourly scale, so CoinDCX's ~0.6% spread
-// isn't bigger than the whole risk; stocks stay as they were.
+// isn't bigger than the whole risk; Indian stocks too, so Angel One's ~0.27%
+// charges aren't. US stocks, nearly free to trade, stay on 5-minute plans.
 
 const FIVE = 5 * 60 * 1000;
 const T0 = Math.floor(1_790_000_000_000 / FIVE) * FIVE;
@@ -48,10 +51,11 @@ describe("the hourly ATR", () => {
     expect(decorated[10].atrHour).toBeUndefined();
   });
 
-  it("plans coins on it, stocks on the 5-minute ATR", () => {
+  it("plans coins and Indian stocks on it, US stocks on the 5-minute ATR", () => {
     expect(planAtr("SOL/INR", { atr: 2, atrHour: 9, close: 1000 })).toBe(9);
     expect(planAtr("SOL/INR", { atr: 2, close: 1000 })).toBeCloseTo(2 * Math.sqrt(12), 9);
-    expect(planAtr("SBIN", { atr: 2, atrHour: 9, close: 1000 })).toBe(2);
+    expect(planAtr("SBIN", { atr: 2, atrHour: 9, close: 1000 })).toBe(9);
+    expect(planAtr("AAPL.US", { atr: 2, atrHour: 9, close: 1000 })).toBe(2);
   });
 });
 
@@ -68,15 +72,19 @@ describe("coin trades", () => {
   const ctx = (symbol: string) => ({ symbol, timeframe: "5m", bars: trendBars(), regime: "trending_bullish" as const, eventWindowActive: false });
   const tuning = { idSuffix: "t", name: "Priya", minAdx: 18, stopAtrMult: 1.1, stopPriceFloorPct: 0.003, targetMult: 1.6, baseProbability: 0.5 };
 
-  it("put the stop at least 1.2% away, on the hourly scale, where a stock keeps its 5-minute plan", () => {
+  it("put the stop at least 1.2% away, on the hourly scale, for coins and Indian stocks; a US stock keeps its 5-minute plan", () => {
     const coin = buildTrendSetup(ctx("SOL/INR"), tuning)!;
-    const stock = buildTrendSetup(ctx("SBIN"), tuning)!;
+    const nse = buildTrendSetup(ctx("SBIN"), tuning)!;
+    const stock = buildTrendSetup(ctx("AAPL.US"), tuning)!;
     const stopPct = (s: typeof coin) => (s.entryPrice - s.stopLoss) / s.entryPrice;
     expect(stopPct(coin)).toBeGreaterThanOrEqual(COIN_MIN_STOP_PCT - 1e-4);
+    expect(stopPct(nse)).toBeGreaterThanOrEqual(NSE_MIN_STOP_PCT - 1e-4);
     expect(stopPct(stock)).toBeLessThan(0.01);
     expect(coin.planAtr).toBeGreaterThan(stock.planAtr!);
-    // Priya's own 1.6× target is widened to the coin minimum of 2×; a stock keeps 1.6×.
+    expect(nse.planAtr).toBe(coin.planAtr);
+    // Priya's own 1.6× target is widened to the minimum of 2×; a US stock keeps 1.6×.
     expect((coin.takeProfit - coin.entryPrice) / (coin.entryPrice - coin.stopLoss)).toBeCloseTo(COIN_MIN_TARGET_R, 1);
+    expect((nse.takeProfit - nse.entryPrice) / (nse.entryPrice - nse.stopLoss)).toBeCloseTo(COIN_MIN_TARGET_R, 1);
     expect((stock.takeProfit - stock.entryPrice) / (stock.entryPrice - stock.stopLoss)).toBeCloseTo(1.6, 1);
     expect(coin.riskRewardRatio).toBeCloseTo(2, 1);
   });
@@ -92,10 +100,12 @@ describe("coin trades", () => {
 
   it("run for 4 hours and trail as runners by their planning ATR", () => {
     expect(holdMinutesFor({ symbol: "SOL/INR", horizon: "intraday" })).toBe(COIN_HOLD_MINUTES);
-    expect(holdMinutesFor({ symbol: "SBIN", horizon: "intraday" })).toBe(30);
+    expect(holdMinutesFor({ symbol: "SBIN", horizon: "intraday" })).toBe(NSE_HOLD_MINUTES);
+    expect(holdMinutesFor({ symbol: "AAPL.US", horizon: "intraday" })).toBe(30);
     expect(holdMinutesFor({ symbol: "SOL/INR", horizon: "swing" })).toBe(4320);
     expect(trailsAsRunner({ family: "mean_reversion", symbol: "SOL/INR" })).toBe(true);
-    expect(trailsAsRunner({ family: "mean_reversion", symbol: "SBIN" })).toBe(false);
+    expect(trailsAsRunner({ family: "mean_reversion", symbol: "SBIN" })).toBe(true);
+    expect(trailsAsRunner({ family: "mean_reversion", symbol: "AAPL.US" })).toBe(false);
     expect(atrForExits({ planAtr: 15, entryPrice: 1000 }, 2)).toBe(15);
     expect(atrForExits({ entryPrice: 1000 }, 2)).toBe(3); // 0.3% floor
 

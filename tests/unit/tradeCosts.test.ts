@@ -59,11 +59,11 @@ describe("the traders' records", () => {
   };
 
   it("leave out setups whose costs would eat the stop, as the live checks do", () => {
-    // Narrow candles: every trader's stop is 0.3–0.5% away, so none of their setups counts.
-    const tight = measureExpectancy([{ symbol: "SBIN", bars: stockBars(0.0005) }], undefined, 0, () => 0.0005);
-    expect(Object.keys(tight.byKey).filter((k) => k.startsWith("nse:"))).toEqual([]);
-    // Wider candles, wider stops: the setups with room count.
-    const wide = measureExpectancy([{ symbol: "SBIN", bars: stockBars(0.004) }], undefined, 0, () => 0.0005);
-    expect(wide.byKey["nse:Chen Conservative Trend"]?.trades).toBeGreaterThan(0);
+    // Indian stocks plan 1.2%+ stops: with a normal spread their costs are about a quarter of it and they count.
+    const normal = measureExpectancy([{ symbol: "SBIN", bars: stockBars(0.004) }], undefined, 0, () => 0.0002);
+    expect(normal.byKey["nse:Chen Conservative Trend"]?.trades).toBeGreaterThan(0);
+    // A 2% spread on top of the charges eats more than the whole stop: none counts.
+    const wide = measureExpectancy([{ symbol: "SBIN", bars: stockBars(0.004) }], undefined, 0, () => 0.02);
+    expect(Object.keys(wide.byKey).filter((k) => k.startsWith("nse:"))).toEqual([]);
   });
 });

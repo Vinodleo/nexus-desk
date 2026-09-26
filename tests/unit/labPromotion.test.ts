@@ -40,7 +40,7 @@ describe("breakout RSI filter", () => {
     expect(buildBreakoutSetup(ctx(72), tuning)?.qualifies).toBe(true);
   });
 
-  it("uses the Lab's stop and target in ATRs: hourly ones for a coin, 5-minute ones for a stock", () => {
+  it("uses the Lab's stop and target in ATRs: hourly ones for a coin, 5-minute ones for a US stock", () => {
     // ATR defaults to 0.5% of 105 = 0.525. A coin plans on the hourly scale;
     // without an hour of candles yet, that's the 5-minute ATR × √12.
     const hourly = 0.525 * Math.sqrt(12);
@@ -48,7 +48,7 @@ describe("breakout RSI filter", () => {
     expect(coin.stopLoss).toBeCloseTo(105 - hourly * 1.4, 2);
     expect(coin.takeProfit).toBeCloseTo(105 + hourly * 2.8, 2);
     expect(coin.planAtr).toBeCloseTo(hourly, 6);
-    const stock = labTunedPersona(model)!.evaluate({ ...ctx(55), symbol: "SBIN" })!;
+    const stock = labTunedPersona(model)!.evaluate({ ...ctx(55), symbol: "AAPL.US" })!;
     expect(stock.stopLoss).toBeCloseTo(105 - 0.525 * 1.4, 2);
   });
 });

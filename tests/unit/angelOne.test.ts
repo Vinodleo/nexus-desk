@@ -31,7 +31,7 @@ function candles(from: number, to: number, step: number) {
   for (let t = Math.ceil(from / step) * step; t <= to; t += step) {
     // A strong trend, 0.15% a candle (well clear of stock trading costs), at ₹905 now.
     const c = 905 * Math.pow(1.0015, (t - now) / FIVE);
-    out.push([isoIst(t), c * 0.9997, c * 1.004, c * 0.996, c, 50000 + ((t / FIVE) % 50) * 100]);
+    out.push([isoIst(t), c * 0.9997, c * 1.0005, c * 0.9995, c, 50000 + ((t / FIVE) % 50) * 100]);
   }
   return out;
 }
@@ -357,7 +357,7 @@ describe("stock bid and ask", () => {
       quarantines: {}, promotedModel: null,
     }, now);
     // The price has run well up since the signal's candle closed.
-    quoteRunUp = 0.012;
+    quoteRunUp = 0.03;
     try {
       await pollStockPrices(now);
     } finally {

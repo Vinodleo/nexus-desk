@@ -12,8 +12,15 @@ import { marketOf } from "./marketLimits";
 //   can run to 3× that, as before);
 // - the trailing stop steps by the same hourly ATR, as a runner.
 //
-// Entries still come from the 5-minute signals. Stocks are unchanged: they
-// close by 3:20 the same day.
+// Entries still come from the 5-minute signals.
+//
+// Indian stocks are planned the same way (still closed by 3:20 the same
+// day). Angel One's intraday charges come to about 0.27% a round trip at
+// ₹10,000, and 5-minute stops sat 0.3–0.5% away, so costs took 64–108% of
+// the risk and every trader lost; the cost check then refused nearly every
+// stock setup. On the hourly scale, with a 1.2% floor, costs are about a
+// quarter of the stop. US stocks cost almost nothing to trade and stay on
+// the 5-minute plan.
 
 /** A coin trade's time limit: 4 hours. */
 export const COIN_HOLD_MINUTES = 240;
@@ -23,33 +30,44 @@ export const INTRADAY_HOLD_MINUTES = 30;
 export const SWING_HOLD_MINUTES = 4320;
 /** The least a coin trade's stop sits from entry: about twice the typical spread. */
 export const COIN_MIN_STOP_PCT = 0.012;
+/** An Indian stock trade's time limit: 3 hours (it's closed at 3:20 whatever). */
+export const NSE_HOLD_MINUTES = 180;
+/** The least an Indian stock trade's stop sits from entry: its costs (about 0.3%) are then a quarter of it. */
+export const NSE_MIN_STOP_PCT = 0.012;
 /** Hours of 5-minute candles the hourly ATR averages over. */
 export const HOUR_ATR_HOURS = 6;
 const CANDLES_PER_HOUR = 12;
 
-/** Whether this is a coin (planned on the hourly scale); stocks, Indian or US, aren't. */
+/** Whether this is a coin. */
 export const isCoin = (symbol: string | undefined): boolean => Boolean(symbol) && marketOf(symbol) === "coins";
+/** Whether this is an Indian stock. */
+const isNseStock = (symbol: string | undefined): boolean => Boolean(symbol) && marketOf(symbol!) === "stocks";
+/** Coins and Indian stocks are planned on the hourly scale; US stocks aren't. */
+export const plansHourly = (symbol: string | undefined): boolean => isCoin(symbol) || isNseStock(symbol);
 
 /** How long a trade may run before the time limit applies. */
 export function holdMinutesFor(setup: { symbol?: string; horizon?: "intraday" | "swing" }): number {
   if (setup.horizon === "swing") return SWING_HOLD_MINUTES;
-  return isCoin(setup.symbol) ? COIN_HOLD_MINUTES : INTRADAY_HOLD_MINUTES;
+  return isCoin(setup.symbol) ? COIN_HOLD_MINUTES : isNseStock(setup.symbol) ? NSE_HOLD_MINUTES : INTRADAY_HOLD_MINUTES;
 }
 
 /**
- * The ATR a trade is planned and trailed on: for coins the hourly one (or,
- * without enough candles yet, the 5-minute one scaled to an hour: volatility
- * grows with the square root of time); for stocks the 5-minute one.
+ * The ATR a trade is planned and trailed on: for coins and Indian stocks the
+ * hourly one (or, without enough candles yet, the 5-minute one scaled to an
+ * hour: volatility grows with the square root of time); for US stocks the
+ * 5-minute one.
  */
 export function planAtr(symbol: string | undefined, bar: { atr?: number; atrHour?: number; close: number }): number {
   const atr = bar.atr || bar.close * 0.005;
-  if (!isCoin(symbol)) return atr;
+  if (!plansHourly(symbol)) return atr;
   return bar.atrHour && bar.atrHour > 0 ? bar.atrHour : atr * Math.sqrt(CANDLES_PER_HOUR);
 }
 
-/** The least distance to a stop, as a share of price: a trader's own floor, and for coins at least COIN_MIN_STOP_PCT. */
+/** The least distance to a stop, as a share of price: a trader's own floor, and at least COIN_MIN_STOP_PCT for coins, NSE_MIN_STOP_PCT for Indian stocks. */
 export function stopFloorPct(symbol: string | undefined, traderFloor: number): number {
-  return isCoin(symbol) ? Math.max(traderFloor, COIN_MIN_STOP_PCT) : traderFloor;
+  if (isCoin(symbol)) return Math.max(traderFloor, COIN_MIN_STOP_PCT);
+  if (isNseStock(symbol)) return Math.max(traderFloor, NSE_MIN_STOP_PCT);
+  return traderFloor;
 }
 
 /**
@@ -102,9 +120,9 @@ export const COIN_MIN_TARGET_R = 2;
 /** Range (reversion) trades: their VWAP target is often closer, so the same minimum applies. */
 export const COIN_REVERSION_MIN_R = COIN_MIN_TARGET_R;
 
-/** A target distance widened, for a coin, to at least COIN_MIN_TARGET_R times the stop. */
+/** A target distance widened, for a coin or Indian stock, to at least COIN_MIN_TARGET_R times the stop. */
 export function coinTargetDistance(symbol: string | undefined, targetDistance: number, stopDistance: number): number {
-  return isCoin(symbol) ? Math.max(targetDistance, stopDistance * COIN_MIN_TARGET_R) : targetDistance;
+  return plansHourly(symbol) ? Math.max(targetDistance, stopDistance * COIN_MIN_TARGET_R) : targetDistance;
 }
 
 /**
