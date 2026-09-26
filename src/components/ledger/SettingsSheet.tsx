@@ -13,6 +13,7 @@ import type { ServerStatus } from "../../hooks/useServerStatus";
 import { prefersReducedMotion, usePresence } from "./motion";
 import { builtAtText, checkForUpdate, type UpdateCheck } from "../../services/appUpdates";
 import { THEMES, type ThemeId } from "../../services/theme";
+import { reviewerSummary } from "../../services/reviewerSummary";
 import { nseTakesEntries } from "../../shared/nse";
 import { usTakesEntries } from "../../shared/usMarket";
 
@@ -576,6 +577,26 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               <span className="text-gain">Ready</span>
             )}
           </Row>
+          {(() => {
+            const { sub, badge } = reviewerSummary(props.serverStatus ?? null);
+            return (
+              <Row label="Gemini reviewer" sub={sub}>
+                {badge === "checking" ? (
+                  <Checking />
+                ) : badge === "off" ? (
+                  <span className="text-muted">Not set up</span>
+                ) : badge === "problem" ? (
+                  <span className="text-warn">Problem</span>
+                ) : badge === "limit" ? (
+                  <span className="text-warn">Limit reached</span>
+                ) : badge === "working" ? (
+                  <Connected />
+                ) : (
+                  <span className="text-gain">Ready</span>
+                )}
+              </Row>
+            );
+          })()}
           <Row
             label="Angel One"
             sub={

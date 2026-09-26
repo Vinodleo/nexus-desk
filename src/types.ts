@@ -214,6 +214,8 @@ export interface TradeProposal {
    * autopilot leaves it for you.
    */
   scannedOnPhone?: boolean;
+  /** Gemini's review on the server just before the autopilot opened it (server/tradeReviewer.ts). */
+  aiReview?: { outcome: "take" | "skip" | "unreviewed"; reason: string; model?: string };
 }
 
 export interface Order {

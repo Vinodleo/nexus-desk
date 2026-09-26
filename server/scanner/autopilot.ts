@@ -15,6 +15,8 @@ import { loadLiveRiskConfig } from "../liveOrderGuard";
 import { placeLiveEntry } from "../liveEntry";
 import { isNseSymbol } from "../../src/shared/nse";
 import { isUsSymbol } from "../../src/shared/usMarket";
+import { reviewTrade } from "../tradeReviewer";
+import type { MarketBar } from "../../src/types";
 
 // Self-Approve on the server: after each scan, the proposals autopilot would
 // have opened in the app are opened here, by the same rules (the shared
@@ -39,6 +41,8 @@ export interface ServerAutopilotDeps {
   livePrice: (symbol: string, direction: "LONG" | "SHORT") => number | undefined;
   /** ATR of the latest closed candle. */
   barAtr: (symbol: string) => number | undefined;
+  /** Closed 5-minute candles, for Gemini's review. */
+  bars?: (symbol: string) => MarketBar[] | undefined;
 }
 
 /** This user's guardian closes, newest first, for the loss guards. */
@@ -79,8 +83,10 @@ export function liveAutopilotBlock(desk: DeskState): string | null {
 export interface ServerAutopilotHooks {
   /** Places a real entry order (server/liveEntry.ts); swapped in tests. */
   placeLiveEntry: typeof placeLiveEntry;
+  /** Gemini's take-or-skip (server/tradeReviewer.ts); swapped in tests. */
+  reviewTrade?: typeof reviewTrade;
 }
-const defaultHooks: ServerAutopilotHooks = { placeLiveEntry };
+const defaultHooks: ServerAutopilotHooks = { placeLiveEntry, reviewTrade };
 
 /**
  * Opens the proposals autopilot accepts and marks every proposal with what
@@ -129,7 +135,18 @@ export async function runServerAutopilot(
   );
 
   const liveRefused = new Map<string, string>();
+  const reviews = new Map<string, NonNullable<TradeProposal["aiReview"]>>();
+  const review = hooks.reviewTrade ?? reviewTrade;
   for (const a of accepted) {
+    // Gemini's second opinion: it can skip a trade, never add one. Without
+    // an answer the trade goes ahead on the checks above.
+    const verdict = await review(a.proposal, deps.bars?.(a.proposal.symbol), now);
+    if (!verdict.off) reviews.set(a.proposal.id, { outcome: verdict.outcome, reason: verdict.reason, model: verdict.model });
+    if (verdict.outcome === "skip") {
+      liveRefused.set(a.proposal.id, `Gemini skipped it: ${verdict.reason}`);
+      console.log(`[ServerAutopilot] Gemini skipped ${a.proposal.symbol} for ${uid}: ${verdict.reason}`);
+      continue;
+    }
     const position = positionFromProposal(a, {
       id: newPositionId(now),
       atr: atrForExits(a.proposal.setup, deps.barAtr(a.proposal.symbol)),
@@ -185,13 +202,14 @@ export async function runServerAutopilot(
 
   const approved = new Set(accepted.filter((a) => !liveRefused.has(a.proposal.id)).map((a) => a.proposal.id));
   const reasons = new Map([...deferred.map((d) => [d.proposal.id, d.reason] as const), ...liveRefused]);
-  return proposals.map((p) =>
-    approved.has(p.id)
-      ? { ...p, status: "APPROVED" as const }
+  return proposals.map((p) => {
+    const reviewed = reviews.has(p.id) ? { ...p, aiReview: reviews.get(p.id) } : p;
+    return approved.has(p.id)
+      ? { ...reviewed, status: "APPROVED" as const }
       : reasons.has(p.id)
-        ? { ...p, status: "DEFERRED" as const, deferralReason: reasons.get(p.id) }
-        : p
-  );
+        ? { ...reviewed, status: "DEFERRED" as const, deferralReason: reasons.get(p.id) }
+        : reviewed;
+  });
 }
 
 /** When the server's autopilot last opened a position for this user (0 if not since the server started). */

@@ -262,6 +262,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
       return currentPrices[s] ?? market.getBars(s)?.at(-1)?.close;
     },
     barAtr: (s) => market.getBars(s)?.at(-1)?.atr,
+    bars: (s) => market.getBars(s) ?? undefined,
   }, now);
   const record: ServerScanReport = { at: now, outcomes: report.outcomes, newProposals };
   state.reports = [...state.reports, record].slice(-MAX_REPORTS);
