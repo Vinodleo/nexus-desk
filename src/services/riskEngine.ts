@@ -12,6 +12,7 @@ import { openQuantity } from "../shared/exitRules";
 import { nseRoundTripRate } from "../shared/nse";
 import { ruleFor } from "./marketRulesStore";
 import type { RiskRejectionCode } from "./scanOutcome";
+import { costShareOfStop, MAX_COST_SHARE_OF_STOP, roundTripFeeRate } from "../shared/tradeCosts";
 
 export interface RiskPolicyConfig {
   equity: number;
@@ -184,21 +185,22 @@ export function evaluateRiskEngine(
     rejectionReason = `REJECTED BY RISK: ${setup.symbol} is under embargo (${remainingMins}m remaining) due to consecutive loss protection.`;
   }
 
-  // Check Spread-to-Stop Ratio (Reject if spread is too wide compared to stop loss distance)
-  const spreadStopDistance = Math.abs(setup.entryPrice - setup.stopLoss);
-  if (passed && options?.spread !== undefined && spreadStopDistance > 0) {
-    const spreadFractionOfStop = options.spread / spreadStopDistance;
-    // If the spread eats more than 25% of the stop loss, the trade is practically unviable
-    if (spreadFractionOfStop > 0.25) {
+  // Costs next to the stop: fees plus the bid-ask spread are paid win or
+  // lose, so a stop only a few times the costs away can't pay (shared with
+  // the traders' replay, shared/tradeCosts).
+  const costStopDistance = Math.abs(setup.entryPrice - setup.stopLoss);
+  if (passed && costStopDistance > 0 && setup.entryPrice > 0) {
+    const spreadPct = options?.spread !== undefined ? options.spread / setup.entryPrice : 0;
+    const share = costShareOfStop(setup.symbol, setup.entryPrice, setup.stopLoss, spreadPct);
+    if (share > MAX_COST_SHARE_OF_STOP) {
       passed = false;
       rejectionCode = "spread";
-      rejectionReason = `REJECTED BY RISK: Bid-ask spread (₹${options.spread.toFixed(
+      rejectionReason = `REJECTED BY RISK: Fees and the bid-ask spread (${(
+        (roundTripFeeRate(setup.symbol) + spreadPct) *
+        100
+      ).toFixed(2)}% of price) would take ${(share * 100).toFixed(0)}% of the stop distance (₹${costStopDistance.toFixed(
         2
-      )}) is ${(spreadFractionOfStop * 100).toFixed(
-        0
-      )}% of stop distance (₹${spreadStopDistance.toFixed(
-        2
-      )}). Max allowed is 25%.`;
+      )}). Max allowed is ${MAX_COST_SHARE_OF_STOP * 100}%.`;
     }
   }
 

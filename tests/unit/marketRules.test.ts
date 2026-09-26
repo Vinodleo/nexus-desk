@@ -41,7 +41,7 @@ describe("sizing with market rules", () => {
     simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
   };
   const trade = (symbol: string, price: number) => {
-    const atr = price * 0.004;
+    const atr = price * 0.008; // a 1.2% stop: coins never stop closer (COIN_MIN_STOP_PCT)
     const setup: any = {
       id: "s", name: "t", family: "trend_following", direction: "LONG", symbol, timeframe: "5m", entryPrice: price,
       stopLoss: price - 1.5 * atr, takeProfit: price + 3.3 * atr, riskRewardRatio: 2.2, baseProbability: 0.58, qualifies: true,

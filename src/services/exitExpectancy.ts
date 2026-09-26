@@ -6,6 +6,7 @@ import { simulateExit } from "./exitComparison";
 import { isNseSymbol } from "../shared/nse";
 import { isUsSymbol } from "../shared/usMarket";
 import { DEFAULT_TRAIL_PROFILE, type TrailProfileId } from "../shared/trailingStop";
+import { costsTooBigForStop } from "../shared/tradeCosts";
 
 // What each trader's setups actually earn with the live exits. The profit
 // check used to assume a winning trade reaches its target; the exits (the
@@ -82,6 +83,8 @@ export function measureExpectancy(
     symbols++;
     for (const { i, setups } of panelSetupsOnHistory(symbol, bars)) {
       for (const setup of setups) {
+        // Not taken live either: its costs would eat too much of the stop.
+        if (costsTooBigForStop(symbol, setup.entryPrice, setup.stopLoss, spreadFor(symbol) ?? 0)) continue;
         const result = simulateExit(setup, bars, i, profile, spreadFor(symbol) ?? 0);
         if (!result) continue;
         const key = expectancyKey(symbol, setup.name);

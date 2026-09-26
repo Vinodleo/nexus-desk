@@ -1,10 +1,9 @@
-import { isUsSymbol, US_ROUND_TRIP_RATE } from "../shared/usMarket";
 import type { MarketBar, StrategySetup } from "../types";
 import { bankPartial, holdingDecision, partialDue, type ExitState } from "../shared/exitRules";
 import { TRAIL_PROFILES, updateTrailingStop, type TrailProfileId, type TrailState } from "../shared/trailingStop";
 import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
 import { panelSetupsOnHistory, LAB_INTERVAL_MS } from "./labSimulation";
-import { isNseSymbol, nseRoundTripRate } from "../shared/nse";
+import { roundTripFeeRate } from "../shared/tradeCosts";
 
 // Which trailing-stop profile makes the most money: every setup the live
 // trader panel would have taken on history, played out candle by candle
@@ -16,8 +15,7 @@ import { isNseSymbol, nseRoundTripRate } from "../shared/nse";
 // a gap through the stop fills at the candle's open.
 
 /** Fees in and out, as a share of the entry price: CoinDCX's, or Angel One's for a ₹10,000 stock trade. */
-const ROUND_TRIP_FEE = 0.001;
-const feeFor = (symbol: string) => (isUsSymbol(symbol) ? US_ROUND_TRIP_RATE : isNseSymbol(symbol) ? nseRoundTripRate(10_000) : ROUND_TRIP_FEE);
+const feeFor = (symbol: string) => roundTripFeeRate(symbol);
 
 export interface ExitResult {
   /** Net result in multiples of the initial risk, after fees. */
