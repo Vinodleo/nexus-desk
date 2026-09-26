@@ -4,7 +4,7 @@ import type { Position } from "../../src/types";
 import { scanAllMarkets, type FullScanReport } from "../../src/services/marketScannerService";
 import { DEFAULT_RISK_POLICY } from "../../src/services/riskEngine";
 import { SIGNAL_INTERVAL_MS, nextCandleFetchAt } from "../../src/services/liveMarketStreamService";
-import { mergeShadows, resolveShadows, type ShadowSignal } from "../../src/services/shadowTracker";
+import { MAX_KEPT, mergeShadows, resolveShadows, type ShadowSignal } from "../../src/services/shadowTracker";
 import { buildCalibrator } from "../../src/services/calibration";
 import { experiencesFromShadows } from "../../src/services/experienceMemory";
 import { toOrderBook } from "../../src/services/orderBookService";
@@ -64,6 +64,23 @@ export const SERVER_SCAN_FRESH_MS = 12 * 60 * 1000;
 
 const DATA_DIR = process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 const SHADOW_FILE = path.join(DATA_DIR, "scanner_shadows.json");
+
+// The server follows every setup in every market, well over a thousand a
+// day, so keeping only the newest 1,500 (what a phone keeps) left "When
+// setups win" with a few hours of results. It keeps a week instead, up to a
+// cap; the phone still gets the newest 1,500.
+/** Followed setups are kept this long on the server. */
+export const SERVER_SHADOW_DAYS = 7;
+/** And at most this many (about 25 MB saved). */
+export const SERVER_MAX_SHADOWS = 40_000;
+
+/** The server's followed setups after adding `fresh`: the last week's, newest first, up to the cap. Open ones are kept whatever their age. */
+export function keepServerShadows(existing: ShadowSignal[], fresh: ShadowSignal[], now: number): ShadowSignal[] {
+  const cutoff = now - SERVER_SHADOW_DAYS * 24 * 60 * 60 * 1000;
+  const merged = mergeShadows(existing, fresh, SERVER_MAX_SHADOWS);
+  const recent = merged.filter((s) => s.status === "open" || s.signalTime >= cutoff);
+  return recent.length === merged.length ? merged : recent;
+}
 
 const market = new ServerMarketData();
 const users = new Map<string, UserScanState>();
@@ -266,7 +283,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
   }, now);
   const record: ServerScanReport = { at: now, outcomes: report.outcomes, newProposals };
   state.reports = [...state.reports, record].slice(-MAX_REPORTS);
-  state.shadows = mergeShadows(state.shadows, report.shadows);
+  state.shadows = keepServerShadows(state.shadows, report.shadows, now);
   state.lastScanAt = now;
   broadcastToUser(uid, { type: "SCAN_REPORT", data: record });
   return record;
@@ -396,8 +413,14 @@ export function exitEdgeTable(uid: string, now: number = Date.now()) {
   return universe.length > 0 ? getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk?.trailProfile, now, typicalSpread) : null;
 }
 
+/** Every setup the server has followed for this user in the last week, newest first. */
 export function shadowsFor(uid: string): ShadowSignal[] {
   return users.get(uid)?.shadows ?? [];
+}
+
+/** The newest of them, as many as a phone keeps (the Learning tab). */
+export function shadowsForDevice(uid: string): ShadowSignal[] {
+  return shadowsFor(uid).slice(0, MAX_KEPT);
 }
 
 /** A cycle stuck longer than this (it shouldn't be: requests time out) no longer blocks the next. */
