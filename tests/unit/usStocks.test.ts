@@ -68,6 +68,8 @@ describe("the US market", () => {
 
 const calls: string[] = [];
 let alpacaDown = false;
+/** The IEX quote's half-spread in dollars. */
+let halfSpread = 0.02;
 
 /** Each 5-minute slot's count of session candles before it, over the days the tests read: prices move only while the market is open. */
 const sessionIndex = new Map<number, number>();
@@ -99,7 +101,7 @@ function alpaca(url: URL): Response {
     const out: Record<string, unknown> = {};
     for (const t of tickers) {
       const p = usdAt(now);
-      out[t] = { latestTrade: { p }, latestQuote: { bp: p - 0.02, ap: p + 0.02, bs: 300, as: 200 } };
+      out[t] = { latestTrade: { p }, latestQuote: { bp: p - halfSpread, ap: p + halfSpread, bs: 300, as: 200 } };
     }
     return new Response(JSON.stringify(out));
   }
@@ -131,6 +133,7 @@ afterAll(() => {
 beforeEach(async () => {
   calls.length = 0;
   alpacaDown = false;
+  halfSpread = 0.02;
   (await import("../../server/fx"))._setUsdInr(null);
   (await import("../../server/alpaca"))._resetAlpaca();
 });
@@ -161,6 +164,21 @@ describe("the Alpaca client", () => {
     expect(snaps["AAPL.US"].ask! - snaps["AAPL.US"].bid!).toBeCloseTo(0.04 * USDINR, 6);
     // The free IEX feed, with the keys in headers (never in the URL).
     expect(calls.every((c) => c.includes("feed=iex") && !c.includes("secret"))).toBe(true);
+  });
+
+  it("leaves out an IEX quote far wider than the market's (priced on the last trade instead)", async () => {
+    const fx = await import("../../server/fx");
+    const alpacaClient = await import("../../server/alpaca");
+    fx._setUsdInr(USDINR, now);
+    // $250 stock, IEX bid and ask $2.50 apart (1%): not the market's real spread.
+    halfSpread = 1.25;
+    const snaps = await alpacaClient.fetchUsSnapshots(["AAPL.US"]);
+    expect(snaps["AAPL.US"].price).toBeCloseTo(usdAt(now) * USDINR, 6);
+    expect(snaps["AAPL.US"].bid).toBeUndefined();
+    expect(snaps["AAPL.US"].ask).toBeUndefined();
+    // A tight one (8 cents, 0.03%) is kept.
+    halfSpread = 0.04;
+    expect((await alpacaClient.fetchUsSnapshots(["AAPL.US"]))["AAPL.US"].bid).toBeCloseTo((usdAt(now) - 0.04) * USDINR, 6);
   });
 
   it("keeps only regular-session candles: Alpaca's pre-market and after-hours ones are left out", async () => {
