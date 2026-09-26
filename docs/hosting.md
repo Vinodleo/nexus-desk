@@ -149,7 +149,11 @@ an https address. `fly.toml` holds the settings. The GitHub Action
    whether it's connected.
 
    `GEMINI_API_KEY` comes from [AI Studio → Get API key](https://aistudio.google.com/apikey).
-   Without it, the agents use their rule-based fallbacks. The other
+   Without it, the agents use their rule-based fallbacks. With it, Gemini
+   also reviews each trade the server's autopilot is about to open and can
+   skip it (never open one); Settings → Server → Gemini reviewer shows
+   today's count against the daily cap (`GEMINI_REVIEW_DAILY_LIMIT`,
+   default 300). The other
    `LIVE_*` limits in `.env.example` can be added the same way.
 6. **Let GitHub deploy.** Create a deploy token:
 
