@@ -21,6 +21,8 @@ export interface ServerStatus {
     skipped: number;
     unreviewed: number;
     limitHits: number;
+    /** Answers per model today; missing on an older server. */
+    byModel?: Record<string, number>;
     limitReached: boolean;
     lastError: string | null;
   };
