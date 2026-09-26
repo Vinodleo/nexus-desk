@@ -16,10 +16,19 @@ import { marketOf } from "../src/shared/marketLimits";
 // GEMINI_REVIEW_DAILY_LIMIT (reviews per day, India time).
 
 /**
- * 3.8 Flash first; when Google's free tier says it's used up (about 5 a
- * minute, 20 a day), Flash-Lite (15 a minute, many more a day) carries on.
+ * Newest Flash first. Google's free tier gives each model its own small
+ * allowance (about 5 a minute and 20 a day for a Flash), so when one is used
+ * up the next carries on, down to the Flash-Lites (15 a minute, many more a
+ * day). A name Google doesn't know is skipped for a day.
  */
-const DEFAULT_REVIEW_MODELS = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
+const DEFAULT_REVIEW_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+];
 /** Stays under the free tier's daily requests for Flash-Lite. */
 export const DEFAULT_REVIEW_DAILY_LIMIT = 300;
 /** At most about nine a minute (the free tier allows ten or more). */
@@ -29,6 +38,8 @@ const TIMEOUT_MS = 20_000;
 const MINUTE_LIMIT_COOLDOWN_MS = 60_000;
 /** After its daily limit, try it again this often (Google resets it at midnight Pacific time). */
 const DAY_LIMIT_COOLDOWN_MS = 60 * 60_000;
+/** A model Google doesn't know is skipped this long. */
+const MISSING_MODEL_COOLDOWN_MS = 24 * 60 * 60_000;
 /** Candles shown to Gemini: three hours of 5-minute ones. */
 const CANDLES_SHOWN = 36;
 
@@ -245,7 +256,11 @@ export async function reviewTrade(
         failure = "Google's free-tier limit was reached";
         continue;
       }
-      failure = isMissingModel(err) ? `model ${model} isn't available (set GEMINI_REVIEW_MODELS)` : shortError(err);
+      if (isMissingModel(err)) {
+        // A wrong or retired name: don't keep asking it on every trade.
+        cooldownUntil.set(model, now + MISSING_MODEL_COOLDOWN_MS);
+        failure = `model ${model} isn't available (check GEMINI_REVIEW_MODELS)`;
+      } else failure = shortError(err);
       console.warn(`[Reviewer] ${model}: ${failure}`);
     }
   }

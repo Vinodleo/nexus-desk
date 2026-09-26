@@ -64,7 +64,7 @@ const deps = { livePrice: () => 1001, barAtr: () => 5, bars: () => bars };
 
 beforeEach(async () => {
   vi.stubEnv("GEMINI_API_KEY", "test-key");
-  vi.stubEnv("GEMINI_REVIEW_MODELS", "");
+  vi.stubEnv("GEMINI_REVIEW_MODELS", "gemini-3.8-flash,gemini-3.1-flash-lite");
   vi.stubEnv("GEMINI_REVIEW_DAILY_LIMIT", "");
   (await import("../../server/tradeReviewer"))._resetReviewer({ minGapMs: 0 });
   (await import("../../server/guardian"))._resetGuardian();
@@ -95,6 +95,16 @@ describe("Gemini's review", () => {
     expect(reviewerStatus(now)).toMatchObject({ configured: true, reviewed: 2, taken: 1, skipped: 1, unreviewed: 0, lastError: null });
   });
 
+  it("goes through the Flashes, newest first, then the Flash-Lites, unless GEMINI_REVIEW_MODELS says otherwise", async () => {
+    const { reviewModels } = await import("../../server/tradeReviewer");
+    vi.stubEnv("GEMINI_REVIEW_MODELS", "");
+    expect(reviewModels()).toEqual([
+      "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+    ]);
+    vi.stubEnv("GEMINI_REVIEW_MODELS", " gemini-3.8-flash , gemini-3.5-flash-lite ");
+    expect(reviewModels()).toEqual(["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
+  });
+
   it("tries the next model when one isn't available", async () => {
     const { reviewTrade } = await import("../../server/tradeReviewer");
     const generate = vi.fn(async ({ model }: { model: string }) => {
@@ -102,6 +112,9 @@ describe("Gemini's review", () => {
       return '{"take": true, "reason": "ok"}';
     });
     expect(await reviewTrade(proposal("SOL/INR"), bars, now, generate)).toMatchObject({ outcome: "take", model: "gemini-3.1-flash-lite" });
+    // And doesn't ask the missing one again on the next trade.
+    await reviewTrade(proposal("ETH/INR"), bars, now + 60 * 60_000, generate);
+    expect(generate.mock.calls.filter((c) => c[0].model === "gemini-3.8-flash")).toHaveLength(1);
   });
 
   it("moves on to Flash-Lite when 3.8 Flash is at Google's limit, and goes back to it later", async () => {
