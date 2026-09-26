@@ -103,10 +103,21 @@ export async function fetchUsCandles(symbols: string[], timeframe: AlpacaTimefra
   return out;
 }
 
+/**
+ * IEX quotes wider than this (share of the mid price) are left out. IEX is
+ * one exchange with a small share of trading; when it isn't quoting near the
+ * whole market's best price, its bid and ask sit far apart (often 1% or more
+ * on stocks whose real spread is a cent or two). Charged in the traders'
+ * replay against 5-minute stops, that made every US setup lose several R, and
+ * judging a position on that bid could stop it out on nothing. Without a
+ * quote, a stock is priced on its last trade.
+ */
+export const MAX_US_QUOTE_SPREAD = 0.001;
+
 export interface UsQuote {
   /** Last trade, in rupees. */
   price: number;
-  /** Best bid and ask (IEX), in rupees, with sizes in shares; absent when IEX has no two-sided quote. */
+  /** Best bid and ask (IEX), in rupees, with sizes in shares; absent when IEX has no two-sided quote or a too-wide one. */
   bid?: number;
   ask?: number;
   bidSize?: number;
@@ -126,7 +137,7 @@ export async function fetchUsSnapshots(symbols: string[]): Promise<Record<string
     const bp = Number(snap?.latestQuote?.bp);
     const ap = Number(snap?.latestQuote?.ap);
     const quote: UsQuote = { price: last * rate };
-    if (bp > 0 && ap >= bp) {
+    if (bp > 0 && ap >= bp && (ap - bp) / ((ap + bp) / 2) <= MAX_US_QUOTE_SPREAD) {
       quote.bid = bp * rate;
       quote.ask = ap * rate;
       quote.bidSize = Number(snap?.latestQuote?.bs) || 0;
