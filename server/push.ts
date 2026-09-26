@@ -115,7 +115,7 @@ export async function notifyUser(uid: string | undefined, message: PushMessage):
   return sent;
 }
 
-export { tradeOpenedMessage, tradeClosedMessage } from "../src/shared/tradeMessages";
+export { tradeOpenedMessage, tradeClosedMessage, swingWaitingMessage } from "../src/shared/tradeMessages";
 
 /** Test hook. */
 export function _resetPush(): void {

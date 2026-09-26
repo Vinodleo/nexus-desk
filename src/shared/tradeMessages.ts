@@ -58,3 +58,28 @@ export function tradeClosedMessage(t: {
     url: "/",
   };
 }
+
+const pct = (from: number, to: number) => `${to >= from ? "+" : "−"}${((Math.abs(to - from) / from) * 100).toFixed(1)}%`;
+
+/**
+ * A swing setup waiting for you in the Queue. The autopilot never opens a
+ * swing trade (it holds for days with a wide stop), and a proposal only
+ * waits about ten minutes, so it's worth a pop-up. The tag is the market's,
+ * so a repeat replaces the last one.
+ */
+export function swingWaitingMessage(
+  p: { symbol: string; setup: { direction: "LONG" | "SHORT"; entryPrice: number; stopLoss: number; takeProfit: number; name?: string }; expiresAt?: number },
+  now: number = Date.now()
+): TradeMessage {
+  const s = p.setup;
+  const minsLeft = p.expiresAt !== undefined ? Math.max(1, Math.round((p.expiresAt - now) / 60_000)) : undefined;
+  return {
+    title: `Swing trade waiting: ${s.direction === "LONG" ? "buy" : "short"} ${p.symbol}`,
+    body: `About ${inr(s.entryPrice)} · stop ${inr(s.stopLoss)} (${pct(s.entryPrice, s.stopLoss)}) · target ${inr(s.takeProfit)} (${pct(
+      s.entryPrice,
+      s.takeProfit
+    )}) · holds up to 3 days${s.name ? ` · ${s.name}` : ""} · ${minsLeft !== undefined ? `approve in the Queue within ${minsLeft} min` : "approve in the Queue"}`,
+    tag: `swing-${p.symbol}`,
+    url: "/",
+  };
+}
