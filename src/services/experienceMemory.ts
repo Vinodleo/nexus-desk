@@ -1,6 +1,7 @@
 import { ExperienceVector, HistoricalTrade, StrategySetup, RegimeType, TradeAutopsy } from "../types";
 import { seededShare } from "./dataProvenance";
 import { oneShadowAtATime, type ShadowSignal } from "./shadowTracker";
+import { outcomeScore, scoreFromR } from "./calibration";
 
 // Seed historical experiences
 export function generateInitialExperienceDatabase(): ExperienceVector[] {
@@ -124,7 +125,11 @@ export function retrieveSimilarExperiences(
   const winPnlSum = wins.reduce((acc, w) => acc + (w.item.pnl || 0), 0);
   const lossPnlSum = losses.reduce((acc, l) => acc + Math.abs(l.item.pnl || 0), 0);
 
-  const empiricalWinRate = topK.length > 0 ? wins.length / topK.length : 0.5;
+  // How far similar setups got toward their target on average (the
+  // calibration's win scale), not just how many ended ahead: a +0.1R scrape
+  // isn't a +2R target. Older memories without the score count 1 or 0.
+  const empiricalWinRate =
+    topK.length > 0 ? topK.reduce((a, s) => a + (s.item.outcomeScore ?? (s.item.outcome === "WIN" ? 1 : 0)), 0) / topK.length : 0.5;
   const avgWinDollars = wins.length > 0 ? winPnlSum / wins.length : 250;
   const avgLossDollars = losses.length > 0 ? lossPnlSum / losses.length : 150;
   const avgSimilarity = topK.length > 0 ? topK.reduce((acc, s) => acc + s.similarity, 0) / topK.length : 0.8;
@@ -170,6 +175,10 @@ export function experiencesFromShadows(shadows: ShadowSignal[]): ExperienceVecto
       metaConfidence: s.confidence ?? 0.5,
       decision: s.kind === "proposed" ? "TRADE" : "NO_TRADE",
       outcome: win ? "WIN" : "LOSS",
+      ...(() => {
+        const score = outcomeScore(s);
+        return score !== null ? { outcomeScore: Number(score.toFixed(4)) } : {};
+      })(),
       // In units of the scanner's standard ₹300 risk.
       pnl: Number((s.r * 300).toFixed(2)),
       pnlPercent: Number(movePct.toFixed(2)),
@@ -210,6 +219,11 @@ export function experienceFromTrade(t: HistoricalTrade, shadows: ShadowSignal[])
     .sort((a, b) => b.signalTime - a.signalTime)[0];
   const readings = setup?.setupFeatures && setup.regime ? setup : undefined;
   const win = t.realizedPnl > 0;
+  // Its result in R against what its setup aimed for, when both are known.
+  const risk = setup ? Math.abs(setup.entryPrice - setup.stopLoss) : 0;
+  const targetR = setup && risk > 0 ? Math.abs(setup.takeProfit - setup.entryPrice) / risk : 0;
+  const score =
+    (t.riskAtOpen ?? 0) > 0 && targetR > 0 ? scoreFromR((t.grossPnl ?? t.realizedPnl) / t.riskAtOpen!, targetR) : undefined;
   return {
     id: tradeExperienceId(t),
     timestamp: new Date(t.closedAtMs ?? Date.now()).toISOString(),
@@ -230,6 +244,7 @@ export function experienceFromTrade(t: HistoricalTrade, shadows: ShadowSignal[])
     metaConfidence: setup?.confidence ?? 0.5,
     decision: "TRADE",
     outcome: win ? "WIN" : "LOSS",
+    ...(score !== undefined ? { outcomeScore: Number(score.toFixed(4)) } : {}),
     pnl: t.realizedPnl,
     pnlPercent: t.realizedPnlPercent,
     tags: [t.symbol, win ? "win" : "loss", t.exitReason, "trade", ...(readings ? [] : [READINGS_UNKNOWN])],

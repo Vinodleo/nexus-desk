@@ -114,6 +114,13 @@ export interface ExperienceVector {
   metaConfidence: number;
   decision: "TRADE" | "NO_TRADE" | "REJECTED_BY_RISK";
   outcome?: "WIN" | "LOSS" | "BREAKEVEN";
+  /**
+   * How far it got toward its target, on the calibration's 0-1 scale (the
+   * target 1, the stop 0, in between by how far it got: calibration's
+   * scoreFromR). The memory averages this; older memories without it count
+   * a win as 1 and a loss as 0.
+   */
+  outcomeScore?: number;
   pnl?: number;
   pnlPercent?: number;
   postClassification?:

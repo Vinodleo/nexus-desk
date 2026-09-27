@@ -60,9 +60,17 @@ export function outcomeScore(s: ShadowSignal): number | null {
   const reward = Math.abs(s.takeProfit - s.entryPrice);
   if (risk <= 0 || reward <= 0) return null;
   const move = s.direction === "LONG" ? s.exitPrice - s.entryPrice : s.entryPrice - s.exitPrice;
-  const r = move / risk;
-  const rr = reward / risk;
-  return Math.min(1, Math.max(0, (r + 1) / (rr + 1)));
+  return scoreFromR(move / risk, reward / risk);
+}
+
+/**
+ * A result of `r` (in R) on a setup aiming for `targetR`, on the 0-1 win
+ * scale: the target 1, the stop 0, in between by how far it got. The trade
+ * memory and the retraining learn this too, so a +0.1R scrape and a +2R
+ * target don't count as the same "win".
+ */
+export function scoreFromR(r: number, targetR: number): number {
+  return Math.min(1, Math.max(0, (r + 1) / (targetR + 1)));
 }
 
 /** Pool-adjacent-violators: the closest non-decreasing sequence, weighted. */

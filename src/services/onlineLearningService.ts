@@ -2,12 +2,15 @@ import { LIVE_MODEL_PATH, trainMetaModel } from "./mlService";
 import { loadStoredPromotedLabModel, saveStoredPromotedLabModel } from "./storagePersistenceService";
 import { META_FEATURE_COUNT, META_FEATURE_VERSION } from "./metaFeatures";
 import { oneShadowAtATime, type ShadowSignal } from "./shadowTracker";
+import { outcomeScore } from "./calibration";
 import type * as tf from "@tensorflow/tfjs";
 
 // Daily retraining of the confidence model on what actually happened: every
 // shadow-tracked intraday setup from the last 30 days, with the model inputs
 // recorded when it was found (the same ones the Lab and live scoring use),
-// labelled by whether it made money after fees.
+// labelled by how far it got toward its target (the calibration's win scale:
+// the target 1, the stop 0, in between by how far it got), so the model
+// learns what setups make, not just how often they end ahead.
 
 const LAST_TRAINING_KEY = "nexus_last_online_training_timestamp";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -25,7 +28,7 @@ export function onlineTrainingSet(shadows: ShadowSignal[], nowMs: number = Date.
   for (const s of oneShadowAtATime(usable)) {
     if (s.status === "open" || s.r === undefined) continue;
     features.push(s.features!);
-    labels.push(s.r > 0 ? 1 : 0);
+    labels.push(outcomeScore(s) ?? (s.r > 0 ? 1 : 0));
   }
   return { features, labels };
 }
