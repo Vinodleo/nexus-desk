@@ -344,6 +344,7 @@ export interface HistoricalTrade {
   closedAtMs?: number;
   holdingDurationMinutes?: number;
   isSelfApproved?: boolean;
+  /** The best and worst prices seen while it was open: how far it went for and against you (tradeExcursion). */
   highestPrice?: number;
   lowestPrice?: number;
   trailActive?: boolean;
