@@ -120,6 +120,10 @@ describe("server scanner", () => {
     expect(reports[0].newProposals[0].dataQuality?.simulatedOrderBook).toBe(false);
     expect(shadowsFor("owner").length).toBeGreaterThan(0);
     expect(fs.existsSync(path.join(dataDir, "scanner_shadows.json"))).toBe(true);
+    // The traders' records are kept on disk too, and the app is told how far back they go.
+    expect(fs.existsSync(path.join(dataDir, "trader_records.json"))).toBe(true);
+    const edge = await (await fetch(`${base}/api/scanner/exit-edge`, { headers: { "x-uid": "owner" } })).json();
+    expect(edge.table).toMatchObject({ recordDays: 30 });
 
     // The app picks them up over HTTP.
     const res = await fetch(`${base}/api/scanner/reports?since=0`, { headers: { "x-uid": "owner" } });

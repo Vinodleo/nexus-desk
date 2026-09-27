@@ -21,6 +21,10 @@ export interface ExitResult {
   /** Net result in multiples of the initial risk, after fees. */
   r: number;
   reason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME";
+  /** The candle it closed on. */
+  exitIndex: number;
+  /** Still open when the history ended: judged at the last price, not finished. */
+  open?: boolean;
 }
 
 type SimPosition = TrailState & ExitState;
@@ -63,15 +67,16 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
   const crossedStop = (price: number) => (price - p.stopLoss) * dir <= 0;
   const reachedTarget = (price: number) => (price - p.takeProfit) * dir >= 0;
 
-  const finish = (exit: number, reason: ExitResult["reason"]): ExitResult => {
+  let j = i + 1;
+  const finish = (exit: number, reason: ExitResult["reason"], open?: boolean): ExitResult => {
     const banked = p.bankedQuantity ?? 0;
     const gainPerUnit =
       ((banked > 0 && p.bankedPrice !== undefined ? (p.bankedPrice - entry) * banked : 0) + (exit - entry) * (p.quantity - banked)) * dir / p.quantity;
-    return { r: (gainPerUnit - entry * fee) / risk, reason };
+    return { r: (gainPerUnit - entry * fee) / risk, reason, exitIndex: open ? bars.length - 1 : j, ...(open ? { open } : {}) };
   };
   const stopReason = (): ExitResult["reason"] => (p.trailActive || (p.stopLoss - entry) * dir >= 0 ? "TRAILING_STOP" : "STOP_LOSS");
 
-  for (let j = i + 1; j < bars.length; j++) {
+  for (; j < bars.length; j++) {
     const bar = bars[j];
     const adverse = dir > 0 ? bar.low : bar.high;
     const favourable = dir > 0 ? bar.high : bar.low;
@@ -97,7 +102,7 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
   // counting the losers that stopped out early: one that has run an hour is
   // judged at the last price; a younger one is left out (it would only show
   // the spread it paid).
-  if (bars.length - 1 - i >= MARK_OPEN_AFTER_BARS) return finish(bars[bars.length - 1].close, "EXPIRY_TIME");
+  if (bars.length - 1 - i >= MARK_OPEN_AFTER_BARS) return finish(bars[bars.length - 1].close, "EXPIRY_TIME", true);
   return null;
 }
 
