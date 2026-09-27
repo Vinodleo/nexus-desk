@@ -50,10 +50,9 @@ function run(over: {
   positions?: Position[];
   dailyLoss?: number;
   depth?: number;
-  hourly?: number;
   failures?: Partial<FailureInjectionState>;
   stale?: boolean;
-  options?: Parameters<typeof evaluateRiskEngine>[10];
+  options?: Parameters<typeof evaluateRiskEngine>[9];
 } = {}) {
   return evaluateRiskEngine(
     over.setup ?? setup(),
@@ -62,7 +61,6 @@ function run(over: {
     over.positions ?? [],
     over.dailyLoss ?? 0,
     over.depth ?? 80,
-    over.hourly ?? 0,
     DEFAULT_RISK_POLICY,
     { ...noFailures, ...over.failures },
     over.stale ?? false,
@@ -85,7 +83,6 @@ describe("evaluateRiskEngine", () => {
     ["daily loss limit", { dailyLoss: DEFAULT_RISK_POLICY.hardDailyLossLimit }, /daily loss limit/],
     ["max positions", { positions: [pos("ETH/INR", 0.001), pos("SOL/INR", 0.001), pos("XRP/INR", 0.001)] }, /Maximum simultaneous/],
     ["thin liquidity", { depth: 10 }, /Liquidity/],
-    ["turnover cap", { hourly: DEFAULT_RISK_POLICY.turnoverCapHourly }, /Turnover/],
     ["negative EV", { ev: { isPositiveEdge: false, expectedNetValue: -5 } as ExpectedValueAssessment }, /Negative expectancy/],
     ["same symbol already open", { positions: [pos("BTC/INR", 0.001)] }, /already open/],
     ["exposure limit", { positions: [pos("ETH/INR", 10, 1000)] }, /exposure/],
@@ -93,6 +90,12 @@ describe("evaluateRiskEngine", () => {
     const r = run(over as Parameters<typeof run>[0]);
     expect(r.passedAllChecks).toBe(false);
     expect(r.rejectionReason).toMatch(reason);
+  });
+
+  it("has no trades-per-hour check of its own: the autopilot's hourly cap is the one limit", () => {
+    // It was always given a count of 2 against a cap of 4, so it never refused anything.
+    expect("turnoverCapHourly" in DEFAULT_RISK_POLICY).toBe(false);
+    expect(DEFAULT_RISK_POLICY.autopilotMaxApprovalsPerHour).toBe(3);
   });
 
   it("caps quarter-Kelly at the fixed per-trade risk fraction", () => {

@@ -55,7 +55,6 @@ export type RiskRejectionCode =
   | "daily_loss"
   | "max_positions"
   | "liquidity"
-  | "turnover"
   | "negative_ev"
   | "existing_position"
   | "exposure"
