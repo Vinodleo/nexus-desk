@@ -313,7 +313,9 @@ export function evaluateRiskEngine(
   // Bounded above by fixed per-trade risk fraction:
   // "confidence-scaled sizing should only reduce risk relative to that ceiling, never increase it"
   const effectiveRiskFraction = Math.min(maxRiskFraction, quarterKelly);
-  const riskDollars = Number((equity * effectiveRiskFraction).toFixed(2));
+  // And by the market's risk per trade (Settings), so every trade in a market
+  // loses the same rupees at its stop, however far away the stop is.
+  const riskDollars = Number(Math.min(equity * effectiveRiskFraction, marketLimit?.riskPerTradeInr ?? Infinity).toFixed(2));
   const stopDistance = Math.abs(setup.entryPrice - setup.stopLoss);
   const rawUnits = stopDistance > 0 ? riskDollars / stopDistance : 0;
 

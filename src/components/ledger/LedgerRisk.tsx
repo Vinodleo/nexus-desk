@@ -5,6 +5,7 @@ import { apiFetch } from "../../services/apiClient";
 import { GrowBar } from "./motion";
 import { Card, Switch } from "./ui";
 import { formatMoney } from "./format";
+import { MARKET_KEYS, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
 
 export interface LedgerRiskProps {
   riskCalc: RiskCalculation;
@@ -16,6 +17,19 @@ export interface LedgerRiskProps {
   coinDcxStatus: CoinDcxServerStatus | null;
   onRefreshCoinDcxStatus?: () => Promise<void>;
   onRefreshBalance?: () => Promise<unknown>;
+  /** Each market's risk per trade (Settings); the most a trade can risk is the lower of it and the share of equity. */
+  marketLimits?: MarketLimits;
+}
+
+const MARKET_SHORT: Record<MarketKey, string> = { coins: "Coins", stocks: "Indian", us: "US" };
+
+/** The most a trade can lose at its stop: one amount, or each market's when they differ. */
+export function mostATradeCanRisk(r: Pick<RiskCalculation, "equity" | "maxRiskPerTradeFraction">, limits?: MarketLimits): string {
+  const equityCap = r.equity * r.maxRiskPerTradeFraction;
+  if (!limits) return `${(r.maxRiskPerTradeFraction * 100).toFixed(1)}% · ${formatMoney(equityCap, { decimals: 0 })}`;
+  const each = MARKET_KEYS.map((k) => Math.min(equityCap, limits[k].riskPerTradeInr ?? equityCap));
+  if (each.every((v) => v === each[0])) return `${formatMoney(each[0], { decimals: 0 })} a trade`;
+  return MARKET_KEYS.map((k, i) => `${MARKET_SHORT[k]} ${formatMoney(each[i], { decimals: 0 })}`).join(" · ");
 }
 
 const Meter: React.FC<{ label: string; value: string; fraction: number }> = ({ label, value, fraction }) => {
@@ -116,9 +130,7 @@ export const LedgerRisk: React.FC<LedgerRiskProps> = (props) => {
         />
         <div className="flex justify-between gap-3 text-[13px] tabular-nums">
           <span>Most a trade can risk</span>
-          <span className="text-muted">
-            {(r.maxRiskPerTradeFraction * 100).toFixed(1)}% · {formatMoney(r.equity * r.maxRiskPerTradeFraction, { decimals: 0 })}
-          </span>
+          <span className="text-muted">{mostATradeCanRisk(r, props.marketLimits)}</span>
         </div>
       </Card>
 

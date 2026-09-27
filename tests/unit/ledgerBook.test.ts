@@ -9,6 +9,7 @@ const { LedgerBook, dayLabel, summarizeTrades } = await import("../../src/compon
 const { LedgerRisk } = await import("../../src/components/ledger/LedgerRisk");
 const { apiFetch } = await import("../../src/services/apiClient");
 import type { FailureInjectionState, HistoricalTrade, RiskCalculation } from "../../src/types";
+import { cleanMarketLimits } from "../../src/shared/marketLimits";
 
 afterEach(cleanup);
 
@@ -92,6 +93,15 @@ describe("LedgerRisk", () => {
     expect(container.textContent).toContain("All checks passing.");
     expect(screen.getByRole("meter", { name: "Daily loss" }).getAttribute("aria-valuenow")).toBe("20");
     expect(container.textContent).toContain("2 of 3");
+  });
+
+  it("shows the most a trade can lose: each market's risk per trade, within the share of equity", () => {
+    const limits = cleanMarketLimits(null);
+    const { container, rerender } = render(createElement(LedgerRisk, { ...base, marketLimits: limits }));
+    expect(container.textContent).toContain("Most a trade can risk₹50 a trade");
+    rerender(createElement(LedgerRisk, { ...base, marketLimits: { ...limits, us: { ...limits.us, riskPerTradeInr: 5000 } } }));
+    // US at ₹5,000 is held to 1% of ₹94,484 of equity.
+    expect(container.textContent).toContain("Coins ₹50 · Indian ₹50 · US ₹945");
   });
 
   it("reports trades as blocked while a drill is on, and turns drills on and off", () => {

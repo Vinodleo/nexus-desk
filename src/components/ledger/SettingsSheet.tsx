@@ -7,7 +7,7 @@ import { usePWAInstall } from "../../hooks/usePWAInstall";
 import { RoundIconButton, Switch } from "./ui";
 import type { NotifyState } from "../../hooks/useTradeNotifications";
 import type { RiskLimits } from "../../hooks/useRiskPolicy";
-import { AMOUNT_CHOICES, MAX_TRADES_CHOICES, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
+import { AMOUNT_CHOICES, defaultRiskPerTrade, MAX_TRADES_CHOICES, RISK_CHOICES, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
 import { formatMoney } from "./format";
 import type { ServerStatus } from "../../hooks/useServerStatus";
 import { prefersReducedMotion, usePresence } from "./motion";
@@ -188,8 +188,9 @@ const AppVersionRow: React.FC = () => {
 };
 
 /**
- * Amount per trade and trades open at once, for one market. Changeable any
- * time, paper or live; the server's autopilot uses them too.
+ * Amount per trade, most to lose per trade and trades open at once, for one
+ * market. Changeable any time, paper or live; the server's autopilot uses
+ * them too.
  */
 const MarketLimitRows: React.FC<{
   market: MarketKey;
@@ -204,6 +205,9 @@ const MarketLimitRows: React.FC<{
   const set = (patch: Partial<MarketLimits[MarketKey]>) => onChange({ ...limits, [market]: { ...mine, ...patch } });
   const overCap = liveCapInr !== undefined && mine.amountPerTradeInr > liveCapInr;
   const withCurrent = (choices: number[], current: number) => (choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b));
+  const risk = mine.riskPerTradeInr ?? defaultRiskPerTrade(mine.amountPerTradeInr);
+  // A stop closer than this (share of price) reaches the amount per trade first, so risks less.
+  const fullRiskStopPct = (risk / mine.amountPerTradeInr) * 100;
   return (
     <>
       <Row
@@ -224,6 +228,22 @@ const MarketLimitRows: React.FC<{
           options={withCurrent(AMOUNT_CHOICES, mine.amountPerTradeInr)}
           format={(v) => formatMoney(v, { decimals: 0 })}
           onChange={(v) => set({ amountPerTradeInr: v })}
+        />
+      </Row>
+      <Row
+        label={`${title}: most to lose per trade`}
+        sub={
+          fullRiskStopPct >= 100
+            ? "More than the amount per trade: the amount decides the size"
+            : `Sized to lose this at the stop; less if the stop is under ${Number(fullRiskStopPct.toFixed(1))}% away`
+        }
+      >
+        <RollingSelect
+          label={`${title}: most to lose per trade`}
+          value={risk}
+          options={withCurrent(RISK_CHOICES, risk)}
+          format={(v) => formatMoney(v, { decimals: 0 })}
+          onChange={(v) => set({ riskPerTradeInr: v })}
         />
       </Row>
       <Row

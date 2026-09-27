@@ -47,11 +47,48 @@ describe("per-market limits", () => {
   it("keep only sensible values, defaulting the rest", () => {
     expect(cleanMarketLimits(null)).toEqual(DEFAULT_MARKET_LIMITS);
     expect(cleanMarketLimits({ coins: { amountPerTradeInr: 2500, maxOpenTrades: 4 }, stocks: { amountPerTradeInr: -5, maxOpenTrades: 99 } })).toEqual({
-      coins: { amountPerTradeInr: 2500, maxOpenTrades: 4 },
+      // Saved before risk per trade existed: 1% of the amount.
+      coins: { amountPerTradeInr: 2500, maxOpenTrades: 4, riskPerTradeInr: 25 },
       stocks: DEFAULT_MARKET_LIMITS.stocks,
       // Saved before US stocks existed: the default.
       us: DEFAULT_MARKET_LIMITS.us,
     });
+  });
+
+  it("keep a chosen risk per trade, and start at 1% of the amount", () => {
+    expect(DEFAULT_MARKET_LIMITS.coins.riskPerTradeInr).toBe(50);
+    const cleaned = cleanMarketLimits({
+      coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 150 },
+      stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 3 },
+      us: { amountPerTradeInr: 50000, maxOpenTrades: 2 },
+    });
+    expect(cleaned.coins.riskPerTradeInr).toBe(150);
+    expect(cleaned.stocks.riskPerTradeInr).toBe(50); // too small to be meant
+    // US shares cost ₹10,000 or more each: a ₹50,000 amount starts at ₹500, so a trade can still buy one.
+    expect(cleaned.us.riskPerTradeInr).toBe(500);
+  });
+
+  it("size each trade so its stop loses the market's risk per trade, up to the amount", () => {
+    const sized = { ...DEFAULT_RISK_POLICY, equity: 100000, marketLimits: cleanMarketLimits(null) };
+    const score = { calibratedWinProbability: 0.6, confidence: 0.6 } as MetaLabelScore;
+    const ev = { isPositiveEdge: true, expectedNetValue: 100 } as ExpectedValueAssessment;
+    const noDrills = {
+      globalKillSwitchActive: false, simulateAgentTimeout: false, simulateStaleMarketData: false,
+      simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
+    };
+    const lossAtStop = (stopLoss: number, p = sized) => {
+      const setup = { symbol: "SOL/INR", direction: "LONG", entryPrice: 1000, stopLoss, takeProfit: 1100, riskRewardRatio: 3 } as StrategySetup;
+      const r = evaluateRiskEngine(setup, score, ev, [], 0, 80, 0, p, noDrills, false);
+      expect(r.passedAllChecks).toBe(true);
+      return r.recommendedPositionSizeUnits * (1000 - stopLoss);
+    };
+    // A 4% stop and a 1.2% stop both lose ₹50: the wider one is a third the size.
+    expect(lossAtStop(960)).toBeCloseTo(50, 1);
+    expect(lossAtStop(988)).toBeCloseTo(50, 1);
+    // A 0.5% stop would need ₹10,000; the ₹5,000 amount caps it, so it loses less.
+    expect(lossAtStop(995)).toBeCloseTo(25, 1);
+    // The share of equity still caps it: ₹10,000 of equity at 0.3% is ₹30.
+    expect(lossAtStop(960, { ...sized, equity: 10000 })).toBeCloseTo(30, 1);
   });
 
   it("size each trade to its market's amount, and count trades per market", () => {

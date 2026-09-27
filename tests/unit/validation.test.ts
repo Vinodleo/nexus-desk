@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   closePositionBody,
   coinDcxCandlesQuery,
+  deskStateBody,
   executeTradeBody,
   syncPositionsBody,
   tradeAutopsyBody,
@@ -102,5 +103,25 @@ describe("validate middleware", () => {
     expect(next).not.toHaveBeenCalled();
     expect(r.status).toHaveBeenCalledWith(400);
     expect(r.json.mock.calls[0][0]).toMatchObject({ code: "VALIDATION_ERROR", issues: [{ path: "price" }] });
+  });
+});
+
+describe("deskStateBody", () => {
+  const limit = { amountPerTradeInr: 5000, maxOpenTrades: 2 };
+  const desk = (marketLimits: unknown) => ({
+    equity: 100000, riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits },
+    dailyRealizedPnl: 0, autopilot: true, killSwitch: false, scanning: true,
+    failureState: {
+      simulateAgentTimeout: false, simulateStaleMarketData: false, simulateDailyLossBreach: false,
+      simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false, globalKillSwitchActive: false,
+    },
+    quarantines: {}, promotedModel: null,
+  });
+
+  it("keeps each market's risk per trade, and still takes limits from an app without it", () => {
+    const parsed = deskStateBody.parse(desk({ coins: { ...limit, riskPerTradeInr: 150 }, stocks: limit, us: limit }));
+    expect(parsed.riskLimits.marketLimits?.coins.riskPerTradeInr).toBe(150);
+    expect(parsed.riskLimits.marketLimits?.stocks.riskPerTradeInr).toBeUndefined();
+    expect(deskStateBody.safeParse(desk({ coins: { ...limit, riskPerTradeInr: -1 }, stocks: limit })).success).toBe(false);
   });
 });

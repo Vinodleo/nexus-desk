@@ -1,12 +1,16 @@
 import { isNseSymbol } from "./nse";
 import { isUsSymbol } from "./usMarket";
 
-// How much goes into each trade, and how many trades can be open at once,
-// set separately for coins (CoinDCX), Indian stocks (Angel One) and US
-// stocks (Alpaca, paper). You change them
+// How much goes into each trade, how much it may lose, and how many trades
+// can be open at once, set separately for coins (CoinDCX), Indian stocks
+// (Angel One) and US stocks (Alpaca, paper). You change them
 // in Settings, paper or live; the app and the server's autopilot both
 // apply them. (Live orders are also held to the server's own caps, the
 // LIVE_* settings, whatever these say.)
+//
+// Each trade is sized so that its stop loses the market's risk per trade
+// (1R): a trade with a stop twice as far away is half the size. The amount
+// per trade still caps it, so a trade whose stop is very close risks less.
 
 export type MarketKey = "coins" | "stocks" | "us";
 export const MARKET_KEYS: MarketKey[] = ["coins", "stocks", "us"];
@@ -16,17 +20,37 @@ export interface MarketLimit {
   amountPerTradeInr: number;
   /** Trades open at the same time in this market. */
   maxOpenTrades: number;
+  /**
+   * Rupees a trade loses if it's stopped out (1R, before fees): it's sized to
+   * that. cleanMarketLimits fills it in; without it (limits from an older
+   * app), only the amount per trade caps the size.
+   */
+  riskPerTradeInr?: number;
 }
 
 export type MarketLimits = Record<MarketKey, MarketLimit>;
 
 export const AMOUNT_CHOICES = [1000, 2000, 3000, 5000, 10000, 25000, 50000];
 export const MAX_TRADES_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10];
+export const RISK_CHOICES = [25, 50, 75, 100, 150, 200, 300, 500, 1000];
+
+/**
+ * Until you choose, a trade may lose 1% of the market's amount per trade
+ * (₹50 of ₹5,000). Coin and Indian stock stops sit at least 1.2% away, so
+ * each of those trades risks exactly that. US stops are closer (usually under 1%),
+ * so the amount still decides their size, as before.
+ */
+export const DEFAULT_RISK_SHARE_OF_AMOUNT = 0.01;
+
+/** The risk per trade used until you choose one: DEFAULT_RISK_SHARE_OF_AMOUNT of the amount. */
+export function defaultRiskPerTrade(amountPerTradeInr: number): number {
+  return Math.max(10, Math.round(amountPerTradeInr * DEFAULT_RISK_SHARE_OF_AMOUNT));
+}
 
 export const DEFAULT_MARKET_LIMITS: MarketLimits = {
-  coins: { amountPerTradeInr: 5000, maxOpenTrades: 2 },
-  stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2 },
-  us: { amountPerTradeInr: 5000, maxOpenTrades: 2 },
+  coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50 },
+  stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50 },
+  us: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50 },
 };
 
 export const MARKET_LABEL: Record<MarketKey, string> = { coins: "coin", stocks: "Indian stock", us: "US stock" };
@@ -41,9 +65,13 @@ export function cleanMarketLimits(raw: unknown): MarketLimits {
     const d = DEFAULT_MARKET_LIMITS[key];
     const amount = Number(r[key]?.amountPerTradeInr);
     const trades = Number(r[key]?.maxOpenTrades);
+    const risk = Number(r[key]?.riskPerTradeInr);
+    const amountPerTradeInr = Number.isFinite(amount) && amount >= 100 && amount <= 1_000_000 ? Math.round(amount) : d.amountPerTradeInr;
     return {
-      amountPerTradeInr: Number.isFinite(amount) && amount >= 100 && amount <= 1_000_000 ? Math.round(amount) : d.amountPerTradeInr,
+      amountPerTradeInr,
       maxOpenTrades: Number.isInteger(trades) && trades >= 1 && trades <= 20 ? trades : d.maxOpenTrades,
+      // Saved before it existed (or odd): 1% of this market's amount.
+      riskPerTradeInr: Number.isFinite(risk) && risk >= 10 && risk <= 100_000 ? Math.round(risk) : defaultRiskPerTrade(amountPerTradeInr),
     };
   };
   return { coins: one("coins"), stocks: one("stocks"), us: one("us") };
