@@ -14,6 +14,7 @@ export type SkipReason =
   | "thin_market"
   | "wide_spread"
   | "spread_cap"
+  | "same_sector"
   | "no_shorting"
   | "weaker_setup"
   | "outvoted"
@@ -34,6 +35,7 @@ export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
   thin_market: "Too little on the order book",
   wide_spread: "Fees and spread too big for the stop",
   spread_cap: `Spread over ${(MAX_COIN_SPREAD * 100).toFixed(1)}%: too costly to trade`,
+  same_sector: "Enough trades open in this sector already",
   no_shorting: "Short setup: CoinDCX spot can't short",
   weaker_setup: "A better setup on the same coin was chosen",
   outvoted: "Outvoted by traders on the other side",
@@ -48,6 +50,7 @@ export type RiskRejectionCode =
   | "quarantine"
   | "spread"
   | "spread_cap"
+  | "correlation"
   | "stale_data"
   | "daily_loss"
   | "max_positions"
@@ -65,6 +68,7 @@ export function skipReasonForRisk(code: RiskRejectionCode | undefined): SkipReas
   if (code === "liquidity") return "thin_market";
   if (code === "spread") return "wide_spread";
   if (code === "spread_cap") return "spread_cap";
+  if (code === "correlation") return "same_sector";
   return "risk_limits";
 }
 

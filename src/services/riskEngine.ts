@@ -1,4 +1,4 @@
-import { MARKET_LABEL, marketOf, openInMarket, type MarketLimits } from "../shared/marketLimits";
+import { MARKET_LABEL, marketOf, openInMarket, openInSector, sectorOf, type MarketLimits } from "../shared/marketLimits";
 import {
   StrategySetup,
   MetaLabelScore,
@@ -21,7 +21,7 @@ export interface RiskPolicyConfig {
   maxAllowedExposureFraction: number; // 0.50 (50% max total margin exposure)
   maxOrderValueInr: number; // largest single position, in rupees
   maxSimultaneousPositions: number; // 3 positions
-  maxCorrelatedPositionsPerGroup: number; // 2 in same group (e.g. INDIAN_EQUITIES, CRYPTO_MAJOR)
+  maxCorrelatedPositionsPerGroup: number; // 2 open trades in one stock sector (shared/marketLimits sectorOf)
   turnoverCapHourly: number; // 4 trades per hour max
   minLiquidityScore: number; // 30 minimum order book depth
   maxSpreadTolerancePercent: number; // 0.08% max spread
@@ -249,6 +249,15 @@ export function evaluateRiskEngine(
     passed = false;
     rejectionCode = "max_positions";
     rejectionReason = `REJECTED BY RISK: Maximum simultaneous positions reached (${activePositions.length}/${maxSimultaneousPositions}).`;
+  }
+
+  // Stocks in one sector move together: at most maxCorrelatedPositionsPerGroup open in it.
+  const sector = sectorOf(setup.symbol);
+  const inSector = openInSector(activePositions, setup.symbol).length;
+  if (passed && sector && inSector >= policy.maxCorrelatedPositionsPerGroup) {
+    passed = false;
+    rejectionCode = "correlation";
+    rejectionReason = `REJECTED BY RISK: Already ${inSector} open ${MARKET_LABEL[marketOf(setup.symbol)]} trades in ${sector.label} (max ${policy.maxCorrelatedPositionsPerGroup}); stocks in one sector move together.`;
   }
 
   // Check Liquidity / Order Book Filter (Section 7)

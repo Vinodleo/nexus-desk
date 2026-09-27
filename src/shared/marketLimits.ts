@@ -1,5 +1,5 @@
-import { isNseSymbol } from "./nse";
-import { isUsSymbol } from "./usMarket";
+import { isNseSymbol, NSE_UNIVERSE } from "./nse";
+import { isUsSymbol, US_UNIVERSE, usTicker } from "./usMarket";
 
 // How much goes into each trade, how much it may lose, and how many trades
 // can be open at once, set separately for coins (CoinDCX), Indian stocks
@@ -75,6 +75,30 @@ export function cleanMarketLimits(raw: unknown): MarketLimits {
     };
   };
   return { coins: one("coins"), stocks: one("stocks"), us: one("us") };
+}
+
+// Stocks in one sector tend to move together (three banks open at once are
+// one bet on banks), so at most a few open trades share a sector: the risk
+// policy's maxCorrelatedPositionsPerGroup. Coins have no sectors here: they
+// all move with Bitcoin, so the coin count in Settings is their limit.
+
+const SECTOR_LABEL: Record<string, string> = {
+  BANK: "banking", FINANCE: "finance", IT: "IT", ENERGY: "energy", FMCG: "FMCG", AUTO: "autos", PHARMA: "pharma and health",
+  METALS: "metals", INFRA: "infrastructure", TELECOM: "telecom", CONSUMER: "consumer", INDEX: "index funds", TECH: "tech",
+  COMMS: "communications", HEALTH: "health",
+};
+
+/** The sector a stock trades in (Indian and US stocks apart), or null for a coin or a stock outside the lists. */
+export function sectorOf(symbol: string): { key: string; label: string } | null {
+  const sector = isUsSymbol(symbol) ? US_UNIVERSE[usTicker(symbol)] : isNseSymbol(symbol) ? NSE_UNIVERSE[symbol] : undefined;
+  if (!sector) return null;
+  return { key: `${marketOf(symbol)}:${sector}`, label: SECTOR_LABEL[sector] ?? sector.toLowerCase() };
+}
+
+/** Positions open in the same sector as `symbol` (none for a coin). */
+export function openInSector<T extends { symbol: string }>(positions: T[], symbol: string): T[] {
+  const sector = sectorOf(symbol);
+  return sector ? positions.filter((p) => sectorOf(p.symbol)?.key === sector.key) : [];
 }
 
 /** Positions open in the same market as `symbol`. */
