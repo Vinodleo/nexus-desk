@@ -106,6 +106,7 @@ import { holdMinutesFor, trailsAsRunner } from "./shared/coinHolds";
 import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, autopilotQueue, newPositionId, PHONE_SCAN_HOLD_REASON, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
 import { experiencesFromShadows, withTradeExperiences } from "./services/experienceMemory";
+import { trainConditionModel } from "./services/conditionModel";
 
 // ATR recorded on a position for its trailing-stop rules.
 function atrForExits(proposal: TradeProposal): number {
@@ -1429,6 +1430,8 @@ export default function App() {
       // Real results only: tracked setups and your closed trades, not the
       // generated starter memory.
       experiences: [...experiencesFromShadows(shadowStore.all()), ...experiences.filter((e) => !e.isSeeded)],
+      // What similar setups did, by trader, market and conditions.
+      conditionModel: trainConditionModel(shadowStore.all()),
       riskPolicy,
       quarantines: symbolQuarantinesRef.current,
       getOrderBook: fetchLiveOrderBook,

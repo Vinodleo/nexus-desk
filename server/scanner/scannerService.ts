@@ -7,6 +7,7 @@ import { SIGNAL_INTERVAL_MS, nextCandleFetchAt } from "../../src/services/liveMa
 import { MAX_KEPT, mergeShadows, resolveShadows, type ShadowSignal } from "../../src/services/shadowTracker";
 import { buildCalibrator } from "../../src/services/calibration";
 import { experiencesFromShadows } from "../../src/services/experienceMemory";
+import { trainConditionModel } from "../../src/services/conditionModel";
 import { toOrderBook } from "../../src/services/orderBookService";
 import { setMarketRules } from "../../src/services/marketRulesStore";
 import type { SymbolScanOutcome } from "../../src/services/scanOutcome";
@@ -256,6 +257,8 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     riskPolicy,
     // The trade memory: this user's finished tracked setups (real results).
     experiences: experiencesFromShadows(state.shadows),
+    // What similar setups did, by trader, market and conditions, from the week of followed setups.
+    conditionModel: trainConditionModel(state.shadows),
     quarantines: serverQuarantines(uid, desk, now),
     getOrderBook,
     calibrators: { heuristic: buildCalibrator(state.shadows, "heuristic") },

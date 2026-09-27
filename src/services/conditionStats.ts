@@ -115,6 +115,16 @@ const GROUPS: { id: string; title: string; buckets: Bucket[] }[] = [
   },
 ];
 
+/** Which row of each condition group a setup falls in (group id to row label), for the scoring table (conditionModel). */
+export function conditionBuckets(s: ShadowSignal): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const g of GROUPS) {
+    const hit = g.buckets.find((b) => b.test(s));
+    if (hit) out[g.id] = hit.label;
+  }
+  return out;
+}
+
 /**
  * A finished setup's result in R after the spread too (shadow results carry
  * fees only): a round trip pays the spread once, as a share of entry, over
