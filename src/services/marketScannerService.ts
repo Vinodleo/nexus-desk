@@ -346,7 +346,6 @@ export async function scanSingleMarket(
       options.activePositions,
       Math.abs(Math.min(0, options.dailyRealizedPnl)),
       orderBook.depthScore,
-      2,
       policy,
       options.failureState,
       isDataStale,

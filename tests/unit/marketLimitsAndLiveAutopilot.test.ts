@@ -79,7 +79,7 @@ describe("per-market limits", () => {
     };
     const lossAtStop = (stopLoss: number, p = sized) => {
       const setup = { symbol: "SOL/INR", direction: "LONG", entryPrice: 1000, stopLoss, takeProfit: 1100, riskRewardRatio: 3 } as StrategySetup;
-      const r = evaluateRiskEngine(setup, score, ev, [], 0, 80, 0, p, noDrills, false);
+      const r = evaluateRiskEngine(setup, score, ev, [], 0, 80, p, noDrills, false);
       expect(r.passedAllChecks).toBe(true);
       return r.recommendedPositionSizeUnits * (1000 - stopLoss);
     };
@@ -101,7 +101,7 @@ describe("per-market limits", () => {
       simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
     };
     const run = (s: StrategySetup, positions: any[]) =>
-      evaluateRiskEngine(s, score, ev, positions, 0, 80, 0, policy, noDrills, false);
+      evaluateRiskEngine(s, score, ev, positions, 0, 80, policy, noDrills, false);
     const coin = run(setup, []);
     expect(coin.passedAllChecks).toBe(true);
     // ₹3,000 at ₹1,000 = 3 units, well under the ₹300 risk cap.
@@ -133,7 +133,7 @@ describe("per-market limits", () => {
       simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
     };
     const run = (symbol: string, positions: any[]) =>
-      evaluateRiskEngine({ symbol, direction: "LONG", entryPrice: 1000, stopLoss: 980, takeProfit: 1060, riskRewardRatio: 3 } as StrategySetup, score, ev, positions, 0, 80, 0, roomy, noDrills, false);
+      evaluateRiskEngine({ symbol, direction: "LONG", entryPrice: 1000, stopLoss: 980, takeProfit: 1060, riskRewardRatio: 3 } as StrategySetup, score, ev, positions, 0, 80, roomy, noDrills, false);
     const twoBanks = [held("HDFCBANK"), held("ICICIBANK")];
     expect(roomy.maxCorrelatedPositionsPerGroup).toBe(2);
     const third = run("SBIN", twoBanks);

@@ -37,7 +37,7 @@ describe("costs next to the stop", () => {
       simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
     };
     const run = (s: any) =>
-      evaluateRiskEngine(s, meta, evaluateExpectedValue(s, meta, 0, 90), [], 0, 90, 0, { ...DEFAULT_RISK_POLICY, equity: 100000 }, noDrills, false);
+      evaluateRiskEngine(s, meta, evaluateExpectedValue(s, meta, 0, 90), [], 0, 90, { ...DEFAULT_RISK_POLICY, equity: 100000 }, noDrills, false);
     const tight = run(setup);
     expect(tight.passedAllChecks).toBe(false);
     expect(tight.rejectionCode).toBe("spread");
@@ -59,7 +59,7 @@ describe("coins with a wide spread", () => {
   };
   /** The risk check with a spread of `spread` rupees on a ₹100 price. */
   const run = (s: any, spread: number) =>
-    evaluateRiskEngine(s, meta, evaluateExpectedValue(s, meta, spread, 90), [], 0, 90, 0, DEFAULT_RISK_POLICY, noDrills, false, { spread });
+    evaluateRiskEngine(s, meta, evaluateExpectedValue(s, meta, spread, 90), [], 0, 90, DEFAULT_RISK_POLICY, noDrills, false, { spread });
 
   it("aren't traded above 0.2%, coins only", () => {
     expect(MAX_COIN_SPREAD).toBe(0.002);

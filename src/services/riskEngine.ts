@@ -22,7 +22,6 @@ export interface RiskPolicyConfig {
   maxOrderValueInr: number; // largest single position, in rupees
   maxSimultaneousPositions: number; // 3 positions
   maxCorrelatedPositionsPerGroup: number; // 2 open trades in one stock sector (shared/marketLimits sectorOf)
-  turnoverCapHourly: number; // 4 trades per hour max
   minLiquidityScore: number; // 30 minimum order book depth
   maxSpreadTolerancePercent: number; // 0.08% max spread
   fixedBrokerageFeeDollars: number; // legacy equity-style flat fee — unused now, kept for backward compatibility
@@ -50,7 +49,6 @@ export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
   maxOrderValueInr: 10000,
   maxSimultaneousPositions: 3,
   maxCorrelatedPositionsPerGroup: 2,
-  turnoverCapHourly: 4,
   minLiquidityScore: 35,
   maxSpreadTolerancePercent: 0.10,
   fixedBrokerageFeeDollars: 20.0,
@@ -145,7 +143,6 @@ export function evaluateRiskEngine(
   activePositions: Position[],
   currentDailyLoss: number,
   orderBookDepthScore: number,
-  recentHourlyTradeCount: number,
   policy: RiskPolicyConfig,
   failureState: FailureInjectionState,
   isDataStale: boolean,
@@ -268,13 +265,6 @@ export function evaluateRiskEngine(
     passed = false;
     rejectionCode = "liquidity";
     rejectionReason = `REJECTED BY RISK: Liquidity filter failed. Order book depth score ${effectiveDepth} < minimum ${policy.minLiquidityScore}.`;
-  }
-
-  // Check Turnover Cap (Section 7)
-  if (passed && recentHourlyTradeCount >= policy.turnoverCapHourly) {
-    passed = false;
-    rejectionCode = "turnover";
-    rejectionReason = `REJECTED BY RISK: Turnover cap reached (${recentHourlyTradeCount}/${policy.turnoverCapHourly} trades/hour). Skipping marginal candidate.`;
   }
 
   // Check Expected Net Edge (Section 7)

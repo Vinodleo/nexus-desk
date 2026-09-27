@@ -49,7 +49,7 @@ describe("sizing with market rules", () => {
     };
     const meta: any = { confidence: 0.62, calibratedWinProbability: 0.62 };
     const ev = evaluateExpectedValue(setup, meta, price * 0.0005, 88);
-    return evaluateRiskEngine(setup, meta, ev, [], 0, 88, 2, DEFAULT_RISK_POLICY, noDrills, false, { spread: price * 0.0005 });
+    return evaluateRiskEngine(setup, meta, ev, [], 0, 88, DEFAULT_RISK_POLICY, noDrills, false, { spread: price * 0.0005 });
   };
 
   it("can trade BTC, ETH and SOL again (the invented lot sizes blocked them)", () => {
