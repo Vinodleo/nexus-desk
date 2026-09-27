@@ -6,7 +6,7 @@ import { simulateExit } from "./exitComparison";
 import { isNseSymbol } from "../shared/nse";
 import { isUsSymbol } from "../shared/usMarket";
 import { DEFAULT_TRAIL_PROFILE, type TrailProfileId } from "../shared/trailingStop";
-import { costsTooBigForStop } from "../shared/tradeCosts";
+import { costsTooBigForStop, spreadTooWide } from "../shared/tradeCosts";
 
 // What each trader's setups actually earn with the live exits. The profit
 // check used to assume a winning trade reaches its target; the exits (the
@@ -78,6 +78,8 @@ export function measureExpectancy(
     if (set.bars.length < 100 || set.bars.some((b) => b.isSynthetic)) continue;
     // Coins that trade too rarely aren't traded, so they don't count toward anyone's record.
     if (tradesTooRarely(set.bars)) continue;
+    // Nor do coins whose spread is too wide to trade.
+    if (spreadTooWide(symbol, spreadFor(symbol) ?? 0)) continue;
     // The live candles carry the scanner's indicators; add them if these don't.
     const bars = set.bars[set.bars.length - 1].ema21 === undefined ? decorateBarsWithIndicators(set.bars) : set.bars;
     symbols++;

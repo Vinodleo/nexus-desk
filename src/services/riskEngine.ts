@@ -12,7 +12,7 @@ import { openQuantity } from "../shared/exitRules";
 import { nseRoundTripRate } from "../shared/nse";
 import { ruleFor } from "./marketRulesStore";
 import type { RiskRejectionCode } from "./scanOutcome";
-import { costShareOfStop, MAX_COST_SHARE_OF_STOP, roundTripFeeRate } from "../shared/tradeCosts";
+import { costShareOfStop, MAX_COIN_SPREAD, MAX_COST_SHARE_OF_STOP, roundTripFeeRate, spreadTooWide } from "../shared/tradeCosts";
 
 export interface RiskPolicyConfig {
   equity: number;
@@ -185,12 +185,24 @@ export function evaluateRiskEngine(
     rejectionReason = `REJECTED BY RISK: ${setup.symbol} is under embargo (${remainingMins}m remaining) due to consecutive loss protection.`;
   }
 
+  // A coin whose spread is too wide isn't traded at all (shared with the
+  // traders' replay, shared/tradeCosts). Swing trades, held for days on much
+  // wider stops, are always the owner's call; the cost check below still
+  // applies to them.
+  const spreadPct = options?.spread !== undefined && setup.entryPrice > 0 ? options.spread / setup.entryPrice : 0;
+  if (passed && setup.horizon !== "swing" && spreadTooWide(setup.symbol, spreadPct)) {
+    passed = false;
+    rejectionCode = "spread_cap";
+    rejectionReason = `REJECTED BY RISK: The bid-ask spread (${(spreadPct * 100).toFixed(2)}% of price) is wider than the ${(
+      MAX_COIN_SPREAD * 100
+    ).toFixed(1)}% coins are traded at.`;
+  }
+
   // Costs next to the stop: fees plus the bid-ask spread are paid win or
   // lose, so a stop only a few times the costs away can't pay (shared with
   // the traders' replay, shared/tradeCosts).
   const costStopDistance = Math.abs(setup.entryPrice - setup.stopLoss);
   if (passed && costStopDistance > 0 && setup.entryPrice > 0) {
-    const spreadPct = options?.spread !== undefined ? options.spread / setup.entryPrice : 0;
     const share = costShareOfStop(setup.symbol, setup.entryPrice, setup.stopLoss, spreadPct);
     if (share > MAX_COST_SHARE_OF_STOP) {
       passed = false;

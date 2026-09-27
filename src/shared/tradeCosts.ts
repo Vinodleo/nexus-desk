@@ -1,5 +1,6 @@
 import { isNseSymbol, nseRoundTripRate } from "./nse";
 import { isUsSymbol, US_ROUND_TRIP_RATE } from "./usMarket";
+import { marketOf } from "./marketLimits";
 
 // What a round trip costs next to how much it risks. A trade pays its fees
 // and the bid-ask spread whether it wins or loses, so with a stop only a few
@@ -35,4 +36,21 @@ export function costShareOfStop(symbol: string, entry: number, stop: number, spr
 
 export function costsTooBigForStop(symbol: string, entry: number, stop: number, spreadPct: number = 0): boolean {
   return costShareOfStop(symbol, entry, stop, spreadPct) > MAX_COST_SHARE_OF_STOP;
+}
+
+// Coins with a wide spread aren't traded at all, however wide the stop.
+// CoinDCX's INR spreads run 0.5–0.6% on many coins. A stop wide enough to
+// pass the check above still hands a quarter of every trade's risk to costs,
+// and those coins cost more than their spread says: it widens when prices
+// move fast, and their thin books fill stops past the stop. At 0.2% a coin's
+// costs (0.3% with fees) are at most a quarter of its smallest stop (1.2%).
+// Live and in the traders' replay alike; swing trades, held for days, aren't
+// held to it.
+
+/** The widest bid-ask spread (share of price) a coin is traded at. */
+export const MAX_COIN_SPREAD = 0.002;
+
+/** Whether this coin's spread (share of price) is too wide to trade. Stocks aren't held to it. */
+export function spreadTooWide(symbol: string, spreadPct: number): boolean {
+  return marketOf(symbol) === "coins" && spreadPct > MAX_COIN_SPREAD;
 }

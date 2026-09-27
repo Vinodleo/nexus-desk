@@ -1,5 +1,7 @@
 // Why the scanner didn't turn a coin's latest candle into a proposal.
 
+import { MAX_COIN_SPREAD } from "../shared/tradeCosts";
+
 export type SkipReason =
   | "no_data"
   | "no_setup"
@@ -11,6 +13,7 @@ export type SkipReason =
   | "below_min_size"
   | "thin_market"
   | "wide_spread"
+  | "spread_cap"
   | "no_shorting"
   | "weaker_setup"
   | "outvoted"
@@ -30,6 +33,7 @@ export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
   below_min_size: "Size below exchange minimum",
   thin_market: "Too little on the order book",
   wide_spread: "Fees and spread too big for the stop",
+  spread_cap: `Spread over ${(MAX_COIN_SPREAD * 100).toFixed(1)}%: too costly to trade`,
   no_shorting: "Short setup: CoinDCX spot can't short",
   weaker_setup: "A better setup on the same coin was chosen",
   outvoted: "Outvoted by traders on the other side",
@@ -43,6 +47,7 @@ export type RiskRejectionCode =
   | "kill_switch"
   | "quarantine"
   | "spread"
+  | "spread_cap"
   | "stale_data"
   | "daily_loss"
   | "max_positions"
@@ -59,6 +64,7 @@ export function skipReasonForRisk(code: RiskRejectionCode | undefined): SkipReas
   if (code === "existing_position") return "already_open";
   if (code === "liquidity") return "thin_market";
   if (code === "spread") return "wide_spread";
+  if (code === "spread_cap") return "spread_cap";
   return "risk_limits";
 }
 
