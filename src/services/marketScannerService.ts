@@ -31,16 +31,15 @@ import { MIN_SIGNAL_BARS, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS } from "./liveMark
 import { skipReasonForRisk, type SkipReason, type SymbolScanOutcome } from "./scanOutcome";
 import { shadowFromSetup, type ShadowSignal } from "./shadowTracker";
 import { DEFAULT_MIN_CONFIDENCE, HEURISTIC_SCORE_VERSION, MIN_EDGE_R, type Calibrator, type ConfidenceScorer } from "./calibration";
-import { META_FEATURE_VERSION, metaFeatures } from "./metaFeatures";
+import { metaFeatures } from "./metaFeatures";
 import { NSE_UNIVERSE, nseTakesEntries } from "../shared/nse";
 import { exitEdgeFor, marketIsFalling, type ExpectancyTable, type MarketTrend } from "./exitExpectancy";
 import { MIN_TRADING_ACTIVITY, tradingActivity } from "./tradingActivity";
 
 // A Lab model trained on generated candles says nothing about the real
-// market, so the live desk ignores it (default hurdle, no persona tuning, no
-// TF.js model) even if an older build let it be promoted.
+// market, so the live desk ignores it (default hurdle, no persona tuning)
+// even if an older build let it be promoted.
 let warnedSyntheticPromotion = false;
-let warnedStaleModelFeatures = false;
 export { DEFAULT_MIN_CONFIDENCE, MIN_EDGE_R };
 
 /**
@@ -73,8 +72,6 @@ import {
   evaluateRiskEngine,
 } from "./riskEngine";
 import { loadStoredPromotedLabModel } from "./storagePersistenceService";
-import { loadMetaModel, predictConfidenceBatch } from "./mlService";
-import * as tf from "@tensorflow/tfjs";
 
 const formatInr = (v: number) => `₹${Math.round(v).toLocaleString("en-IN")}`;
 
@@ -101,8 +98,7 @@ export interface ScanMarketOptions {
   /**
    * Set when scanning away from the browser (the server): the promoted Lab
    * settings (null for none) instead of this browser's saved ones, the 1-hour
-   * trend per symbol, the crypto coins to scan, and whether to load the Lab's
-   * TensorFlow model (kept in the browser).
+   * trend per symbol, and the crypto coins to scan.
    */
   promotedModel?: PromotedLabModel | null;
   macroRegimes?: Record<string, RegimeType | "neutral">;
@@ -115,7 +111,6 @@ export interface ScanMarketOptions {
   exitExpectancy?: ExpectancyTable;
   /** Bitcoin's trend: coin longs wait while it's falling. */
   marketTrend?: MarketTrend;
-  useLabModel?: boolean;
   /** A scheduled-news pause in force now (see shared/eventCalendar): the event officer vetoes new trades. */
   eventWindow?: { active: boolean; headline?: string };
   /** Win-chance calibration from shadow-tracked setups, per scorer. Without one, raw scores are used. */
@@ -159,8 +154,7 @@ export interface FullScanReport {
 export async function scanSingleMarket(
   symbolConfig: SymbolConfig,
   bars: MarketBar[],
-  options: ScanMarketOptions,
-  tfjsModel?: tf.LayersModel
+  options: ScanMarketOptions
 ): Promise<MarketScanResult> {
   const policy = options.riskPolicy || DEFAULT_RISK_POLICY;
   // CoinDCX's INR markets are spot: only long trades can be placed there.
@@ -274,15 +268,8 @@ export async function scanSingleMarket(
     if (live) orderBook = live;
   }
 
-  // The Lab model's inputs, read from the signal candle the same way the Lab
-  // and online learning compute them. Also kept on each shadow for training.
+  // The signal candle's readings (metaFeatures), kept on each shadow.
   const signalFeatures = metaFeatures(bars);
-  const candidateFeatures: number[][] = tfjsModel ? qualifiedSetups.map(() => signalFeatures) : [];
-
-  let predictions: number[] = [];
-  if (tfjsModel && candidateFeatures.length > 0) {
-    predictions = predictConfidenceBatch(tfjsModel, candidateFeatures);
-  }
 
   // Coins that go minutes without a trade jump between trades, so their
   // stops fill past where they're set.
@@ -309,12 +296,7 @@ export async function scanSingleMarket(
       similarityScore: retrieval.similarityScore,
     });
 
-    const scorer: ConfidenceScorer = tfjsModel && predictions.length > i ? "tfjs" : "heuristic";
-    if (scorer === "tfjs") {
-      metaScore.confidence = predictions[i];
-      metaScore.confidenceRationale =
-        "TensorFlow.js Neural Net Real-time Prediction";
-    }
+    const scorer: ConfidenceScorer = "heuristic";
 
     // Once enough shadow-tracked setups have played out, the win chance used
     // for the profit check and sizing is the one measured at this score.
@@ -552,22 +534,6 @@ export async function scanAllMarkets(
   const newProposals: TradeProposal[] = [];
   let totalSetupsEvaluated = 0;
 
-  const promotedModel = loadUsablePromotedModel(options);
-  let tfjsModel: tf.LayersModel | undefined = undefined;
-
-  // A model trained on another version of the inputs would be fed numbers
-  // it doesn't understand, so it's left out until the Lab is rerun.
-  if (promotedModel?.hasTrainedModel && promotedModel.featureVersion !== META_FEATURE_VERSION) {
-    if (!warnedStaleModelFeatures) {
-      warnedStaleModelFeatures = true;
-      console.warn(`[Scanner] The promoted Lab model uses older inputs; retrain it in the Lab to use it live.`);
-    }
-  } else if (promotedModel?.hasTrainedModel && options.useLabModel !== false) {
-    const loaded = await loadMetaModel();
-    if (loaded) {
-      tfjsModel = loaded;
-    }
-  }
 
   // Stocks: only while their market takes new intraday trades (NSE 9:15 to
   // 3:00 IST; US 9:30 to 3:30 New York time; weekdays).
@@ -617,12 +583,7 @@ export async function scanAllMarkets(
     }
     if (latestCandleMs !== undefined) lastScannedCandle.set(symbolConfig.symbol, latestCandleMs);
 
-    const scanResult = await scanSingleMarket(
-      symbolConfig,
-      bars,
-      options,
-      tfjsModel
-    );
+    const scanResult = await scanSingleMarket(symbolConfig, bars, options);
     resultsBySymbol.push(scanResult);
     outcomes.push(scanResult.outcome);
     shadows.push(...scanResult.shadows);

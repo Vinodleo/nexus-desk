@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
+import { readFileSync } from "fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { metaFeatures, META_FEATURE_VERSION } from "../../src/services/metaFeatures";
-import { candleSpacingMs, hourlyRegimeLookup, replayPanel, simulateTunedBreakout, toLabBars, LAB_COST_PCT } from "../../src/services/labSimulation";
+import { candleSpacingMs, hourlyRegimeLookup, simulateTunedBreakout, toLabBars, LAB_COST_PCT } from "../../src/services/labSimulation";
 import { fetchRealHistoricalCandles, runRealDataWalkForward, type HistoricalCandle } from "../../src/services/realDataBacktestService";
-import { onlineTrainingSet, MIN_ONLINE_SAMPLES } from "../../src/services/onlineLearningService";
 import { buildBreakoutSetup, roundPrice } from "../../src/services/strategyEngine";
 import { decorateBarsWithIndicators } from "../../src/services/marketDataService";
-import { shadowFromSetup } from "../../src/services/shadowTracker";
 import type { MarketBar } from "../../src/types";
 
 vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -74,15 +73,6 @@ describe("Lab replay on 5-minute candles", () => {
     }
   });
 
-  it("replays the live trader panel for training samples", () => {
-    const samples = replayPanel("SOL/INR", bars);
-    expect(samples.length).toBeGreaterThan(10);
-    for (const s of samples) {
-      expect(s.features).toHaveLength(6);
-      expect(typeof s.win).toBe("boolean");
-    }
-  });
-
   it("refuses candles that aren't 5 minutes apart", async () => {
     await expect(runRealDataWalkForward(candles(300, 60 * 60 * 1000), "SOL/INR")).rejects.toThrow(/5-minute candles.*60 minutes apart/);
   });
@@ -111,30 +101,6 @@ describe("history download", () => {
   });
 });
 
-describe("online learning", () => {
-  const setup: any = { symbol: "SOL/INR", name: "T", family: "trend_following", direction: "LONG", entryPrice: 100, stopLoss: 99, takeProfit: 102 };
-  it("learns from finished intraday setups with recorded inputs from the last 30 days", () => {
-    const now = T0 + 40 * 24 * 60 * 60 * 1000;
-    const done = (signalTime: number, r: number, extra = {}) => ({
-      ...shadowFromSetup(setup, "proposed", signalTime, { confidence: 0.5, scorer: "heuristic", features: [1, 0.2, 0.5, 0.1, 0.5, 0.3] }), status: "target" as const, r, resolvedAt: signalTime + 1, ...extra,
-    });
-    const set = onlineTrainingSet(
-      [
-        done(now - 1000, 1.5),
-        done(now - 2000, -1),
-        done(now - 31 * 24 * 60 * 60 * 1000, 1), // too old
-        done(now - 3000, 1, { features: undefined }), // no inputs recorded
-        done(now - 4000, 1, { horizon: "swing" }),
-        { ...shadowFromSetup(setup, "proposed", now - 500, { confidence: 0.5, scorer: "heuristic", features: [1, 1, 1, 1, 1, 1] }) }, // still open
-      ],
-      now
-    );
-    expect(set.labels).toEqual([1, 0]);
-    expect(set.features).toHaveLength(2);
-    expect(MIN_ONLINE_SAMPLES).toBeGreaterThan(50);
-  });
-});
-
 describe("prices of cheap coins", () => {
   it("keep their stops and targets instead of rounding to zero", () => {
     expect(roundPrice(0.00123456, 0.00125)).toBe(0.0012346); // 5 significant digits
@@ -155,9 +121,6 @@ describe("prices of cheap coins", () => {
 
 describe("Lab progress", () => {
   it("reports each stage in order, ending at done", async () => {
-    // The test DOM has no WebGL; TensorFlow's CPU backend is enough here.
-    const tf = await import("@tensorflow/tfjs");
-    await tf.setBackend("cpu");
     const seen: { step: string; fraction: number }[] = [];
     await runRealDataWalkForward(candles(200), "SOL/INR", (p) => seen.push(p));
     const fractions = seen.map((p) => p.fraction);
@@ -166,5 +129,12 @@ describe("Lab progress", () => {
     expect(seen.some((p) => /Testing on data it didn't train on/.test(p.step))).toBe(true);
     expect(seen.some((p) => p.step === "Walk-forward test")).toBe(true);
     expect(seen.at(-1)).toEqual({ step: "Done", fraction: 1 });
+    // No neural network is trained any more: the tuned settings are what goes live.
+    expect(seen.some((p) => /confidence model|Replaying/.test(p.step))).toBe(false);
+  });
+
+  it("leaves the neural network library out of the app", () => {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+    expect(pkg.dependencies["@tensorflow/tfjs"]).toBeUndefined();
   });
 });

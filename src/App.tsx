@@ -60,8 +60,6 @@ import { LedgerRisk } from "./components/ledger/LedgerRisk";
 import { LedgerLab } from "./components/ledger/LedgerLab";
 import { LedgerLearning } from "./components/ledger/LedgerLearning";
 import { CommanderModal } from "./components/CommanderModal";
-import { checkAndRunOnlineLearning } from "./services/onlineLearningService";
-import { promoteCandidateModel } from "./services/mlService";
 import { SecurityConsoleModal } from "./components/SecurityConsoleModal";
 import { useAuth } from "./context/AuthContext";
 import { useBackgroundExecution } from "./hooks/useBackgroundExecution";
@@ -670,33 +668,6 @@ export default function App() {
   useEffect(() => {
     setExperiences((prev) => withTradeExperiences(prev, closedTrades, shadowStore.all()));
   }, [closedTrades]);
-
-  // Continuous Online Learning Background Worker
-  useEffect(() => {
-    // Check every hour if a day has passed since last training
-    const interval = setInterval(() => {
-      void checkAndRunOnlineLearning(shadowStore.all());
-    }, 60 * 60 * 1000);
-
-    // Also check shortly after launch
-    const timeout = setTimeout(() => {
-      void checkAndRunOnlineLearning(shadowStore.all());
-    }, 5000);
-
-    const handleModelTrained = () => {
-      const updatedModel = loadStoredPromotedLabModel();
-      if (updatedModel) {
-        setPromotedLabModel(updatedModel);
-      }
-    };
-    window.addEventListener("nexus-model-trained", handleModelTrained);
-
-    return () => {
-      clearInterval(interval);
-      clearTimeout(timeout);
-      window.removeEventListener("nexus-model-trained", handleModelTrained);
-    };
-  }, []);
 
   // Autonomous Continuous Scanning State (evaluates universe continuously)
   const [isContinuousScanActive, setIsContinuousScanActive] =
@@ -1443,10 +1414,7 @@ export default function App() {
         trailProfileRef.current
       ),
       marketTrend: marketTrendFrom(liveMarketStream.getBars("BTC/INR"), liveMarketStream.getMacroRegime("BTC/INR")),
-      calibrators: {
-        heuristic: buildCalibrator(shadowStore.all(), "heuristic"),
-        tfjs: buildCalibrator(shadowStore.all(), "tfjs"),
-      },
+      calibrators: { heuristic: buildCalibrator(shadowStore.all(), "heuristic") },
     });
     // Autopilot leaves these for you: the server's checks didn't see them.
     const marked = { ...report, newProposals: report.newProposals.map((p) => ({ ...p, scannedOnPhone: true })) };
@@ -1894,25 +1862,16 @@ export default function App() {
                   sourceExchange: result.sourceExchange,
                   isSynthetic: result.isSynthetic,
                   optimizedParameters: result.optimizedParameters,
-                  hasTrainedModel: false,
                 };
-                const finish = (withModel: boolean) => {
-                  setPromotedLabModel(
-                    withModel ? { ...promoted, hasTrainedModel: true, featureVersion: result.featureVersion } : promoted
-                  );
-                  handleUpdateModelAccuracy({
-                    accuracyPct: result.learnedMetrics.accuracyPercent,
-                    winRatePct: result.learnedMetrics.winRate,
-                    sharpeRatio: result.learnedMetrics.sharpeRatio,
-                    datasetName: result.datasetName || `${result.symbol} Custom`,
-                    lastUpdated: new Date().toISOString(),
-                    totalCandlesEvaluated: result.totalCandles || result.candlesCount,
-                  });
-                };
-                // The Lab's model goes live first, so the scanner never pairs
-                // this promotion with an older model file.
-                if (result.featureVersion) void promoteCandidateModel().then(finish);
-                else finish(false);
+                setPromotedLabModel(promoted);
+                handleUpdateModelAccuracy({
+                  accuracyPct: result.learnedMetrics.accuracyPercent,
+                  winRatePct: result.learnedMetrics.winRate,
+                  sharpeRatio: result.learnedMetrics.sharpeRatio,
+                  datasetName: result.datasetName || `${result.symbol} Custom`,
+                  lastUpdated: new Date().toISOString(),
+                  totalCandlesEvaluated: result.totalCandles || result.candlesCount,
+                });
               }}
               onRevert={() => {
                 setPromotedLabModel(null);

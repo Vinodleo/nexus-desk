@@ -408,9 +408,6 @@ export interface PromotedLabModel {
   optimizedParameters?: OptimizedParameters;
   sourceExchange?: string;
   isSynthetic?: boolean;
-  hasTrainedModel?: boolean;
-  /** Version of the model's inputs (metaFeatures); a model on another version isn't used live. */
-  featureVersion?: number;
 }
 
 export interface FailureInjectionState {

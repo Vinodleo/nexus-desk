@@ -1,12 +1,10 @@
 import type { MarketBar, RegimeType, StrategySetup } from "../types";
-import type * as tf from "@tensorflow/tfjs";
 import { classifyRegime, decorateBarsWithIndicators } from "./marketDataService";
 import { buildBreakoutSetup } from "./strategyEngine";
 import { runPersonaPanel } from "./personaEngine";
 import { computeMetaLabelScore } from "./metaLabeling";
 import { resolveShadow, shadowFromSetup } from "./shadowTracker";
 import { metaFeatures } from "./metaFeatures";
-import { predictConfidenceBatch } from "./mlService";
 import { SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
 import { isNseSymbol, nseTakesEntries } from "../shared/nse";
 import { isUsSymbol, usTakesEntries } from "../shared/usMarket";
@@ -157,9 +155,9 @@ function toTrade(symbol: string, setup: StrategySetup, bars: MarketBar[], i: num
 /**
  * The Lab-tuned breakout trader on history: the live breakout builder with
  * these settings (as labTunedPersona applies them), taking non-overlapping
- * trades. With a model, its score must clear `params.minConfidence`.
+ * trades whose score clears `params.minConfidence`.
  */
-export function simulateTunedBreakout(symbol: string, bars: MarketBar[], params: LabParams, model?: tf.LayersModel): LabTrade[] {
+export function simulateTunedBreakout(symbol: string, bars: MarketBar[], params: LabParams): LabTrade[] {
   const candidates: { i: number; setup: StrategySetup; regime: RegimeType; confidence: number; features: number[] }[] = [];
   for (let i = WARMUP_BARS; i < bars.length - 1; i++) {
     const regime = classifyRegime(bars[i]);
@@ -180,18 +178,13 @@ export function simulateTunedBreakout(symbol: string, bars: MarketBar[], params:
     // CoinDCX spot can't short, so neither does the Lab (its history is crypto).
     if (!setup?.qualifies || setup.direction === "SHORT") continue;
     const features = metaFeatures(bars, i);
-    // Without a model: a simple score from trend alignment (% change over
-    // 20 candles) and volume.
+    // A simple score from trend alignment (% change over 20 candles) and volume.
     const slope = features[5];
     let confidence = 0.5;
     if (slope > 0.2) confidence += 0.12;
     if (features[1] * 5 > 1.5) confidence += 0.08;
     if (regime === "high_volatility_choppy") confidence -= 0.14;
     candidates.push({ i, setup, regime, confidence, features });
-  }
-  if (model && candidates.length > 0) {
-    const scores = predictConfidenceBatch(model, candidates.map((c) => c.features));
-    candidates.forEach((c, k) => (c.confidence = scores[k]));
   }
 
   const trades: LabTrade[] = [];
@@ -207,11 +200,6 @@ export function simulateTunedBreakout(symbol: string, bars: MarketBar[], params:
   return trades;
 }
 
-export interface PanelSample {
-  features: number[];
-  win: boolean;
-  pnlPercent: number;
-}
 
 /**
  * Whether the live scanner takes a new trade in this market at `ms`: coins
@@ -262,22 +250,4 @@ export function panelSetupsOnHistory(
     i += REPLAY_COOLDOWN_BARS;
   }
   return out;
-}
-
-/**
- * The live trader panel on history: every intraday setup it would have put
- * forward, with the model inputs at that candle and how it turned out. This
- * is what the confidence model scores live, so it's what it learns from.
- */
-export function replayPanel(symbol: string, bars: MarketBar[]): PanelSample[] {
-  const samples: PanelSample[] = [];
-  for (const { i, regime, setups } of panelSetupsOnHistory(symbol, bars)) {
-    // Every trader's setup is scored live, so each is a training sample.
-    const features = metaFeatures(bars, i);
-    for (const setup of setups) {
-      const trade = toTrade(symbol, setup, bars, i, regime, 0.5, features);
-      if (trade) samples.push({ features, win: trade.isWin, pnlPercent: trade.pnlPercent });
-    }
-  }
-  return samples;
 }

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { oneShadowAtATime, shadowFromSetup, type ShadowSignal } from "../../src/services/shadowTracker";
 import { buildCalibrator, HEURISTIC_SCORE_VERSION } from "../../src/services/calibration";
 import { conditionBreakdown } from "../../src/services/conditionStats";
-import { onlineTrainingSet } from "../../src/services/onlineLearningService";
 import { experiencesFromShadows } from "../../src/services/experienceMemory";
 
 // A setup stays valid for several candles and is followed again on each, so
@@ -51,12 +50,10 @@ describe("followed setups, one at a time", () => {
 describe("what the desk learns from", () => {
   // Two moves of six candles each: two lessons, not twelve.
   const shadows = [...move(T0), ...move(T0 + 8 * FIVE)];
-  const now = T0 + 24 * 60 * 60 * 1000;
 
-  it("counts each move once in the win-chance calibration, 'When setups win', the retraining and the trade memory", () => {
+  it("counts each move once in the win-chance calibration, 'When setups win' and the trade memory", () => {
     expect(buildCalibrator(shadows).samples).toBe(2);
     expect(conditionBreakdown(shadows).setups).toBe(2);
-    expect(onlineTrainingSet(shadows, now).labels).toEqual([1, 1]);
     expect(experiencesFromShadows(shadows)).toHaveLength(2);
   });
 });
