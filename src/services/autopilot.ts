@@ -5,14 +5,15 @@ import { ruleFor } from "./marketRulesStore";
 import { isBuiltOnSyntheticPrices } from "./dataProvenance";
 import { openQuantity, planPartialQuantity } from "../shared/exitRules";
 import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
-import { MARKET_LABEL, marketOf, type MarketKey } from "../shared/marketLimits";
+import { MARKET_LABEL, marketOf, sectorOf, type MarketKey } from "../shared/marketLimits";
 
 // Self-Approve (autopilot): which proposals it opens on its own. Shared by the
 // app and the server scanner, so a trade is let through by the same rules
 // wherever it's approved. A proposal is opened only while doing so keeps the
 // book within the limits a human approver would be bound by: max positions,
-// max exposure, one position per coin, a rolling-hour cap, and trader-panel
-// agreement. Anything else is deferred with the reason, for a human to review.
+// max exposure, a few per stock sector, one position per coin, a rolling-hour
+// cap, and trader-panel agreement. Anything else is deferred with the reason,
+// for a human to review.
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -82,6 +83,11 @@ export function selectAutopilotTrades(
   let positionCount = book.positions.length;
   const openByMarket: Record<MarketKey, number> = { coins: 0, stocks: 0, us: 0 };
   for (const p of book.positions) openByMarket[marketOf(p.symbol)]++;
+  const openBySector = new Map<string, number>();
+  for (const p of book.positions) {
+    const key = sectorOf(p.symbol)?.key;
+    if (key) openBySector.set(key, (openBySector.get(key) ?? 0) + 1);
+  }
   let exposure = book.positions.reduce((acc, p) => acc + openQuantity(p) * p.currentPrice, 0);
   let hourly = book.openedLastHour;
   const held = new Set(book.positions.map((p) => p.symbol));
@@ -133,6 +139,8 @@ export function selectAutopilotTrades(
       ? openByMarket[market] + 1 > marketLimit.maxOpenTrades
       : positionCount + 1 > policy.maxSimultaneousPositions;
     const tooExposed = !marketLimit && (exposure + added) / policy.equity > policy.maxAllowedExposureFraction;
+    const sector = sectorOf(proposal.symbol);
+    const sectorFull = !!sector && (openBySector.get(sector.key) ?? 0) + 1 > policy.maxCorrelatedPositionsPerGroup;
     const alreadyHeld = held.has(proposal.symbol);
     const overHourly = hourly + 1 > policy.autopilotMaxApprovalsPerHour;
     // A split or thin panel vote is left for a human.
@@ -140,7 +148,7 @@ export function selectAutopilotTrades(
     const votes = proposal.personaVotesCast ?? 1;
     const lacksConsensus = agreement < policy.autopilotMinConsensus || votes < policy.autopilotMinPersonaVotes;
 
-    if (tooMany || tooExposed || alreadyHeld || overHourly || lacksConsensus) {
+    if (tooMany || tooExposed || sectorFull || alreadyHeld || overHourly || lacksConsensus) {
       const reasons: string[] = [];
       if (tooMany)
         reasons.push(
@@ -149,6 +157,7 @@ export function selectAutopilotTrades(
             : `would exceed max ${policy.maxSimultaneousPositions} simultaneous positions`
         );
       if (tooExposed) reasons.push(`would exceed max ${(policy.maxAllowedExposureFraction * 100).toFixed(0)}% portfolio exposure`);
+      if (sectorFull) reasons.push(`would exceed ${policy.maxCorrelatedPositionsPerGroup} open trades in ${sector!.label}`);
       if (alreadyHeld) reasons.push(`already holding a ${proposal.symbol} position`);
       if (overHourly) reasons.push(`would exceed ${policy.autopilotMaxApprovalsPerHour} autonomous approvals/hour`);
       if (lacksConsensus)
@@ -162,6 +171,7 @@ export function selectAutopilotTrades(
     accepted.push({ proposal, entryPrice: priced.entryPrice, units: priced.units });
     positionCount += 1;
     openByMarket[market] += 1;
+    if (sector) openBySector.set(sector.key, (openBySector.get(sector.key) ?? 0) + 1);
     exposure += added;
     hourly += 1;
     held.add(proposal.symbol);

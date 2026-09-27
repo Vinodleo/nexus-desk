@@ -5,7 +5,8 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExpectedValueAssessment, MetaLabelScore, StrategySetup, TradeProposal } from "../../src/types";
 import { DEFAULT_RISK_POLICY, evaluateRiskEngine } from "../../src/services/riskEngine";
 import { selectAutopilotTrades } from "../../src/services/autopilot";
-import { cleanMarketLimits, DEFAULT_MARKET_LIMITS } from "../../src/shared/marketLimits";
+import { cleanMarketLimits, DEFAULT_MARKET_LIMITS, sectorOf } from "../../src/shared/marketLimits";
+import { SKIP_REASON_LABEL, skipReasonForRisk } from "../../src/services/scanOutcome";
 
 // Amount per trade and trades at once, set separately for coins and stocks;
 // and the server's autopilot placing real CoinDCX orders in Live mode, only
@@ -113,6 +114,44 @@ describe("per-market limits", () => {
     expect(stock.passedAllChecks).toBe(true);
     expect(stock.recommendedDollarExposure).toBeGreaterThan(3000);
     expect(run({ ...setup, symbol: "TCS" }, [...two, held("SBIN")]).rejectionReason).toMatch(/open Indian stock trades reached \(1\/1\)/);
+  });
+
+  it("put stocks in sectors, Indian and US apart, and coins in none", () => {
+    expect(sectorOf("SBIN")).toEqual({ key: "stocks:BANK", label: "banking" });
+    expect(sectorOf("HDFCBANK")?.key).toBe(sectorOf("SBIN")?.key);
+    expect(sectorOf("TCS")?.key).toBe("stocks:IT");
+    expect(sectorOf("AAPL.US")).toEqual({ key: "us:TECH", label: "tech" });
+    expect(sectorOf("SOL/INR")).toBeNull();
+  });
+
+  it("allow at most two open stock trades in one sector, whatever the market's count", () => {
+    const roomy = { ...policy, marketLimits: { ...limits, stocks: { amountPerTradeInr: 8000, maxOpenTrades: 4 } } };
+    const score = { calibratedWinProbability: 0.6, confidence: 0.6 } as MetaLabelScore;
+    const ev = { isPositiveEdge: true, expectedNetValue: 100 } as ExpectedValueAssessment;
+    const noDrills = {
+      globalKillSwitchActive: false, simulateAgentTimeout: false, simulateStaleMarketData: false,
+      simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
+    };
+    const run = (symbol: string, positions: any[]) =>
+      evaluateRiskEngine({ symbol, direction: "LONG", entryPrice: 1000, stopLoss: 980, takeProfit: 1060, riskRewardRatio: 3 } as StrategySetup, score, ev, positions, 0, 80, 0, roomy, noDrills, false);
+    const twoBanks = [held("HDFCBANK"), held("ICICIBANK")];
+    expect(roomy.maxCorrelatedPositionsPerGroup).toBe(2);
+    const third = run("SBIN", twoBanks);
+    expect(third.rejectionCode).toBe("correlation");
+    expect(third.rejectionReason).toMatch(/Already 2 open Indian stock trades in banking \(max 2\)/);
+    expect(SKIP_REASON_LABEL[skipReasonForRisk("correlation")]).toBe("Enough trades open in this sector already");
+    // Another sector, or one bank, is fine; coins aren't held to sectors.
+    expect(run("TCS", twoBanks).passedAllChecks).toBe(true);
+    expect(run("SBIN", [held("HDFCBANK")]).passedAllChecks).toBe(true);
+    expect(run("SOL/INR", [held("A/INR")]).passedAllChecks).toBe(true);
+  });
+
+  it("hold the autopilot to two per sector across one batch", () => {
+    const roomy = { ...policy, marketLimits: { ...limits, stocks: { amountPerTradeInr: 8000, maxOpenTrades: 4 } }, autopilotMaxApprovalsPerHour: 10 };
+    const batch = ["SBIN", "ICICIBANK", "TCS"].map((s) => proposal(s));
+    const { accepted, deferred } = selectAutopilotTrades(batch, { positions: [held("HDFCBANK")], openedLastHour: 0, quarantines: {} }, roomy, () => 1000, now);
+    expect(accepted.map((a) => a.proposal.symbol)).toEqual(["SBIN", "TCS"]);
+    expect(deferred.map((d) => [d.proposal.symbol, d.reason])).toEqual([["ICICIBANK", "would exceed 2 open trades in banking"]]);
   });
 
   it("hold the autopilot to each market's count across one batch", () => {

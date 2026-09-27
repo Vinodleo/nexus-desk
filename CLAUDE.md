@@ -36,7 +36,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - **Shared rules:** `src/shared/` and `src/services/`, used by both the app and the server.
   - Exit rules, trailing stops and trade maths.
   - Market sessions: `nse.ts`, `usMarket.ts`.
-  - Per-market limits: `marketLimits.ts`, the amount per trade and trades at once for each market.
+  - Per-market limits: `marketLimits.ts`, the amount per trade, risk per trade and trades at once for each market,
+    and at most 2 open trades in one stock sector (`sectorOf`).
 - **Trader records ("Traders with your exits"):** `src/services/exitExpectancy.ts`.
   - It replays every trader's setups under the live exits, after fees and spreads.
   - One trade at a time per trader and market; the server keeps 30 days of trades (`server/scanner/traderRecords.ts`).
