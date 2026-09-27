@@ -85,17 +85,28 @@ describe("Settings: trade size per market", () => {
     expect(screen.getByText("Up to ₹10,000 in coins at a time")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Coins: amount per trade"), { target: { value: "3000" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 3000, maxOpenTrades: 2 } },
+      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 3000, maxOpenTrades: 2, riskPerTradeInr: 50 } },
     });
     fireEvent.change(screen.getByLabelText("Indian stocks: trades at once"), { target: { value: "4" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { ...cleanMarketLimits(null), stocks: { amountPerTradeInr: 5000, maxOpenTrades: 4 } },
+      marketLimits: { ...cleanMarketLimits(null), stocks: { amountPerTradeInr: 5000, maxOpenTrades: 4, riskPerTradeInr: 50 } },
     });
     fireEvent.change(screen.getByLabelText("US stocks: amount per trade"), { target: { value: "2000" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { ...cleanMarketLimits(null), us: { amountPerTradeInr: 2000, maxOpenTrades: 2 } },
+      marketLimits: { ...cleanMarketLimits(null), us: { amountPerTradeInr: 2000, maxOpenTrades: 2, riskPerTradeInr: 50 } },
     });
     expect(screen.queryByLabelText("Largest trade")).toBeNull();
+  });
+
+  it("sets the most a trade may lose, per market, and says when the amount caps it", () => {
+    const onRiskLimitsChange = vi.fn();
+    render(createElement(SettingsSheet, props({ onRiskLimitsChange })));
+    // ₹50 of ₹5,000: a stop closer than 1% reaches the amount first.
+    expect(screen.getAllByText("Sized to lose this at the stop; less if the stop is under 1% away")).toHaveLength(3);
+    fireEvent.change(screen.getByLabelText("Coins: most to lose per trade"), { target: { value: "150" } });
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
+      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 150 } },
+    });
   });
 
   it("in Live mode, flags an amount above the server's cap per live order, and stocks as paper only", () => {

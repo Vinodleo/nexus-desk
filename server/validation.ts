@@ -130,17 +130,24 @@ const promotedModel = z
   // Display fields (dates, lessons, metrics) ride along unchanged.
   .passthrough();
 
+const marketLimit = z.object({
+  amountPerTradeInr: positiveNumber.max(1_000_000),
+  maxOpenTrades: z.number().int().min(1).max(20),
+  // Sent by apps from the risk-per-trade update on.
+  riskPerTradeInr: positiveNumber.max(1_000_000).optional(),
+});
+
 export const deskStateBody = z.object({
   equity: z.number().finite(),
   riskLimits: z.object({
     maxOrderValueInr: positiveNumber.max(10_000_000),
     maxAllowedExposureFraction: z.number().finite().positive().max(1),
-    // Amount per trade and trades at once, for coins and for stocks (shared/marketLimits).
+    // Amount per trade, trades at once and risk per trade, for each market (shared/marketLimits).
     marketLimits: z
       .object({
-        coins: z.object({ amountPerTradeInr: positiveNumber.max(1_000_000), maxOpenTrades: z.number().int().min(1).max(20) }),
-        stocks: z.object({ amountPerTradeInr: positiveNumber.max(1_000_000), maxOpenTrades: z.number().int().min(1).max(20) }),
-        us: z.object({ amountPerTradeInr: positiveNumber.max(1_000_000), maxOpenTrades: z.number().int().min(1).max(20) }).optional(),
+        coins: marketLimit,
+        stocks: marketLimit,
+        us: marketLimit.optional(),
       })
       .optional(),
   }),
