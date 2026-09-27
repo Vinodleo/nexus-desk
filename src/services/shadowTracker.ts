@@ -163,6 +163,28 @@ export function summarizeShadows(list: ShadowSignal[]): ShadowSummaryRow[] {
 }
 
 /**
+ * The followed setups counted one at a time, for learning from them (the
+ * win-chance calibration, "When setups win", the retraining and the trade
+ * memory): for each trader in each market, in the order they appeared, a
+ * setup that comes while that trader's last counted one there is still
+ * being followed isn't counted. A setup stays valid for several candles and
+ * is followed again on each, so without this one price move counted many
+ * times over. One still being followed holds its place until it resolves.
+ * Keeps `list`'s order. The lists of followed setups still show them all.
+ */
+export function oneShadowAtATime(list: ShadowSignal[]): ShadowSignal[] {
+  const busyUntil = new Map<string, number>();
+  const kept = new Set<string>();
+  for (const s of [...list].sort((a, b) => a.signalTime - b.signalTime)) {
+    const key = `${s.symbol}|${s.setupName}|${s.horizon}`;
+    if (s.signalTime < (busyUntil.get(key) ?? -Infinity)) continue;
+    busyUntil.set(key, s.status === "open" ? Infinity : s.resolvedAt ?? s.expiresAt);
+    kept.add(s.id);
+  }
+  return list.filter((s) => kept.has(s.id));
+}
+
+/**
  * Adds new signals to a list (one per setup per candle, so repeats of a
  * known one are ignored), newest first, keeping at most `max`.
  */

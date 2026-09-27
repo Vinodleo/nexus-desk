@@ -1,4 +1,4 @@
-import type { ShadowSignal } from "./shadowTracker";
+import { oneShadowAtATime, type ShadowSignal } from "./shadowTracker";
 
 // Win-chance calibration. The scanner's confidence score is built from rules
 // of thumb, so "62%" isn't a measured chance of anything. Shadow tracking
@@ -91,12 +91,17 @@ export function buildCalibrator(
   minSamples: number = MIN_CALIBRATION_SAMPLES
 ): Calibrator {
   const points: { score: number; y: number }[] = [];
-  for (const s of shadows) {
-    if (s.horizon !== "intraday" || s.confidence === undefined) continue;
-    if ((s.scorer ?? "heuristic") !== scorer) continue;
-    if (scorer === "heuristic" && s.scoreVersion !== HEURISTIC_SCORE_VERSION) continue;
+  const scored = shadows.filter(
+    (s) =>
+      s.horizon === "intraday" &&
+      s.confidence !== undefined &&
+      (s.scorer ?? "heuristic") === scorer &&
+      (scorer !== "heuristic" || s.scoreVersion === HEURISTIC_SCORE_VERSION)
+  );
+  // Each price move once (oneShadowAtATime), not once per candle it stayed valid.
+  for (const s of oneShadowAtATime(scored)) {
     const y = outcomeScore(s);
-    if (y !== null) points.push({ score: s.confidence, y });
+    if (y !== null) points.push({ score: s.confidence!, y });
   }
 
   const raw = BAND_EDGES.slice(0, -1).map((lo, i) => {

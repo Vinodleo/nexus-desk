@@ -20,7 +20,8 @@ let n = 0;
 function resolved(score: number, status: "target" | "stop" | "expired", exitPrice?: number, extra: Partial<ShadowSignal> = {}): ShadowSignal {
   const s = shadowFromSetup(setup, "proposed", T0 + n++ * FIVE, { confidence: score, scoreVersion: 2 });
   const exit = exitPrice ?? (status === "target" ? 1020 : status === "stop" ? 990 : 1000);
-  return { ...s, status, exitPrice: exit, ...extra };
+  // Each resolved on its own candle, before the next appeared: separate moves.
+  return { ...s, status, exitPrice: exit, resolvedAt: s.signalTime + FIVE, ...extra };
 }
 
 describe("scoring an outcome", () => {

@@ -1,6 +1,6 @@
 import { ExperienceVector, HistoricalTrade, StrategySetup, RegimeType, TradeAutopsy } from "../types";
 import { seededShare } from "./dataProvenance";
-import type { ShadowSignal } from "./shadowTracker";
+import { oneShadowAtATime, type ShadowSignal } from "./shadowTracker";
 
 // Seed historical experiences
 export function generateInitialExperienceDatabase(): ExperienceVector[] {
@@ -147,7 +147,8 @@ export function retrieveSimilarExperiences(
  */
 export function experiencesFromShadows(shadows: ShadowSignal[]): ExperienceVector[] {
   const out: ExperienceVector[] = [];
-  for (const s of shadows) {
+  // Each price move once (oneShadowAtATime), not once per candle it stayed valid.
+  for (const s of oneShadowAtATime(shadows)) {
     if (s.status === "open" || s.r === undefined || !s.setupFeatures || !s.regime || s.exitPrice === undefined) continue;
     const win = s.r > 0;
     const movePct = ((s.direction === "LONG" ? s.exitPrice - s.entryPrice : s.entryPrice - s.exitPrice) / s.entryPrice) * 100;
