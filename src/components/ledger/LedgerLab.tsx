@@ -11,6 +11,7 @@ import {
   type RealDataLearningResult,
 } from "../../services/realDataBacktestService";
 import { liveMarketStream } from "../../services/liveMarketStreamService";
+import { RETRAIN_LESSON_ID } from "../../services/onlineLearningService";
 import { Card } from "./ui";
 import { GrowBar, staggerDelay } from "./motion";
 import { ExitSettings } from "./ExitSettings";
@@ -206,6 +207,12 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
               <div className="text-[13px] leading-relaxed bg-inset rounded-[10px] px-3 py-2">
                 <strong>Votes on the panel as a tuned breakout trader.</strong>{" "}
                 {describeTunedSettings(promoted.optimizedParameters)}.
+              </div>
+            )}
+            {/* The daily retrain's latest check: whether the retrained model beat this one on a week it hadn't seen. */}
+            {promoted.distilledLessons.find((l) => l.id === RETRAIN_LESSON_ID) && (
+              <div className="text-[13px] leading-relaxed text-muted" data-testid="retrain-check">
+                {promoted.distilledLessons.find((l) => l.id === RETRAIN_LESSON_ID)!.rule}
               </div>
             )}
             {confirmRevert ? (
