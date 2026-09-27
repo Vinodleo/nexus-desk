@@ -4,6 +4,7 @@ import { averageFill, bookStats, depthScoreFor, parseCoinDcxOrderBook, type RawB
 import { toOrderBook } from "../../src/services/orderBookService";
 import { evaluateExpectedValue } from "../../src/services/riskEngine";
 import { _resetScannedCandles, scanAllMarkets } from "../../src/services/marketScannerService";
+import { SKIP_REASON_LABEL } from "../../src/services/scanOutcome";
 import type { MarketBar, MetaLabelScore, StrategySetup } from "../../src/types";
 
 vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -121,6 +122,15 @@ describe("scanner with the live book", () => {
     const report = await scanAllMarkets({ ...baseOptions, getOrderBook: async (_s, n) => toOrderBook(thin, n) });
     expect(report.newProposals).toEqual([]);
     expect(report.outcomes[0]).toMatchObject({ proposed: false, reason: "thin_market" });
+  });
+
+  it("skips a coin whose spread is too wide, and still follows the setup", async () => {
+    const wide: RawBook = { bids: [[last - 30, 100]], asks: [[last + 30, 100]], fetchedAt: Date.now() };
+    const report = await scanAllMarkets({ ...baseOptions, getOrderBook: async (_s, n) => toOrderBook(wide, n) });
+    expect(report.newProposals).toEqual([]);
+    expect(report.outcomes[0]).toMatchObject({ proposed: false, reason: "spread_cap" });
+    expect(report.shadows.some((s) => s.kind === "spread_cap")).toBe(true);
+    expect(SKIP_REASON_LABEL.spread_cap).toBe("Spread over 0.2%: too costly to trade");
   });
 
   it("falls back to the simulated book when CoinDCX's can't be read", async () => {

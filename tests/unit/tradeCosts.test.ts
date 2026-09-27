@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MarketBar } from "../../src/types";
-import { costShareOfStop, costsTooBigForStop, MAX_COST_SHARE_OF_STOP, roundTripFeeRate } from "../../src/shared/tradeCosts";
+import { costShareOfStop, costsTooBigForStop, MAX_COIN_SPREAD, MAX_COST_SHARE_OF_STOP, roundTripFeeRate, spreadTooWide } from "../../src/shared/tradeCosts";
 import { DEFAULT_RISK_POLICY, evaluateExpectedValue, evaluateRiskEngine } from "../../src/services/riskEngine";
 import { measureExpectancy } from "../../src/services/exitExpectancy";
 
@@ -46,6 +46,43 @@ describe("costs next to the stop", () => {
   });
 });
 
+describe("coins with a wide spread", () => {
+  const coinSetup: any = {
+    id: "s", name: "t", family: "trend_following", direction: "LONG", symbol: "SOL/INR", timeframe: "5m", entryPrice: 100,
+    stopLoss: 90, takeProfit: 125, riskRewardRatio: 2.5, baseProbability: 0.6, qualifies: true,
+    features: { emaAlignment: true, volumeSurgeRatio: 1.5, vwapDistancePercent: 0.1, adx: 30, rsi: 55, atr: 3 },
+  };
+  const meta: any = { confidence: 0.7, calibratedWinProbability: 0.7 };
+  const noDrills = {
+    globalKillSwitchActive: false, simulateAgentTimeout: false, simulateStaleMarketData: false,
+    simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
+  };
+  /** The risk check with a spread of `spread` rupees on a ₹100 price. */
+  const run = (s: any, spread: number) =>
+    evaluateRiskEngine(s, meta, evaluateExpectedValue(s, meta, spread, 90), [], 0, 90, 0, DEFAULT_RISK_POLICY, noDrills, false, { spread });
+
+  it("aren't traded above 0.2%, coins only", () => {
+    expect(MAX_COIN_SPREAD).toBe(0.002);
+    expect(spreadTooWide("SOL/INR", 0.0025)).toBe(true);
+    expect(spreadTooWide("SOL/INR", 0.0015)).toBe(false);
+    expect(spreadTooWide("SBIN", 0.005)).toBe(false);
+    expect(spreadTooWide("AAPL.US", 0.005)).toBe(false);
+  });
+
+  it("are refused by the risk check even when the stop is wide enough for the costs", () => {
+    // A 10% stop: 0.5% spread and fees are 6% of it, well inside the cost check.
+    expect(costsTooBigForStop("SOL/INR", 100, 90, 0.005)).toBe(false);
+    const wide = run(coinSetup, 0.5);
+    expect(wide.passedAllChecks).toBe(false);
+    expect(wide.rejectionCode).toBe("spread_cap");
+    expect(wide.rejectionReason).toMatch(/spread \(0\.50% of price\) is wider than the 0\.2% coins are traded at/);
+    expect(run(coinSetup, 0.1).rejectionCode).toBeUndefined();
+    // An Indian stock isn't held to it, nor a swing trade (always the owner's call).
+    expect(run({ ...coinSetup, symbol: "SBIN" }, 0.5).rejectionCode).not.toBe("spread_cap");
+    expect(run({ ...coinSetup, horizon: "swing" }, 0.5).rejectionCode).toBeUndefined();
+  });
+});
+
 describe("the traders' records", () => {
   /** A stock rising 0.15% a candle, each candle `range` wide either side, over the last 3 days. */
   const stockBars = (range: number): MarketBar[] => {
@@ -65,5 +102,13 @@ describe("the traders' records", () => {
     // A 2% spread on top of the charges eats more than the whole stop: none counts.
     const wide = measureExpectancy([{ symbol: "SBIN", bars: stockBars(0.004) }], undefined, 0, () => 0.02);
     expect(Object.keys(wide.byKey).filter((k) => k.startsWith("nse:"))).toEqual([]);
+  });
+
+  it("leave out coins whose spread is too wide to trade", () => {
+    const bars = stockBars(0.004);
+    expect(measureExpectancy([{ symbol: "SOL/INR", bars }], undefined, 0, () => 0.001).symbols).toBe(1);
+    expect(measureExpectancy([{ symbol: "SOL/INR", bars }], undefined, 0, () => 0.005).symbols).toBe(0);
+    // Stocks aren't held to the coins' limit.
+    expect(measureExpectancy([{ symbol: "SBIN", bars }], undefined, 0, () => 0.005).symbols).toBe(1);
   });
 });
