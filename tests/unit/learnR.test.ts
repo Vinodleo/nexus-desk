@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { scoreFromR } from "../../src/services/calibration";
 import { experienceFromTrade, experiencesFromShadows, retrieveSimilarExperiences } from "../../src/services/experienceMemory";
-import { onlineTrainingSet } from "../../src/services/onlineLearningService";
 import { shadowFromSetup, type ShadowSignal } from "../../src/services/shadowTracker";
 import type { ExperienceVector, HistoricalTrade, StrategySetup } from "../../src/types";
 
@@ -67,15 +66,5 @@ describe("the trade memory", () => {
     // Older memories without the score still count a win as 1.
     const legacy = memory.map(({ outcomeScore: _drop, ...m }) => m as ExperienceVector);
     expect(retrieveSimilarExperiences(setup, "trending_bullish", legacy, 15).empiricalWinRate).toBe(0.5);
-  });
-});
-
-describe("the retraining", () => {
-  it("learns how far each setup got, not just win or loss", () => {
-    const now = T0 + 24 * 60 * 60 * 1000;
-    const set = onlineTrainingSet([followed(102, 0), followed(99, 1), followed(100.5, 2)], now);
-    expect(set.labels[0]).toBe(1);
-    expect(set.labels[1]).toBe(0);
-    expect(set.labels[2]).toBeCloseTo(0.5, 6);
   });
 });

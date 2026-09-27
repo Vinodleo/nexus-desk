@@ -1,12 +1,8 @@
 import type { MarketBar, RegimeType } from "../types";
-import type * as tf from "@tensorflow/tfjs";
-import { CANDIDATE_MODEL_PATH, trainMetaModel } from "./mlService";
-import { META_FEATURE_VERSION } from "./metaFeatures";
 import {
   LAB_INTERVAL,
   LAB_INTERVAL_MS,
   candleSpacingMs,
-  replayPanel,
   simulateTunedBreakout,
   toLabBars,
   type LabParams,
@@ -96,8 +92,6 @@ export interface RealDataLearningResult {
     volSurgeThreshold: number;
     minConfidence: number;
   };
-  /** Set when a confidence model was trained: the version of its inputs (metaFeatures). */
-  featureVersion?: number;
 }
 
 export type HistoricalSource = "BINANCE" | "COINBASE";
@@ -260,9 +254,8 @@ export function parseCSVToCandles(csvText: string): HistoricalCandle[] {
  * The Lab's train-and-test pipeline, on 5-minute candles like live trading:
  * 1. Splits each coin's history 70% in-sample / 30% out-of-sample.
  * 2. Grid-searches the Lab-tuned breakout trader's settings in-sample.
- * 3. Trains the confidence model on every setup the live trader panel would
- *    have put forward in-sample, with the same inputs the scanner scores.
- * 4. Tests the tuned trader, with the model, on the unseen out-of-sample part.
+ * 3. Tests the tuned trader on the unseen out-of-sample part: exactly what
+ *    promoting puts on the live panel.
  * Trades resolve like live ones: target, stop or 30 minutes, after costs.
  */
 
@@ -272,8 +265,6 @@ interface LabDataset {
 }
 
 const DEFAULT_PARAMS: LabParams = { slMultiplier: 1.4, tpMultiplier: 2.8, volSurgeThreshold: 1.2, rsiThreshold: 50, minConfidence: 0 };
-/** Panel setups needed before a confidence model is trained. */
-const MIN_MODEL_SAMPLES = 50;
 
 function toBacktestTrades(trades: LabTrade[]): RealDataBacktestTrade[] {
   return trades.map((t, k) => ({
@@ -294,8 +285,8 @@ function toBacktestTrades(trades: LabTrade[]): RealDataBacktestTrade[] {
   }));
 }
 
-function simulateAll(sets: LabDataset[], params: LabParams, model?: tf.LayersModel): RealDataBacktestTrade[] {
-  return toBacktestTrades(sets.flatMap((d) => simulateTunedBreakout(d.symbol, d.bars, params, model)));
+function simulateAll(sets: LabDataset[], params: LabParams): RealDataBacktestTrade[] {
+  return toBacktestTrades(sets.flatMap((d) => simulateTunedBreakout(d.symbol, d.bars, params)));
 }
 
 /** How far a Lab run has got: what it's doing, and 0–1 of the way through. */
@@ -355,39 +346,14 @@ async function learnFrom(
     action: "Quantitative Parameter Sweep",
   });
 
-  // 2. The confidence model, on what the live panel would have proposed.
-  if (onProgress) {
-    onProgress({ step: "Replaying the traders' setups", fraction: 0.5 });
-    await yieldToUi();
-  }
-  const samples = inSample.flatMap((d) => replayPanel(d.symbol, d.bars));
-  let model: tf.LayersModel | undefined;
-  if (samples.length >= MIN_MODEL_SAMPLES) {
-    if (onProgress) {
-      onProgress({ step: `Training the confidence model on ${samples.length} setups`, fraction: 0.58 });
-      await yieldToUi();
-    }
-    const trained = await trainMetaModel(samples.map((x) => x.features), samples.map((x) => (x.win ? 1 : 0)));
-    if (trained) {
-      model = trained as tf.LayersModel;
-      // Kept as a candidate; it only reaches the live scanner when promoted.
-      await model.save(CANDIDATE_MODEL_PATH);
-      lessons.push({
-        id: "lesson-ml-1",
-        rule: `Trained Neural Network on ${samples.length} trader-panel setups from ${sets.length} market${sets.length === 1 ? "" : "s"} (5-minute candles, the live scanner's inputs).`,
-        regime: "All Regimes",
-        action: "TensorFlow.js Meta-Model",
-      });
-    }
-  }
-
-  // 3. Out-of-sample: default trader, then the tuned one with the model.
+  // 2. Out-of-sample: the default trader, then the tuned one (exactly what
+  // promoting puts on the live panel).
   if (onProgress) {
     onProgress({ step: "Testing on data it didn't train on", fraction: 0.86 });
     await yieldToUi();
   }
   const baselineOosTrades = simulateAll(outOfSample, DEFAULT_PARAMS);
-  const learnedOosTrades = simulateAll(outOfSample, bestParams, model);
+  const learnedOosTrades = simulateAll(outOfSample, bestParams);
   const baseMetrics = computeTradeMetrics(baselineOosTrades);
   const learnedMetrics = computeTradeMetrics(learnedOosTrades);
 
@@ -421,7 +387,6 @@ async function learnFrom(
     datasetName: label.datasetName,
     // Exactly the parameters the out-of-sample test ran with.
     optimizedParameters: { ...bestParams },
-    ...(model ? { featureVersion: META_FEATURE_VERSION } : {}),
   };
 }
 

@@ -266,7 +266,6 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     macroRegimes: market.macroRegimes(),
     eventWindow: await currentEventWindow(now),
     // The Lab's TensorFlow model lives in the browser.
-    useLabModel: false,
   });
   // Self-Approve: opens what autopilot accepts and marks each proposal.
   const newProposals = await runServerAutopilot(uid, desk, report.newProposals, riskPolicy, {

@@ -1,13 +1,13 @@
 import type { MarketBar } from "../types";
 
-// The inputs to the Lab-trained confidence model, computed one way for
-// training (Lab replays, shadow-tracked setups) and for live scoring. They
-// are read from 5-minute candles that already carry indicators
-// (decorateBarsWithIndicators), at the candle the signal came from.
+// Six readings of the candle a signal came from, computed one way wherever
+// they're used (kept on each followed setup, and on the Lab's trades; the
+// Lab's simple score reads two). They are read from 5-minute candles that
+// already carry indicators (decorateBarsWithIndicators).
 //
 // Version 2: all six read from the candles (version 1 took ATR, RSI and VWAP
 // from different formulas in the Lab and faked the slope from the regime
-// label live). A model trained on another version isn't used.
+// label live).
 
 export const META_FEATURE_VERSION = 2;
 export const META_FEATURE_COUNT = 6;

@@ -68,16 +68,6 @@ describe("LedgerLab", () => {
     expect(screen.queryByRole("button", { name: "Promote to live" })).toBeNull();
   });
 
-  it("shows the daily retrain's latest check on the model in use", () => {
-    const rule = "Retrained on 150 tracked setups; on the latest week's 40 it hadn't seen, the half it rated best earned −0.20R each, against +0.10R for the model in use and +0.02R for all of them. Kept the model in use.";
-    render(createElement(LedgerLab, {
-      promotedLabModel: { ...promoted, distilledLessons: [{ id: "online-retrain", rule, regime: "All Regimes", action: "Online Learning TFJS Model" }] },
-      onPromote: vi.fn(),
-      onRevert: vi.fn(),
-    }));
-    expect(screen.getByTestId("retrain-check").textContent).toBe(rule);
-  });
-
   it("shows the model in use and reverts it after a confirm", () => {
     const onRevert = vi.fn();
     render(createElement(LedgerLab, { promotedLabModel: promoted, onPromote: vi.fn(), onRevert }));
