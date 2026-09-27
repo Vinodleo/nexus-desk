@@ -42,6 +42,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - It replays every trader's setups under the live exits, after fees and spreads.
   - One trade at a time per trader and market; the server keeps 30 days of trades (`server/scanner/traderRecords.ts`).
   - Records are pooled across markets.
+  - The card sets each trader's real paper trades against the replay, per market (`realByTrader`, `replayVsReal`).
   - Stock setups count only in their entry hours (`takesEntriesAt` in `labSimulation.ts`).
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
   - It, the win-chance calibration and the trade memory count each trader's move once

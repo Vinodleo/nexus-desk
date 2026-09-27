@@ -469,8 +469,55 @@ function useJudgedMoves(table: EdgeTable | null): Map<string, number> {
 const MARKET_TAB = { crypto: "Coins", nse: "India", us: "US" } as const;
 type EdgeMarket = EdgeRow["market"];
 
+// Replay against real fills. The records replay every setup on candles; your
+// paper trades are real fills (the bid and ask, gaps through stops). Side by
+// side they show whether the replay is too kind: real trades well below it
+// mean a record should be trusted less than it looks.
+
+/** Real trades a market needs before the replay and real results are compared. */
+export const MIN_REAL_TRADES = 10;
+/** A gap this big (in R per trade) between real and replay is worth saying. */
+export const REAL_GAP_R = 0.2;
+
+export interface RealRecord {
+  trades: number;
+  /** Average result per trade in R, after fees, from real fills. */
+  avgR: number;
+}
+
+const EDGE_MARKET = { coins: "crypto", stocks: "nse", us: "us" } as const;
+
+/** Each trader's real paper trades in each market (those that recorded their risk), closed since `since`, keyed as the records are. */
+export function realByTrader(trades: HistoricalTrade[], since = 0): Map<string, RealRecord> {
+  const sums = new Map<string, { n: number; r: number }>();
+  for (const t of trades) {
+    if (!((t.riskAtOpen ?? 0) > 0) || (t.closedAtMs ?? 0) < since) continue;
+    const key = `${EDGE_MARKET[marketOf(t.symbol)]}:${t.setupName}`;
+    const acc = sums.get(key) ?? { n: 0, r: 0 };
+    acc.n++;
+    acc.r += t.realizedPnl / t.riskAtOpen!;
+    sums.set(key, acc);
+  }
+  return new Map([...sums].map(([k, { n, r }]) => [k, { trades: n, avgR: r / n }]));
+}
+
+/** Real trades against what the replay gives the same traders in the same market, weighted by real trades; null with none. */
+export function replayVsReal(rows: Pick<EdgeRow, "market" | "trader" | "avgR">[], real: Map<string, RealRecord>) {
+  let trades = 0;
+  let realSum = 0;
+  let replaySum = 0;
+  for (const row of rows) {
+    const rec = real.get(`${row.market}:${row.trader}`);
+    if (!rec) continue;
+    trades += rec.trades;
+    realSum += rec.avgR * rec.trades;
+    replaySum += row.avgR * rec.trades;
+  }
+  return trades > 0 ? { trades, realR: realSum / trades, replayR: replaySum / trades } : null;
+}
+
 /** The scanner's record of each trader with your exits: who may trade now, one market at a time. */
-export const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) => {
+export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: HistoricalTrade[] }> = ({ table, trades = [] }) => {
   const [picked, setPicked] = useState<EdgeMarket | null>(null);
   const [openTrader, setOpenTrader] = useState<string | null>(null);
   const touchX = useRef<number | null>(null);
@@ -481,6 +528,8 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) =
   const markets = table ? (["crypto", "nse", "us"] as const).filter((m) => table.rows.some((r) => r.market === m)) : [];
   const market = picked && markets.includes(picked as never) ? picked : markets[0];
   const slideClass = useSlideFrom(market, markets);
+  // Real paper trades over the span the records cover.
+  const real = useMemo(() => realByTrader(trades, table?.since ?? 0), [trades, table?.since]);
   if (!table || table.rows.length === 0 || !market) return null;
 
   const judgingIn = (m: EdgeMarket) => table.rows.filter((r) => r.market === m).reduce((n, r) => n + r.trades, 0) >= table.minMarketTrades;
@@ -501,6 +550,8 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) =
   };
 
   const rows = table.rows.filter((r) => r.market === market);
+  const vsReal = replayVsReal(rows, real);
+  const gap = vsReal ? vsReal.realR - vsReal.replayR : 0;
   const measured = rows.reduce((n, r) => n + r.trades, 0);
   const judging = judgingIn(market);
   const index = markets.indexOf(market as never);
@@ -560,6 +611,22 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) =
             {measured} setups so far; trading isn't limited by this until there are {table.minMarketTrades}.
           </div>
         )}
+        {vsReal && (
+          <div
+            data-testid="replay-vs-real"
+            className={`text-xs tabular-nums ${vsReal.trades >= MIN_REAL_TRADES && gap <= -REAL_GAP_R ? "text-loss" : "text-muted"}`}
+          >
+            {vsReal.trades < MIN_REAL_TRADES
+              ? `${vsReal.trades} real paper ${vsReal.trades === 1 ? "trade" : "trades"} here so far; the replay and real fills are compared from ${MIN_REAL_TRADES}.`
+              : `Your paper trades here: ${rSigned(vsReal.realR)} each over ${vsReal.trades}, against ${rSigned(vsReal.replayR)} in the replay for the same traders. ${
+                  gap <= -REAL_GAP_R
+                    ? "Real fills do worse: these records look kinder than trading is."
+                    : gap >= REAL_GAP_R
+                      ? "Real trades do better: the desk's checks pick the better setups."
+                      : "Close to the replay."
+                }`}
+          </div>
+        )}
         <ul ref={listRef} className="relative m-0 p-0 list-none flex flex-col">
           {rows.map((r, i) => {
             const paused = judging && r.judgedR < MIN_EDGE_R;
@@ -594,6 +661,8 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) =
                     <span className="block text-xs text-muted tabular-nums">
                       judged {rSigned(r.judgedR)}
                       {r.otherMarketR ? ` · other markets ${rSigned(r.otherMarketR)}` : ""}
+                      {real.get(`${r.market}:${r.trader}`) &&
+                        ` · real ${rSigned(real.get(`${r.market}:${r.trader}`)!.avgR)} over ${real.get(`${r.market}:${r.trader}`)!.trades}`}
                     </span>
                   </span>
                   <span className="text-right shrink-0 block">
@@ -802,7 +871,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
       )}
 
       <HowTradesMoved trades={inRange} />
-      <TraderRecord table={measures.table} />
+      <TraderRecord table={measures.table} trades={trades} />
       <WhenSetupsWin data={measures.conditions} />
       <Rows title="By market" rows={byMarket} />
       <Rows title="By trader" rows={byTrader} />
