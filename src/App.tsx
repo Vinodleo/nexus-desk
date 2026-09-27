@@ -874,6 +874,7 @@ export default function App() {
         stopAtExit: pos.stopLoss,
         riskAtOpen: riskAtOpen(pos),
         ...(pos.openedByServer ? { openedByServer: true } : {}),
+        ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
         fillAtExit: exitPrice,
         // The best and worst prices seen while open, for how far it went each way.
         highestPrice: Math.max(pos.highestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
@@ -1062,6 +1063,7 @@ export default function App() {
         direction: proposal.setup.direction,
         setupName: proposal.setup.name,
         entryPrice,
+        signalPrice: proposal.setup.entryPrice,
         currentPrice: entryPrice,
         quantity,
         stopLoss: proposal.setup.stopLoss,

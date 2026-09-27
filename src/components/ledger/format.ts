@@ -17,6 +17,17 @@ export function stopSlip(t: HistoricalTrade): { pct: number } | null {
   return { pct: Math.max(0, (worse / t.stopAtExit) * 100) };
 }
 
+/**
+ * What the entry cost next to the signal: how far the price paid was from the
+ * price the signal came from, as a % of it. Positive is worse (a long bought
+ * higher); negative is better. Null for trades from before this was recorded.
+ */
+export function entrySlip(t: HistoricalTrade): { pct: number } | null {
+  if (!(t.signalPrice !== undefined && t.signalPrice > 0) || !(t.entryPrice > 0)) return null;
+  const worse = t.direction === "LONG" ? t.entryPrice - t.signalPrice : t.signalPrice - t.entryPrice;
+  return { pct: (worse / t.signalPrice) * 100 };
+}
+
 /** How a trade closed, in words. */
 export const EXIT_LABEL: Record<HistoricalTrade["exitReason"], string> = {
   TAKE_PROFIT: "Take profit",

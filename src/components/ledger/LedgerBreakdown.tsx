@@ -3,7 +3,8 @@ import type { HistoricalTrade } from "../../types";
 import { apiFetch } from "../../services/apiClient";
 import { MIN_EDGE_R } from "../../services/calibration";
 import { Card, StatTile } from "./ui";
-import { EXIT_LABEL, formatMoney, pnlTone, stopSlip } from "./format";
+import { EXIT_LABEL, entrySlip, formatMoney, pnlTone, stopSlip } from "./format";
+import { marketOf } from "../../shared/marketLimits";
 import { GrowBar, prefersReducedMotion, useSlideFrom } from "./motion";
 import { ChevronDown } from "lucide-react";
 import { MIN_CONDITION_SETUPS, type ConditionBreakdown } from "../../services/conditionStats";
@@ -23,6 +24,8 @@ export interface BreakdownRow {
   avgR: number | null;
   /** Average % a stop exit sold past its stop, over those recorded; null if none. */
   avgSlipPct: number | null;
+  /** Average % entries paid past the signal's price (negative: better than it), over those recorded; null if none. */
+  avgEntrySlipPct: number | null;
 }
 
 /** Trades grouped by `keyOf`, the costliest first. */
@@ -48,6 +51,10 @@ export function breakdown(trades: HistoricalTrade[], keyOf: (t: HistoricalTrade)
         avgR: withRisk.length > 0 ? withRisk.reduce((a, t) => a + t.realizedPnl / t.riskAtOpen!, 0) / withRisk.length : null,
         avgSlipPct: (() => {
           const slips = list.map(stopSlip).filter((s): s is { pct: number } => s !== null);
+          return slips.length > 0 ? slips.reduce((a, s) => a + s.pct, 0) / slips.length : null;
+        })(),
+        avgEntrySlipPct: (() => {
+          const slips = list.map(entrySlip).filter((s): s is { pct: number } => s !== null);
           return slips.length > 0 ? slips.reduce((a, s) => a + s.pct, 0) / slips.length : null;
         })(),
       };
@@ -190,6 +197,12 @@ const Rows: React.FC<{ title: string; rows: BreakdownRow[]; limit?: number }> = 
               {r.avgSlipPct !== null && r.avgSlipPct >= 0.05 && (
                 <div className="text-xs text-loss tabular-nums">stops sold {r.avgSlipPct.toFixed(2)}% past the stop on average</div>
               )}
+              {r.avgEntrySlipPct !== null && Math.abs(r.avgEntrySlipPct) >= 0.01 && (
+                <div className={`text-xs tabular-nums ${r.avgEntrySlipPct > 0 ? "text-loss" : "text-muted"}`}>
+                  entries {r.avgEntrySlipPct > 0 ? "paid" : "got"} {Math.abs(r.avgEntrySlipPct).toFixed(2)}%{" "}
+                  {r.avgEntrySlipPct > 0 ? "more than" : "better than"} the signal on average
+                </div>
+              )}
             </div>
             <div className={`text-sm font-semibold tabular-nums shrink-0 ${pnlTone(r.net)}`}>{formatMoney(r.net, { signed: true, decimals: 0 })}</div>
             {/* Its share of the money made or lost, against the biggest here. */}
@@ -205,6 +218,8 @@ const Rows: React.FC<{ title: string; rows: BreakdownRow[]; limit?: number }> = 
 };
 
 const MARKET_TITLE = { crypto: "Coins", nse: "Indian stocks", us: "US stocks" } as const;
+/** The same, keyed as the per-market limits are. */
+const MARKET_TITLE_BY_KEY = { coins: MARKET_TITLE.crypto, stocks: MARKET_TITLE.nse, us: MARKET_TITLE.us } as const;
 
 interface EdgeRow {
   market: "crypto" | "nse" | "us";
@@ -728,6 +743,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
   );
   const summary = payoffSummary(inRange);
   const byTrader = useMemo(() => breakdown(inRange, (t) => t.setupName || "Unknown"), [inRange]);
+  const byMarket = useMemo(() => breakdown(inRange, (t) => MARKET_TITLE_BY_KEY[marketOf(t.symbol)]), [inRange]);
   const byCoin = useMemo(() => breakdown(inRange, (t) => t.symbol), [inRange]);
   const byExit = useMemo(() => breakdown(inRange, (t) => EXIT_LABEL[t.exitReason] ?? t.exitReason), [inRange]);
   const measures = useScannerMeasures();
@@ -787,6 +803,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
       <HowTradesMoved trades={inRange} />
       <TraderRecord table={measures.table} />
       <WhenSetupsWin data={measures.conditions} />
+      <Rows title="By market" rows={byMarket} />
       <Rows title="By trader" rows={byTrader} />
       <Rows title="By coin" rows={byCoin} limit={8} />
       <CoinCosts activity={measures.activity} />

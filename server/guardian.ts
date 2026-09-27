@@ -49,6 +49,8 @@ export interface DaemonPosition {
   isLiveOrder?: boolean; // set by the server from its live registry, never trusted from the client
   /** Opened by the server's autopilot (set by the server, never trusted from the client). */
   openedByServer?: boolean;
+  /** The price the signal came from, for the entry slippage. */
+  signalPrice?: number;
   /** The app has synced it back at least once, so it knows about it. */
   clientSeen?: boolean;
 }
@@ -82,6 +84,7 @@ export interface DaemonClosedTrade {
   /** The best and worst prices seen while it was open (what it could have sold at), for how far it went each way. */
   highestPrice?: number;
   lowestPrice?: number;
+  signalPrice?: number;
 }
 
 interface DaemonPersistedState {
@@ -364,6 +367,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     fillAtExit: exitPrice,
     highestPrice: Math.max(pos.highestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
     lowestPrice: Math.min(pos.lowestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
+    ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
   };
 
   daemonClosedTrades.unshift(closedRecord);

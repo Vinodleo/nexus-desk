@@ -105,6 +105,8 @@ describe("positionFromProposal", () => {
       atrAtEntry: 5,
       openTime: new Date(now).toISOString(),
     });
+    // The signal's own price is kept: the 1001 paid against it is the entry slippage.
+    expect(pos.signalPrice).toBe(proposal("SOL/INR").setup.entryPrice);
   });
 });
 
