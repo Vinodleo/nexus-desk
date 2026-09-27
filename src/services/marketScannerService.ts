@@ -24,6 +24,7 @@ import {
 import { runPersonaPanel } from "./personaEngine";
 import { liveMarketStream } from "./liveMarketStreamService";
 import { retrieveSimilarExperiences } from "./experienceMemory";
+import { scoreWithConditions, type ConditionModel } from "./conditionModel";
 import { computeMetaLabelScore } from "./metaLabeling";
 import { syntheticBarShare } from "./dataProvenance";
 import { MIN_SIGNAL_BARS, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
@@ -119,6 +120,8 @@ export interface ScanMarketOptions {
   eventWindow?: { active: boolean; headline?: string };
   /** Win-chance calibration from shadow-tracked setups, per scorer. Without one, raw scores are used. */
   calibrators?: Partial<Record<ConfidenceScorer, Calibrator>>;
+  /** The scoring table from followed setups (conditionModel): what similar setups did. Without it, the closest past setups. */
+  conditionModel?: ConditionModel;
 }
 
 export interface MarketScanResult {
@@ -181,6 +184,17 @@ export async function scanSingleMarket(
   // estimate stands (see computeMetaLabelScore).
   const experiences = options.experiences ?? [];
   const proposals: TradeProposal[] = [];
+  // What setups like this one did: from the scoring table when there is one
+  // (each trader in each market, and the conditions it appeared in), else
+  // from the 15 past setups with the closest readings.
+  const similarSetups = (setup: StrategySetup) => {
+    if (options.conditionModel) {
+      const signal = shadowFromSetup(setup, "proposed", candleCloseMs, { regime, btcChange1hPct: options.marketTrend?.change1hPct });
+      const { score, samples } = scoreWithConditions(options.conditionModel, signal);
+      return { empiricalWinRate: score, sampleCount: samples, similarityScore: 1, seededShare: 0 };
+    }
+    return retrieveSimilarExperiences(setup, regime, experiences, 15);
+  };
 
   // Run the full trader panel: multiple differentiated personas vote,
   // suppressor personas (volatility/event risk officers) can veto outright,
@@ -199,12 +213,7 @@ export async function scanSingleMarket(
       macroRegime: options.macroRegimes?.[symbolConfig.symbol] ?? liveMarketStream.getMacroRegime(symbolConfig.symbol),
     },
     (setup) => {
-      const retrieval = retrieveSimilarExperiences(
-        setup,
-        regime,
-        experiences,
-        15
-      );
+      const retrieval = similarSetups(setup);
       return computeMetaLabelScore({
         setup,
         regime,
@@ -233,12 +242,7 @@ export async function scanSingleMarket(
       macroRegime: options.macroRegimes?.[symbolConfig.symbol] ?? liveMarketStream.getMacroRegime(symbolConfig.symbol),
     },
     (setup) => {
-      const retrieval = retrieveSimilarExperiences(
-        setup,
-        regime,
-        experiences,
-        15
-      );
+      const retrieval = similarSetups(setup);
       return computeMetaLabelScore({
         setup,
         regime,
@@ -293,13 +297,8 @@ export async function scanSingleMarket(
     const setup = qualifiedSetups[i];
     const sourcePanel = candidates[i].panel;
 
-    // 1. Experience Retrieval
-    const retrieval = retrieveSimilarExperiences(
-      setup,
-      regime,
-      experiences,
-      15
-    );
+    // 1. What similar setups did (the scoring table, or the closest past setups)
+    const retrieval = similarSetups(setup);
 
     // 2. Meta-Label Scoring
     const metaScore: MetaLabelScore = computeMetaLabelScore({

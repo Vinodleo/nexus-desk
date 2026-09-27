@@ -46,6 +46,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
   - It, the win-chance calibration, the retraining and the trade memory count each trader's move once
     (`oneShadowAtATime` in `shadowTracker.ts`), not once per candle a setup stayed valid.
+  - The confidence score's "what similar setups did" comes from the scoring table (`conditionModel.ts`):
+    each trader in each market plus those conditions, thin rows pulled toward no effect.
 - **Hosting and secrets:** `docs/hosting.md` and `.env.example`.
 
 ## Plans
