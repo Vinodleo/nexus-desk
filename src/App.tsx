@@ -875,6 +875,9 @@ export default function App() {
         riskAtOpen: riskAtOpen(pos),
         ...(pos.openedByServer ? { openedByServer: true } : {}),
         fillAtExit: exitPrice,
+        // The best and worst prices seen while open, for how far it went each way.
+        highestPrice: Math.max(pos.highestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
+        lowestPrice: Math.min(pos.lowestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
       };
 
       setClosedTrades((prev) => [newHistoricalTrade, ...prev]);

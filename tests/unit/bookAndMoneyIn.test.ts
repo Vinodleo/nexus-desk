@@ -29,6 +29,16 @@ describe("trades closed by the server guardian", () => {
     expect(t.openedAtMs).toBe(Date.parse("2026-09-25T10:00:00.000Z"));
     expect(t.closedAt).toMatch(/^\d{1,2}:\d{2}/); // a time, not the raw ISO string
   });
+
+  it("carry the best and worst prices seen while open", () => {
+    const ev = {
+      id: "daemon-closed-2-p8", positionId: "p8", symbol: "ETH/INR", direction: "LONG", entryPrice: 200000, exitPrice: 199000,
+      quantity: 0.05, moneyPlaced: 10000, grossPnl: -50, feesPaid: 10, realizedPnl: -60, realizedPnlPercent: -0.6, isWin: false,
+      exitReason: "STOP_LOSS", closedAt: "2026-09-25T10:20:00.000Z", openedAt: "2026-09-25T10:00:00.000Z",
+      highestPrice: 201500, lowestPrice: 198900,
+    } as DaemonCloseEvent;
+    expect(daemonEventToTrade(ev)).toMatchObject({ highestPrice: 201500, lowestPrice: 198900 });
+  });
 });
 
 describe("repairing saved trades", () => {

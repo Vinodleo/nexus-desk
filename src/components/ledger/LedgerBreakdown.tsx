@@ -73,6 +73,101 @@ export function payoffSummary(trades: HistoricalTrade[]) {
 
 const rSigned = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`;
 
+// How far trades went for and against you before they closed, in R
+// (multiples of what each risked). It shows whether the exits fit how
+// trades really move:
+// - winners that never dipped far suggest the stop sits further away than it
+//   needs to;
+// - losers that were well ahead first suggest gains should be locked in sooner;
+// - winners keeping little of their best move suggest the trailing stop is too loose.
+
+/** How far a closed trade went in its favour (best) and against it (worst), in R; null without the record (older trades). */
+export function tradeExcursion(t: HistoricalTrade): { bestR: number; worstR: number } | null {
+  if (!((t.riskAtOpen ?? 0) > 0) || !(t.quantity > 0) || t.highestPrice === undefined || t.lowestPrice === undefined) return null;
+  const perUnit = t.riskAtOpen! / t.quantity;
+  const up = (t.highestPrice - t.entryPrice) / perUnit;
+  const down = (t.entryPrice - t.lowestPrice) / perUnit;
+  const [best, worst] = t.direction === "LONG" ? [up, down] : [down, up];
+  return { bestR: Math.max(0, best), worstR: Math.max(0, worst) };
+}
+
+/** Closed trades with the record needed before the card says anything. */
+export const MIN_EXCURSION_TRADES = 10;
+
+/** The level `share` of the values stay at or under. */
+function upTo(values: number[], share: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.ceil(share * sorted.length) - 1)];
+}
+
+export function excursionSummary(trades: HistoricalTrade[]) {
+  const measured = trades.flatMap((t) => {
+    const x = tradeExcursion(t);
+    return x ? [{ ...x, r: t.realizedPnl / t.riskAtOpen!, won: t.realizedPnl > 0 }] : [];
+  });
+  const winners = measured.filter((m) => m.won);
+  const losers = measured.filter((m) => !m.won);
+  const kept = winners.filter((m) => m.bestR > 0);
+  return {
+    trades: measured.length,
+    ready: measured.length >= MIN_EXCURSION_TRADES,
+    /** 9 in 10 winners went no further than this against you. */
+    winnersWorstR: winners.length > 0 ? upTo(winners.map((m) => m.worstR), 0.9) : null,
+    winners: winners.length,
+    /** How far losers were ahead, on average, before turning; and how many got to +0.5R. */
+    losersBestR: losers.length > 0 ? losers.reduce((a, m) => a + m.bestR, 0) / losers.length : null,
+    losersHalfR: losers.filter((m) => m.bestR >= 0.5).length,
+    losers: losers.length,
+    /** Share of their best move winners kept, on average. */
+    keptShare: kept.length > 0 ? kept.reduce((a, m) => a + Math.min(1, Math.max(0, m.r / m.bestR)), 0) / kept.length : null,
+  };
+}
+
+/** How far trades went for and against you, and what that says about the exits. */
+export const HowTradesMoved: React.FC<{ trades: HistoricalTrade[] }> = ({ trades }) => {
+  const x = excursionSummary(trades);
+  if (x.trades === 0) return null;
+  return (
+    <Card aria-label="How trades moved" className="flex flex-col gap-3">
+      <div className="text-sm font-semibold">How trades moved</div>
+      {!x.ready ? (
+        <div className="text-xs text-muted">
+          {x.trades} closed {x.trades === 1 ? "trade has" : "trades have"} recorded how far they went each way; this shows once{" "}
+          {MIN_EXCURSION_TRADES} have.
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-2">
+            <StatTile label="Winners' worst dip" value={x.winnersWorstR !== null ? rSigned(-x.winnersWorstR) : "—"} valueClassName="text-base" />
+            <StatTile label="Losers' best point" value={x.losersBestR !== null ? rSigned(x.losersBestR) : "—"} valueClassName="text-base" />
+            <StatTile label="Kept of best move" value={x.keptShare !== null ? `${Math.round(x.keptShare * 100)}%` : "—"} valueClassName="text-base" />
+          </div>
+          <div className="text-xs text-muted flex flex-col gap-1">
+            {x.winnersWorstR !== null && (
+              <span>
+                9 in 10 winners went no more than {x.winnersWorstR.toFixed(2)}R against you before winning. If that's well under 1R, the stop
+                may sit further away than it needs to.
+              </span>
+            )}
+            {x.losersBestR !== null && (
+              <span>
+                Losers were {x.losersBestR.toFixed(2)}R ahead on average before turning; {x.losersHalfR} of {x.losers} got to +0.5R. Many
+                that were well ahead mean gains should be locked in sooner.
+              </span>
+            )}
+            {x.keptShare !== null && (
+              <span>
+                Winners kept {Math.round(x.keptShare * 100)}% of their best move. Keeping little of it means the trailing stop gives back
+                too much.
+              </span>
+            )}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+};
+
 const Rows: React.FC<{ title: string; rows: BreakdownRow[]; limit?: number }> = ({ title, rows, limit }) => {
   if (rows.length === 0) return null;
   const shown = limit ? rows.slice(0, limit) : rows;
@@ -689,6 +784,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
         </Card>
       )}
 
+      <HowTradesMoved trades={inRange} />
       <TraderRecord table={measures.table} />
       <WhenSetupsWin data={measures.conditions} />
       <Rows title="By trader" rows={byTrader} />

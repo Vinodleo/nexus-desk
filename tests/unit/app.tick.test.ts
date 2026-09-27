@@ -103,5 +103,7 @@ describe("App live ticks", () => {
     expect(positions.find((p: { id: string }) => p.id === "pos-tp")).toBeUndefined();
     const trade = trades.find((t: { positionId: string }) => t.positionId === "pos-tp");
     expect(trade).toMatchObject({ exitReason: "TAKE_PROFIT", exitPrice: 1012 });
+    // How far it went each way while open, for "How trades moved".
+    expect(trade).toMatchObject({ highestPrice: 1012, lowestPrice: 1000 });
   }, 30000);
 });

@@ -79,6 +79,9 @@ export interface DaemonClosedTrade {
   riskAtOpen?: number;
   stopAtExit?: number;
   fillAtExit?: number;
+  /** The best and worst prices seen while it was open (what it could have sold at), for how far it went each way. */
+  highestPrice?: number;
+  lowestPrice?: number;
 }
 
 interface DaemonPersistedState {
@@ -359,6 +362,8 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     ...(pos.openedByServer ? { openedByServer: true } : {}),
     stopAtExit: pos.stopLoss,
     fillAtExit: exitPrice,
+    highestPrice: Math.max(pos.highestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
+    lowestPrice: Math.min(pos.lowestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
   };
 
   daemonClosedTrades.unshift(closedRecord);
