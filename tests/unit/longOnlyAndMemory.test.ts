@@ -78,6 +78,7 @@ describe("memory from real results", () => {
     status: r > 0 ? "target" : "stop",
     r,
     exitPrice: exit,
+    resolvedAt: T0 + (i + 1) * FIVE_MIN,
     ...extra,
   });
 
@@ -103,7 +104,7 @@ describe("memory from real results", () => {
 
 describe("calibration and the score version", () => {
   it("ignores setups scored with the old formula", () => {
-    const old = Array.from({ length: 50 }, (_, i) => ({ ...shadowFromSetup(setup, "proposed", i, { confidence: 0.6 }), status: "target" as const, exitPrice: 102 }));
+    const old = Array.from({ length: 50 }, (_, i) => ({ ...shadowFromSetup(setup, "proposed", i, { confidence: 0.6 }), status: "target" as const, exitPrice: 102, resolvedAt: i + 1 }));
     expect(buildCalibrator(old).samples).toBe(0);
     const current = old.map((s) => ({ ...s, scoreVersion: HEURISTIC_SCORE_VERSION }));
     expect(buildCalibrator(current).samples).toBe(50);

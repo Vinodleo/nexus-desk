@@ -1,7 +1,7 @@
 import { LIVE_MODEL_PATH, trainMetaModel } from "./mlService";
 import { loadStoredPromotedLabModel, saveStoredPromotedLabModel } from "./storagePersistenceService";
 import { META_FEATURE_COUNT, META_FEATURE_VERSION } from "./metaFeatures";
-import type { ShadowSignal } from "./shadowTracker";
+import { oneShadowAtATime, type ShadowSignal } from "./shadowTracker";
 import type * as tf from "@tensorflow/tfjs";
 
 // Daily retraining of the confidence model on what actually happened: every
@@ -18,11 +18,13 @@ export const MIN_ONLINE_SAMPLES = 150;
 export function onlineTrainingSet(shadows: ShadowSignal[], nowMs: number = Date.now()): { features: number[][]; labels: number[] } {
   const features: number[][] = [];
   const labels: number[] = [];
-  for (const s of shadows) {
-    if (s.status === "open" || s.horizon !== "intraday" || s.r === undefined) continue;
-    if (!s.features || s.features.length !== META_FEATURE_COUNT) continue;
-    if (nowMs - s.signalTime > WINDOW_MS) continue;
-    features.push(s.features);
+  const usable = shadows.filter(
+    (s) => s.horizon === "intraday" && s.features?.length === META_FEATURE_COUNT && nowMs - s.signalTime <= WINDOW_MS
+  );
+  // Each price move once (oneShadowAtATime), not once per candle it stayed valid.
+  for (const s of oneShadowAtATime(usable)) {
+    if (s.status === "open" || s.r === undefined) continue;
+    features.push(s.features!);
     labels.push(s.r > 0 ? 1 : 0);
   }
   return { features, labels };

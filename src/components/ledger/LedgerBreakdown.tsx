@@ -668,7 +668,8 @@ export const WhenSetupsWin: React.FC<{ data: ConditionBreakdown | null }> = ({ d
       <div className="text-xs text-muted">
         Every setup the scanner followed, taken or not ({data.setups}
         {since ? ` since ${since}` : ""}), grouped by the conditions it appeared in: how often it ended ahead and its average after fees
-        and spreads. All markets together, or each. Under {MIN_CONDITION_SETUPS} setups is too early to read.
+        and spreads. Each trader's move counts once, not once per candle it stayed valid. All markets together, or each. Under{" "}
+        {MIN_CONDITION_SETUPS} setups is too early to read.
       </div>
       <div className="flex gap-2" role="group" aria-label="Market">
         {(

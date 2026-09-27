@@ -1,4 +1,4 @@
-import type { ShadowSignal } from "./shadowTracker";
+import { oneShadowAtATime, type ShadowSignal } from "./shadowTracker";
 import { marketOf, type MarketKey } from "../shared/marketLimits";
 
 // When setups win: every setup the scanner has followed (taken or not),
@@ -137,8 +137,9 @@ function cell(results: number[]): ConditionCell {
 
 /** Finished intraday setups, grouped by condition, for coins and stocks together and each. */
 export function conditionBreakdown(shadows: ShadowSignal[], spreadFor: (symbol: string) => number | undefined = () => undefined): ConditionBreakdown {
-  const done = shadows
-    .filter((s) => s.horizon === "intraday" && s.status !== "open")
+  // Each price move once (oneShadowAtATime), not once per candle it stayed valid.
+  const done = oneShadowAtATime(shadows.filter((s) => s.horizon === "intraday"))
+    .filter((s) => s.status !== "open")
     .map((s) => ({ s, r: resultAfterSpread(s, spreadFor(s.symbol)), market: marketOf(s.symbol) }))
     .filter((x): x is { s: ShadowSignal; r: number; market: MarketKey } => x.r !== null);
 
