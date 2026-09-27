@@ -30,6 +30,7 @@ import { dailyPnlToday, deskFirstSeenAt, istDay, scanningDesks, getDeskState, ty
 import { lastServerOpenAt, runServerAutopilot, serverQuarantines } from "./autopilot";
 import { announceSwings } from "./swingAlerts";
 import { getExpectancyTable, marketTrendFrom } from "../../src/services/exitExpectancy";
+import { _resetTraderRecords, loadTraderRecords, traderHistory } from "./traderRecords";
 import { tradingActivity } from "../../src/services/tradingActivity";
 
 /** Bitcoin: its trend decides whether coin longs are taken, so its candles are always kept. */
@@ -246,7 +247,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     equitySymbols: [...stockUniverse(), ...usUniverse()],
     now,
     // Each trader's last day with your exits; remeasured hourly.
-    exitExpectancy: getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk.trailProfile, now, typicalSpread),
+    exitExpectancy: getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk.trailProfile, now, typicalSpread, traderHistory),
     marketTrend: marketTrendFrom(market.getBars(MARKET_SYMBOL), market.macroRegimes()[MARKET_SYMBOL]),
     barsMap,
     activePositions: [...daemonPositions.values()].filter((p) => p.userId === uid).map(asPosition),
@@ -413,7 +414,7 @@ export function coinActivity(): { symbol: string; activity: number | null; sprea
 /** Each trader's recent results with this user's exits (measured on the next scan if not yet). */
 export function exitEdgeTable(uid: string, now: number = Date.now()) {
   const desk = getDeskState(uid);
-  return universe.length > 0 ? getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk?.trailProfile, now, typicalSpread) : null;
+  return universe.length > 0 ? getExpectancyTable(measuredSymbols(), (s) => market.getBars(s), desk?.trailProfile, now, typicalSpread, traderHistory) : null;
 }
 
 /** Every setup the server has followed for this user in the last week, newest first. */
@@ -453,6 +454,7 @@ export function scannerHeartbeat(now: number = Date.now()) {
  */
 export function startServerScanner(): void {
   loadScannerState();
+  loadTraderRecords();
   const schedule = () => {
     const delay = Math.max(1000, nextCandleFetchAt(Date.now()) - Date.now());
     timer = setTimeout(tick, delay);
@@ -483,6 +485,7 @@ export function startServerScanner(): void {
 /** Test hooks. */
 export function _resetServerScanner(): void {
   users.clear();
+  _resetTraderRecords();
   observedSpreads.clear();
   market.keepOnly([]);
   lastStockBackfillAt = 0;

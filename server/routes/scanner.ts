@@ -6,7 +6,7 @@ import { getDeskState, setDeskState } from "../scanner/deskState";
 import { coinActivity, exitEdgeTable, reportsSince, scanNow, scannerStatus, shadowsFor, shadowsForDevice, typicalSpread } from "../scanner/scannerService";
 import { conditionBreakdown } from "../../src/services/conditionStats";
 import { MIN_TRADING_ACTIVITY } from "../../src/services/tradingActivity";
-import { expectancyRows, MIN_MARKET_TRADES } from "../../src/services/exitExpectancy";
+import { expectancyRows, MIN_MARKET_TRADES, RECORD_DAYS } from "../../src/services/exitExpectancy";
 import { getEvents } from "../eventCalendar";
 import { PAUSE_AFTER_MS, eventWindowAt } from "../../src/shared/eventCalendar";
 
@@ -52,7 +52,15 @@ router.get("/api/scanner/exit-edge", (req: Request, res: Response) => {
   if (!table) return res.json({ success: true, table: null, activity, conditions });
   res.json({
     success: true,
-    table: { profile: table.profile, measuredAt: table.measuredAt, symbols: table.symbols, minMarketTrades: MIN_MARKET_TRADES, rows: expectancyRows(table) },
+    table: {
+      profile: table.profile,
+      measuredAt: table.measuredAt,
+      symbols: table.symbols,
+      since: table.since ?? 0,
+      recordDays: RECORD_DAYS,
+      minMarketTrades: MIN_MARKET_TRADES,
+      rows: expectancyRows(table),
+    },
     activity,
     conditions,
   });

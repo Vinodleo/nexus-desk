@@ -20,9 +20,11 @@ const candles = (rows: [number, number, number, number][]): MarketBar[] =>
 const setup = (over: Partial<StrategySetup> = {}) =>
   ({ symbol: "SOL/INR", name: "Sofia Range Scalp", family: "mean_reversion", direction: "LONG", entryPrice: 1000, stopLoss: 990, takeProfit: 1020, horizon: "intraday", ...over }) as StrategySetup;
 
+const flatFor = (n: number) => candles(Array.from({ length: n }, () => [1000, 1003, 997, 1001] as [number, number, number, number]));
+
 describe("playing a setup out on candles", () => {
   it("stops out at the stop, or at the open when a candle gaps through it", () => {
-    expect(simulateExit(setup(), candles([[1000, 1001, 999, 1000], [1000, 1002, 989, 995]]), 0, "tight")).toMatchObject({ reason: "STOP_LOSS", r: expect.closeTo(-1.1, 5) });
+    expect(simulateExit(setup(), candles([[1000, 1001, 999, 1000], [1000, 1002, 989, 995]]), 0, "tight")).toMatchObject({ reason: "STOP_LOSS", r: expect.closeTo(-1.1, 5), exitIndex: 1 });
     const gap = simulateExit(setup(), candles([[1000, 1001, 999, 1000], [985, 986, 980, 982]]), 0, "tight")!;
     expect(gap.r).toBeCloseTo((-15 - 1) / 10, 5); // filled at the 985 open, not the 990 stop
   });
@@ -81,6 +83,9 @@ describe("playing a setup out on candles", () => {
     const r = simulateExit(setup({ takeProfit: 1100 }), rising, 0, "fixed")!;
     expect(r.reason).toBe("EXPIRY_TIME");
     expect(r.r).toBeGreaterThan(0);
+    // Marked as still open, closing on the last candle (a finished trade isn't).
+    expect(r).toMatchObject({ open: true, exitIndex: 19 });
+    expect(simulateExit(setup(), flatFor(60), 0, "fixed")!.open).toBeUndefined();
     expect(simulateExit(setup({ takeProfit: 1100 }), rising.slice(0, 8), 0, "fixed")).toBeNull();
   });
 });

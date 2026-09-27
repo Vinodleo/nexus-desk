@@ -39,6 +39,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - Per-market limits: `marketLimits.ts`, the amount per trade and trades at once for each market.
 - **Trader records ("Traders with your exits"):** `src/services/exitExpectancy.ts`.
   - It replays every trader's setups under the live exits, after fees and spreads.
+  - One trade at a time per trader and market; the server keeps 30 days of trades (`server/scanner/traderRecords.ts`).
   - Records are pooled across markets.
   - Stock setups count only in their entry hours (`takesEntriesAt` in `labSimulation.ts`).
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.

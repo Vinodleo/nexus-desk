@@ -127,8 +127,18 @@ interface EdgeTable {
   profile: string;
   measuredAt: number;
   symbols: number;
+  /** When the oldest trade counted opened (ms), and how many days the server keeps. */
+  since?: number;
+  recordDays?: number;
   minMarketTrades: number;
   rows: EdgeRow[];
+}
+
+/** What the records cover: "since 27 Sep (the server keeps up to 30 days)", or the day of candles from a server that doesn't keep them. */
+export function recordSpan(table: Pick<EdgeTable, "since" | "recordDays">): string {
+  if (!table.since || !table.recordDays) return "over the last day";
+  const since = new Date(table.since).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
+  return `since ${since} (the server keeps up to ${table.recordDays} days)`;
 }
 
 interface CoinActivity {
@@ -394,8 +404,9 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null }> = ({ table }) =
         <span className="flex items-center gap-1"><span className="w-0.5 h-3 bg-gain" />trades above {rSigned(MIN_EDGE_R)}</span>
       </div>
       <div className="text-xs text-muted">
-        Every setup each trader found over the last day ({table.symbols} markets), played out with your {table.profile} trailing stop, the half
-        banked at +1R and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)} doesn't trade until they recover. Each
+        Each trader's setups {recordSpan(table)} in {table.symbols} markets, taken one at a time: one that comes while the trader's last
+        trade in that market is still open isn't counted. Each is played out with your {table.profile} trailing stop, the half banked at +1R
+        and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)} doesn't trade until they recover. Each
         market's result is judged together with the trader's record in the other markets (8 setups' worth; a good one counts for half), so a
         few lucky setups can't outweigh a long losing record. Tap a trader to see every market.
       </div>
