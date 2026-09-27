@@ -81,7 +81,7 @@ describe("App live ticks", () => {
           id: "pos-tp", symbol: "BTC/INR", direction: "LONG", setupName: "Test", entryPrice: 1000, currentPrice: 1000,
           quantity: 1, stopLoss: 990, takeProfit: 1010, initialTakeProfit: 1010, unrealizedPnl: 0,
           unrealizedPnlPercent: 0, openTime: opened, expectedHoldingTimeMinutes: 30, metaConfidence: 0.6,
-          trailMode: "SCALP_TIGHT", atrAtEntry: 5,
+          trailMode: "SCALP_TIGHT", atrAtEntry: 5, signalPrice: 998,
         },
       ])
     );
@@ -105,5 +105,7 @@ describe("App live ticks", () => {
     expect(trade).toMatchObject({ exitReason: "TAKE_PROFIT", exitPrice: 1012 });
     // How far it went each way while open, for "How trades moved".
     expect(trade).toMatchObject({ highestPrice: 1012, lowestPrice: 1000 });
+    // And the signal's price, for what the entry cost.
+    expect(trade.signalPrice).toBe(998);
   }, 30000);
 });

@@ -48,6 +48,11 @@ describe("syncPositionsBody", () => {
     expect(r.positions[0].atrAtEntry).toBeUndefined();
   });
 
+  it("keeps the signal's price for the entry slippage, dropping a bad one", () => {
+    expect(syncPositionsBody.parse({ positions: [{ ...pos, signalPrice: 998 }] }).positions[0].signalPrice).toBe(998);
+    expect(syncPositionsBody.parse({ positions: [{ ...pos, signalPrice: -1 }] }).positions[0].signalPrice).toBeUndefined();
+  });
+
   it.each([
     ["missing stopLoss", { ...pos, stopLoss: undefined }],
     ["zero entry price", { ...pos, entryPrice: 0 }],

@@ -35,9 +35,9 @@ describe("trades closed by the server guardian", () => {
       id: "daemon-closed-2-p8", positionId: "p8", symbol: "ETH/INR", direction: "LONG", entryPrice: 200000, exitPrice: 199000,
       quantity: 0.05, moneyPlaced: 10000, grossPnl: -50, feesPaid: 10, realizedPnl: -60, realizedPnlPercent: -0.6, isWin: false,
       exitReason: "STOP_LOSS", closedAt: "2026-09-25T10:20:00.000Z", openedAt: "2026-09-25T10:00:00.000Z",
-      highestPrice: 201500, lowestPrice: 198900,
+      highestPrice: 201500, lowestPrice: 198900, signalPrice: 199800,
     } as DaemonCloseEvent;
-    expect(daemonEventToTrade(ev)).toMatchObject({ highestPrice: 201500, lowestPrice: 198900 });
+    expect(daemonEventToTrade(ev)).toMatchObject({ highestPrice: 201500, lowestPrice: 198900, signalPrice: 199800 });
   });
 });
 

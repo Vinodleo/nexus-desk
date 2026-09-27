@@ -27,6 +27,7 @@ export interface DaemonCloseEvent {
   openedByServer?: boolean;
   highestPrice?: number;
   lowestPrice?: number;
+  signalPrice?: number;
 }
 
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -61,6 +62,7 @@ export function daemonEventToTrade(ev: DaemonCloseEvent): HistoricalTrade {
     ...(ev.riskAtOpen !== undefined ? { riskAtOpen: ev.riskAtOpen } : {}),
     ...(ev.highestPrice !== undefined ? { highestPrice: ev.highestPrice } : {}),
     ...(ev.lowestPrice !== undefined ? { lowestPrice: ev.lowestPrice } : {}),
+    ...(ev.signalPrice !== undefined ? { signalPrice: ev.signalPrice } : {}),
     ...(ev.openedByServer ? { openedByServer: true } : {}),
     isSelfApproved: true,
   };

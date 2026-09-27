@@ -88,7 +88,7 @@ describe("the guardian on quotes", () => {
 
   it("stops out when the bid reaches the stop, and fills there", async () => {
     const guardian = await import("../../server/guardian");
-    guardian.daemonPositions.set("p1", long({ stopLoss: 99.5 }));
+    guardian.daemonPositions.set("p1", long({ stopLoss: 99.5, signalPrice: 99.8 }));
     const { pollQuotes, freshQuote } = await import("../../server/quotes");
     expect(await pollQuotes()).toBe(1);
     expect(guardian.daemonPositions.has("p1")).toBe(false);
@@ -96,6 +96,8 @@ describe("the guardian on quotes", () => {
     expect(closed).toMatchObject({ exitReason: "STOP_LOSS", fillAtExit: 99 });
     // How far it went each way while open, kept with the close.
     expect(closed).toMatchObject({ highestPrice: 100, lowestPrice: 99 });
+    // And the signal's price, for what the entry cost.
+    expect(closed.signalPrice).toBe(99.8);
     expect(freshQuote("BTC/INR")).toMatchObject({ bid: 99, ask: 101 });
   });
 

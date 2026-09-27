@@ -313,6 +313,8 @@ export interface Position {
   exchangeOrderId?: string;
   /** Opened by the server's autopilot (possibly while the app was closed). */
   openedByServer?: boolean;
+  /** The price the signal came from (its candle's close): entryPrice against it is the entry slippage. */
+  signalPrice?: number;
 }
 
 export interface HistoricalTrade {
@@ -336,6 +338,8 @@ export interface HistoricalTrade {
   openedByServer?: boolean;
   /** Rupees at stake when it opened (distance to the first stop × quantity): 1R, to read results in R. */
   riskAtOpen?: number;
+  /** The price the signal came from; entryPrice against it is what the entry cost (entrySlip). */
+  signalPrice?: number;
   isWin: boolean;
   exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL" | "EXPIRY_TIME";
   openedAt: string;

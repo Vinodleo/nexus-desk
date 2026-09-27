@@ -80,6 +80,7 @@ const syncedPosition = z
     bankedPrice: positiveNumber.optional().catch(undefined),
     isSelfApproved: z.boolean().optional().catch(undefined),
     setupName: z.string().max(200).optional().catch(undefined),
+    signalPrice: positiveNumber.optional().catch(undefined),
   })
   // The client restores its book from what it synced, so keep its other
   // display fields; the guardian only reads the ones validated above.

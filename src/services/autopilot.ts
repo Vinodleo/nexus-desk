@@ -215,6 +215,7 @@ export function positionFromProposal(
     direction: setup.direction,
     setupName: setup.name,
     entryPrice,
+    signalPrice: setup.entryPrice,
     currentPrice: entryPrice,
     quantity: units,
     stopLoss: setup.stopLoss,
