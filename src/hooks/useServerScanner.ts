@@ -3,6 +3,7 @@ import { apiFetch } from "../services/apiClient";
 import { shadowStore, type ShadowSignal } from "../services/shadowTracker";
 import type { FailureInjectionState, PromotedLabModel, TradeProposal, TradingExecutionMode } from "../types";
 import type { SymbolScanOutcome } from "../services/scanOutcome";
+import { beatOf, mergeBeats, type ScanBeat } from "../shared/scanHeartbeat";
 
 // The app's link to the server scanner. It sends the desk settings the
 // server scans with, picks up every scan the server ran (live over the
@@ -58,12 +59,15 @@ export function useServerScanner(desk: DeskSettings, onReport: (report: ServerSc
   const [location, setLocation] = useState<ScanLocation>("checking");
   const [lastScanAt, setLastScanAt] = useState(0);
   const [lastAutopilotOpenAt, setLastAutopilotOpenAt] = useState(0);
+  /** The server's scans over the last hour, for the Floor's heartbeat. */
+  const [recentScans, setRecentScans] = useState<ScanBeat[]>([]);
   const onReportRef = useRef(onReport);
   onReportRef.current = onReport;
   const lastAt = useRef(readLastReportAt());
 
   /** Hands each report to the app once, oldest first. */
   const take = useCallback((reports: ServerScanReport[]) => {
+    if (reports.length > 0) setRecentScans((held) => mergeBeats(held, reports.map(beatOf), Date.now()));
     for (const r of [...reports].sort((a, b) => a.at - b.at)) {
       if (r.at <= lastAt.current) continue;
       lastAt.current = r.at;
@@ -103,11 +107,15 @@ export function useServerScanner(desk: DeskSettings, onReport: (report: ServerSc
   }, []);
 
   const applyStatus = useCallback(
-    (status?: { running?: boolean; lastScanAt?: number; hasDesk?: boolean; lastAutopilotOpenAt?: number }) => {
+    (status?: { running?: boolean; lastScanAt?: number; hasDesk?: boolean; lastAutopilotOpenAt?: number; recentScans?: ScanBeat[] }) => {
       if (!status) return;
       setLocation(status.running ? "server" : "browser");
       setLastScanAt(status.lastScanAt ?? 0);
       setLastAutopilotOpenAt(status.lastAutopilotOpenAt ?? 0);
+      if (Array.isArray(status.recentScans)) {
+        const fromServer = status.recentScans;
+        setRecentScans((held) => mergeBeats(held, fromServer, Date.now()));
+      }
       if (status.hasDesk === false && !resending.current) {
         resending.current = true;
         void sendDesk().finally(() => (resending.current = false));
@@ -189,5 +197,5 @@ export function useServerScanner(desk: DeskSettings, onReport: (report: ServerSc
     }
   }, [take]);
 
-  return { location, lastScanAt, lastAutopilotOpenAt, handleLiveReport, scanNow };
+  return { location, lastScanAt, lastAutopilotOpenAt, recentScans, handleLiveReport, scanNow };
 }

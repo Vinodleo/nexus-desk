@@ -6,6 +6,9 @@ import { RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPrice } from "./format";
 import { SwipeCard } from "./SwipeCard";
 
+/** How far each card in the deck peeks out under the one above it. */
+const DECK_STEP_PX = 8;
+
 /** How long a swiped proposal waits, with Undo, before it's approved or skipped. */
 export const UNDO_MS = 5000;
 
@@ -209,6 +212,17 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
   const focused = shown.find((p) => p.id === focusedId) ?? shown[0];
   const others = shown.filter((p) => p !== focused);
   const heldCount = shown.filter((p) => p.status === "DEFERRED").length;
+  // The deck: up to two of the others peek out under the card on top.
+  const peeks = Math.min(2, others.length);
+  // When the card on top has gone (swiped, approved or skipped), the next
+  // rises from the deck into its place; picking one from the list, or Undo
+  // (which pops it back in), doesn't.
+  const lastTop = useRef<{ id: string | null; rise: boolean }>({ id: focused?.id ?? null, rise: false });
+  if (focused && lastTop.current.id !== focused.id) {
+    const prev = lastTop.current.id;
+    lastTop.current = { id: focused.id, rise: prev !== null && !shown.some((p) => p.id === prev) };
+  }
+  const rising = Boolean(focused) && lastTop.current.rise;
   const readyCount = shown.length - heldCount;
 
   // Once a proposal leaves the queue, forget that it was being approved.
@@ -299,26 +313,48 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
       )}
 
       {focused ? (
-        <div key={focused.id} className={`flex flex-col gap-2${returnedId === focused.id ? " nx-pop-in" : ""}`}>
-          {/* Swipe right to approve (paper only: live orders need the button), left to skip. */}
-          <SwipeCard
-            onSwipeRight={props.isLive ? undefined : () => swiped(focused, "approve")}
-            onSwipeLeft={() => swiped(focused, "skip")}
-            rightLabel="Approve"
-            leftLabel="Skip"
-            disabled={busyId === focused.id}
-          >
-            <ProposalCard
-              proposal={focused}
-              busy={busyId === focused.id}
-              isLive={Boolean(props.isLive)}
-              onApprove={() => {
-                setBusyId(focused.id);
-                props.onApprove(focused);
-              }}
-              onSkip={() => props.onReject(focused.id, "Skipped by you in the queue")}
-            />
-          </SwipeCard>
+        <div className="flex flex-col gap-2">
+          <div className="relative" style={{ paddingBottom: peeks * DECK_STEP_PX }}>
+            {/* The next proposals, peeking out under the card like a deck (the lowest first, so it sits behind). */}
+            {Array.from({ length: peeks }, (_, k) => peeks - k).map((depth) => (
+              <div
+                key={depth}
+                aria-hidden="true"
+                data-testid="deck-peek"
+                className="absolute inset-x-0 top-0 rounded-[18px] border border-line bg-surface origin-bottom nx-deck-peek"
+                style={{
+                  bottom: peeks * DECK_STEP_PX,
+                  transform: `translateY(${depth * DECK_STEP_PX}px) scale(${1 - depth * 0.04})`,
+                  opacity: depth === 1 ? 1 : 0.7,
+                }}
+              />
+            ))}
+            <div
+              key={focused.id}
+              data-testid="deck-top"
+              className={`relative origin-bottom${returnedId === focused.id ? " nx-pop-in" : rising ? " nx-deck-rise" : ""}`}
+            >
+              {/* Swipe right to approve (paper only: live orders need the button), left to skip. */}
+              <SwipeCard
+                onSwipeRight={props.isLive ? undefined : () => swiped(focused, "approve")}
+                onSwipeLeft={() => swiped(focused, "skip")}
+                rightLabel="Approve"
+                leftLabel="Skip"
+                disabled={busyId === focused.id}
+              >
+                <ProposalCard
+                  proposal={focused}
+                  busy={busyId === focused.id}
+                  isLive={Boolean(props.isLive)}
+                  onApprove={() => {
+                    setBusyId(focused.id);
+                    props.onApprove(focused);
+                  }}
+                  onSkip={() => props.onReject(focused.id, "Skipped by you in the queue")}
+                />
+              </SwipeCard>
+            </div>
+          </div>
           <div className="text-center text-[11px] text-muted">
             {props.isLive ? "Swipe left to skip · live trades are approved with the button" : "Swipe right to approve · left to skip"}
           </div>

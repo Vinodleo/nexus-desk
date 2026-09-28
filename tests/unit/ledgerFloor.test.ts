@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LedgerFloor, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
 import { formatMoney, formatPct, formatPrice } from "../../src/components/ledger/format";
+import { HOLD_MS } from "../../src/components/ledger/ui";
 import type { Position } from "../../src/types";
 
 afterEach(cleanup);
@@ -71,24 +72,50 @@ describe("LedgerFloor", () => {
     expect(container.textContent).toContain("Watching 7 default coins until CoinDCX's most-traded list loads");
   });
 
-  it("closes a position only on the second tap", () => {
-    const p = props();
-    render(createElement(LedgerFloor, p));
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(p.onClosePosition).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Tap again to close" }));
-    expect(p.onClosePosition).toHaveBeenCalledWith(btc);
-  });
-
-  it("forgets a half-finished close after a few seconds", () => {
+  it("closes a position only when Close is held, not on a tap or a short press", () => {
     vi.useFakeTimers();
     try {
-      render(createElement(LedgerFloor, props()));
-      fireEvent.click(screen.getByRole("button", { name: "Close" }));
-      act(() => {
-        vi.advanceTimersByTime(4500);
-      });
-      expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+      const p = props();
+      render(createElement(LedgerFloor, p));
+      const button = () => screen.getByRole("button", { name: /hold/i });
+      expect(button().textContent).toBe("Hold to close");
+      fireEvent.click(button());
+      fireEvent.pointerDown(button());
+      act(() => vi.advanceTimersByTime(HOLD_MS - 200));
+      fireEvent.pointerUp(button());
+      act(() => vi.advanceTimersByTime(HOLD_MS));
+      expect(p.onClosePosition).not.toHaveBeenCalled();
+      // Letting go early says what to do, then goes back.
+      expect(button().textContent).toBe("Keep holding to close");
+      act(() => vi.advanceTimersByTime(2100));
+      expect(button().textContent).toBe("Hold to close");
+
+      fireEvent.pointerDown(button());
+      expect((screen.getByTestId("hold-fill") as HTMLElement).style.transform).toBe("scaleX(1)");
+      act(() => vi.advanceTimersByTime(HOLD_MS));
+      expect(p.onClosePosition).toHaveBeenCalledTimes(1);
+      expect(p.onClosePosition).toHaveBeenCalledWith(btc);
+      fireEvent.pointerUp(button());
+      expect(p.onClosePosition).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes with the keyboard by holding Space or Enter, and stops if a scroll takes the finger", () => {
+    vi.useFakeTimers();
+    try {
+      const p = props();
+      render(createElement(LedgerFloor, p));
+      const button = screen.getByRole("button", { name: "Hold to close" });
+      fireEvent.pointerDown(button);
+      fireEvent.pointerCancel(button);
+      act(() => vi.advanceTimersByTime(HOLD_MS * 2));
+      expect(p.onClosePosition).not.toHaveBeenCalled();
+      expect(button.textContent).toBe("Hold to close");
+      fireEvent.keyDown(button, { key: " " });
+      act(() => vi.advanceTimersByTime(HOLD_MS));
+      expect(p.onClosePosition).toHaveBeenCalledWith(btc);
     } finally {
       vi.useRealTimers();
     }
@@ -159,9 +186,12 @@ describe("what the server did while the app was closed", () => {
   it("says so when the server hasn't traded yet, and says nothing when autopilot is off", () => {
     const { unmount } = render(createElement(LedgerFloor, props({ scanLocation: "server", lastServerScanAt: Date.now(), lastServerOpenAt: 0 })));
     expect(screen.getByLabelText("Server autopilot").textContent).toMatch(/last scan just now · last trade none yet/);
+    // With the heartbeat: the countdown to the next scan and the last hour of scans.
+    expect(screen.getByTestId("scan-heartbeat").textContent).toMatch(/Next scan in \d:\d\d|Scanning now…/);
     unmount();
     render(createElement(LedgerFloor, props({ scanLocation: "server", autopilotOn: false })));
     expect(screen.queryByLabelText("Server autopilot")).toBeNull();
+    expect(screen.queryByTestId("scan-heartbeat")).toBeNull();
     expect(screen.queryByText(/Opened by the server/)).toBeNull();
   });
 });

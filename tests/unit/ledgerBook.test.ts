@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 
-const { LedgerBook, dayLabel, summarizeTrades } = await import("../../src/components/ledger/LedgerBook");
+const { LedgerBook, dayLabel, moveLine, summarizeTrades } = await import("../../src/components/ledger/LedgerBook");
 const { LedgerRisk } = await import("../../src/components/ledger/LedgerRisk");
 const { apiFetch } = await import("../../src/services/apiClient");
 import type { FailureInjectionState, HistoricalTrade, RiskCalculation } from "../../src/types";
@@ -69,6 +69,51 @@ describe("LedgerBook", () => {
     expect(screen.getByText(/No closed trades yet/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: /Risk/ }));
     expect(screen.getByText("risk here")).toBeTruthy();
+  });
+});
+
+describe("a trade that opens into a card", () => {
+  // Risked ₹70 on 0.035 ETH: ₹2,000 a coin is 1R.
+  const measured = (over: Partial<HistoricalTrade> = {}) => trade("win", 142.1, NOW, { riskAtOpen: 70, highestPrice: 267000, lowestPrice: 264000, ...over });
+
+  it("lifts the row into a card and grows its details open, then folds them away before setting it down", () => {
+    vi.useFakeTimers();
+    try {
+      render(createElement(LedgerBook, { trades: [measured()], risk: null }));
+      const row = () => screen.getByRole("region", { name: "Closed trades" }).querySelector("li")!;
+      expect(row().className).not.toContain("nx-trade-open");
+      fireEvent.click(screen.getByRole("button", { expanded: false }));
+      expect(row().className).toContain("nx-trade-open");
+      expect(screen.getByTestId("trade-details").className).toContain("nx-trade-body-in");
+      fireEvent.click(screen.getByRole("button", { expanded: true }));
+      expect(row().className).not.toContain("nx-trade-open");
+      expect(screen.getByTestId("trade-details").className).toContain("nx-trade-body-out");
+      act(() => vi.advanceTimersByTime(300));
+      expect(screen.queryByTestId("trade-details")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("draws how it moved in R: the best for you, the worst against, and where it closed", () => {
+    const near = (v: number) => expect.closeTo(v, 6);
+    expect(moveLine(measured())).toEqual({ bestR: near(1), worstR: near(0.5), exitR: near(0.5), lo: -1, hi: near(1) });
+    // A trade that ran past 1R widens the line to fit.
+    expect(moveLine(measured({ highestPrice: 270000, exitPrice: 269000 }))).toMatchObject({ bestR: near(2.5), exitR: near(2), hi: near(2.5) });
+    render(createElement(LedgerBook, { trades: [measured()], risk: null }));
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    const line = screen.getByTestId("how-it-moved");
+    expect(line.textContent).toContain("Went +1.0R your way at best and −0.5R against at worst; closed at +0.5R before fees.");
+    // From −1R (the stop) to +1R: +0.5R is three-quarters along.
+    expect((screen.getByTestId("exit-dot") as HTMLElement).style.left).toBe("75%");
+  });
+
+  it("leaves the line out for older trades without the record", () => {
+    expect(moveLine(trade("old", 10, NOW))).toBeNull();
+    render(createElement(LedgerBook, { trades: [trade("old", 10, NOW)], risk: null }));
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.queryByTestId("how-it-moved")).toBeNull();
+    expect(screen.getByTestId("trade-details").textContent).toContain("Held for");
   });
 });
 

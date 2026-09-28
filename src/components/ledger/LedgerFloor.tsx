@@ -3,14 +3,17 @@ import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight, AlertTriangle 
 import type { Position } from "../../types";
 import { useLiveTickers } from "../../hooks/useLiveTickers";
 import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../services/liveMarketStreamService";
-import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
+import { Card, HoldButton, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
-import { Flash, GrowBar, Rolling, useAnimatedNumber, usePresenceList, type ListItemState } from "./motion";
+import { Flash, GrowBar, Rolling, RollingDigits, usePresenceList, type ListItemState } from "./motion";
 import { isNseOpen } from "../../shared/nse";
 import { isUsOpen } from "../../shared/usMarket";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
 import type { EventWindow } from "../../shared/eventCalendar";
 import { openQuantity } from "../../shared/exitRules";
+import { roundTripFeeRate } from "../../shared/tradeCosts";
+import type { ScanBeat } from "../../shared/scanHeartbeat";
+import { ScanHeartbeat } from "./ScanHeartbeat";
 
 /** The most common skip reasons, largest first, with their share of all skips. */
 export function topSkipReasons(counts: SkipCounts | undefined, limit = 3): { reason: SkipReason; label: string; pct: number }[] {
@@ -75,6 +78,8 @@ export interface LedgerFloorProps {
   /** The server's last scan, and when its autopilot last opened a position (ms; 0 if none). */
   lastServerScanAt?: number;
   lastServerOpenAt?: number;
+  /** The server's scans over the last hour, for the autopilot's heartbeat. */
+  serverScans?: ScanBeat[];
   /** A scheduled-news pause now, or the next one. */
   eventWindow?: EventWindow;
   /** Today's loss limit in full, for the meter under "Daily loss left". */
@@ -357,6 +362,35 @@ export function trackPoint(p: Pick<Position, "direction" | "stopLoss" | "initial
   return Math.max(0, Math.min(1, f));
 }
 
+/**
+ * What a stop raised to `stop` means for the part still open, after the
+ * round trip's fees: at break-even (within a rupee), a gain locked in, or a
+ * smaller loss still at risk.
+ */
+export function stopRaisedTag(
+  p: Pick<Position, "symbol" | "direction" | "entryPrice" | "quantity" | "bankedQuantity">,
+  stop: number
+): { text: string; tone: "gain" | "ink" } {
+  const qty = openQuantity(p);
+  const gross = (p.direction === "LONG" ? stop - p.entryPrice : p.entryPrice - stop) * qty;
+  const net = gross - roundTripFeeRate(p.symbol, p.entryPrice * qty) * p.entryPrice * qty;
+  if (Math.abs(net) < 1) return { text: "Stop raised to break-even", tone: "gain" };
+  return net > 0
+    ? { text: `Stop raised · ${formatMoney(net, { decimals: 0 })} locked in`, tone: "gain" }
+    : { text: `Stop raised · ${formatMoney(-net, { decimals: 0 })} at risk now`, tone: "ink" };
+}
+
+/**
+ * A stop that just moved your way: its last move (from a price; `trail` counts
+ * moves, each drawing its own trail) and the tag (none alongside "Half
+ * banked"). While it keeps rising, the one tag stays up with the new amount.
+ */
+interface StopRaise {
+  trail: number;
+  from: number;
+  tag: ReturnType<typeof stopRaisedTag> | null;
+}
+
 /** How long a closed trade stays on the Floor while it animates away. */
 const CLOSE_ANIMATION_MS = 1300;
 
@@ -366,15 +400,17 @@ const BANKED_TAG_MS = 3300;
 /**
  * The trade's line from stop to target: where the price is now (the marker
  * glides as it moves), the run from entry in green or red, the entry and
- * +1R ticks, and the stop once it has trailed up.
+ * +1R ticks, and the stop once it has trailed up. A raised stop slides up
+ * the line, leaving a short trail, with a tag saying what it locks in.
  */
-const PositionTrack: React.FC<{ position: Position; bankedKey: number }> = ({ position: p, bankedKey }) => {
+const PositionTrack: React.FC<{ position: Position; bankedKey: number; stopRaise: StopRaise | null }> = ({ position: p, bankedKey, stopRaise }) => {
   const now = trackPoint(p, p.currentPrice);
   const entry = trackPoint(p, p.entryPrice);
   if (now === null || entry === null) return null;
   const risk = Math.abs(p.entryPrice - (p.initialStopLoss ?? p.stopLoss));
   const oneR = trackPoint(p, p.direction === "LONG" ? p.entryPrice + risk : p.entryPrice - risk);
   const stop = trackPoint(p, p.stopLoss);
+  const raisedFrom = stopRaise ? trackPoint(p, stopRaise.from) : null;
   const up = now >= entry;
   const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
   return (
@@ -386,7 +422,22 @@ const PositionTrack: React.FC<{ position: Position; bankedKey: number }> = ({ po
       />
       <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-muted" style={{ left: pct(entry) }} />
       {oneR !== null && oneR < 1 && <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-line" style={{ left: pct(oneR) }} />}
-      {stop !== null && stop > 0.001 && <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss" style={{ left: pct(stop) }} />}
+      {stopRaise && raisedFrom !== null && stop !== null && stop > raisedFrom && (
+        <div
+          key={stopRaise.trail}
+          data-testid="stop-trail"
+          className="absolute top-2 h-1 rounded-full nx-stop-trail"
+          style={{ left: pct(raisedFrom), width: pct(stop - raisedFrom) }}
+        />
+      )}
+      {/* Always there (hidden at the original stop), so its first move up slides too. */}
+      {stop !== null && (
+        <div
+          data-testid="stop-tick"
+          className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss nx-stop-tick"
+          style={{ left: pct(stop), opacity: stop > 0.001 ? 1 : 0 }}
+        />
+      )}
       <div
         data-testid="position-marker"
         className={`absolute top-[3px] w-3.5 h-3.5 -ml-[7px] rounded-full border-2 border-surface nx-glide-left ${up ? "bg-gain" : "bg-loss"}`}
@@ -401,6 +452,16 @@ const PositionTrack: React.FC<{ position: Position; bankedKey: number }> = ({ po
           Half banked ✓
         </span>
       )}
+      {stopRaise?.tag && stop !== null && (
+        <span
+          className={`nx-tag-pop absolute -top-5 whitespace-nowrap text-[11px] font-bold px-2 py-px rounded-full bg-surface border border-line ${
+            stopRaise.tag.tone === "gain" ? "text-gain" : "text-ink"
+          }`}
+          style={{ left: `clamp(6rem, ${pct(stop)}, calc(100% - 6rem))` }}
+        >
+          {stopRaise.tag.text}
+        </span>
+      )}
     </div>
   );
 };
@@ -410,26 +471,36 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
   onClose,
   state = "stay",
 }) => {
-  const [confirming, setConfirming] = useState(false);
-  useEffect(() => {
-    if (!confirming) return;
-    const t = setTimeout(() => setConfirming(false), 4000);
-    return () => clearTimeout(t);
-  }, [confirming]);
-
-  // "Half banked" pops up when half is banked while this row is on screen.
+  // "Half banked" pops up when half is banked while this row is on screen,
+  // and "Stop raised" when the stop moves your way (banking half raises it
+  // too: then only "Half banked" is said, so the two don't overlap).
   const banked = (p.bankedQuantity ?? 0) > 0;
   const wasBanked = useRef(banked);
+  const lastStop = useRef(p.stopLoss);
   const [bankedKey, setBankedKey] = useState(0);
+  const [stopRaise, setStopRaise] = useState<StopRaise | null>(null);
   useEffect(() => {
-    if (banked && !wasBanked.current) setBankedKey((k) => k + 1);
+    const justBanked = banked && !wasBanked.current;
     wasBanked.current = banked;
-  }, [banked]);
+    if (justBanked) setBankedKey((k) => k + 1);
+    const before = lastStop.current;
+    lastStop.current = p.stopLoss;
+    const raised = p.direction === "LONG" ? p.stopLoss > before : p.stopLoss < before;
+    if (raised) {
+      const tag = justBanked || bankedKey > 0 ? null : stopRaisedTag(p, p.stopLoss);
+      setStopRaise((r) => ({ trail: (r?.trail ?? 0) + 1, from: before, tag: tag ?? r?.tag ?? null }));
+    }
+  }, [banked, p.stopLoss, p.direction]);
   useEffect(() => {
     if (bankedKey === 0) return;
     const t = setTimeout(() => setBankedKey(0), BANKED_TAG_MS);
     return () => clearTimeout(t);
   }, [bankedKey]);
+  useEffect(() => {
+    if (!stopRaise) return;
+    const t = setTimeout(() => setStopRaise(null), BANKED_TAG_MS);
+    return () => clearTimeout(t);
+  }, [stopRaise]);
 
   const tone = pnlTone(p.unrealizedPnl);
   const closing = state === "leave";
@@ -455,7 +526,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
           </Flash>
         </div>
-        <PositionTrack position={p} bankedKey={bankedKey} />
+        <PositionTrack position={p} bankedKey={bankedKey} stopRaise={stopRaise} />
         <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted tabular-nums">
           <span>Entry {formatPrice(p.entryPrice)}</span>
           <Flash value={p.currentPrice} className="px-1 -mx-1 text-ink">
@@ -467,22 +538,14 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
         </div>
         <div className="flex items-center justify-between gap-3">
           <span className={`text-xs ${closing ? `font-semibold ${tone}` : "text-muted"}`}>{closing ? "Closed" : positionNote(p)}</span>
-          <button
-            type="button"
-            onClick={() => {
-              if (confirming) {
-                setConfirming(false);
-                onClose(p);
-              } else {
-                setConfirming(true);
-              }
-            }}
-            className={`shrink-0 min-h-[36px] px-3 -mr-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
-              confirming ? "bg-danger-soft text-loss border border-danger-line" : "text-accent hover:bg-accent-soft"
-            }`}
-          >
-            {confirming ? "Tap again to close" : "Close"}
-          </button>
+          {/* Closes only when held, so a stray tap can't close a trade. */}
+          <HoldButton
+            label="Hold to close"
+            keepHoldingLabel="Keep holding to close"
+            onHold={() => onClose(p)}
+            className="shrink-0 min-h-[36px] px-3 rounded-full border border-danger-line bg-danger-soft text-loss text-xs font-semibold"
+            fillClassName="bg-loss/25"
+          />
         </div>
       </div>
     </li>
@@ -498,10 +561,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
     positions,
   } = props;
 
-  // Equity and P&L glide to new values; positions animate in and out.
-  const shownEquity = Math.round(useAnimatedNumber(equity) * 100) / 100;
-  const whole = formatMoney(Math.trunc(shownEquity), { decimals: 0 });
-  const paise = Math.abs(shownEquity % 1).toFixed(2).slice(1); // ".96"
+  // Equity's digits roll into place; P&L glides to new values; positions animate in and out.
   const openPnl = positions.reduce((acc, p) => acc + (p.unrealizedPnl || 0), 0);
   // A closed trade holds its result for a moment, then slides away (nx-item-close).
   const rows = usePresenceList(positions, (p) => p.id, CLOSE_ANIMATION_MS);
@@ -509,6 +569,9 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
 
   const guardianText =
     props.guardianOnline === null ? "Guardian connecting" : props.guardianOnline ? "Guardian online" : "Guardian unreachable";
+  // The server's autopilot is working for you: its last scan and trade, and the heartbeat.
+  const serverAutopilot =
+    props.autopilotOn && !props.stopped && props.scanLocation === "server" && (!props.isLive || props.liveTradingEnabled === true);
   const liveText =
     props.liveTradingEnabled === null ? null : props.liveTradingEnabled ? "live trading on" : "live trading off";
 
@@ -536,9 +599,8 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
 
       <section aria-label="Account" className="flex flex-col gap-1.5">
         <div className="text-[13px] text-muted">{isLive ? "CoinDCX equity" : "Paper equity"}</div>
-        <div className="font-display text-[46px] leading-[1.05] tracking-[-0.01em] tabular-nums">
-          {whole}
-          <span className="text-muted">{paise}</span>
+        <div className="flex font-display text-[46px] tracking-[-0.01em] tabular-nums">
+          <RollingDigits text={formatMoney(equity)} mutedFrom="." />
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] tabular-nums">
           <span>
@@ -568,7 +630,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
                   : "Approves trades within your limits"
                 : "Off · you approve every trade"}
             </div>
-            {props.autopilotOn && !props.stopped && props.scanLocation === "server" && (!props.isLive || props.liveTradingEnabled === true) && (
+            {serverAutopilot && (
               <div className="text-xs text-muted tabular-nums" aria-label="Server autopilot">
                 Server: last scan {props.lastServerScanAt ? agoText(props.lastServerScanAt) : "pending"} · last trade{" "}
                 {props.lastServerOpenAt ? clockText(props.lastServerOpenAt) : "none yet"}
@@ -577,6 +639,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
           </div>
           <Switch checked={props.autopilotOn} onChange={props.onAutopilotChange} label="Autopilot" disabled={props.stopped} />
         </div>
+        {serverAutopilot && <ScanHeartbeat lastScanAt={props.lastServerScanAt ?? 0} scans={props.serverScans ?? []} />}
         <div className="flex gap-2">
           <StatTile
             label={`In trades · ${(props.exposureFraction * 100).toFixed(1)}%`}

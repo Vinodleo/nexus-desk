@@ -261,3 +261,38 @@ describe("the Queue in Live mode", () => {
     expect(screen.getByRole("button", { name: "Approve live trade" })).toBeTruthy();
   });
 });
+
+describe("the deck", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("shows the next proposals peeking out under the one on top, two at most", () => {
+    const four = [proposal("a", "XRP/INR", 0.55), proposal("b", "ETH/INR", 0.61), proposal("c", "SOL/INR", 0.58), proposal("d", "ADA/INR", 0.52)];
+    const { rerender } = render(createElement(LedgerQueue, props(four)));
+    expect(screen.getAllByTestId("deck-peek")).toHaveLength(2);
+    rerender(createElement(LedgerQueue, props(four.slice(1, 3))));
+    expect(screen.getAllByTestId("deck-peek")).toHaveLength(1);
+    rerender(createElement(LedgerQueue, props(four.slice(1, 2))));
+    expect(screen.queryAllByTestId("deck-peek")).toHaveLength(0);
+  });
+
+  it("raises the next card into place when the top one is swiped away, not when one is picked from the list", () => {
+    vi.useFakeTimers();
+    render(createElement(LedgerQueue, props([proposal("a", "XRP/INR", 0.55), proposal("b", "ETH/INR", 0.61), proposal("c", "SOL/INR", 0.58)])));
+    expect(screen.getByTestId("deck-top").className).not.toContain("nx-deck-rise");
+    swipe(-180);
+    expect(screen.getByRole("article", { name: "Buy SOL/INR" })).toBeTruthy();
+    expect(screen.getByTestId("deck-top").className).toContain("nx-deck-rise");
+    fireEvent.click(within(screen.getByRole("list", { name: "Other proposals" })).getByRole("button"));
+    expect(screen.getByRole("article", { name: "Buy XRP/INR" })).toBeTruthy();
+    expect(screen.getByTestId("deck-top").className).not.toContain("nx-deck-rise");
+  });
+
+  it("raises the next one when the top one is approved with the button too", () => {
+    const a = proposal("a", "XRP/INR", 0.55);
+    const b = proposal("b", "ETH/INR", 0.61);
+    const { rerender } = render(createElement(LedgerQueue, props([a, b])));
+    rerender(createElement(LedgerQueue, props([a, { ...b, status: "APPROVED" }])));
+    expect(screen.getByRole("article", { name: "Buy XRP/INR" })).toBeTruthy();
+    expect(screen.getByTestId("deck-top").className).toContain("nx-deck-rise");
+  });
+});
