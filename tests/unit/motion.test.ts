@@ -333,3 +333,19 @@ describe("the Floor's top", () => {
     expect(bar().className).toContain("bg-warn");
   });
 });
+
+describe("the opening screen", () => {
+  it("grows candles one after another, in place of the spinner", async () => {
+    const { LoadingScreen } = await import("../../src/components/LoadingScreen");
+    const { container } = render(createElement(LoadingScreen));
+    expect(screen.getByRole("status").textContent).toContain("Opening the desk…");
+    const candles = [...screen.getByTestId("loading-candles").children] as HTMLElement[];
+    expect(candles).toHaveLength(7);
+    // Each is staggered by its place; wick then body grow.
+    expect(candles.map((c) => c.style.getPropertyValue("--i"))).toEqual(["0", "1", "2", "3", "4", "5", "6"]);
+    expect(candles[0].querySelector(".nx-candle-wick")).not.toBeNull();
+    expect(candles[0].querySelector(".nx-candle-body")).not.toBeNull();
+    expect(candles.filter((c) => c.className.includes("text-loss"))).toHaveLength(2);
+    expect(container.querySelector(".animate-spin")).toBeNull();
+  });
+});
