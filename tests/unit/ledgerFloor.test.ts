@@ -159,9 +159,12 @@ describe("what the server did while the app was closed", () => {
   it("says so when the server hasn't traded yet, and says nothing when autopilot is off", () => {
     const { unmount } = render(createElement(LedgerFloor, props({ scanLocation: "server", lastServerScanAt: Date.now(), lastServerOpenAt: 0 })));
     expect(screen.getByLabelText("Server autopilot").textContent).toMatch(/last scan just now · last trade none yet/);
+    // With the heartbeat: the countdown to the next scan and the last hour of scans.
+    expect(screen.getByTestId("scan-heartbeat").textContent).toMatch(/Next scan in \d:\d\d|Scanning now…/);
     unmount();
     render(createElement(LedgerFloor, props({ scanLocation: "server", autopilotOn: false })));
     expect(screen.queryByLabelText("Server autopilot")).toBeNull();
+    expect(screen.queryByTestId("scan-heartbeat")).toBeNull();
     expect(screen.queryByText(/Opened by the server/)).toBeNull();
   });
 });

@@ -1721,6 +1721,7 @@ export default function App() {
               scanLocation={serverScanner.location}
               lastServerScanAt={serverScanner.lastScanAt}
               lastServerOpenAt={serverScanner.lastAutopilotOpenAt}
+              serverScans={serverScanner.recentScans}
               syncGlowKey={away.glowKey}
               eventWindow={eventWindow}
               isLive={tradingMode === "LIVE_COINDCX"}

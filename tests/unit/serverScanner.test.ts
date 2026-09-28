@@ -113,6 +113,8 @@ describe("server scanner", () => {
     // Real candles arrived: the coin was scanned, not skipped for missing data.
     expect(reports[0].outcomes[0]).not.toMatchObject({ reason: "no_data" });
     expect(scannerStatus("owner", now)).toMatchObject({ running: true, lastScanAt: now, coins: 1, problems: [] });
+    // The last hour's scans, for the Floor's heartbeat.
+    expect(scannerStatus("owner", now).recentScans).toEqual([{ at: now, checked: 1, proposed: 1 }]);
     // Every setup found is followed, and saved to disk.
     expect(reports[0].outcomes[0]).toEqual({ symbol: "SOL/INR", proposed: true });
     expect(reports[0].newProposals[0]).toMatchObject({ symbol: "SOL/INR", status: "PENDING_APPROVAL" });

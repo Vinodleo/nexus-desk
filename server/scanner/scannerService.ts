@@ -4,6 +4,7 @@ import type { Position } from "../../src/types";
 import { scanAllMarkets, type FullScanReport } from "../../src/services/marketScannerService";
 import { DEFAULT_RISK_POLICY } from "../../src/services/riskEngine";
 import { SIGNAL_INTERVAL_MS, nextCandleFetchAt } from "../../src/services/liveMarketStreamService";
+import { recentBeats } from "../../src/shared/scanHeartbeat";
 import { MAX_KEPT, mergeShadows, resolveShadows, type ShadowSignal } from "../../src/services/shadowTracker";
 import { buildCalibrator } from "../../src/services/calibration";
 import { experiencesFromShadows } from "../../src/services/experienceMemory";
@@ -391,6 +392,8 @@ export function scannerStatus(uid: string, now: number = Date.now()) {
     lastScanAt,
     /** When the server's autopilot last opened a position for this user (0: none since the server started). */
     lastAutopilotOpenAt: lastServerOpenAt(uid),
+    /** The last hour's scans (when, how many checked and proposed), for the Floor's heartbeat. */
+    recentScans: recentBeats(state?.reports ?? [], now),
     coins: universe.length,
     stocks: stockUniverse().length,
     usStocks: usUniverse().length,

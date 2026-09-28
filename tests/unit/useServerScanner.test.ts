@@ -58,6 +58,21 @@ describe("useServerScanner", () => {
     expect(localStorage.getItem("nexus_last_server_report_at")).toBe(String(now));
   });
 
+  it("keeps the last hour of the server's scans for the heartbeat, adding each one heard live", async () => {
+    const now = Date.now();
+    const earlier = { at: now - 5 * 60_000, checked: 48, proposed: 1 };
+    apiFetch.mockImplementation(async (url: string) => {
+      if (url.startsWith("/api/scanner/reports"))
+        return json({ status: { running: true, lastScanAt: earlier.at, recentScans: [{ at: now - 70 * 60_000, checked: 9, proposed: 0 }, earlier] }, reports: [] });
+      if (url === "/api/scanner/shadows") return json({ shadows: [] });
+      return json({ success: true, status: { running: true } });
+    });
+    const { result } = renderHook(() => useServerScanner(desk, vi.fn()));
+    await waitFor(() => expect(result.current.recentScans).toEqual([earlier]));
+    act(() => result.current.handleLiveReport(report(now)));
+    expect(result.current.recentScans).toEqual([earlier, { at: now, checked: 1, proposed: 0 }]);
+  });
+
   it("sends the desk settings", async () => {
     apiFetch.mockImplementation(async () => json({ status: { running: false }, reports: [] }));
     renderHook(() => useServerScanner(desk, vi.fn()));

@@ -11,6 +11,8 @@ import { isUsOpen } from "../../shared/usMarket";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
 import type { EventWindow } from "../../shared/eventCalendar";
 import { openQuantity } from "../../shared/exitRules";
+import type { ScanBeat } from "../../shared/scanHeartbeat";
+import { ScanHeartbeat } from "./ScanHeartbeat";
 
 /** The most common skip reasons, largest first, with their share of all skips. */
 export function topSkipReasons(counts: SkipCounts | undefined, limit = 3): { reason: SkipReason; label: string; pct: number }[] {
@@ -75,6 +77,8 @@ export interface LedgerFloorProps {
   /** The server's last scan, and when its autopilot last opened a position (ms; 0 if none). */
   lastServerScanAt?: number;
   lastServerOpenAt?: number;
+  /** The server's scans over the last hour, for the autopilot's heartbeat. */
+  serverScans?: ScanBeat[];
   /** A scheduled-news pause now, or the next one. */
   eventWindow?: EventWindow;
   /** Today's loss limit in full, for the meter under "Daily loss left". */
@@ -506,6 +510,9 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
 
   const guardianText =
     props.guardianOnline === null ? "Guardian connecting" : props.guardianOnline ? "Guardian online" : "Guardian unreachable";
+  // The server's autopilot is working for you: its last scan and trade, and the heartbeat.
+  const serverAutopilot =
+    props.autopilotOn && !props.stopped && props.scanLocation === "server" && (!props.isLive || props.liveTradingEnabled === true);
   const liveText =
     props.liveTradingEnabled === null ? null : props.liveTradingEnabled ? "live trading on" : "live trading off";
 
@@ -564,7 +571,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
                   : "Approves trades within your limits"
                 : "Off · you approve every trade"}
             </div>
-            {props.autopilotOn && !props.stopped && props.scanLocation === "server" && (!props.isLive || props.liveTradingEnabled === true) && (
+            {serverAutopilot && (
               <div className="text-xs text-muted tabular-nums" aria-label="Server autopilot">
                 Server: last scan {props.lastServerScanAt ? agoText(props.lastServerScanAt) : "pending"} · last trade{" "}
                 {props.lastServerOpenAt ? clockText(props.lastServerOpenAt) : "none yet"}
@@ -573,6 +580,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
           </div>
           <Switch checked={props.autopilotOn} onChange={props.onAutopilotChange} label="Autopilot" disabled={props.stopped} />
         </div>
+        {serverAutopilot && <ScanHeartbeat lastScanAt={props.lastServerScanAt ?? 0} scans={props.serverScans ?? []} />}
         <div className="flex gap-2">
           <StatTile
             label={`In trades · ${(props.exposureFraction * 100).toFixed(1)}%`}
