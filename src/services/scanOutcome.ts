@@ -21,6 +21,7 @@ export type SkipReason =
   | "market_down"
   | "thin_trading"
   | "no_exit_edge"
+  | "short_record"
   | "risk_limits";
 
 export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
@@ -42,6 +43,7 @@ export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
   market_down: "Bitcoin is falling: no coin longs",
   thin_trading: "Trades too rarely: stops fill badly",
   no_exit_edge: "This trader loses money with your exits lately",
+  short_record: "This trader's record here is too short yet",
   risk_limits: "Blocked by a risk limit",
 };
 

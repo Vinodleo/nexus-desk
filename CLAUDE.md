@@ -16,7 +16,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   The owner sets them on Fly (app `nexus-desk-vinodleo`) from Google Cloud Shell with `fly secrets set`.
 - **One change per PR,** from the branch named in the session. Open the PR when the change is ready:
   that's the owner's workflow. They merge, Fly deploys, and they tap Settings → Version → Check for updates.
-- **"Paused" means paused.** A trader averaging under `MIN_EDGE_R` with the owner's exits doesn't trade.
+- **"Paused" means paused.** A trader averaging under `MIN_EDGE_R` with the owner's exits doesn't trade,
+  nor does one with fewer than `MIN_TRADER_TRADES` (10) replayed setups in that market (owner's call, 28 Sept).
   The autopilot opens only trades that pass the server's checks. Trades the phone's own scan finds wait for the owner.
 - **Before pushing:** `npm run lint` (tsc), `npm test` (vitest) and `npm run build` must pass.
   Add a test for every fix, and check it fails without the fix.
@@ -58,7 +59,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - **Watch the US traders' records:** check them after the session-hours fix. If losses are still well past −1R,
   look at IEX bid/ask spreads next.
 - **Two new traders (added 28 Sept):** Nora Opening Range (US and Nifty stocks trading 2x their usual
-  opening volume) and Ravi Late-Day Momentum (SPY, QQQ, IWM). They trade only once their records are positive.
+  opening volume) and Ravi Late-Day Momentum (SPY, QQQ, IWM). They trade only once their records are positive over 10+ setups.
   Check "Traders with your exits" after a week or two; if either stays negative, remove it.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.

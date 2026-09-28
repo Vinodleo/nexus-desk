@@ -140,6 +140,18 @@ describe("the scanner", () => {
     const proposal = earning.newProposals[0];
     expect(proposal.exitEdge).toEqual({ r: 0.25, trades: 40 }); // 12 / (40 + 8)
     expect(proposal.metaScore.confidenceRationale).toMatch(/With your exits, .* averaged \+0\.25R over 40 recent setups/);
+
+    // A good start isn't a record yet: three +0.24R setups are judged above the bar, but under ten don't trade.
+    _resetScannedCandles();
+    const start: ExpectancyTable = {
+      ...table(0.3),
+      byKey: {
+        "crypto:Another Trader": { trades: 40, totalR: 4, wins: 20, winR: 20, lossR: -16 },
+        ...Object.fromEntries(names.map((n) => [`crypto:${n}`, { trades: 3, totalR: 0.72, wins: 3, winR: 0.72, lossR: 0 }])),
+      },
+    };
+    const early = await scanAllMarkets({ ...opts, exitExpectancy: start });
+    expect(early.outcomes).toEqual([{ symbol: "SOL/INR", proposed: false, reason: "short_record" }]);
   });
 });
 

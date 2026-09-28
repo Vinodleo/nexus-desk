@@ -15,6 +15,17 @@ export const DEFAULT_MIN_CONFIDENCE = 0.58;
 /** With measured win chances, a trade must expect at least this share of its risk back after costs. */
 export const MIN_EDGE_R = 0.05;
 /**
+ * A trader also needs at least this many replayed setups in a market before
+ * trading there: a few lucky ones can clear MIN_EDGE_R on their own (a new
+ * trader's first three +0.24R wins did).
+ */
+export const MIN_TRADER_TRADES = 10;
+
+/** Whether a trader judged at `judgedR` over `trades` setups in a market is held back from trading there. */
+export function traderHeldBack(judgedR: number, trades: number): boolean {
+  return judgedR < MIN_EDGE_R || trades < MIN_TRADER_TRADES;
+}
+/**
  * Version of the rule-based score (computeMetaLabelScore). Version 2 leans on
  * each trader's own estimate until real results of similar setups exist,
  * instead of a memory of generated trades. Scores from another version mean

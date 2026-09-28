@@ -412,6 +412,19 @@ describe("traders with your exits, by market", () => {
     expect(screen.getByTestId("trader-list").className).toContain("nx-tab-from-right");
   });
 
+  it("holds back a trader whose good start is under ten setups, and says how many more it needs", async () => {
+    const ravi = { ...row("us", "Ravi Late-Day Momentum", 0.24, 0.07), trades: 3, winPct: 100 };
+    vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify({ success: true, table: { ...table, rows: [...table.rows, ravi] }, activity: null, conditions: null })));
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: null }));
+    fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+    await screen.findByText("Traders with your exits");
+    // Judged above +0.05R, but only three setups: still one of two trading in the US, not two of three.
+    fireEvent.click(screen.getByRole("tab", { name: "US · 1/3" }));
+    const item = [...screen.getByTestId("trader-list").querySelectorAll("li")].find((li) => li.textContent?.includes("Ravi"))!;
+    expect(item.textContent).toContain("Paused");
+    expect(item.textContent).toContain("judged +0.07R · 7 more before it trades");
+  });
+
   it("swipes to the next market", async () => {
     await open();
     const list = screen.getByTestId("trader-list");
