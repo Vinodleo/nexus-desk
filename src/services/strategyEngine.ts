@@ -1,5 +1,6 @@
 import { MarketBar, StrategySetup, RegimeType, StrategyFamily, TradeDirection, PromotedLabModel } from "../types";
 import { coinTargetDistance, planAtr, stopFloorPct } from "../shared/coinHolds";
+import { barTime, recentSessions, sessionClock } from "../shared/sessionBars";
 
 export interface CandidateEvaluationContext {
   symbol: string;
@@ -339,6 +340,171 @@ export function buildMeanReversionSetup(ctx: CandidateEvaluationContext, tuning:
     disqualificationReason,
     planAtr: s.planAtr,
     features: baseFeatures(s, false),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Setup F: Opening Range Breakout on stocks in play (US and Indian stocks)
+// ---------------------------------------------------------------------------
+// The opening range is the session's first 5-minute candle. A stock is "in
+// play" when that candle traded at least `minRelativeVolume` times its
+// usual opening volume (the same candle's average over the previous few
+// sessions held): research on US stocks (Zarattini, Barbon & Aziz, 2024)
+// found opening-range breakouts paid on such stocks and mostly failed on
+// quiet ones. The first candle's colour picks the side: after a rising one
+// a close above its high is bought, after a falling one a close below its
+// low is sold short (not in the US, where the desk only buys). Only the
+// first such close counts, and only in the first `entryWindowBars` candles.
+// The stop sits at the far side of the range (never nearer than the
+// market's minimum), the target at `targetStopMult` times the stop.
+
+export interface OpeningRangeTuning {
+  idSuffix: string;
+  name: string;
+  minRelativeVolume: number;
+  /** Earlier sessions whose opening candle is held, needed to know the usual volume. */
+  minPriorSessions: number;
+  /** Candles after the opening one in which the breakout may come. */
+  entryWindowBars: number;
+  stopPriceFloorPct: number;
+  targetStopMult: number;
+  baseProbability: number;
+}
+
+export function buildOpeningRangeSetup(ctx: CandidateEvaluationContext, tuning: OpeningRangeTuning): StrategySetup | null {
+  const { symbol, timeframe, bars, eventWindowActive } = ctx;
+  const clock = sessionClock(symbol);
+  const latest = bars[bars.length - 1];
+  if (!clock || !latest || latest.timestampMs === undefined) return null;
+  // Cheap check first (the replay asks at every candle): only in the window after the opening candle.
+  const sinceOpen = barTime(latest, clock).minutes - clock.open;
+  if (sinceOpen < 5 || sinceOpen > tuning.entryWindowBars * 5) return null;
+  const sessions = recentSessions(clock, bars, tuning.minPriorSessions + 3);
+  const today = sessions[sessions.length - 1];
+  // The day's real opening candle must be held, and enough earlier ones to know its usual volume.
+  if (!today || today.minutes[0] !== clock.open) return null;
+  const opening = today.bars[0];
+  const earlier = sessions
+    .slice(0, -1)
+    .filter((d) => d.minutes[0] === clock.open && d.bars[0].volume > 0)
+    .map((d) => d.bars[0].volume);
+  if (earlier.length < tuning.minPriorSessions) return null;
+  const s = deriveSnapshot(bars, symbol);
+  if (!s) return null;
+
+  const relativeVolume = opening.volume / (earlier.reduce((a, v) => a + v, 0) / earlier.length);
+  const rising = opening.close > opening.open;
+  const falling = opening.close < opening.open;
+  const direction: TradeDirection = falling ? "SHORT" : "LONG";
+  const beyond = (b: MarketBar) => (direction === "LONG" ? b.close > opening.high : b.close < opening.low);
+  const after = today.bars.slice(1);
+  const firstBreak = after.length > 0 && beyond(after[after.length - 1]) && after.slice(0, -1).every((b) => !beyond(b));
+  const inPlay = relativeVolume >= tuning.minRelativeVolume;
+  const qualifies = (rising || falling) && inPlay && firstBreak && !eventWindowActive;
+
+  const toFarSide = direction === "LONG" ? s.price - opening.low : opening.high - s.price;
+  const stopDistance = Math.max(toFarSide, s.price * stopFloorPct(symbol, tuning.stopPriceFloorPct));
+  const targetDistance = coinTargetDistance(symbol, stopDistance * tuning.targetStopMult, stopDistance);
+  const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
+  const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
+
+  let disqualificationReason: string | undefined;
+  if (eventWindowActive) disqualificationReason = "Event filter active";
+  else if (!rising && !falling) disqualificationReason = "Opening candle closed where it opened: no side to trade";
+  else if (!inPlay)
+    disqualificationReason = `Opening volume ${relativeVolume.toFixed(1)}x usual, below ${tuning.minRelativeVolume}x: not in play`;
+  else if (!firstBreak) disqualificationReason = "No first close beyond the opening range";
+
+  return {
+    id: `setup-${tuning.idSuffix}-${symbol}`,
+    name: tuning.name,
+    family: "breakout_confirmation",
+    direction,
+    symbol,
+    timeframe,
+    entryPrice: s.price,
+    stopLoss,
+    takeProfit,
+    riskRewardRatio: Number((targetDistance / stopDistance).toFixed(1)),
+    baseProbability: tuning.baseProbability,
+    qualifies,
+    disqualificationReason,
+    planAtr: s.planAtr,
+    features: { ...baseFeatures(s, s.ema9 > s.ema21), volumeSurgeRatio: Number(relativeVolume.toFixed(2)) },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Setup G: Late-day momentum on US index funds
+// ---------------------------------------------------------------------------
+// Research on the S&P 500 (Gao, Han, Li & Zhou, 2018) found the first half
+// hour's move, from the previous close to 10:00 New York time, tends to
+// carry on into the last half hour. So once a day, at the candle closing at
+// `entryCloseMinutes` (3:25, the last before new US trades stop), a fund
+// whose first half hour rose is bought (fell: a short, which the US desk
+// sits out). It's closed at 3:50 with every US trade.
+
+export interface LateMomentumTuning {
+  idSuffix: string;
+  name: string;
+  /** The funds it trades. */
+  symbols: string[];
+  /** New York minutes: the first half hour ends at this candle close (10:00). */
+  measureCloseMinutes: number;
+  /** New York minutes: the trade is taken at this candle close (3:25). */
+  entryCloseMinutes: number;
+  stopAtrMult: number;
+  stopPriceFloorPct: number;
+  targetStopMult: number;
+  baseProbability: number;
+}
+
+export function buildLateMomentumSetup(ctx: CandidateEvaluationContext, tuning: LateMomentumTuning): StrategySetup | null {
+  const { symbol, timeframe, bars, eventWindowActive } = ctx;
+  if (!tuning.symbols.includes(symbol)) return null;
+  const clock = sessionClock(symbol);
+  const latest = bars[bars.length - 1];
+  if (!clock || !latest || latest.timestampMs === undefined) return null;
+  // Once a day: only at the entry candle.
+  if (barTime(latest, clock).minutes + 5 !== tuning.entryCloseMinutes) return null;
+  const [yesterday, today] = recentSessions(clock, bars, 2);
+  if (!yesterday || !today) return null;
+  // Yesterday must have run to its close (not a half day or a gap in the candles), and today's 10:00 candle be held.
+  if (yesterday.minutes[yesterday.minutes.length - 1] + 5 !== clock.close) return null;
+  const at10 = today.minutes.indexOf(tuning.measureCloseMinutes - 5);
+  if (at10 < 0) return null;
+  const s = deriveSnapshot(bars, symbol);
+  if (!s) return null;
+
+  const firstHalfHour = today.bars[at10].close / yesterday.bars[yesterday.bars.length - 1].close - 1;
+  const direction: TradeDirection = firstHalfHour < 0 ? "SHORT" : "LONG";
+  const qualifies = firstHalfHour !== 0 && !eventWindowActive;
+
+  const stopDistance = Math.max(s.planAtr * tuning.stopAtrMult, s.price * tuning.stopPriceFloorPct);
+  const targetDistance = stopDistance * tuning.targetStopMult;
+  const stopLoss = roundPrice(direction === "LONG" ? s.price - stopDistance : s.price + stopDistance, s.price);
+  const takeProfit = roundPrice(direction === "LONG" ? s.price + targetDistance : s.price - targetDistance, s.price);
+
+  return {
+    id: `setup-${tuning.idSuffix}-${symbol}`,
+    name: tuning.name,
+    family: "trend_following",
+    direction,
+    symbol,
+    timeframe,
+    entryPrice: s.price,
+    stopLoss,
+    takeProfit,
+    riskRewardRatio: tuning.targetStopMult,
+    baseProbability: tuning.baseProbability,
+    qualifies,
+    disqualificationReason: eventWindowActive
+      ? "Event filter active"
+      : firstHalfHour === 0
+      ? "Flat first half hour: no direction"
+      : undefined,
+    planAtr: s.planAtr,
+    features: baseFeatures(s, s.ema9 > s.ema21),
   };
 }
 
