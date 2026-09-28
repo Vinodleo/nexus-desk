@@ -273,6 +273,19 @@ html, body {
 /* A sliding pill behind the picked option of a segmented control. */
 .nx-segment-pill { transition: transform 280ms cubic-bezier(0.3, 0.9, 0.3, 1.1); }
 
+/* The Queue's deck: the next proposals peek out under the card on top (and
+   fade in as they arrive); when the top card goes, the next rises from the
+   deck into its place. */
+.nx-deck-peek { animation: nx-fade-in 240ms ease-out both; }
+@keyframes nx-deck-rise {
+  from { transform: translateY(8px) scale(0.96); opacity: 0.6; }
+  to { transform: none; opacity: 1; }
+}
+.nx-deck-rise { animation: nx-deck-rise 340ms cubic-bezier(0.3, 0.9, 0.3, 1.1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-deck-peek, .nx-deck-rise { animation: none; }
+}
+
 /* The Queue's Undo bar rises from the bottom. */
 @keyframes nx-snack-in {
   from { transform: translateY(24px); opacity: 0; }
