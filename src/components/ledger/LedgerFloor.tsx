@@ -3,7 +3,7 @@ import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight, AlertTriangle 
 import type { Position } from "../../types";
 import { useLiveTickers } from "../../hooks/useLiveTickers";
 import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../services/liveMarketStreamService";
-import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
+import { Card, HoldButton, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
 import { Flash, GrowBar, Rolling, RollingDigits, usePresenceList, type ListItemState } from "./motion";
 import { isNseOpen } from "../../shared/nse";
@@ -414,13 +414,6 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
   onClose,
   state = "stay",
 }) => {
-  const [confirming, setConfirming] = useState(false);
-  useEffect(() => {
-    if (!confirming) return;
-    const t = setTimeout(() => setConfirming(false), 4000);
-    return () => clearTimeout(t);
-  }, [confirming]);
-
   // "Half banked" pops up when half is banked while this row is on screen.
   const banked = (p.bankedQuantity ?? 0) > 0;
   const wasBanked = useRef(banked);
@@ -471,22 +464,14 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
         </div>
         <div className="flex items-center justify-between gap-3">
           <span className={`text-xs ${closing ? `font-semibold ${tone}` : "text-muted"}`}>{closing ? "Closed" : positionNote(p)}</span>
-          <button
-            type="button"
-            onClick={() => {
-              if (confirming) {
-                setConfirming(false);
-                onClose(p);
-              } else {
-                setConfirming(true);
-              }
-            }}
-            className={`shrink-0 min-h-[36px] px-3 -mr-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
-              confirming ? "bg-danger-soft text-loss border border-danger-line" : "text-accent hover:bg-accent-soft"
-            }`}
-          >
-            {confirming ? "Tap again to close" : "Close"}
-          </button>
+          {/* Closes only when held, so a stray tap can't close a trade. */}
+          <HoldButton
+            label="Hold to close"
+            keepHoldingLabel="Keep holding to close"
+            onHold={() => onClose(p)}
+            className="shrink-0 min-h-[36px] px-3 -mr-1 rounded-full border border-danger-line bg-danger-soft text-loss text-xs font-semibold"
+            fillClassName="bg-loss/25"
+          />
         </div>
       </div>
     </li>

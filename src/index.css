@@ -395,6 +395,11 @@ html, body {
   .nx-odo-strip { transition: none; }
 }
 
+/* Hold buttons (Close on the Floor): the fill runs across while held (its
+   duration is set inline) and drains quickly when let go. It shows how long
+   is left, so it stays with reduced motion. */
+.nx-hold-fill { transition: transform 200ms ease-out; }
+
 /* The autopilot's heartbeat (ScanHeartbeat): the ring runs down to the next
    scan, a ring pulses out when one comes in, and each new scan's bar grows up. */
 .nx-countdown-ring { transition: stroke-dashoffset 1000ms linear; }
