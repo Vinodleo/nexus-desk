@@ -387,9 +387,9 @@ describe("traders with your exits, by market", () => {
     profile: "tight", measuredAt: NOW, symbols: 96, minMarketTrades: 30,
     rows: [
       row("crypto", "Diego Aggressive Breakout", -0.18, -0.36, -1.24),
-      row("crypto", "Chen Conservative Trend", -0.26, -0.29, -0.7),
+      { ...row("crypto", "Chen Conservative Trend", -0.26, -0.29, -0.7), trades: 25 },
       row("nse", "Chen Conservative Trend", -0.51, -0.5, -0.3),
-      row("us", "Chen Conservative Trend", 0.2, 0.12, -0.4),
+      { ...row("us", "Chen Conservative Trend", 0.2, 0.12, -0.4), trades: 12 },
       row("us", "Sofia Range Scalp", -0.4, -0.45),
     ],
   };
@@ -412,6 +412,19 @@ describe("traders with your exits, by market", () => {
     expect(screen.getByTestId("trader-list").className).toContain("nx-tab-from-right");
   });
 
+  it("holds back a trader whose good start is under ten setups, and says how many more it needs", async () => {
+    const ravi = { ...row("us", "Ravi Late-Day Momentum", 0.24, 0.07), trades: 3, winPct: 100 };
+    vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify({ success: true, table: { ...table, rows: [...table.rows, ravi] }, activity: null, conditions: null })));
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: null }));
+    fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
+    await screen.findByText("Traders with your exits");
+    // Judged above +0.05R, but only three setups: still one of two trading in the US, not two of three.
+    fireEvent.click(screen.getByRole("tab", { name: "US · 1/3" }));
+    const item = [...screen.getByTestId("trader-list").querySelectorAll("li")].find((li) => li.textContent?.includes("Ravi"))!;
+    expect(item.textContent).toContain("Paused");
+    expect(item.textContent).toContain("judged +0.07R · 7 more before it trades");
+  });
+
   it("swipes to the next market", async () => {
     await open();
     const list = screen.getByTestId("trader-list");
@@ -429,7 +442,19 @@ describe("traders with your exits, by market", () => {
     expect(markets).toMatch(/Coins.*−0\.26R/);
     expect(markets).toMatch(/India.*−0\.51R/);
     expect(markets).toMatch(/US.*\+0\.20R/);
+    // And how many setups each market's result is from.
+    expect(screen.getByTestId("trader-market-crypto").textContent).toContain("25 setups");
+    expect(screen.getByTestId("trader-market-nse").textContent).toContain("40 setups");
+    expect(screen.getByTestId("trader-market-us").textContent).toContain("12 setups");
     expect(screen.getByTestId("trader-list").textContent).toContain("judged −0.29R · other markets −0.70R");
+  });
+
+  it("shows no count for a market a trader has no setups in", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "US · 1/2" }));
+    fireEvent.click(screen.getAllByRole("button", { expanded: false }).find((b) => b.textContent?.startsWith("Sofia Range Scalp"))!);
+    expect(screen.getByTestId("trader-market-us").textContent).toContain("40 setups");
+    expect(screen.getByTestId("trader-market-crypto").textContent).toBe("Coinsno setups—");
   });
 });
 

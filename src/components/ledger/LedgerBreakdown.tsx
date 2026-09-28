@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { HistoricalTrade } from "../../types";
 import { apiFetch } from "../../services/apiClient";
-import { MIN_EDGE_R } from "../../services/calibration";
+import { MIN_EDGE_R, MIN_TRADER_TRADES, traderHeldBack } from "../../services/calibration";
 import { Card, StatTile } from "./ui";
 import { EXIT_LABEL, entrySlip, formatMoney, pnlTone, stopSlip } from "./format";
 import { marketOf } from "../../shared/marketLimits";
@@ -533,7 +533,7 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: Historic
   if (!table || table.rows.length === 0 || !market) return null;
 
   const judgingIn = (m: EdgeMarket) => table.rows.filter((r) => r.market === m).reduce((n, r) => n + r.trades, 0) >= table.minMarketTrades;
-  const pausedIn = (r: EdgeRow) => judgingIn(r.market) && r.judgedR < MIN_EDGE_R;
+  const pausedIn = (r: EdgeRow) => judgingIn(r.market) && traderHeldBack(r.judgedR, r.trades);
   const pick = (m: EdgeMarket) => {
     setPicked(m);
     setOpenTrader(null);
@@ -567,7 +567,8 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: Historic
       <div className="text-xs text-muted">
         Each trader's setups {recordSpan(table)} in {table.symbols} markets, taken one at a time: one that comes while the trader's last
         trade in that market is still open isn't counted. Each is played out with your {table.profile} trailing stop, the half banked at +1R
-        and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)} doesn't trade until they recover. Each
+        and the time limit, after fees. A trader averaging under {rSigned(MIN_EDGE_R)}, or with fewer than {MIN_TRADER_TRADES} setups in a
+        market, doesn't trade there until that changes. Each
         market's result is judged together with the trader's record in the other markets (8 setups' worth; a good one counts for half), so a
         few lucky setups can't outweigh a long losing record. Tap a trader to see every market.
       </div>
@@ -629,7 +630,7 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: Historic
         )}
         <ul ref={listRef} className="relative m-0 p-0 list-none flex flex-col">
           {rows.map((r, i) => {
-            const paused = judging && r.judgedR < MIN_EDGE_R;
+            const paused = judging && traderHeldBack(r.judgedR, r.trades);
             const open = openTrader === r.trader;
             const moved = moves.get(`${r.market}:${r.trader}`);
             const everywhere = markets.map((m) => ({ m, row: table.rows.find((x) => x.market === m && x.trader === r.trader) }));
@@ -661,6 +662,7 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: Historic
                     <span className="block text-xs text-muted tabular-nums">
                       judged {rSigned(r.judgedR)}
                       {r.otherMarketR ? ` · other markets ${rSigned(r.otherMarketR)}` : ""}
+                      {r.trades < MIN_TRADER_TRADES && ` · ${MIN_TRADER_TRADES - r.trades} more before it trades`}
                       {real.get(`${r.market}:${r.trader}`) &&
                         ` · real ${rSigned(real.get(`${r.market}:${r.trader}`)!.avgR)} over ${real.get(`${r.market}:${r.trader}`)!.trades}`}
                     </span>
@@ -673,11 +675,13 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: Historic
                 {open && (
                   <div className="nx-drop-down mt-2 p-2.5 rounded-xl bg-inset flex flex-col gap-2" data-testid="trader-markets">
                     <div className="text-[11px] font-semibold text-muted">{r.trader} in each market, on its own</div>
+                    {/* Each market: its result, and how many setups it's from. */}
                     {everywhere.map(({ m, row }, j) => (
-                      <div key={m} className="grid grid-cols-[3.5rem_1fr_3.5rem] gap-2 items-center text-xs">
+                      <div key={m} data-testid={`trader-market-${m}`} className="grid grid-cols-[3.5rem_1fr_3.5rem_4.25rem] gap-2 items-center text-xs">
                         <span className="text-muted">{MARKET_TAB[m]}</span>
                         {row ? <MarketBar r={row.avgR} delayMs={j * 90} /> : <span className="text-muted">no setups</span>}
                         <span className={`text-right font-semibold tabular-nums ${row ? pnlTone(row.avgR) : "text-muted"}`}>{row ? rSigned(row.avgR) : "—"}</span>
+                        <span className="text-right text-muted tabular-nums">{row ? `${row.trades} ${row.trades === 1 ? "setup" : "setups"}` : ""}</span>
                       </div>
                     ))}
                   </div>

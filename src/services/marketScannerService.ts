@@ -30,7 +30,7 @@ import { syntheticBarShare } from "./dataProvenance";
 import { MIN_SIGNAL_BARS, SIGNAL_INTERVAL, SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
 import { skipReasonForRisk, type SkipReason, type SymbolScanOutcome } from "./scanOutcome";
 import { shadowFromSetup, type ShadowSignal } from "./shadowTracker";
-import { DEFAULT_MIN_CONFIDENCE, HEURISTIC_SCORE_VERSION, MIN_EDGE_R, type Calibrator, type ConfidenceScorer } from "./calibration";
+import { DEFAULT_MIN_CONFIDENCE, HEURISTIC_SCORE_VERSION, MIN_EDGE_R, MIN_TRADER_TRADES, type Calibrator, type ConfidenceScorer } from "./calibration";
 import { metaFeatures } from "./metaFeatures";
 import { NSE_UNIVERSE, nseTakesEntries } from "../shared/nse";
 import { exitEdgeFor, marketIsFalling, type ExpectancyTable, type MarketTrend } from "./exitExpectancy";
@@ -362,6 +362,8 @@ export async function scanSingleMarket(
     else if (marketFalling) skip = "market_down";
     else if (tradesTooRarely) skip = "thin_trading";
     else if (exitEdge && exitEdge.r < MIN_EDGE_R) skip = "no_exit_edge";
+    // A good start isn't a record yet: a few lucky setups can clear the bar.
+    else if (exitEdge && exitEdge.trades < MIN_TRADER_TRADES) skip = "short_record";
     else if (!evAssessment.isPositiveEdge) skip = "negative_ev";
     else if (riskCalc.recommendedPositionSizeUnits <= 0) skip = "below_min_size";
     else if (!passesConfidence) skip = "low_confidence";
