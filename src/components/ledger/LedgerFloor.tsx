@@ -543,7 +543,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             label="Hold to close"
             keepHoldingLabel="Keep holding to close"
             onHold={() => onClose(p)}
-            className="shrink-0 min-h-[36px] px-3 -mr-1 rounded-full border border-danger-line bg-danger-soft text-loss text-xs font-semibold"
+            className="shrink-0 min-h-[36px] px-3 rounded-full border border-danger-line bg-danger-soft text-loss text-xs font-semibold"
             fillClassName="bg-loss/25"
           />
         </div>
