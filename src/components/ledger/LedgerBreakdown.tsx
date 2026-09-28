@@ -675,11 +675,13 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: Historic
                 {open && (
                   <div className="nx-drop-down mt-2 p-2.5 rounded-xl bg-inset flex flex-col gap-2" data-testid="trader-markets">
                     <div className="text-[11px] font-semibold text-muted">{r.trader} in each market, on its own</div>
+                    {/* Each market: its result, and how many setups it's from. */}
                     {everywhere.map(({ m, row }, j) => (
-                      <div key={m} className="grid grid-cols-[3.5rem_1fr_3.5rem] gap-2 items-center text-xs">
+                      <div key={m} data-testid={`trader-market-${m}`} className="grid grid-cols-[3.5rem_1fr_3.5rem_4.25rem] gap-2 items-center text-xs">
                         <span className="text-muted">{MARKET_TAB[m]}</span>
                         {row ? <MarketBar r={row.avgR} delayMs={j * 90} /> : <span className="text-muted">no setups</span>}
                         <span className={`text-right font-semibold tabular-nums ${row ? pnlTone(row.avgR) : "text-muted"}`}>{row ? rSigned(row.avgR) : "—"}</span>
+                        <span className="text-right text-muted tabular-nums">{row ? `${row.trades} ${row.trades === 1 ? "setup" : "setups"}` : ""}</span>
                       </div>
                     ))}
                   </div>
