@@ -19,6 +19,8 @@ export const US_UNIVERSE: Record<string, string> = {
 
 export const US_SUFFIX = ".US";
 export const US_SYMBOLS = Object.keys(US_UNIVERSE).map((t) => `${t}${US_SUFFIX}`);
+/** The index funds among them (SPY, QQQ, IWM). */
+export const US_INDEX_FUNDS = US_SYMBOLS.filter((s) => US_UNIVERSE[s.slice(0, -US_SUFFIX.length)] === "INDEX");
 
 /** A US stock symbol like "AAPL.US". */
 export function isUsSymbol(symbol: string | undefined): boolean {

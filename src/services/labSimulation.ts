@@ -28,7 +28,7 @@ const WARMUP_BARS = 30;
 const WINDOW_BARS = 21;
 /** Candles handed to resolution: the setup's time limit in candles, and a little extra for its close. */
 const resolveBarsFor = (setup: StrategySetup) => Math.ceil((holdMinutesFor(setup) * 60 * 1000) / LAB_INTERVAL_MS) + 2;
-/** After a signal, the next few candles on the same coin aren't counted again. */
+/** After a trader's signal, their next few candles on the same coin aren't counted again. */
 const REPLAY_COOLDOWN_BARS = 3;
 
 export interface LabParams {
@@ -217,10 +217,16 @@ export function takesEntriesAt(symbol: string, ms: number): boolean {
  * Every intraday setup the live trader panel (with the 1-hour trend check)
  * would have put forward on history, at the candle it came from: long-only
  * for coins (CoinDCX spot can't short), both ways for stocks. After a
- * signal, the next few candles on the coin aren't counted again. A stock
+ * trader's signal, their next few candles on the coin aren't counted again
+ * (each trader's own: another trader's signal doesn't hide theirs). A stock
  * setup counts only in the hours the live scanner takes trades: one near
  * the close would otherwise be judged across the night's gap, which a live
  * trade (closed before the close) never is.
+ *
+ * The traders see every candle up to the one they're judging, as they do
+ * live: most read only the last 15, but the opening range and late-day
+ * momentum traders read the session itself (its opening candle, earlier
+ * days' openings, yesterday's close).
  */
 export function panelSetupsOnHistory(
   symbol: string,
@@ -229,6 +235,8 @@ export function panelSetupsOnHistory(
 ): { i: number; regime: RegimeType; setups: StrategySetup[] }[] {
   const macroAt = hourlyRegimeLookup(bars);
   const out: { i: number; regime: RegimeType; setups: StrategySetup[] }[] = [];
+  /** The last candle each trader (by setup name) is still spaced out until. */
+  const spacedUntil = new Map<string, number>();
   for (let i = WARMUP_BARS; i < bars.length - 1; i++) {
     if (!takesEntriesAt(symbol, (bars[i].timestampMs as number) + LAB_INTERVAL_MS)) continue;
     const regime = classifyRegime(bars[i]);
@@ -236,7 +244,7 @@ export function panelSetupsOnHistory(
       {
         symbol,
         timeframe: LAB_INTERVAL,
-        bars: bars.slice(i - WINDOW_BARS + 1, i + 1),
+        bars: bars.slice(0, i + 1),
         regime,
         eventWindowActive: false,
         longOnly,
@@ -245,9 +253,10 @@ export function panelSetupsOnHistory(
       (setup) => computeMetaLabelScore({ setup, regime, empiricalWinRate: 0.5, sampleCount: 0, similarityScore: 1 }),
       "intraday"
     );
-    if (panel.candidates.length === 0) continue;
-    out.push({ i, regime, setups: panel.candidates });
-    i += REPLAY_COOLDOWN_BARS;
+    const setups = panel.candidates.filter((s) => (spacedUntil.get(s.name) ?? -1) < i);
+    if (setups.length === 0) continue;
+    for (const s of setups) spacedUntil.set(s.name, i + REPLAY_COOLDOWN_BARS);
+    out.push({ i, regime, setups });
   }
   return out;
 }

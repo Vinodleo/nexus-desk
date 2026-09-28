@@ -35,7 +35,8 @@ export const NSE_LAST_ENTRY = 15 * 60;
 export const NSE_SQUARE_OFF = 15 * 60 + 20;
 export const NSE_CLOSE = 15 * 60 + 30;
 
-function istParts(ms: number): { day: string; weekday: number; minutes: number } {
+/** The IST day, weekday and minutes after midnight. */
+export function istParts(ms: number): { day: string; weekday: number; minutes: number } {
   const d = new Date(ms + IST_OFFSET_MS);
   return { day: d.toISOString().slice(0, 10), weekday: d.getUTCDay(), minutes: d.getUTCHours() * 60 + d.getUTCMinutes() };
 }

@@ -57,6 +57,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   skip conditions that clearly lose and favour ones that win.
 - **Watch the US traders' records:** check them after the session-hours fix. If losses are still well past −1R,
   look at IEX bid/ask spreads next.
+- **Two new traders (added 28 Sept):** Nora Opening Range (US and Nifty stocks trading 2x their usual
+  opening volume) and Ravi Late-Day Momentum (SPY, QQQ, IWM). They trade only once their records are positive.
+  Check "Traders with your exits" after a week or two; if either stays negative, remove it.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 
