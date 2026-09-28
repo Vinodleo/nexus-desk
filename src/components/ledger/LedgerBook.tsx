@@ -4,8 +4,8 @@ import type { HistoricalTrade } from "../../types";
 import { TradeAutopsyCard } from "../TradeAutopsyCard";
 import { Card, StatTile } from "./ui";
 import { EXIT_LABEL, formatMoney, formatPct, formatPrice, pnlTone, stopSlip } from "./format";
-import { LedgerBreakdown } from "./LedgerBreakdown";
-import { Rolling, staggerDelay, useSlideFrom } from "./motion";
+import { LedgerBreakdown, tradeExcursion } from "./LedgerBreakdown";
+import { Rolling, staggerDelay, usePresence, useSlideFrom } from "./motion";
 
 export type BookFilter = "all" | "wins" | "losses";
 
@@ -107,6 +107,50 @@ function timeOf(t: HistoricalTrade): string {
     : t.closedAt;
 }
 
+/**
+ * Where a closed trade went while it was open, in R (what it risked): the
+ * best it got to for you, the worst against you, and where it closed (before
+ * fees), on a line wide enough to show the stop at −1R. Null without the
+ * record (older trades).
+ */
+export function moveLine(t: HistoricalTrade): { lo: number; hi: number; bestR: number; worstR: number; exitR: number } | null {
+  const x = tradeExcursion(t);
+  if (!x) return null;
+  const perUnit = t.riskAtOpen! / t.quantity;
+  const exitR = (t.direction === "LONG" ? t.exitPrice - t.entryPrice : t.entryPrice - t.exitPrice) / perUnit;
+  return { ...x, exitR, lo: Math.min(-1, -x.worstR, exitR), hi: Math.max(1, x.bestR, exitR) };
+}
+
+const signedR = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(1)}R`;
+
+/** The move line, drawn outward from the entry when the card opens; the close drops on last. */
+const HowItMoved: React.FC<{ trade: HistoricalTrade }> = ({ trade: t }) => {
+  const m = moveLine(t);
+  if (!m) return null;
+  const x = (r: number) => (r - m.lo) / (m.hi - m.lo);
+  const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="how-it-moved">
+      <div className="text-xs text-muted">How it moved</div>
+      <div className="relative h-5" aria-hidden="true">
+        <div className="absolute inset-x-0 top-2 h-1 rounded-full bg-line" />
+        <div className="absolute top-2 h-1 rounded-l-full bg-loss/40 nx-grow-left" style={{ left: pct(x(-m.worstR)), width: pct(x(0) - x(-m.worstR)) }} />
+        <div className="absolute top-2 h-1 rounded-r-full bg-gain/40 nx-grow" style={{ left: pct(x(0)), width: pct(x(m.bestR) - x(0)) }} />
+        <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss" style={{ left: pct(x(-1)) }} />
+        <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-muted" style={{ left: pct(x(0)) }} />
+        <div
+          data-testid="exit-dot"
+          className={`absolute top-[3px] w-3.5 h-3.5 -ml-[7px] rounded-full border-2 border-surface nx-exit-pop ${t.realizedPnl > 0 ? "bg-gain" : "bg-loss"}`}
+          style={{ left: pct(x(m.exitR)) }}
+        />
+      </div>
+      <p className="m-0 text-xs leading-relaxed">
+        Went {signedR(m.bestR)} your way at best and {signedR(-m.worstR)} against at worst; closed at {signedR(m.exitR)} before fees.
+      </p>
+    </div>
+  );
+};
+
 const TradeRow: React.FC<{
   trade: HistoricalTrade;
   open: boolean;
@@ -117,8 +161,10 @@ const TradeRow: React.FC<{
 }> = ({ trade: t, open, onToggle, onUpdateTrade, index = 0 }) => {
   const tone = pnlTone(t.realizedPnl);
   const reason = EXIT_LABEL[t.exitReason] ?? t.exitReason;
+  // Opening lifts the row into a card and grows its details open; closing folds them away first.
+  const details = usePresence(open, 260);
   return (
-    <li className="border-b border-line nx-row-in" style={{ animationDelay: staggerDelay(index) }}>
+    <li className={`border-b border-line nx-row-in nx-trade${open ? " nx-trade-open" : ""}`} style={{ animationDelay: staggerDelay(index) }}>
       <button
         type="button"
         onClick={onToggle}
@@ -145,51 +191,54 @@ const TradeRow: React.FC<{
           <ChevronDown className={`w-4 h-4 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
         </span>
       </button>
-      {open && (
-        <div className="pb-4 flex flex-col gap-3 nx-row-in">
-          <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 text-xs tabular-nums">
-            <div>
-              <dt className="text-muted">Entry → exit</dt>
-              <dd className="m-0 font-semibold">
-                {formatPrice(t.entryPrice)} → {formatPrice(t.exitPrice)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted">Return</dt>
-              <dd className={`m-0 font-semibold ${tone}`}>{formatPct(t.realizedPnlPercent)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Money placed</dt>
-              <dd className="m-0 font-semibold">{formatMoney(t.moneyPlaced)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Fees</dt>
-              <dd className="m-0 font-semibold">{formatMoney(t.feesPaid || 0)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Held for</dt>
-              <dd className="m-0 font-semibold">{heldFor(t)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Setup</dt>
-              <dd className="m-0 font-semibold truncate">{t.setupName}</dd>
-            </div>
-            {stopSlip(t) && (
-              <div className="col-span-2">
-                <dt className="text-muted">Stop → sold at</dt>
+      {details.mounted && (
+        <div data-testid="trade-details" className={`nx-trade-body ${details.leaving ? "nx-trade-body-out" : "nx-trade-body-in"}`}>
+          <div className="pb-4 flex flex-col gap-3">
+            <HowItMoved trade={t} />
+            <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 text-xs tabular-nums">
+              <div>
+                <dt className="text-muted">Entry → exit</dt>
                 <dd className="m-0 font-semibold">
-                  {formatPrice(t.stopAtExit!)} → {formatPrice(t.fillAtExit!)}
-                  {stopSlip(t)!.pct >= 0.05 && (
-                    <span className="text-loss font-normal">
-                      {" "}
-                      · {stopSlip(t)!.pct.toFixed(2)}% past the stop: the price moved through it between checks
-                    </span>
-                  )}
+                  {formatPrice(t.entryPrice)} → {formatPrice(t.exitPrice)}
                 </dd>
               </div>
-            )}
-          </dl>
-          <TradeAutopsyCard trade={t} onUpdateTrade={onUpdateTrade} />
+              <div>
+                <dt className="text-muted">Return</dt>
+                <dd className={`m-0 font-semibold ${tone}`}>{formatPct(t.realizedPnlPercent)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted">Money placed</dt>
+                <dd className="m-0 font-semibold">{formatMoney(t.moneyPlaced)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted">Fees</dt>
+                <dd className="m-0 font-semibold">{formatMoney(t.feesPaid || 0)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted">Held for</dt>
+                <dd className="m-0 font-semibold">{heldFor(t)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted">Setup</dt>
+                <dd className="m-0 font-semibold truncate">{t.setupName}</dd>
+              </div>
+              {stopSlip(t) && (
+                <div className="col-span-2">
+                  <dt className="text-muted">Stop → sold at</dt>
+                  <dd className="m-0 font-semibold">
+                    {formatPrice(t.stopAtExit!)} → {formatPrice(t.fillAtExit!)}
+                    {stopSlip(t)!.pct >= 0.05 && (
+                      <span className="text-loss font-normal">
+                        {" "}
+                        · {stopSlip(t)!.pct.toFixed(2)}% past the stop: the price moved through it between checks
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              )}
+            </dl>
+            <TradeAutopsyCard trade={t} onUpdateTrade={onUpdateTrade} />
+          </div>
         </div>
       )}
     </li>

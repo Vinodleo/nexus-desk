@@ -408,6 +408,37 @@ html, body {
   .nx-odo-strip { transition: none; }
 }
 
+/* A closed trade in the Book opens into a card: the row lifts (surface,
+   rounded corners, a soft shadow, a little wider than the list) and its
+   details grow open below it; closing folds them away and sets it back
+   down. The move line draws outward from the entry, and the close drops on
+   last. */
+.nx-trade {
+  transition: background-color 300ms ease, box-shadow 300ms ease, border-color 300ms ease, border-radius 300ms ease,
+    margin 320ms cubic-bezier(0.2, 0.8, 0.3, 1), padding 320ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.nx-trade-open {
+  background-color: var(--nx-surface);
+  border-color: transparent;
+  border-radius: 16px;
+  margin: 6px -8px;
+  padding-inline: 8px;
+  box-shadow: 0 12px 28px -16px color-mix(in srgb, var(--nx-scrim) 50%, transparent);
+}
+.nx-trade-body { display: grid; grid-template-rows: 1fr; }
+.nx-trade-body > * { min-height: 0; overflow: hidden; }
+@keyframes nx-trade-body-in {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to { grid-template-rows: 1fr; opacity: 1; }
+}
+.nx-trade-body-in { animation: nx-trade-body-in 380ms cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+.nx-trade-body-out { animation: nx-trade-body-in 260ms ease-in reverse both; }
+.nx-exit-pop { animation: nx-badge-pop 320ms ease-out 650ms both; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-trade { transition: none; }
+  .nx-trade-body-in, .nx-trade-body-out, .nx-exit-pop { animation: none; }
+}
+
 /* A raised stop (the Floor's trade line): the stop mark slides up with a
    little overshoot and fades in the first time; a trail runs from where it
    was and fades. */
