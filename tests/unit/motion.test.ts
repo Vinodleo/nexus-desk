@@ -3,7 +3,7 @@ import { act, cleanup, render, renderHook, screen } from "@testing-library/react
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RollingDigits, useAnimatedNumber, useFlash, usePresence } from "../../src/components/ledger/motion";
-import { LedgerFloor, trackPoint, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
+import { LedgerFloor, stopRaisedTag, trackPoint, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
 import { BottomNavBar } from "../../src/components/BottomNavBar";
 import { Sheet } from "../../src/components/ledger/Sheet";
 import type { Position } from "../../src/types";
@@ -124,6 +124,49 @@ describe("the Floor", () => {
     expect(container.textContent).toContain("Half banked ✓");
     act(() => vi.advanceTimersByTime(3400));
     expect(container.textContent).not.toContain("Half banked ✓");
+  });
+
+  it("slides the stop up the line when it's raised, and says what that locks in after fees", () => {
+    const sol = (over: Partial<Position> = {}) => pos("sol", { initialStopLoss: 98, currentPrice: 102.5, quantity: 10, ...over });
+    const { container, rerender } = render(createElement(LedgerFloor, floor({ positions: [sol()] })));
+    const tick = () => container.querySelector('[data-testid="stop-tick"]') as HTMLElement;
+    // At the original stop the mark is there but hidden, so its first move slides too.
+    expect(tick().style.left).toBe("0%");
+    expect(tick().style.opacity).toBe("0");
+    rerender(createElement(LedgerFloor, floor({ positions: [sol({ stopLoss: 101 })] })));
+    // Stop 98, target 104: 101 is half-way; a trail runs from where it was.
+    expect(tick().style.left).toBe("50%");
+    expect(tick().style.opacity).toBe("1");
+    const trail = container.querySelector('[data-testid="stop-trail"]') as HTMLElement;
+    expect([trail.style.left, trail.style.width]).toEqual(["0%", "50%"]);
+    // ₹1 over entry on 10 coins, less ₹1 of fees on ₹1,000 there and back.
+    expect(container.textContent).toContain("Stop raised · ₹9 locked in");
+    // Still rising: the one tag stays, with the new amount.
+    rerender(createElement(LedgerFloor, floor({ positions: [sol({ stopLoss: 102 })] })));
+    expect(container.textContent).toContain("Stop raised · ₹19 locked in");
+    expect(container.textContent?.match(/Stop raised/g)).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(3400));
+    expect(container.textContent).not.toContain("Stop raised");
+  });
+
+  it("leaves the stop to \"Half banked\" when banking half raised it, and says nothing when a stop moves back", () => {
+    const sol = (over: Partial<Position> = {}) => pos("sol", { initialStopLoss: 98, currentPrice: 102.5, quantity: 10, ...over });
+    const { container, rerender } = render(createElement(LedgerFloor, floor({ positions: [sol({ stopLoss: 99 })] })));
+    rerender(createElement(LedgerFloor, floor({ positions: [sol({ stopLoss: 100.2, bankedQuantity: 5 })] })));
+    expect(container.textContent).toContain("Half banked ✓");
+    expect(container.textContent).not.toContain("Stop raised");
+    expect((container.querySelector('[data-testid="stop-tick"]') as HTMLElement).style.left).toBe("36.67%");
+    act(() => vi.advanceTimersByTime(3400));
+    rerender(createElement(LedgerFloor, floor({ positions: [sol({ stopLoss: 100, bankedQuantity: 5 })] })));
+    expect(container.textContent).not.toContain("Stop raised");
+  });
+
+  it("says a raised stop is at break-even, or what is still at risk", () => {
+    const p = { symbol: "SOL/INR", direction: "LONG" as const, entryPrice: 100, quantity: 10 };
+    expect(stopRaisedTag(p, 100.1)).toEqual({ text: "Stop raised to break-even", tone: "gain" });
+    expect(stopRaisedTag(p, 99)).toEqual({ text: "Stop raised · ₹11 at risk now", tone: "ink" });
+    // Only the part still open counts once half is banked.
+    expect(stopRaisedTag({ ...p, bankedQuantity: 5 }, 102).text).toBe("Stop raised · ₹10 locked in");
   });
 
   it("flashes the price green when it ticks up and red when it ticks down", () => {

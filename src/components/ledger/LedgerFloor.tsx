@@ -11,6 +11,7 @@ import { isUsOpen } from "../../shared/usMarket";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
 import type { EventWindow } from "../../shared/eventCalendar";
 import { openQuantity } from "../../shared/exitRules";
+import { roundTripFeeRate } from "../../shared/tradeCosts";
 import type { ScanBeat } from "../../shared/scanHeartbeat";
 import { ScanHeartbeat } from "./ScanHeartbeat";
 
@@ -361,6 +362,35 @@ export function trackPoint(p: Pick<Position, "direction" | "stopLoss" | "initial
   return Math.max(0, Math.min(1, f));
 }
 
+/**
+ * What a stop raised to `stop` means for the part still open, after the
+ * round trip's fees: at break-even (within a rupee), a gain locked in, or a
+ * smaller loss still at risk.
+ */
+export function stopRaisedTag(
+  p: Pick<Position, "symbol" | "direction" | "entryPrice" | "quantity" | "bankedQuantity">,
+  stop: number
+): { text: string; tone: "gain" | "ink" } {
+  const qty = openQuantity(p);
+  const gross = (p.direction === "LONG" ? stop - p.entryPrice : p.entryPrice - stop) * qty;
+  const net = gross - roundTripFeeRate(p.symbol, p.entryPrice * qty) * p.entryPrice * qty;
+  if (Math.abs(net) < 1) return { text: "Stop raised to break-even", tone: "gain" };
+  return net > 0
+    ? { text: `Stop raised · ${formatMoney(net, { decimals: 0 })} locked in`, tone: "gain" }
+    : { text: `Stop raised · ${formatMoney(-net, { decimals: 0 })} at risk now`, tone: "ink" };
+}
+
+/**
+ * A stop that just moved your way: its last move (from a price; `trail` counts
+ * moves, each drawing its own trail) and the tag (none alongside "Half
+ * banked"). While it keeps rising, the one tag stays up with the new amount.
+ */
+interface StopRaise {
+  trail: number;
+  from: number;
+  tag: ReturnType<typeof stopRaisedTag> | null;
+}
+
 /** How long a closed trade stays on the Floor while it animates away. */
 const CLOSE_ANIMATION_MS = 1300;
 
@@ -370,15 +400,17 @@ const BANKED_TAG_MS = 3300;
 /**
  * The trade's line from stop to target: where the price is now (the marker
  * glides as it moves), the run from entry in green or red, the entry and
- * +1R ticks, and the stop once it has trailed up.
+ * +1R ticks, and the stop once it has trailed up. A raised stop slides up
+ * the line, leaving a short trail, with a tag saying what it locks in.
  */
-const PositionTrack: React.FC<{ position: Position; bankedKey: number }> = ({ position: p, bankedKey }) => {
+const PositionTrack: React.FC<{ position: Position; bankedKey: number; stopRaise: StopRaise | null }> = ({ position: p, bankedKey, stopRaise }) => {
   const now = trackPoint(p, p.currentPrice);
   const entry = trackPoint(p, p.entryPrice);
   if (now === null || entry === null) return null;
   const risk = Math.abs(p.entryPrice - (p.initialStopLoss ?? p.stopLoss));
   const oneR = trackPoint(p, p.direction === "LONG" ? p.entryPrice + risk : p.entryPrice - risk);
   const stop = trackPoint(p, p.stopLoss);
+  const raisedFrom = stopRaise ? trackPoint(p, stopRaise.from) : null;
   const up = now >= entry;
   const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
   return (
@@ -390,7 +422,22 @@ const PositionTrack: React.FC<{ position: Position; bankedKey: number }> = ({ po
       />
       <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-muted" style={{ left: pct(entry) }} />
       {oneR !== null && oneR < 1 && <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-line" style={{ left: pct(oneR) }} />}
-      {stop !== null && stop > 0.001 && <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss" style={{ left: pct(stop) }} />}
+      {stopRaise && raisedFrom !== null && stop !== null && stop > raisedFrom && (
+        <div
+          key={stopRaise.trail}
+          data-testid="stop-trail"
+          className="absolute top-2 h-1 rounded-full nx-stop-trail"
+          style={{ left: pct(raisedFrom), width: pct(stop - raisedFrom) }}
+        />
+      )}
+      {/* Always there (hidden at the original stop), so its first move up slides too. */}
+      {stop !== null && (
+        <div
+          data-testid="stop-tick"
+          className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss nx-stop-tick"
+          style={{ left: pct(stop), opacity: stop > 0.001 ? 1 : 0 }}
+        />
+      )}
       <div
         data-testid="position-marker"
         className={`absolute top-[3px] w-3.5 h-3.5 -ml-[7px] rounded-full border-2 border-surface nx-glide-left ${up ? "bg-gain" : "bg-loss"}`}
@@ -405,6 +452,16 @@ const PositionTrack: React.FC<{ position: Position; bankedKey: number }> = ({ po
           Half banked ✓
         </span>
       )}
+      {stopRaise?.tag && stop !== null && (
+        <span
+          className={`nx-tag-pop absolute -top-5 whitespace-nowrap text-[11px] font-bold px-2 py-px rounded-full bg-surface border border-line ${
+            stopRaise.tag.tone === "gain" ? "text-gain" : "text-ink"
+          }`}
+          style={{ left: `clamp(6rem, ${pct(stop)}, calc(100% - 6rem))` }}
+        >
+          {stopRaise.tag.text}
+        </span>
+      )}
     </div>
   );
 };
@@ -414,19 +471,36 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
   onClose,
   state = "stay",
 }) => {
-  // "Half banked" pops up when half is banked while this row is on screen.
+  // "Half banked" pops up when half is banked while this row is on screen,
+  // and "Stop raised" when the stop moves your way (banking half raises it
+  // too: then only "Half banked" is said, so the two don't overlap).
   const banked = (p.bankedQuantity ?? 0) > 0;
   const wasBanked = useRef(banked);
+  const lastStop = useRef(p.stopLoss);
   const [bankedKey, setBankedKey] = useState(0);
+  const [stopRaise, setStopRaise] = useState<StopRaise | null>(null);
   useEffect(() => {
-    if (banked && !wasBanked.current) setBankedKey((k) => k + 1);
+    const justBanked = banked && !wasBanked.current;
     wasBanked.current = banked;
-  }, [banked]);
+    if (justBanked) setBankedKey((k) => k + 1);
+    const before = lastStop.current;
+    lastStop.current = p.stopLoss;
+    const raised = p.direction === "LONG" ? p.stopLoss > before : p.stopLoss < before;
+    if (raised) {
+      const tag = justBanked || bankedKey > 0 ? null : stopRaisedTag(p, p.stopLoss);
+      setStopRaise((r) => ({ trail: (r?.trail ?? 0) + 1, from: before, tag: tag ?? r?.tag ?? null }));
+    }
+  }, [banked, p.stopLoss, p.direction]);
   useEffect(() => {
     if (bankedKey === 0) return;
     const t = setTimeout(() => setBankedKey(0), BANKED_TAG_MS);
     return () => clearTimeout(t);
   }, [bankedKey]);
+  useEffect(() => {
+    if (!stopRaise) return;
+    const t = setTimeout(() => setStopRaise(null), BANKED_TAG_MS);
+    return () => clearTimeout(t);
+  }, [stopRaise]);
 
   const tone = pnlTone(p.unrealizedPnl);
   const closing = state === "leave";
@@ -452,7 +526,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
           </Flash>
         </div>
-        <PositionTrack position={p} bankedKey={bankedKey} />
+        <PositionTrack position={p} bankedKey={bankedKey} stopRaise={stopRaise} />
         <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted tabular-nums">
           <span>Entry {formatPrice(p.entryPrice)}</span>
           <Flash value={p.currentPrice} className="px-1 -mx-1 text-ink">
