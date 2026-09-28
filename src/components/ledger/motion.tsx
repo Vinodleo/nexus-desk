@@ -131,6 +131,39 @@ export function usePresenceList<T>(items: T[], keyOf: (item: T) => string, ms = 
   return out;
 }
 
+/**
+ * A figure whose digits roll into place like a meter when it changes, the
+ * rightmost first. `text` is the formatted figure; from the `mutedFrom`
+ * character on (the paise) it's muted. The digits are drawn by CSS
+ * (index.css, nx-odo), so the element's text is just the figure: that's what
+ * is read out and copied. Nothing rolls on first show, or with reduced motion.
+ */
+export const RollingDigits: React.FC<{ text: string; mutedFrom?: string; className?: string }> = ({ text, mutedFrom, className = "" }) => {
+  const chars = Array.from(text);
+  const cut = mutedFrom ? chars.indexOf(mutedFrom) : -1;
+  const digitCount = chars.filter((c) => /\d/.test(c)).length;
+  let seen = 0;
+  return (
+    <span className={`nx-odo ${className}`}>
+      <span className="sr-only">{text}</span>
+      <span aria-hidden="true" className="nx-odo-face">
+        {chars.map((ch, i) => {
+          // Keyed from the right, so the units stay the units when a digit is added on the left.
+          const key = chars.length - i;
+          const muted = cut >= 0 && i >= cut ? " text-muted" : "";
+          if (!/\d/.test(ch)) return <span key={key} className={`nx-odo-ch${muted}`} data-ch={ch} />;
+          const fromRight = digitCount - 1 - seen++;
+          return (
+            <span key={key} className={`nx-odo-digit${muted}`}>
+              <span className="nx-odo-strip" style={{ transform: `translateY(${-Number(ch) * 10}%)`, transitionDelay: `${fromRight * 45}ms` }} />
+            </span>
+          );
+        })}
+      </span>
+    </span>
+  );
+};
+
 /** A number shown through `format` that glides to each new value (counting up from `from` when first shown, if given). */
 export const Rolling: React.FC<{ value: number; format: (n: number) => string; ms?: number; from?: number }> = ({
   value,

@@ -2,7 +2,7 @@
 import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useAnimatedNumber, useFlash, usePresence } from "../../src/components/ledger/motion";
+import { RollingDigits, useAnimatedNumber, useFlash, usePresence } from "../../src/components/ledger/motion";
 import { LedgerFloor, trackPoint, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
 import { BottomNavBar } from "../../src/components/BottomNavBar";
 import { Sheet } from "../../src/components/ledger/Sheet";
@@ -137,14 +137,29 @@ describe("the Floor", () => {
     expect(rowOf(container, "SOL/INR")!.textContent).toContain("Now 100.50");
   });
 
-  it("rolls equity to its new value", () => {
+  it("rolls each digit of equity to its new value, the rightmost first, and reads out the figure", () => {
     const { container, rerender } = render(createElement(LedgerFloor, floor({ equity: 1000 })));
-    rerender(createElement(LedgerFloor, floor({ equity: 1100 })));
-    act(() => vi.advanceTimersByTime(100));
-    const mid = container.textContent ?? "";
-    expect(mid).not.toContain("₹1,100.00");
-    act(() => vi.advanceTimersByTime(500));
-    expect(container.textContent).toContain("₹1,100.00");
+    const account = () => container.querySelector('[aria-label="Account"]') as HTMLElement;
+    const strips = () => [...account().querySelectorAll<HTMLElement>(".nx-odo-strip")];
+    const shown = () => strips().map((s) => Number(/-?(\d+)%/.exec(s.style.transform)?.[1]) / 10).join("");
+    expect(shown()).toBe("100000");
+    rerender(createElement(LedgerFloor, floor({ equity: 1234.5 })));
+    // The new figure is there at once for reading; each column slides to its digit.
+    expect(account().querySelector(".sr-only")?.textContent).toBe("₹1,234.50");
+    expect(shown()).toBe("123450");
+    expect(strips().map((s) => s.style.transitionDelay)).toEqual(["225ms", "180ms", "135ms", "90ms", "45ms", "0ms"]);
+    // The paise are muted, and the digits themselves are drawn by CSS, not text.
+    expect(account().querySelector('[data-ch="."]')?.className).toContain("text-muted");
+    expect(account().querySelector(".nx-odo-face")?.textContent).toBe("");
+  });
+
+  it("keeps the units in their column when a digit is added on the left", () => {
+    const { container, rerender } = render(createElement(RollingDigits, { text: "₹9,999.00" }));
+    const units = () => container.querySelectorAll(".nx-odo-digit")[container.querySelectorAll(".nx-odo-digit").length - 3];
+    const before = units();
+    rerender(createElement(RollingDigits, { text: "₹10,000.00" }));
+    expect(units()).toBe(before);
+    expect(container.querySelector(".sr-only")?.textContent).toBe("₹10,000.00");
   });
 });
 

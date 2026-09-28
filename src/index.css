@@ -381,6 +381,20 @@ html, body {
 }
 .nx-roll-in { display: inline-block; animation: nx-roll-in 300ms cubic-bezier(0.3, 0.9, 0.3, 1.1) both; }
 
+/* Rolling digits (the Floor's equity, RollingDigits in motion.tsx): each
+   digit is a column of 0–9 that slides to its value, like a meter. The
+   characters are drawn here (content), so the element's own text is just the
+   figure. The column is taller than the glyphs, so neighbours don't show. */
+.nx-odo { display: inline-flex; }
+.nx-odo-face { display: inline-flex; line-height: 1.15; }
+.nx-odo-digit, .nx-odo-ch { display: inline-block; height: 1.15em; overflow: hidden; }
+.nx-odo-ch::before { content: attr(data-ch); }
+.nx-odo-strip { display: block; transition: transform 900ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.nx-odo-strip::before { display: block; white-space: pre; content: "0\A 1\A 2\A 3\A 4\A 5\A 6\A 7\A 8\A 9"; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-odo-strip { transition: none; }
+}
+
 /* A trader's bar starts at their record in one market alone and is tugged
    to the judged result; the line from the other markets' record fades in as
    it pulls, then stays faint. */

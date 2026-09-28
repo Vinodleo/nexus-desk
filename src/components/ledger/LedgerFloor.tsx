@@ -5,7 +5,7 @@ import { useLiveTickers } from "../../hooks/useLiveTickers";
 import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../services/liveMarketStreamService";
 import { Card, RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
 import { formatMoney, formatPct, formatPrice, pnlTone } from "./format";
-import { Flash, GrowBar, Rolling, useAnimatedNumber, usePresenceList, type ListItemState } from "./motion";
+import { Flash, GrowBar, Rolling, RollingDigits, usePresenceList, type ListItemState } from "./motion";
 import { isNseOpen } from "../../shared/nse";
 import { isUsOpen } from "../../shared/usMarket";
 import { SKIP_REASON_LABEL, type SkipCounts, type SkipReason } from "../../services/scanOutcome";
@@ -498,10 +498,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
     positions,
   } = props;
 
-  // Equity and P&L glide to new values; positions animate in and out.
-  const shownEquity = Math.round(useAnimatedNumber(equity) * 100) / 100;
-  const whole = formatMoney(Math.trunc(shownEquity), { decimals: 0 });
-  const paise = Math.abs(shownEquity % 1).toFixed(2).slice(1); // ".96"
+  // Equity's digits roll into place; P&L glides to new values; positions animate in and out.
   const openPnl = positions.reduce((acc, p) => acc + (p.unrealizedPnl || 0), 0);
   // A closed trade holds its result for a moment, then slides away (nx-item-close).
   const rows = usePresenceList(positions, (p) => p.id, CLOSE_ANIMATION_MS);
@@ -536,9 +533,8 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
 
       <section aria-label="Account" className="flex flex-col gap-1.5">
         <div className="text-[13px] text-muted">{isLive ? "CoinDCX equity" : "Paper equity"}</div>
-        <div className="font-display text-[46px] leading-[1.05] tracking-[-0.01em] tabular-nums">
-          {whole}
-          <span className="text-muted">{paise}</span>
+        <div className="flex font-display text-[46px] tracking-[-0.01em] tabular-nums">
+          <RollingDigits text={formatMoney(equity)} mutedFrom="." />
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] tabular-nums">
           <span>
