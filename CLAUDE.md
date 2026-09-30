@@ -56,6 +56,12 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 
 - **Condition filters:** once "When setups win" has 2–3 days of data (most rows with 20+ setups),
   skip conditions that clearly lose and favour ones that win.
+- **Making the traders learn** (details and guardrails in `docs/learning-plan.md`). The owner is gathering
+  3–4 weeks of data first; build only when asked, in this order, one PR each:
+  1. Condition filters (above).
+  2. Self-tuning traders: the replay tries a few small changes to each trader's settings and switches
+     only if they also win on recent days they weren't picked from.
+  3. More money for proven traders: size each trade by the trader's record, within the owner's limits.
 - **Watch the US traders' records:** check them after the session-hours fix. If losses are still well past −1R,
   look at IEX bid/ask spreads next.
 - **Two new traders (added 28 Sept):** Nora Opening Range (US and Nifty stocks trading 2x their usual
