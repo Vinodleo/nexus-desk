@@ -208,6 +208,17 @@ function marketOpenFor(symbol: string, now: number): boolean {
   return isUsSymbol(symbol) ? isUsOpen(now) : isNseSymbol(symbol) ? isNseOpen(now) : true;
 }
 
+/**
+ * Stocks whose market closed within the last candle. The day's last candle
+ * (3:55–4:00 in New York, 3:25–3:30 IST) only closes at the bell, so it's
+ * fetched just after: otherwise it's never held (the next morning fetches
+ * only recent candles), and yesterday's close, which the late-day momentum
+ * trader measures from, is missing on every day but Monday.
+ */
+function justClosedStocks(now: number): string[] {
+  return [...stockUniverse(), ...usUniverse()].filter((s) => !marketOpenFor(s, now) && marketOpenFor(s, now - SIGNAL_INTERVAL_MS));
+}
+
 /** The coins, plus the Indian stocks while NSE is open and the US stocks while the US market is. */
 function scanList(now: number): string[] {
   return [...universe, ...(isNseOpen(now) ? stockUniverse() : []), ...(isUsOpen(now) ? usUniverse() : [])];
@@ -313,7 +324,8 @@ async function refreshMarket(now: number): Promise<void> {
     await checkAlpacaAccount(now);
   }
   // Stocks keep their candles overnight; they're fetched only while their
-  // market is open. Except stocks with none at all (after a restart): their
+  // market is open, and once more just after it closes for the day's last
+  // candle (justClosedStocks). Except stocks with none at all (after a restart): their
   // last session is loaded anyway (Angel One and Alpaca serve past candles
   // any time), at most hourly, so the traders' record doesn't vanish until
   // the open.
@@ -324,7 +336,7 @@ async function refreshMarket(now: number): Promise<void> {
       : [];
   if (missingStocks.length > 0) lastStockBackfillAt = now;
   const symbols = [...new Set([...scanList(now), ...followed, MARKET_SYMBOL])].filter((sym) => marketOpenFor(sym, now));
-  await market.refresh([...symbols, ...missingStocks], now);
+  await market.refresh([...new Set([...symbols, ...justClosedStocks(now), ...missingStocks])], now);
   await market.refreshMacro([...new Set([...scanList(now), MARKET_SYMBOL])], now);
 }
 

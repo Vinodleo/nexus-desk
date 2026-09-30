@@ -317,4 +317,26 @@ describe("US stocks on the server", () => {
     await runScanCycle(saturday + FIVE);
     expect(calls.filter((c) => c.includes("timeframe=5Min")).length).toBe(1);
   });
+
+  it("fetches the day's last candle just after the close, then stops until the next open", async () => {
+    const { setDeskState } = await import("../../server/scanner/deskState");
+    const { runScanCycle, reportsSince } = await import("../../server/scanner/scannerService");
+    // Thursday 3:55 in New York, just after that candle's start: the last scan while open.
+    const lastScan = Date.parse("2026-09-24T19:55:08Z");
+    (await import("../../server/fx"))._setUsdInr(USDINR, lastScan);
+    setDeskState("owner", desk, lastScan);
+    await runScanCycle(lastScan);
+    const candleCalls = () => calls.filter((c) => c.includes("timeframe=5Min"));
+    expect(candleCalls().length).toBe(1);
+    // 4:00:08, the bell: the 3:55–4:00 candle has closed, so it's fetched once more.
+    await runScanCycle(lastScan + FIVE);
+    expect(candleCalls().length).toBe(2);
+    expect(new URL(candleCalls()[1]).searchParams.get("end")).toBe(new Date(lastScan + FIVE).toISOString());
+    // Nothing is scanned or traded after the close.
+    const outcomes = () => reportsSince("owner", lastScan + 1).flatMap((r) => r.outcomes).filter((o) => isUsSymbol(o.symbol));
+    expect(outcomes()).toEqual([]);
+    // And no more candles until the next open.
+    await runScanCycle(lastScan + 2 * FIVE);
+    expect(candleCalls().length).toBe(2);
+  });
 });
