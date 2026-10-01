@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { inUsSession, isUsOpen, isUsSymbol, usSquareOffDue, usTakesEntries, US_ROUND_TRIP_RATE } from "../../src/shared/usMarket";
+import { inUsSession, isUsOpen, isUsSymbol, nyParts, usSquareOffDue, usTakesEntries, US_ROUND_TRIP_RATE } from "../../src/shared/usMarket";
 import { marketOf } from "../../src/shared/marketLimits";
 import { holdMinutesFor, planAtr, stopFloorPct, isCoin } from "../../src/shared/coinHolds";
 import { breakevenBuffer, holdingDecision } from "../../src/shared/exitRules";
@@ -46,6 +46,25 @@ describe("the US market", () => {
     expect(usSquareOffDue(opened, Date.parse("2026-09-24T19:45:00Z"))).toBe(false);
     expect(usSquareOffDue(opened, Date.parse("2026-09-24T19:50:00Z"))).toBe(true);
     expect(usSquareOffDue(opened, Date.parse("2026-09-25T14:00:00Z"))).toBe(true);
+  });
+
+  it("remembers each minute's New York time, and gets it right either side of a clock change", () => {
+    const fresh = (ms: number) => {
+      const p = Object.fromEntries(
+        new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+          .formatToParts(new Date(ms))
+          .map((x) => [x.type, x.value])
+      );
+      return { day: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute) };
+    };
+    // Clocks go forward at 2:00 on 8 March 2026 (07:00 UTC) and back at 2:00 on 1 November (06:00 UTC).
+    for (const iso of ["2026-03-08T06:58:30Z", "2026-03-08T07:00:00Z", "2026-03-08T07:01:59Z", "2026-11-01T05:59:59Z", "2026-11-01T06:00:00Z", "2026-11-01T06:30:00Z"]) {
+      const ms = Date.parse(iso);
+      // Asked twice (the second from memory), and from another second of the same minute.
+      for (const at of [ms, ms, Math.floor(ms / 60_000) * 60_000 + 59_999]) expect(nyParts(at)).toMatchObject(fresh(at));
+    }
+    expect(nyParts(Date.parse("2026-03-08T07:00:00Z"))).toMatchObject({ day: "2026-03-08", minutes: 3 * 60, weekday: 0 });
+    expect(nyParts(Date.parse("2026-11-01T06:00:00Z"))).toMatchObject({ day: "2026-11-01", minutes: 60 });
   });
 
   it("trades on stock rules: 5-minute plan, 30-minute limit, closed at 3:50, near-zero costs", () => {

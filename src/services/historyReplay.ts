@@ -1,10 +1,11 @@
-import type { MarketBar } from "../types";
+import type { MarketBar, StrategySetup } from "../types";
 import { decorateBarsWithIndicators } from "./marketDataService";
 import { LAB_INTERVAL_MS, panelSetupsOnHistory } from "./labSimulation";
 import { simulateExit } from "./exitComparison";
 import { expectancyKey, MARKET_KINDS, type MarketKind, type TraderRecord } from "./exitExpectancy";
 import { costsTooBigForStop } from "../shared/tradeCosts";
 import type { TrailProfileId } from "../shared/trailingStop";
+import { sessionClock } from "../shared/sessionBars";
 
 // The traders over years of history: every setup each trader would have put
 // forward on a market's past 5-minute candles, played forward under the live
@@ -78,18 +79,119 @@ function barsOf(s: CandleSeries, from: number, to: number): MarketBar[] {
 }
 
 /**
- * Replays a market's history a chunk at a time, yielding the trades found
- * every SLICE_BARS candles (so a caller can pause in between). One trade
- * at a time per trader and exit profile, across chunks; trades still open
- * when the history ends are left out.
+ * The readings saved with each setup, in this order: the trader's own (RSI,
+ * ADX, volume against usual, distance from VWAP), the candle's (ATR, the
+ * EMAs' order, the last hour's and four hours' change, in %), the plan's
+ * (stop distance, target against stop), and the market's last hour
+ * (Bitcoin's for coins, SPY's for US stocks; none for Indian ones).
+ */
+export const SETUP_READINGS = [
+  "rsi",
+  "adx",
+  "volSurge",
+  "vwapDistPct",
+  "atrPct",
+  "stopPct",
+  "rewardRisk",
+  "ema9vs21Pct",
+  "ema21vs50Pct",
+  "vsEma200Pct",
+  "chg1hPct",
+  "chg4hPct",
+  "market1hPct",
+] as const;
+
+/** One setup as it came, with what was known then and how it played out under each exit profile: a row for machine learning. */
+export interface SetupDetail {
+  /** Candle close it came at (ms). */
+  entryMs: number;
+  trader: string;
+  direction: "LONG" | "SHORT";
+  /** The 5-minute and 1-hour trend then. */
+  regime: string;
+  macro: string;
+  /** Minutes after midnight and weekday (0 Sunday) in the market's own time: New York, IST, or UTC for coins. */
+  minute: number;
+  weekday: number;
+  /** SETUP_READINGS, in order (null where there weren't enough candles). */
+  readings: (number | null)[];
+  /** Each exit profile's result in R after costs, and candles held; absent where the history ended first. */
+  results: Partial<Record<TrailProfileId, { r: number; bars: number }>>;
+}
+
+const pct = (a: number | undefined, b: number | undefined) => (a !== undefined && b !== undefined && b > 0 ? ((a - b) / b) * 100 : null);
+
+function setupDetail(
+  symbol: string,
+  bars: MarketBar[],
+  i: number,
+  setup: StrategySetup,
+  regime: string,
+  macro: string,
+  entryMs: number,
+  marketMove: ((ms: number) => number | null) | undefined
+): Omit<SetupDetail, "results"> {
+  const bar = bars[i];
+  const risk = Math.abs(setup.entryPrice - setup.stopLoss);
+  const clock = sessionClock(symbol);
+  let minute: number;
+  let weekday: number;
+  if (clock) {
+    const { day, minutes } = clock.parts(entryMs);
+    minute = minutes;
+    weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+  } else {
+    minute = Math.floor(entryMs / 60_000) % 1440;
+    weekday = new Date(entryMs).getUTCDay();
+  }
+  return {
+    entryMs,
+    trader: setup.name,
+    direction: setup.direction,
+    regime,
+    macro,
+    minute,
+    weekday,
+    readings: [
+      setup.features.rsi,
+      setup.features.adx,
+      setup.features.volumeSurgeRatio,
+      setup.features.vwapDistancePercent,
+      bar.atr !== undefined && bar.close > 0 ? (bar.atr / bar.close) * 100 : null,
+      setup.entryPrice > 0 ? (risk / setup.entryPrice) * 100 : null,
+      risk > 0 ? Math.abs(setup.takeProfit - setup.entryPrice) / risk : null,
+      pct(bar.ema9, bar.ema21),
+      pct(bar.ema21, bar.ema50),
+      pct(bar.close, bar.ema200),
+      i >= 12 ? pct(bar.close, bars[i - 12].close) : null,
+      i >= 48 ? pct(bar.close, bars[i - 48].close) : null,
+      marketMove?.(entryMs) ?? null,
+    ],
+  };
+}
+
+/** A slice of the replay: the trades taken (one at a time) and every setup found, with its details. */
+export interface ReplayStep {
+  trades: HistoryTrade[];
+  setups: SetupDetail[];
+}
+
+/**
+ * Replays a market's history a chunk at a time, yielding what it found
+ * every SLICE_BARS candles (so a caller can pause in between). Every setup
+ * is played out under each exit profile and kept with its details; the
+ * trades are those taken one at a time per trader and exit profile, across
+ * chunks. Results still open when the history ends are left out.
  */
 export function* replayHistory(
   symbol: string,
   series: CandleSeries,
   profiles: TrailProfileId[],
   /** The market's bid-ask spread, paid once per trade (share of price). */
-  spreadPct: number = 0
-): Generator<HistoryTrade[]> {
+  spreadPct: number = 0,
+  /** The market's last hour at a time (Bitcoin's or SPY's change, %), for the setup details. */
+  marketMove?: (ms: number) => number | null
+): Generator<ReplayStep> {
   const n = series.t.length;
   /** When each trader's last trade under each profile closes. */
   const busyUntil = new Map<string, number>();
@@ -99,27 +201,71 @@ export function* replayHistory(
     const first = start - CHUNK_WARMUP_BARS;
     const bars = decorateBarsWithIndicators(barsOf(series, first, Math.min(n, end + CHUNK_TAIL_BARS)));
     for (let from = start; from < end; from += SLICE_BARS) {
-      const trades: HistoryTrade[] = [];
+      const step: ReplayStep = { trades: [], setups: [] };
       const found = panelSetupsOnHistory(symbol, bars, undefined, { from: from - first, to: Math.min(end, from + SLICE_BARS) - first, view: HISTORY_VIEW_BARS });
-      for (const { i, setups } of found) {
+      for (const { i, regime, macro, setups } of found) {
         const entryMs = closeMs(bars, i);
         for (const setup of setups) {
           // Not taken live either: its costs would eat too much of the stop.
           if (costsTooBigForStop(symbol, setup.entryPrice, setup.stopLoss, spreadPct)) continue;
+          const detail: SetupDetail = { ...setupDetail(symbol, bars, i, setup, regime, macro, entryMs, marketMove), results: {} };
           for (const profile of profiles) {
-            const key = `${profile}|${setup.name}`;
-            if (entryMs < (busyUntil.get(key) ?? 0)) continue;
             const result = simulateExit(setup, bars, i, profile, spreadPct);
             if (!result || result.open) continue;
+            detail.results[profile] = { r: result.r, bars: result.exitIndex - i };
+            const key = `${profile}|${setup.name}`;
+            if (entryMs < (busyUntil.get(key) ?? 0)) continue;
             const exitMs = closeMs(bars, result.exitIndex);
             busyUntil.set(key, exitMs);
-            trades.push({ trader: setup.name, profile, entryMs, exitMs, r: result.r });
+            step.trades.push({ trader: setup.name, profile, entryMs, exitMs, r: result.r });
           }
+          step.setups.push(detail);
         }
       }
-      yield trades;
+      yield step;
     }
   }
+}
+
+/** The saved setups' columns: when and who, the trend, the time, SETUP_READINGS, then each profile's result and candles held. */
+export function setupCsvHeader(profiles: TrailProfileId[]): string {
+  return ["entryMs", "trader", "direction", "regime", "macro", "minute", "weekday", ...SETUP_READINGS, ...profiles.flatMap((p) => [`r_${p}`, `bars_${p}`])].join(",");
+}
+
+const num = (x: number | null | undefined, digits: number) => (x === null || x === undefined || !Number.isFinite(x) ? "" : String(Number(x.toFixed(digits))));
+
+/** A saved setup as a CSV line (no commas appear in trader names or trends). */
+export function setupCsvRow(d: SetupDetail, profiles: TrailProfileId[]): string {
+  return [
+    d.entryMs,
+    d.trader,
+    d.direction,
+    d.regime,
+    d.macro,
+    d.minute,
+    d.weekday,
+    ...d.readings.map((x) => num(x, 3)),
+    ...profiles.flatMap((p) => [num(d.results[p]?.r, 3), d.results[p]?.bars ?? ""]),
+  ].join(",");
+}
+
+/** A market's change over the last hour (12 closed 5-minute candles) at a time, from its series; null when it has no recent candle. */
+export function lastHourMove(series: CandleSeries): (ms: number) => number | null {
+  return (ms) => {
+    // The last candle closed by `ms`.
+    let lo = 0;
+    let hi = series.t.length - 1;
+    let k = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (series.t[mid] + LAB_INTERVAL_MS <= ms) {
+        k = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    if (k < 12 || ms - (series.t[k] + LAB_INTERVAL_MS) > 30 * 60_000) return null;
+    return pct(series.c[k], series.c[k - 12]);
+  };
 }
 
 /** Results by exit profile, then period ("2025-Q3"), then market and trader (expectancyKey). */

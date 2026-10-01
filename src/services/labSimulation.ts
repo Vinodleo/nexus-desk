@@ -235,15 +235,16 @@ export function panelSetupsOnHistory(
   bars: MarketBar[],
   longOnly: boolean = !isNseSymbol(symbol),
   range: { from?: number; to?: number; view?: number } = {}
-): { i: number; regime: RegimeType; setups: StrategySetup[] }[] {
+): { i: number; regime: RegimeType; macro: RegimeType | "neutral"; setups: StrategySetup[] }[] {
   const macroAt = hourlyRegimeLookup(bars);
-  const out: { i: number; regime: RegimeType; setups: StrategySetup[] }[] = [];
+  const out: { i: number; regime: RegimeType; macro: RegimeType | "neutral"; setups: StrategySetup[] }[] = [];
   /** The last candle each trader (by setup name) is still spaced out until. */
   const spacedUntil = new Map<string, number>();
   const view = range.view ?? Infinity;
   for (let i = Math.max(WARMUP_BARS, range.from ?? 0); i < Math.min(bars.length - 1, range.to ?? Infinity); i++) {
     if (!takesEntriesAt(symbol, (bars[i].timestampMs as number) + LAB_INTERVAL_MS)) continue;
     const regime = classifyRegime(bars[i]);
+    const macro = macroAt((bars[i].timestampMs as number) + LAB_INTERVAL_MS);
     const panel = runPersonaPanel(
       {
         symbol,
@@ -252,7 +253,7 @@ export function panelSetupsOnHistory(
         regime,
         eventWindowActive: false,
         longOnly,
-        macroRegime: macroAt((bars[i].timestampMs as number) + LAB_INTERVAL_MS),
+        macroRegime: macro,
       },
       (setup) => computeMetaLabelScore({ setup, regime, empiricalWinRate: 0.5, sampleCount: 0, similarityScore: 1 }),
       "intraday"
@@ -260,7 +261,7 @@ export function panelSetupsOnHistory(
     const setups = panel.candidates.filter((s) => (spacedUntil.get(s.name) ?? -1) < i);
     if (setups.length === 0) continue;
     for (const s of setups) spacedUntil.set(s.name, i + REPLAY_COOLDOWN_BARS);
-    out.push({ i, regime, setups });
+    out.push({ i, regime, macro, setups });
   }
   return out;
 }

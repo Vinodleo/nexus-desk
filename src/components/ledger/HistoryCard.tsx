@@ -26,6 +26,8 @@ export interface HistoryView {
     fromMs: number;
     toMs: number;
     markets: Record<MarketKind, { done: number; failed: number; skipped: number }>;
+    /** Every setup saved with its readings and results (for machine learning). */
+    setups?: { count: number; bytes: number; full: boolean };
     problems: { symbol: string; note: string }[];
   } | null;
   records: HistoryRecords;
@@ -110,6 +112,13 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
           <span className="text-muted">Starts a few minutes after the server does.</span>
         )}
       </div>
+
+      {view.run?.setups && view.run.setups.count > 0 && (
+        <div className="text-xs text-muted tabular-nums" data-testid="history-setups">
+          Setup details saved for machine learning: {view.run.setups.count.toLocaleString("en-IN")} setups (
+          {(view.run.setups.bytes / 1024 / 1024).toFixed(1)} MB){view.run.setups.full ? ", the most kept: later markets' aren't saved" : ""}
+        </div>
+      )}
 
       <div role="tablist" aria-label="Market" className="grid grid-cols-3 mt-2 p-0.5 rounded-full bg-inset border border-line">
         {MARKET_KINDS.map((m) => (

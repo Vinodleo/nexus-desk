@@ -1,9 +1,19 @@
 import fs from "fs";
 import path from "path";
+import { promisify } from "util";
+import { gzip } from "zlib";
 import { getCoinUniverse } from "../coinUniverse";
 import { fetchCoinHistory, fetchNseHistory, fetchUsHistory, type HistoryFetch } from "./historyCandles";
 import { scannerHeartbeat, stockUniverse, typicalSpread, usUniverse } from "../scanner/scannerService";
-import { addToRecords, replayHistory, type HistoryRecords } from "../../src/services/historyReplay";
+import {
+  addToRecords,
+  lastHourMove,
+  replayHistory,
+  setupCsvHeader,
+  setupCsvRow,
+  type CandleSeries,
+  type HistoryRecords,
+} from "../../src/services/historyReplay";
 import { TRADER_PERSONAS } from "../../src/services/personaEngine";
 import { TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
 import { MAX_COIN_SPREAD } from "../../src/shared/tradeCosts";
@@ -12,9 +22,11 @@ import { isUsSymbol } from "../../src/shared/usMarket";
 
 // The traders over the last two years: each market's 5-minute candles are
 // downloaded and replayed (src/services/historyReplay.ts) in the background,
-// one market at a time, and only the results are kept (on the volume, so a
-// restart carries on from the next market). It runs a while after the
-// server starts, then again weekly, or when the traders change.
+// one market at a time. The candles aren't kept, only the results (on the
+// volume, so a restart carries on from the next market) and every setup
+// found, with its readings and results (history_setups/, a compressed CSV
+// file per market: the data machine learning trains on). It runs a while
+// after the server starts, then again weekly, or when the traders change.
 //
 // The server shares a CPU that only guarantees a small slice of a core
 // (Fly's shared CPU: 6.25%, with a short burst allowance). Using more for
@@ -26,7 +38,7 @@ import { isUsSymbol } from "../../src/shared/usMarket";
 
 export const HISTORY_DAYS = 730;
 /** Bump when the replay changes enough that old results no longer compare. */
-export const HISTORY_VERSION = 2;
+export const HISTORY_VERSION = 3;
 /** Results this old are replayed again. */
 export const RERUN_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Share of a core the replay uses on average. */
@@ -42,7 +54,20 @@ const MIN_CANDLES = 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PROFILES = Object.keys(TRAIL_PROFILES) as TrailProfileId[];
 
-const file = () => path.join(process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data"), "history_results.json");
+const dataDir = () => process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
+const file = () => path.join(dataDir(), "history_results.json");
+/** Each market's setups, one compressed CSV file each. */
+export const setupsDir = () => path.join(dataDir(), "history_setups");
+const setupsFile = (symbol: string) => path.join(setupsDir(), `${symbol.replace(/[^A-Za-z0-9]+/g, "_")}.csv.gz`);
+/**
+ * The setup files stop growing past this, so they can never fill the volume
+ * (1 GB, shared with everything else the server keeps). Two years of every
+ * market should take well under it.
+ */
+export const MAX_SETUP_BYTES = 300 * 1024 * 1024;
+/** The markets whose last hour each saved setup records: Bitcoin for coins, SPY for US stocks. */
+const LEADERS = { crypto: "BTC/INR", us: "SPY.US" } as const;
+const gzipAsync = promisify(gzip);
 
 export interface HistoryMarket {
   status: "done" | "failed" | "skipped";
@@ -52,6 +77,9 @@ export interface HistoryMarket {
   lastMs?: number;
   /** Why it failed or was skipped. */
   note?: string;
+  /** Setups saved for it, and the size of its file (bytes). */
+  setups?: number;
+  setupBytes?: number;
 }
 
 export interface HistoryRun {
@@ -85,14 +113,25 @@ export interface HistoryDeps {
 const realDeps: HistoryDeps = {
   now: () => Date.now(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  symbols: async () => [...(await getCoinUniverse()).coins.map((c) => c.symbol), ...usUniverse(), ...stockUniverse()],
+  // Bitcoin and SPY first: the other coins' and US stocks' setups record their last hour.
+  symbols: async () => [
+    ...leaderFirst((await getCoinUniverse()).coins.map((c) => c.symbol), LEADERS.crypto),
+    ...leaderFirst(usUniverse(), LEADERS.us),
+    ...stockUniverse(),
+  ],
   download: (symbol, fromMs, toMs) =>
     isUsSymbol(symbol) ? fetchUsHistory(symbol, fromMs, toMs) : isNseSymbol(symbol) ? fetchNseHistory(symbol, fromMs, toMs) : fetchCoinHistory(symbol, fromMs, toMs),
   spread: typicalSpread,
   scannerBusy: () => scannerHeartbeat().cycleRunning,
 };
 
+function leaderFirst(symbols: string[], leader: string): string[] {
+  return symbols.includes(leader) ? [leader, ...symbols.filter((s) => s !== leader)] : symbols;
+}
+
 let run: HistoryRun | null = null;
+/** Bitcoin's and SPY's candles from this run, for the last-hour reading (gone after a restart: then left blank). */
+const leaderSeries = new Map<string, CandleSeries>();
 let phase: HistoryPhase = "idle";
 let current: string | null = null;
 let total = 0;
@@ -155,6 +194,8 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
   const stopped = () => gen !== generation;
   phase = "starting";
   if (fresh || !run) {
+    fs.rmSync(setupsDir(), { recursive: true, force: true });
+    leaderSeries.clear();
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
     run = { version: HISTORY_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: toMs - HISTORY_DAYS * DAY_MS, toMs, traders: traderIds(), markets: {}, records: {} };
     saveHistory();
@@ -194,22 +235,29 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
       return true;
     }
     phase = "replaying";
+    // Bitcoin's and SPY's closes are kept for the other markets' last-hour reading.
+    if (symbol === LEADERS.crypto || symbol === LEADERS.us) leaderSeries.set(symbol, { ...series, o: [], h: [], l: [], v: [] });
+    const leader = leaderSeries.get(isUsSymbol(symbol) ? LEADERS.us : isNseSymbol(symbol) ? "" : LEADERS.crypto);
     // This market's results join the others only once it's done, so a stop part-way leaves none of it.
     const records: HistoryRecords = {};
-    const replay = replayHistory(symbol, series, PROFILES, spread);
+    const rows: string[] = [];
+    const replay = replayHistory(symbol, series, PROFILES, spread, leader ? lastHourMove(leader) : undefined);
     for (;;) {
       const started = deps.now();
       const step = replay.next();
       const took = deps.now() - started;
       if (step.done) break;
-      addToRecords(records, symbol, step.value);
+      addToRecords(records, symbol, step.value.trades);
+      for (const setup of step.value.setups) rows.push(setupCsvRow(setup, PROFILES));
       // Rest so the replay averages CPU_SHARE of a core, and let a scan cycle finish first.
       await deps.sleep(Math.max(1, Math.round(took * (1 / CPU_SHARE - 1))));
       while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
       if (stopped()) return false;
     }
+    const saved = await saveSetups(r, symbol, rows, stopped);
+    if (stopped()) return false;
     mergeRecords(r.records, records);
-    r.markets[symbol] = market;
+    r.markets[symbol] = { ...market, ...saved };
     saveHistory();
     return true;
   };
@@ -230,6 +278,26 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
   r.finishedAt = deps.now();
   saveHistory();
   console.log(`[History] Replayed ${Object.values(r.markets).filter((m) => m.status === "done").length} of ${symbols.length} markets over ${HISTORY_DAYS} days.`);
+}
+
+/** Bytes the run's setup files take so far. */
+const setupBytesOf = (r: HistoryRun) => Object.values(r.markets).reduce((n, m) => n + (m.setupBytes ?? 0), 0);
+
+/** Writes a market's setups (compressed CSV), unless the files have reached MAX_SETUP_BYTES. */
+async function saveSetups(r: HistoryRun, symbol: string, rows: string[], stopped: () => boolean): Promise<{ setups: number; setupBytes: number }> {
+  if (rows.length === 0 || setupBytesOf(r) >= MAX_SETUP_BYTES) return { setups: 0, setupBytes: 0 };
+  try {
+    // Compressed off the main thread; a run replaced meanwhile doesn't write into the new one's files.
+    const data = await gzipAsync(Buffer.from(`${setupCsvHeader(PROFILES)}\n${rows.join("\n")}\n`));
+    if (stopped()) return { setups: 0, setupBytes: 0 };
+    fs.mkdirSync(setupsDir(), { recursive: true });
+    fs.writeFileSync(`${setupsFile(symbol)}.tmp`, data);
+    fs.renameSync(`${setupsFile(symbol)}.tmp`, setupsFile(symbol));
+    return { setups: rows.length, setupBytes: data.length };
+  } catch (err) {
+    console.warn(`[History] Couldn't save ${symbol}'s setups:`, err);
+    return { setups: 0, setupBytes: 0 };
+  }
 }
 
 function mergeRecords(into: HistoryRecords, add: HistoryRecords): void {
@@ -300,6 +368,11 @@ export function historyView() {
           fromMs: run.fromMs,
           toMs: run.toMs,
           markets: byMarket,
+          setups: {
+            count: Object.values(markets).reduce((n, m) => n + (m.setups ?? 0), 0),
+            bytes: setupBytesOf(run),
+            full: setupBytesOf(run) >= MAX_SETUP_BYTES,
+          },
           problems: Object.entries(markets)
             .filter(([, m]) => m.status !== "done")
             .slice(0, 12)
@@ -313,6 +386,7 @@ export function historyView() {
 /** Test hooks. */
 export function _resetHistoryJob(): void {
   generation++;
+  leaderSeries.clear();
   run = null;
   phase = "idle";
   current = null;

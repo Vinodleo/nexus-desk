@@ -92,8 +92,8 @@ every trade in a market gets the same amount and risk (`marketLimits.ts`:
 
 A model trained on every setup's features to predict wins. It needs far more varied
 data than 30 days of live records (it would memorise that month's luck). The two-year
-replay can supply it: keep each replayed setup's readings with its result, train on the
-older part, and use the model only if it beats the scoring table on the latest 6 months,
+replay supplies it: it saves every replayed setup with its readings and its result under
+each trailing stop (`history_setups/` on the server, 1 Oct). Train on the older part, and use the model only if it beats the scoring table on the latest 6 months,
 which it never saw, then on 2 weeks of paper trading where it scores but decides nothing.
 Look at the exits first (the two-year replay compares the trailing stops): a model can
 only pick the least-bad setups if the exits cut wins short.

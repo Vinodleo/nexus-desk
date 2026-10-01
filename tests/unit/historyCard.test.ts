@@ -26,6 +26,7 @@ const view = (over: Record<string, unknown> = {}) => ({
     fromMs: Date.parse("2024-10-01T00:00:00Z"),
     toMs: Date.parse("2026-10-01T00:00:00Z"),
     markets: { crypto: { done: 2, failed: 1, skipped: 0 }, us: { done: 0, failed: 0, skipped: 0 }, nse: { done: 0, failed: 0, skipped: 0 } },
+    setups: { count: 1234567, bytes: 52 * 1024 * 1024, full: false },
     problems: [{ symbol: "WIF/INR", note: "WIFUSDT isn't on Binance" }],
   },
   records: {
@@ -57,6 +58,7 @@ describe("Traders over two years", () => {
     expect(exits.textContent).toContain("Patient20 setups · 60% won · +0.20R");
     expect(screen.getByTestId("history-status").textContent).toBe("1 Oct 2024 – 1 Oct 2026 · updated 1 Oct 2026");
     expect(screen.getByText(/WIF\/INR \(WIFUSDT isn't on Binance\)/)).toBeTruthy();
+    expect(screen.getByTestId("history-setups").textContent).toBe("Setup details saved for machine learning: 12,34,567 setups (52.0 MB)");
     expect(screen.getByRole("tab", { name: "Coins · 2" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "US · 0" }));
     expect(screen.getByText("No results here.")).toBeTruthy();

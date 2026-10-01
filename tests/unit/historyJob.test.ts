@@ -16,7 +16,15 @@ vi.stubEnv("NEXUS_DATA_DIR", dataDir);
 vi.spyOn(console, "log").mockImplementation(() => {});
 
 const job = await import("../../server/history/historyJob");
-const { CPU_SHARE, HISTORY_DAYS, HISTORY_VERSION, RERUN_AFTER_MS, historyView, loadHistory, needsRun, startHistoryRun, _historyRun, _resetHistoryJob } = job;
+const { CPU_SHARE, HISTORY_DAYS, HISTORY_VERSION, MAX_SETUP_BYTES, RERUN_AFTER_MS, historyView, loadHistory, needsRun, setupsDir, startHistoryRun, _historyRun, _resetHistoryJob } = job;
+const { gunzipSync } = await import("zlib");
+
+/** A market's saved setups: the header's columns, and each row as named fields. */
+function savedSetups(file: string): Record<string, string>[] {
+  const [header, ...lines] = gunzipSync(fs.readFileSync(path.join(setupsDir(), file))).toString().trim().split("\n");
+  const cols = header.split(",");
+  return lines.map((line) => Object.fromEntries(line.split(",").map((v, k) => [cols[k], v])));
+}
 type HistoryDeps = import("../../server/history/historyJob").HistoryDeps;
 
 const FIVE = 5 * 60_000;
@@ -66,6 +74,7 @@ function fakes(over: Partial<HistoryDeps> = {}, startIso = "2026-10-01T12:00:00Z
 beforeEach(() => {
   _resetHistoryJob();
   fs.rmSync(path.join(dataDir, "history_results.json"), { force: true });
+  fs.rmSync(path.join(dataDir, "history_setups"), { recursive: true, force: true });
 });
 
 afterAll(() => {
@@ -175,6 +184,55 @@ describe("the history job", () => {
     expect((await recordsWith(undefined)).records).toEqual(atLimit.records);
     // A narrower one is charged as it is.
     expect((await recordsWith(0.0005)).records).not.toEqual(atLimit.records);
+  });
+
+  it("saves every setup with its readings and results, a compressed file per market", async () => {
+    const { deps } = fakes({ symbols: async () => ["BTC/INR", "ETH/INR", "RELIANCE"] });
+    await startHistoryRun(false, deps);
+    const run = _historyRun()!;
+    expect(fs.readdirSync(setupsDir()).sort()).toEqual(["BTC_INR.csv.gz", "ETH_INR.csv.gz", "RELIANCE.csv.gz"]);
+    const eth = savedSetups("ETH_INR.csv.gz");
+    expect(eth.length).toBe(run.markets["ETH/INR"].setups);
+    expect(eth.length).toBeGreaterThan(0);
+    expect(run.markets["ETH/INR"].setupBytes).toBe(fs.statSync(path.join(setupsDir(), "ETH_INR.csv.gz")).size);
+    for (const row of eth) {
+      expect(Number(row.entryMs)).toBeGreaterThan(0);
+      expect(row.trader).not.toBe("");
+      expect(Number.isFinite(Number(row.rsi))).toBe(true);
+      // Bitcoin's last hour, from its candles replayed first.
+      expect(row.market1hPct).not.toBe("");
+    }
+    expect(eth.some((row) => row.r_tight !== "" && row.bars_tight !== "")).toBe(true);
+    // Indian stocks have no market leader here.
+    expect(savedSetups("RELIANCE.csv.gz").every((row) => row.market1hPct === "")).toBe(true);
+    expect(historyView().run!.setups).toEqual({
+      count: run.markets["BTC/INR"].setups! + run.markets["ETH/INR"].setups! + run.markets.RELIANCE.setups!,
+      bytes: ["BTC/INR", "ETH/INR", "RELIANCE"].reduce((n, s) => n + run.markets[s].setupBytes!, 0),
+      full: false,
+    });
+
+    // A fresh run starts its files again.
+    const again = fakes({ symbols: async () => ["ETH/INR"] });
+    await startHistoryRun(true, again.deps);
+    expect(fs.readdirSync(setupsDir())).toEqual(["ETH_INR.csv.gz"]);
+  });
+
+  it("stops saving setups once their files reach the cap, so they can't fill the disk", async () => {
+    const first = fakes({ symbols: async () => ["BTC/INR"] });
+    await startHistoryRun(false, first.deps);
+    // As if the files so far had reached the cap.
+    const saved = { ..._historyRun()!, finishedAt: null };
+    saved.markets["BTC/INR"] = { ...saved.markets["BTC/INR"], setupBytes: MAX_SETUP_BYTES };
+    fs.writeFileSync(path.join(dataDir, "history_results.json"), JSON.stringify(saved));
+    _resetHistoryJob();
+    loadHistory();
+    const later = fakes({ symbols: async () => ["BTC/INR", "ETH/INR"] });
+    await startHistoryRun(false, later.deps);
+    const run = _historyRun()!;
+    // Still replayed, its results counted; its setups not saved.
+    expect(run.markets["ETH/INR"]).toMatchObject({ status: "done", setups: 0, setupBytes: 0 });
+    expect(fs.existsSync(path.join(setupsDir(), "ETH_INR.csv.gz"))).toBe(false);
+    expect(historyView().run!.setups.full).toBe(true);
   });
 
   it("carries on after a restart from the next market", async () => {
