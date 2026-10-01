@@ -78,7 +78,7 @@ export function payoffSummary(trades: HistoricalTrade[]) {
   };
 }
 
-const rSigned = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`;
+export const rSigned = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`;
 
 // How far trades went for and against you before they closed, in R
 // (multiples of what each risked). It shows whether the exits fit how
@@ -217,7 +217,7 @@ const Rows: React.FC<{ title: string; rows: BreakdownRow[]; limit?: number }> = 
   );
 };
 
-const MARKET_TITLE = { crypto: "Coins", nse: "Indian stocks", us: "US stocks" } as const;
+export const MARKET_TITLE = { crypto: "Coins", nse: "Indian stocks", us: "US stocks" } as const;
 /** The same, keyed as the per-market limits are. */
 const MARKET_TITLE_BY_KEY = { coins: MARKET_TITLE.crypto, stocks: MARKET_TITLE.nse, us: MARKET_TITLE.us } as const;
 
@@ -466,7 +466,7 @@ function useJudgedMoves(table: EdgeTable | null): Map<string, number> {
   return moves;
 }
 
-const MARKET_TAB = { crypto: "Coins", nse: "India", us: "US" } as const;
+export const MARKET_TAB = { crypto: "Coins", nse: "India", us: "US" } as const;
 type EdgeMarket = EdgeRow["market"];
 
 // Replay against real fills. The records replay every setup on candles; your

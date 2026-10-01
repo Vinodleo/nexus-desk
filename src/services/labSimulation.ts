@@ -226,25 +226,29 @@ export function takesEntriesAt(symbol: string, ms: number): boolean {
  * The traders see every candle up to the one they're judging, as they do
  * live: most read only the last 15, but the opening range and late-day
  * momentum traders read the session itself (its opening candle, earlier
- * days' openings, yesterday's close).
+ * days' openings, yesterday's close). On long histories, `view` caps that at
+ * the candles the server holds live, and `from`/`to` judge only part of
+ * `bars` (the rest is warm-up before, and room for exits after).
  */
 export function panelSetupsOnHistory(
   symbol: string,
   bars: MarketBar[],
-  longOnly: boolean = !isNseSymbol(symbol)
+  longOnly: boolean = !isNseSymbol(symbol),
+  range: { from?: number; to?: number; view?: number } = {}
 ): { i: number; regime: RegimeType; setups: StrategySetup[] }[] {
   const macroAt = hourlyRegimeLookup(bars);
   const out: { i: number; regime: RegimeType; setups: StrategySetup[] }[] = [];
   /** The last candle each trader (by setup name) is still spaced out until. */
   const spacedUntil = new Map<string, number>();
-  for (let i = WARMUP_BARS; i < bars.length - 1; i++) {
+  const view = range.view ?? Infinity;
+  for (let i = Math.max(WARMUP_BARS, range.from ?? 0); i < Math.min(bars.length - 1, range.to ?? Infinity); i++) {
     if (!takesEntriesAt(symbol, (bars[i].timestampMs as number) + LAB_INTERVAL_MS)) continue;
     const regime = classifyRegime(bars[i]);
     const panel = runPersonaPanel(
       {
         symbol,
         timeframe: LAB_INTERVAL,
-        bars: bars.slice(0, i + 1),
+        bars: bars.slice(Math.max(0, i + 1 - view), i + 1),
         regime,
         eventWindowActive: false,
         longOnly,

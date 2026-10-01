@@ -8,6 +8,7 @@ import { conditionBreakdown } from "../../src/services/conditionStats";
 import { MIN_TRADING_ACTIVITY } from "../../src/services/tradingActivity";
 import { expectancyRows, MIN_MARKET_TRADES, RECORD_DAYS } from "../../src/services/exitExpectancy";
 import { getEvents } from "../eventCalendar";
+import { historyView, startHistoryRun } from "../history/historyJob";
 import { PAUSE_AFTER_MS, eventWindowAt } from "../../src/shared/eventCalendar";
 
 // The app's side of the server scanner: it sends its desk settings, and
@@ -64,6 +65,17 @@ router.get("/api/scanner/exit-edge", (req: Request, res: Response) => {
     activity,
     conditions,
   });
+});
+
+// The traders over the last two years (the Lab): progress, and the results so far.
+router.get("/api/history", (_req: Request, res: Response) => {
+  res.json({ success: true, ...historyView() });
+});
+
+// Replay the two years again from the start (after a change to the traders or exits).
+router.post("/api/history/run", (_req: Request, res: Response) => {
+  void startHistoryRun(true);
+  res.json({ success: true, ...historyView() });
 });
 
 // "Scan now": every coin, immediately.
