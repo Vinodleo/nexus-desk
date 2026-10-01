@@ -92,14 +92,14 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
       <div className="text-xs text-muted leading-relaxed">
         Every trader's setups on the last two years of 5-minute candles, played out with your {TRAIL_PROFILES[profile].label.toLowerCase()} trailing
         stop, the half banked at +1R and the time limit, after fees and spreads, one at a time. Coins use Binance's history (in dollars:
-        results in R come out the same). It runs on the server in the background, slowly so live scanning isn't slowed: about half a
-        day, then again each week.
+        results in R come out the same), charged their CoinDCX spread up to 0.2%, the most the desk trades at. It runs on the server in the
+        background, slowly so live scanning isn't slowed: about half a day, then again each week.
       </div>
 
       <div className="text-xs tabular-nums mt-1" data-testid="history-status">
         {view.running ? (
           <span className="text-ink">
-            Replaying: {view.finished} of {view.total} markets done
+            Replaying: {view.finished} of {view.total} markets checked
             {view.current && ` · ${PHASE_LABEL[view.phase] || "on"} ${view.current}`}
           </span>
         ) : view.run?.finishedAt ? (

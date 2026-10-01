@@ -158,6 +158,25 @@ describe("the history job", () => {
     ]);
   });
 
+  it("replays a coin whatever its spread now, charging at most the 0.2% the desk trades at", async () => {
+    const recordsWith = async (spread: number | undefined) => {
+      _resetHistoryJob();
+      fs.rmSync(path.join(dataDir, "history_results.json"), { force: true });
+      const { deps } = fakes({ symbols: async () => ["BTC/INR"], spread: () => spread });
+      await startHistoryRun(false, deps);
+      return _historyRun()!;
+    };
+    // Wider than the desk trades at right now: still replayed, as if traded at 0.2%.
+    const wide = await recordsWith(0.01);
+    expect(wide.markets["BTC/INR"].status).toBe("done");
+    const atLimit = await recordsWith(0.002);
+    expect(wide.records).toEqual(atLimit.records);
+    // Not read yet: charged the 0.2% too.
+    expect((await recordsWith(undefined)).records).toEqual(atLimit.records);
+    // A narrower one is charged as it is.
+    expect((await recordsWith(0.0005)).records).not.toEqual(atLimit.records);
+  });
+
   it("carries on after a restart from the next market", async () => {
     const first = fakes({ symbols: async () => ["BTC/INR"] });
     await startHistoryRun(false, first.deps);

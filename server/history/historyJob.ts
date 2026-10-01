@@ -6,7 +6,7 @@ import { scannerHeartbeat, stockUniverse, typicalSpread, usUniverse } from "../s
 import { addToRecords, replayHistory, type HistoryRecords } from "../../src/services/historyReplay";
 import { TRADER_PERSONAS } from "../../src/services/personaEngine";
 import { TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
-import { spreadTooWide } from "../../src/shared/tradeCosts";
+import { MAX_COIN_SPREAD } from "../../src/shared/tradeCosts";
 import { isNseOpen, isNseSymbol } from "../../src/shared/nse";
 import { isUsSymbol } from "../../src/shared/usMarket";
 
@@ -26,7 +26,7 @@ import { isUsSymbol } from "../../src/shared/usMarket";
 
 export const HISTORY_DAYS = 730;
 /** Bump when the replay changes enough that old results no longer compare. */
-export const HISTORY_VERSION = 1;
+export const HISTORY_VERSION = 2;
 /** Results this old are replayed again. */
 export const RERUN_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Share of a core the replay uses on average. */
@@ -130,6 +130,18 @@ export function needsRun(saved: HistoryRun | null, now: number): boolean {
   return now - (saved.finishedAt ?? saved.startedAt) > RERUN_AFTER_MS;
 }
 
+/**
+ * The spread a market's replayed trades pay. Today's spread doesn't decide
+ * whether a coin's two years are replayed: the desk doesn't trade a coin
+ * while its spread is wider than MAX_COIN_SPREAD, so its trades pay at most
+ * that, and that's what it's charged when wider or not read yet (a server
+ * just restarted has read few). Stocks pay theirs, as live.
+ */
+export function historySpread(symbol: string, read: number | undefined): number {
+  if (isUsSymbol(symbol) || isNseSymbol(symbol)) return read ?? 0;
+  return Math.min(read ?? MAX_COIN_SPREAD, MAX_COIN_SPREAD);
+}
+
 /** NSE is open, or within 15 minutes of it (the scanner's last fetch comes just after the close). */
 const nseBusy = (now: number) => isNseOpen(now) || isNseOpen(now - 15 * 60_000) || isNseOpen(now + 15 * 60_000);
 
@@ -173,8 +185,8 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
       return true;
     }
     const { series } = fetched;
-    const spread = deps.spread(symbol) ?? 0;
-    const skip = series.t.length < MIN_CANDLES ? `Only ${series.t.length} candles` : spreadTooWide(symbol, spread) ? "Its spread is too wide to trade" : null;
+    const spread = historySpread(symbol, deps.spread(symbol));
+    const skip = series.t.length < MIN_CANDLES ? `Only ${series.t.length} candles` : null;
     const market: HistoryMarket = { status: skip ? "skipped" : "done", candles: series.t.length, firstMs: series.t[0], lastMs: series.t[series.t.length - 1] };
     if (skip) {
       r.markets[symbol] = { ...market, note: skip };
