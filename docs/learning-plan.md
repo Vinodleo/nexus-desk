@@ -24,6 +24,10 @@ enough setups and checks itself on data it wasn't picked from.
   pulled toward no effect.
 - **The Lab:** tunes desk-wide settings on coin history; a promoted result raises the
   minimum confidence score (`requiredMetaConfidence` in `marketScannerService.ts`).
+- **Traders over two years (Lab, 1 Oct):** the server replays every trader on two years
+  of 5-minute candles in every market, under all four trailing stops (`server/history/`,
+  `src/services/historyReplay.ts`). It judges traders and exits on years, not 30 days,
+  without waiting; the steps below can be tested on it before they go live.
 
 ## 1. Condition filters (first)
 
@@ -86,6 +90,10 @@ every trade in a market gets the same amount and risk (`marketLimits.ts`:
 
 ## 4. A full machine-learning model (not yet)
 
-A model trained on every setup's features to predict wins. It needs hundreds of trades
-per trader; today they have 5 to 30, so it would memorise luck. Revisit only when the
-records are much larger.
+A model trained on every setup's features to predict wins. It needs far more varied
+data than 30 days of live records (it would memorise that month's luck). The two-year
+replay can supply it: keep each replayed setup's readings with its result, train on the
+older part, and use the model only if it beats the scoring table on the latest 6 months,
+which it never saw, then on 2 weeks of paper trading where it scores but decides nothing.
+Look at the exits first (the two-year replay compares the trailing stops): a model can
+only pick the least-bad setups if the exits cut wins short.

@@ -14,6 +14,7 @@ import { liveMarketStream } from "../../services/liveMarketStreamService";
 import { Card } from "./ui";
 import { GrowBar, staggerDelay } from "./motion";
 import { ExitSettings } from "./ExitSettings";
+import { HistoryCard } from "./HistoryCard";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
 
@@ -192,6 +193,8 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
         <span className="w-2 h-2 rounded-full bg-warn" />
         Sandbox · nothing here places trades until you promote it
       </div>
+
+      <HistoryCard trailProfile={trailProfile} />
 
       <Card aria-label="Model in use" className="flex flex-col gap-2.5">
         <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em]">In use</div>

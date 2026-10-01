@@ -45,6 +45,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - Records are pooled across markets.
   - The card sets each trader's real paper trades against the replay, per market (`realByTrader`, `replayVsReal`).
   - Stock setups count only in their entry hours (`takesEntriesAt` in `labSimulation.ts`).
+- **Traders over two years (Lab):** `server/history/` downloads two years of 5-minute candles (coins from Binance,
+  US from Alpaca, Nifty from Angel One outside NSE hours) and replays every trader under all four trailing stops
+  (`src/services/historyReplay.ts`), keeping only the results (`history_results.json`). It runs weekly in the background
+  at about 3% of a core (`CPU_SHARE`): Fly's shared CPU guarantees only 6.25%, and draining its burst allowance slows the scanner.
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
   - It, the win-chance calibration and the trade memory count each trader's move once
     (`oneShadowAtATime` in `shadowTracker.ts`), not once per candle a setup stayed valid.
