@@ -72,7 +72,7 @@ describe("Traders over two years", () => {
   it("shows progress while it runs, and can replay again once it's done", async () => {
     vi.mocked(apiFetch).mockResolvedValueOnce(reply(view({ running: true, phase: "waiting_for_nse", current: "RELIANCE", finished: 40, total: 131 })));
     render(createElement(HistoryCard, { trailProfile: "tight" }));
-    expect((await screen.findByTestId("history-status")).textContent).toBe("Replaying: 40 of 131 markets done · waiting for NSE to close RELIANCE");
+    expect((await screen.findByTestId("history-status")).textContent).toBe("Replaying: 40 of 131 markets checked · waiting for NSE to close RELIANCE");
     expect(screen.queryByRole("button", { name: "Replay again" })).toBeNull();
     cleanup();
 
