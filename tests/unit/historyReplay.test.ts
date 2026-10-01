@@ -11,7 +11,11 @@ import {
   historyRows,
   profileTotals,
   quarterOf,
+  lastHourMove,
   replayHistory,
+  setupCsvHeader,
+  setupCsvRow,
+  SETUP_READINGS,
   type CandleSeries,
   type HistoryRecords,
   type HistoryTrade,
@@ -44,10 +48,10 @@ function coinSeries(count: number, seed = 11): CandleSeries {
 describe("the history replay", () => {
   it("replays a chunk at a time, one trade at a time per trader under each exit profile", () => {
     const series = coinSeries(CHUNK_WARMUP_BARS + 2 * CHUNK_BARS + 400);
-    const slices: HistoryTrade[][] = [...replayHistory("BTC/INR", series, [...PROFILES], 0.0005)];
+    const slices = [...replayHistory("BTC/INR", series, [...PROFILES], 0.0005)];
     // It pauses every SLICE_BARS candles: 4 + 4 + 1 times.
     expect(slices.length).toBe(9);
-    const trades = slices.flat();
+    const trades = slices.flatMap((s) => s.trades);
     expect(new Set(trades.map((t) => t.profile))).toEqual(new Set(PROFILES));
     const firstJudged = series.t[CHUNK_WARMUP_BARS];
     const end = series.t[series.t.length - 1] + FIVE;
@@ -102,9 +106,51 @@ describe("the history replay", () => {
     // Today's opening lands in the second chunk; the earlier sessions it needs are in the first.
     const opening = bars.length - 75;
     expect(opening).toBeGreaterThan(CHUNK_WARMUP_BARS + CHUNK_BARS);
-    const trades = [...replayHistory("RELIANCE", series, ["tight"])].flat();
+    const trades = [...replayHistory("RELIANCE", series, ["tight"])].flatMap((s) => s.trades);
     const nora = trades.find((t) => t.trader === "Nora Opening Range");
     expect(nora?.entryMs).toBe(bars[opening + 2].timestampMs! + FIVE);
+  });
+
+  it("keeps every setup with what was known when it came and how it played out under each exit profile", () => {
+    const series = coinSeries(CHUNK_WARMUP_BARS + CHUNK_BARS + 400);
+    // Bitcoin rose 1% over the last hour, whenever asked.
+    const steps = [...replayHistory("ETH/INR", series, [...PROFILES], 0.0005, () => 1)];
+    const setups = steps.flatMap((s) => s.setups);
+    const trades = steps.flatMap((s) => s.trades);
+    // Every setup is kept, including those a trader was too busy to take.
+    expect(setups.length).toBeGreaterThan(trades.filter((t) => t.profile === "tight").length);
+    for (const d of setups) {
+      expect(d.readings).toHaveLength(SETUP_READINGS.length);
+      expect(d.readings[SETUP_READINGS.indexOf("market1hPct")]).toBe(1);
+      expect(d.readings[SETUP_READINGS.indexOf("stopPct")]).toBeGreaterThan(0);
+      expect(d.minute).toBe(Math.floor(d.entryMs / 60_000) % 1440);
+      expect(d.direction).toBe("LONG");
+    }
+    // Each trade taken is one of the setups, with the same result.
+    for (const t of trades.slice(0, 50)) {
+      const d = setups.find((x) => x.entryMs === t.entryMs && x.trader === t.trader)!;
+      expect(d.results[t.profile]!.r).toBe(t.r);
+      expect(d.results[t.profile]!.bars).toBe((t.exitMs - t.entryMs) / FIVE);
+    }
+    // As CSV: a header, then one line per setup with as many fields.
+    const header = setupCsvHeader([...PROFILES]).split(",");
+    expect(header.slice(0, 7)).toEqual(["entryMs", "trader", "direction", "regime", "macro", "minute", "weekday"]);
+    expect(header.slice(-2)).toEqual(["r_fixed", "bars_fixed"]);
+    const row = setupCsvRow(setups[0], [...PROFILES]).split(",");
+    expect(row).toHaveLength(header.length);
+    expect(Number(row[0])).toBe(setups[0].entryMs);
+    expect(row[1]).toBe(setups[0].trader);
+  });
+
+  it("reads a market's last hour from its candles", () => {
+    const series = coinSeries(100);
+    const move = lastHourMove(series);
+    const k = 50;
+    // Asked when candle k has just closed: its close against the one 12 candles before.
+    expect(move(series.t[k] + FIVE)).toBeCloseTo((series.c[k] / series.c[k - 12] - 1) * 100, 9);
+    // Before 13 candles, or long after the last one: not known.
+    expect(move(series.t[5] + FIVE)).toBeNull();
+    expect(move(series.t[99] + FIVE + 3_600_000)).toBeNull();
   });
 
   it("shows the traders only the candles the server holds live", () => {

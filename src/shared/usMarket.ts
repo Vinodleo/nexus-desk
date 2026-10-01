@@ -53,10 +53,24 @@ const nyFormat = new Intl.DateTimeFormat("en-US", {
 });
 const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
+type NyParts = Readonly<{ day: string; weekday: number; minutes: number }>;
+// Intl's formatToParts takes a few microseconds, and the traders' replays ask
+// for the same minutes over and over (every candle of every trade checks the
+// 3:50 close), so each minute's answer is kept: the last NY_CACHE_MAX of them.
+const nyCache = new Map<number, NyParts>();
+const NY_CACHE_MAX = 200_000;
+
 /** The New York day, weekday and minutes after midnight (daylight saving included). */
-export function nyParts(ms: number): { day: string; weekday: number; minutes: number } {
-  const p = Object.fromEntries(nyFormat.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
-  return { day: `${p.year}-${p.month}-${p.day}`, weekday: WEEKDAYS[p.weekday] ?? 0, minutes: Number(p.hour) * 60 + Number(p.minute) };
+export function nyParts(ms: number): NyParts {
+  const minute = Math.floor(ms / 60_000);
+  let parts = nyCache.get(minute);
+  if (!parts) {
+    const p = Object.fromEntries(nyFormat.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+    parts = { day: `${p.year}-${p.month}-${p.day}`, weekday: WEEKDAYS[p.weekday] ?? 0, minutes: Number(p.hour) * 60 + Number(p.minute) };
+    if (nyCache.size >= NY_CACHE_MAX) nyCache.clear();
+    nyCache.set(minute, parts);
+  }
+  return parts;
 }
 
 /** The US session is on (9:30 to 4:00 New York time on a weekday). Holidays aren't known here: no new candles come then. */
