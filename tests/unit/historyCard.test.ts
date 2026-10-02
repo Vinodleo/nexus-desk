@@ -78,6 +78,41 @@ describe("Traders over two years", () => {
     expect(screen.getByText("No results here.")).toBeTruthy();
   });
 
+  it("checks the coins against a list fixed in advance, and shows each market's own result on slower candles", async () => {
+    const slow = { "1h": {}, "1d": { tight: { "2026-Q3": { "crypto:Marcus Swing Trend": rec(40, 21, 18, -8) } } } };
+    const slowByMarket = {
+      "BTC/INR": { "1d": { tight: rec(10, 6, 6, -2), patient: rec(10, 2, 1, -8) } },
+      "PEPE/INR": { "1d": { tight: rec(10, 3, 2, -6) } },
+      "WIF/INR": { "1d": { tight: rec(20, 12, 10, -4) } },
+      // No setups with your trailing stop: left out.
+      "ETH/INR": { "1d": { patient: rec(5, 3, 2, -1) } },
+      "AAPL.US": { "1d": { tight: rec(5, 3, 2, -1) } },
+    };
+    vi.mocked(apiFetch).mockResolvedValue(reply(view({ slow, slowByMarket })));
+    render(createElement(HistoryCard, { trailProfile: "tight" }));
+    await screen.findByTestId("history-traders");
+    // Not on 5-minute candles.
+    expect(screen.queryByTestId("history-markets")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "1 day" }));
+    const box = screen.getByTestId("history-markets");
+    // Bitcoin and Pepe are on the fixed list (+0.40R and −0.40R), WIF is one of today's picks.
+    expect(box.textContent).toContain("Coin check: a list fixed in advance against today's picks");
+    expect(box.textContent).toContain("Fixed list · 2 coins20 setups · 45% won · +0.00R");
+    expect(box.textContent).toContain("Today's picks · 1 coin20 setups · 60% won · +0.30R");
+    expect(box.textContent).toContain("Each coin (3)");
+    expect(within(box).getAllByRole("listitem", { hidden: true }).map((li) => li.textContent)).toEqual([
+      "BTCfixed list10 setups · +0.40R",
+      "WIF20 setups · +0.30R",
+      "PEPEfixed list10 setups · −0.40R",
+    ]);
+    // US stocks: each stock, no coin check.
+    fireEvent.click(screen.getByRole("tab", { name: "US · 0" }));
+    const us = screen.getByTestId("history-markets");
+    expect(us.textContent).not.toContain("Coin check");
+    expect(us.textContent).toContain("Each stock (1)");
+    expect(within(us).getAllByRole("listitem", { hidden: true }).map((li) => li.textContent)).toEqual(["AAPL5 setups · +0.20R"]);
+  });
+
   it("shows nothing for a reply without results (an older server)", async () => {
     vi.mocked(apiFetch).mockResolvedValue(reply({ success: true, events: [] }));
     const { container } = render(createElement(HistoryCard, { trailProfile: "tight" }));

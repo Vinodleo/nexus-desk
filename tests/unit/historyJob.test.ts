@@ -18,6 +18,7 @@ vi.spyOn(console, "log").mockImplementation(() => {});
 const job = await import("../../server/history/historyJob");
 const { CPU_SHARE, HISTORY_DAYS, HISTORY_VERSION, MAX_SETUP_BYTES, RERUN_AFTER_MS, historyView, loadHistory, needsRun, setupsDir, startHistoryRun, _historyRun, _resetHistoryJob } = job;
 const { gunzipSync } = await import("zlib");
+const { FIXED_COINS, totalsByProfile } = await import("../../src/services/historyReplay");
 
 /** A market's saved setups: the header's columns, and each row as named fields. */
 function savedSetups(file: string): Record<string, string>[] {
@@ -289,7 +290,7 @@ describe("the history job", () => {
     expect(done.markets["BTC/INR"].slowIncluded).toBe(true);
     expect(job.slowRedoDue(done)).toBe(false);
     // Kept from an older slower replay: its slower results are out of date.
-    const old = { ...done, slowVersion: job.SLOW_VERSION - 1, slow: { "1h": {} }, markets: { "BTC/INR": { ...done.markets["BTC/INR"], slowIncluded: undefined } } };
+    const old = { ...done, slowVersion: job.SLOW_VERSION - 1, slow: { "1h": {} }, markets: { "BTC/INR": { ...done.markets["BTC/INR"], slowIncluded: undefined, slowTotals: undefined } } };
     fs.writeFileSync(path.join(dataDir, "history_results.json"), JSON.stringify(old));
     _resetHistoryJob();
     loadHistory();
@@ -303,7 +304,41 @@ describe("the history job", () => {
     expect(redone.records).toEqual(done.records);
     expect(redone.finishedAt).toBe(done.finishedAt);
     expect(redone.markets["BTC/INR"].slowIncluded).toBe(true);
+    // Kept from before the coin check: its own slower results are back too.
+    expect(redone.markets["BTC/INR"].slowTotals).toEqual(done.markets["BTC/INR"].slowTotals);
     expect(job.slowRedoDue(redone)).toBe(false);
+  });
+
+  it("replays the coin check's fixed list of coins too, each once, Bitcoin and SPY still first", () => {
+    const list = job.marketsToReplay(["WIF/INR", "BTC/INR", "SOL/INR"], ["AAPL.US", "SPY.US"], ["RELIANCE"]);
+    expect(list.slice(0, 3)).toEqual(["BTC/INR", "WIF/INR", "SOL/INR"]);
+    expect(new Set(list).size).toBe(list.length);
+    for (const coin of FIXED_COINS) expect(list).toContain(coin);
+    expect(list.length).toBe(1 + FIXED_COINS.length + 3);
+    expect(list.slice(-3)).toEqual(["SPY.US", "AAPL.US", "RELIANCE"]);
+    // Without Bitcoin in today's list, the fixed list still brings it, first.
+    expect(job.marketsToReplay(["WIF/INR"], [], [])[0]).toBe("BTC/INR");
+  });
+
+  it("keeps each market's own slower results, which add up to the run's", async () => {
+    const { deps } = fakes({
+      symbols: async () => ["BTC/INR", "ETH/INR"],
+      download: async (symbol) => ({ series: series("2026-06-01T00:00:00Z", 12_000, () => true, symbol === "BTC/INR" ? 5 : 9) }),
+    });
+    await startHistoryRun(false, deps);
+    const run = _historyRun()!;
+    const btc = run.markets["BTC/INR"].slowTotals!["1h"]!;
+    const eth = run.markets["ETH/INR"].slowTotals!["1h"]!;
+    expect(btc.tight!.trades).toBeGreaterThan(0);
+    expect(eth.tight!.trades).toBeGreaterThan(0);
+    const all = totalsByProfile(run.slow!["1h"]!);
+    for (const p of ["tight", "balanced", "patient", "fixed"] as const) {
+      expect(btc[p]!.trades + eth[p]!.trades).toBe(all[p]!.trades);
+      expect(btc[p]!.totalR + eth[p]!.totalR).toBeCloseTo(all[p]!.totalR, 9);
+    }
+    // Too few days for daily trades here: none.
+    expect(run.markets["BTC/INR"].slowTotals!["1d"]).toEqual({});
+    expect(historyView().slowByMarket).toEqual({ "BTC/INR": run.markets["BTC/INR"].slowTotals, "ETH/INR": run.markets["ETH/INR"].slowTotals });
   });
 
   it("counts a market kept from an earlier coin list in the run's total, so progress never reads past it", async () => {

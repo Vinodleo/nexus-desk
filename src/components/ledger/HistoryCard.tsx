@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../services/apiClient";
-import { historyRows, profileTotals, type HistoryRecords, type Timeframe } from "../../services/historyReplay";
-import { MARKET_KINDS, type MarketKind } from "../../services/exitExpectancy";
+import { FIXED_COINS, historyRows, profileTotals, recordStats, sumRecords, type HistoryRecords, type MarketTotals, type Timeframe } from "../../services/historyReplay";
+import { MARKET_KINDS, type MarketKind, type TraderRecord } from "../../services/exitExpectancy";
+import { isNseSymbol } from "../../shared/nse";
+import { isUsSymbol } from "../../shared/usMarket";
 import { DEFAULT_TRAIL_PROFILE, TRAIL_PROFILES, type TrailProfileId } from "../../shared/trailingStop";
 import { Card } from "./ui";
 import { pnlTone } from "./format";
@@ -33,6 +35,8 @@ export interface HistoryView {
   records: HistoryRecords;
   /** The same on slower candles (absent from servers before them). */
   slow?: Partial<Record<Timeframe, HistoryRecords>>;
+  /** Each market's own slower results, every trader together (the coin check). */
+  slowByMarket?: Record<string, MarketTotals>;
 }
 
 type CardTimeframe = "5m" | Timeframe;
@@ -53,6 +57,20 @@ const PHASE_LABEL: Record<Phase, string> = {
 };
 /** While a run is going, look again this often. */
 const RUNNING_REFRESH_MS = 60_000;
+
+const kindOf = (symbol: string): MarketKind => (isUsSymbol(symbol) ? "us" : isNseSymbol(symbol) ? "nse" : "crypto");
+const shortName = (symbol: string) => symbol.replace(/\/INR$|\.US$/, "");
+
+/** A group's or market's figures, as the exit profiles show theirs (`brief`: without the share won, to fit a phone's line). */
+const Figures: React.FC<{ rec: TraderRecord; brief?: boolean }> = ({ rec, brief }) => {
+  const stats = recordStats(rec);
+  return (
+    <span className="text-muted ml-auto">
+      {stats.trades} setups · {brief ? "" : `${stats.winPct}% won · `}
+      <span className={`font-semibold ${pnlTone(stats.avgR)}`}>{rSigned(stats.avgR)}</span>
+    </span>
+  );
+};
 
 /** A reply this card can show (an older server, or an error, has no results). */
 const isView = (body: any): body is HistoryView => !!body && typeof body.records === "object" && body.records !== null && typeof body.running === "boolean";
@@ -100,6 +118,21 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
   const shown = rows.filter((r) => r.market === market);
   const exits = profileTotals(records).filter((t) => t.market === market);
   const counts = view.run?.markets;
+  // Each market's own result on the slower candles, best first; the coins split into the fixed list and today's picks.
+  const each =
+    timeframe === "5m"
+      ? []
+      : Object.entries(view.slowByMarket ?? {})
+          .filter(([symbol]) => kindOf(symbol) === market)
+          .flatMap(([symbol, totals]) => {
+            const rec = totals[timeframe]?.[profile];
+            return rec && rec.trades > 0 ? [{ symbol, rec, fixed: FIXED_COINS.includes(symbol) }] : [];
+          })
+          .sort((a, b) => b.rec.totalR / b.rec.trades - a.rec.totalR / a.rec.trades);
+  const coinGroups = [
+    { label: "Fixed list", list: each.filter((e) => e.fixed) },
+    { label: "Today's picks", list: each.filter((e) => !e.fixed) },
+  ].filter((g) => g.list.length > 0);
 
   return (
     <Card aria-label="Traders over two years" className="flex flex-col gap-1">
@@ -222,6 +255,46 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {each.length > 0 && (
+        <div className="mt-2 p-2.5 rounded-xl bg-inset flex flex-col gap-1.5" data-testid="history-markets">
+          {market === "crypto" && (
+            <>
+              <div className="text-[11px] font-semibold text-muted">Coin check: a list fixed in advance against today's picks</div>
+              <div className="text-[11px] text-muted leading-relaxed">
+                Today's picks are the coins most active now, which can favour coins that rose. The fixed list is the {FIXED_COINS.length} biggest coins
+                on 1 Oct 2024, picked before the two years began. If the traders only do well on today's picks, the coins did the work.
+              </div>
+              {coinGroups.map((g) => (
+                <div key={g.label} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
+                  <span className="font-semibold">
+                    {g.label} · {g.list.length} {g.list.length === 1 ? "coin" : "coins"}
+                  </span>
+                  <Figures rec={sumRecords(g.list.map((e) => e.rec))} />
+                </div>
+              ))}
+            </>
+          )}
+          <details>
+            <summary className="text-[11px] font-semibold text-muted cursor-pointer">
+              Each {market === "crypto" ? "coin" : "stock"} ({each.length})
+            </summary>
+            <ul className="m-0 p-0 list-none flex flex-col mt-1">
+              {each.map((e) => (
+                <li key={e.symbol} className="flex flex-wrap items-baseline justify-between gap-x-2 py-1 text-xs tabular-nums">
+                  <span className="min-w-0">
+                    {shortName(e.symbol)}
+                    {market === "crypto" && e.fixed && (
+                      <span className="ml-1.5 px-1.5 rounded-full border border-line text-[10px] text-muted align-middle">fixed list</span>
+                    )}
+                  </span>
+                  <Figures rec={e.rec} brief />
+                </li>
+              ))}
+            </ul>
+          </details>
         </div>
       )}
 
