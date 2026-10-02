@@ -15,6 +15,7 @@ import { Card } from "./ui";
 import { GrowBar, staggerDelay } from "./motion";
 import { ExitSettings } from "./ExitSettings";
 import { HistoryCard } from "./HistoryCard";
+import { MlTestCard } from "./MlTestCard";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
 
@@ -195,6 +196,8 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
       </div>
 
       <HistoryCard trailProfile={trailProfile} />
+
+      <MlTestCard />
 
       <Card aria-label="Model in use" className="flex flex-col gap-2.5">
         <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em]">In use</div>

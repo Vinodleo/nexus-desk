@@ -9,6 +9,7 @@ import { MIN_TRADING_ACTIVITY } from "../../src/services/tradingActivity";
 import { expectancyRows, MIN_MARKET_TRADES, RECORD_DAYS } from "../../src/services/exitExpectancy";
 import { getEvents } from "../eventCalendar";
 import { historyView, startHistoryRun } from "../history/historyJob";
+import { mlTestView, startMlTest } from "../history/mlTest";
 import { PAUSE_AFTER_MS, eventWindowAt } from "../../src/shared/eventCalendar";
 
 // The app's side of the server scanner: it sends its desk settings, and
@@ -76,6 +77,17 @@ router.get("/api/history", (_req: Request, res: Response) => {
 router.post("/api/history/run", (_req: Request, res: Response) => {
   void startHistoryRun(true);
   res.json({ success: true, ...historyView() });
+});
+
+// The machine-learning test on the replayed setups (the Lab): progress and its verdict.
+router.get("/api/ml-test", (_req: Request, res: Response) => {
+  res.json({ success: true, ...mlTestView() });
+});
+
+// Run the machine-learning test now (once a replay has finished).
+router.post("/api/ml-test/run", (_req: Request, res: Response) => {
+  void startMlTest();
+  res.json({ success: true, ...mlTestView() });
 });
 
 // "Scan now": every coin, immediately.

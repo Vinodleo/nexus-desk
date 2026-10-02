@@ -88,7 +88,13 @@ every trade in a market gets the same amount and risk (`marketLimits.ts`:
 - **Visible:** show the size multiplier on the trade proposal and in "Traders with
   your exits".
 
-## 4. A full machine-learning model (not yet)
+## 4. A full machine-learning model (the test is built, 2 Oct)
+
+The two-year replay (2 Oct) found every trader losing in every market, by about what a
+trade costs. The machine-learning test (`server/history/mlTest.ts`, in the Lab) checks
+whether a model can pick the setups that beat costs, judged on months it never saw.
+Nothing uses the model live; if a market passes, using it is a separate change.
+
 
 A model trained on every setup's features to predict wins. It needs far more varied
 data than 30 days of live records (it would memorise that month's luck). The two-year

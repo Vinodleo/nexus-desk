@@ -58,7 +58,9 @@ const dataDir = () => process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "da
 const file = () => path.join(dataDir(), "history_results.json");
 /** Each market's setups, one compressed CSV file each. */
 export const setupsDir = () => path.join(dataDir(), "history_setups");
-const setupsFile = (symbol: string) => path.join(setupsDir(), `${symbol.replace(/[^A-Za-z0-9]+/g, "_")}.csv.gz`);
+/** A market's setups file name, e.g. "BTC_INR.csv.gz". */
+export const setupsFileName = (symbol: string) => `${symbol.replace(/[^A-Za-z0-9]+/g, "_")}.csv.gz`;
+const setupsFile = (symbol: string) => path.join(setupsDir(), setupsFileName(symbol));
 /**
  * The setup files stop growing past this, so they can never fill the volume
  * (1 GB, shared with everything else the server keeps). Two years of every
@@ -335,12 +337,18 @@ export function startHistoryRun(fresh: boolean, deps: HistoryDeps = realDeps): P
   return job;
 }
 
+/** Other background work that a scheduled replay waits for (the machine-learning test): both at once would double the load. */
+let otherWorkBusy: () => boolean = () => false;
+export function waitForOtherWork(busy: () => boolean): void {
+  otherWorkBusy = busy;
+}
+
 /** Loads kept results and checks a while after start, then every few hours, whether a run is due. */
 export function startHistoryJob(): void {
   loadHistory();
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);
-    if (!active && (needsRun(run, Date.now()) || (run && run.finishedAt === null))) void startHistoryRun(false);
+    if (!active && !otherWorkBusy() && (needsRun(run, Date.now()) || (run && run.finishedAt === null))) void startHistoryRun(false);
   };
   timer = setTimeout(check, START_DELAY_MS);
 }
@@ -394,6 +402,16 @@ export function _resetHistoryJob(): void {
   active = null;
   if (timer) clearTimeout(timer);
   timer = null;
+}
+
+/** The kept run (finished or not), for the machine-learning test. */
+export function historyRunInfo(): HistoryRun | null {
+  return run;
+}
+
+/** A replay is under way (the machine-learning test waits for it). */
+export function historyRunning(): boolean {
+  return active !== null;
 }
 
 export function _historyRun(): HistoryRun | null {
