@@ -17,6 +17,11 @@ export interface CandidateEvaluationContext {
    * a coin you don't hold isn't possible). Short setups sit out the vote.
    */
   longOnly?: boolean;
+  /**
+   * Candles longer than 5 minutes (the history replay's slower trades): how
+   * much more they move (volatilityScale), for limits tuned on 5-minute ones.
+   */
+  volatilityScale?: number;
 }
 
 /**
@@ -519,7 +524,7 @@ export function buildVolatilitySuppressor(ctx: CandidateEvaluationContext): Stra
   const s = deriveSnapshot(bars);
   if (!s) return null;
 
-  const atrPercent = (s.atr / s.price) * 100;
+  const atrPercent = ((s.atr / s.price) * 100) / (ctx.volatilityScale ?? 1);
   const dangerous = regime === "high_volatility_choppy" || atrPercent > 1.8;
 
   return {

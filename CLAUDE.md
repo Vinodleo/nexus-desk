@@ -51,7 +51,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   and results under each trailing stop (`history_setups/`, a gzipped CSV per market, capped at 300 MB): the data for
   machine learning. The 5-minute candles aren't kept; hourly ones are (`history_candles_1h/`), for slower strategies.
   Each market is also replayed on 1-hour and 1-day candles (`replayTimeframe`): stops sized on them, held up to 5 or 30
-  days, overnight included (Indian stocks as delivery trades, `nseDeliveryRoundTripRate`). It runs weekly in the background
+  days, overnight included (Indian stocks as delivery trades, `nseDeliveryRoundTripRate`). Volatility limits tuned on
+  5-minute candles scale with the candle (`volatilityScale`). Bumping `SLOW_VERSION` redoes only the slower replays,
+  from the kept hourly candles, without downloading again. It runs weekly in the background
   at about 3% of a core (`CPU_SHARE`): Fly's shared CPU guarantees only 6.25%, and draining its burst allowance slows the scanner.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). A market passes only if

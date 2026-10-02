@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { promisify } from "util";
-import { gzip } from "zlib";
+import { gunzip, gzip } from "zlib";
 import { getCoinUniverse } from "../coinUniverse";
 import { fetchCoinHistory, fetchNseHistory, fetchUsHistory, type HistoryFetch } from "./historyCandles";
 import { scannerHeartbeat, stockUniverse, typicalSpread, usUniverse } from "../scanner/scannerService";
@@ -49,6 +49,11 @@ import { isUsSymbol } from "../../src/shared/usMarket";
 export const HISTORY_DAYS = 730;
 /** Bump when the replay changes enough that old results no longer compare. */
 export const HISTORY_VERSION = 4;
+/**
+ * Bump when only the slower (1-hour, 1-day) replay changes: replayed
+ * markets redo it from their kept hourly candles, without downloading again.
+ */
+export const SLOW_VERSION = 2;
 /** Results this old are replayed again. */
 export const RERUN_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Share of a core the replay uses on average. */
@@ -80,6 +85,7 @@ export const MAX_SETUP_BYTES = 300 * 1024 * 1024;
 /** The markets whose last hour each saved setup records: Bitcoin for coins, SPY for US stocks. */
 const LEADERS = { crypto: "BTC/INR", us: "SPY.US" } as const;
 const gzipAsync = promisify(gzip);
+const gunzipAsync = promisify(gunzip);
 /** Each market's hourly candles, a compressed CSV file each ("t,o,h,l,c,v"). */
 export const hourlyDir = () => path.join(dataDir(), "history_candles_1h");
 /**
@@ -100,10 +106,14 @@ export interface HistoryMarket {
   /** Setups saved for it, and the size of its file (bytes). */
   setups?: number;
   setupBytes?: number;
+  /** Its slower trades are in the run's slower results (false: to redo from its hourly candles). */
+  slowIncluded?: boolean;
 }
 
 export interface HistoryRun {
   version: number;
+  /** The slower replay's version (SLOW_VERSION) its slower results come from. */
+  slowVersion?: number;
   startedAt: number;
   finishedAt: number | null;
   /** The period downloaded (ms). */
@@ -203,6 +213,35 @@ export function historySpread(symbol: string, read: number | undefined): number 
   return Math.min(read ?? MAX_COIN_SPREAD, MAX_COIN_SPREAD);
 }
 
+/** Whether a kept run's slower results are from an older slower replay (redone from the hourly candles). */
+export function slowRedoDue(saved: HistoryRun | null): boolean {
+  return !!saved && (saved.slowVersion !== SLOW_VERSION || Object.values(saved.markets).some((m) => m.status === "done" && m.slowIncluded === false));
+}
+
+/** A market's kept hourly candles, or null without them. */
+async function readHourly(symbol: string): Promise<CandleSeries | null> {
+  const target = path.join(hourlyDir(), setupsFileName(symbol));
+  if (!fs.existsSync(target)) return null;
+  try {
+    const text = (await gunzipAsync(fs.readFileSync(target))).toString();
+    const out: CandleSeries = { t: [], o: [], h: [], l: [], c: [], v: [] };
+    for (const line of text.split("\n").slice(1)) {
+      const [t, o, h, l, c, v] = line.split(",").map(Number);
+      if (!Number.isFinite(t) || !(c > 0)) continue;
+      out.t.push(t);
+      out.o.push(o);
+      out.h.push(h);
+      out.l.push(l);
+      out.c.push(c);
+      out.v.push(v);
+    }
+    return out;
+  } catch (err) {
+    console.warn(`[History] Couldn't read ${symbol}'s hourly candles:`, err);
+    return null;
+  }
+}
+
 /** NSE is open, or within 15 minutes of it (the scanner's last fetch comes just after the close). */
 const nseBusy = (now: number) => isNseOpen(now) || isNseOpen(now - 15 * 60_000) || isNseOpen(now + 15 * 60_000);
 
@@ -220,10 +259,19 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
     fs.rmSync(hourlyDir(), { recursive: true, force: true });
     leaderSeries.clear();
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
-    run = { version: HISTORY_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: toMs - HISTORY_DAYS * DAY_MS, toMs, traders: traderIds(), markets: {}, records: {}, slow: {} };
+    run = { version: HISTORY_VERSION, slowVersion: SLOW_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: toMs - HISTORY_DAYS * DAY_MS, toMs, traders: traderIds(), markets: {}, records: {}, slow: {} };
     saveHistory();
   }
   const r = run;
+  // A changed slower replay starts its results again; replayed markets get it from their kept hourly candles.
+  if (r.slowVersion !== SLOW_VERSION) {
+    r.slow = {};
+    r.slowVersion = SLOW_VERSION;
+    for (const m of Object.values(r.markets)) m.slowIncluded = false;
+    saveHistory();
+  }
+  /** Whether this run replays any market from its candles (a run that only redoes slower trades keeps its finish time). */
+  let replayedAny = false;
   const symbols = await deps.symbols();
   total = symbols.length;
 
@@ -282,6 +330,18 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
     // Slower trades: the hourly candles (kept), and 1-hour and 1-day replays.
     const hourly = aggregateSeries(series, 60 * 60 * 1000, hourOffsetMs(symbol));
     await saveHourly(symbol, hourly, stopped);
+    const slowRecords = await replaySlow(symbol, hourly, spread);
+    if (!slowRecords) return false;
+    mergeRecords(r.records, records);
+    for (const tf of TIMEFRAMES) mergeRecords(((r.slow ??= {})[tf] ??= {}), slowRecords[tf] ?? {});
+    r.markets[symbol] = { ...market, ...saved, slowIncluded: true };
+    replayedAny = true;
+    saveHistory();
+    return true;
+  };
+
+  /** The 1-hour and 1-day replays of a market's hourly candles; null if the run was stopped. */
+  async function replaySlow(symbol: string, hourly: CandleSeries, spread: number): Promise<Partial<Record<Timeframe, HistoryRecords>> | null> {
     const slowFee = isNseSymbol(symbol) ? nseDeliveryRoundTripRate(SLOW_NSE_TRADE_INR) : roundTripFeeRate(symbol);
     const slowRecords: Partial<Record<Timeframe, HistoryRecords>> = {};
     for (const tf of TIMEFRAMES) {
@@ -295,17 +355,33 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
         addToRecords(tfRecords, symbol, step.value);
         await deps.sleep(Math.max(1, Math.round(took * (1 / CPU_SHARE - 1))));
         while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
-        if (stopped()) return false;
+        if (stopped()) return null;
       }
       slowRecords[tf] = tfRecords;
     }
-    mergeRecords(r.records, records);
-    for (const tf of TIMEFRAMES) mergeRecords(((r.slow ??= {})[tf] ??= {}), slowRecords[tf] ?? {});
-    r.markets[symbol] = { ...market, ...saved };
+    return slowRecords;
+  }
+
+  /** A replayed market's slower trades again, from its kept hourly candles (after the slower replay changed). */
+  const redoSlow = async (symbol: string): Promise<boolean> => {
+    current = symbol;
+    phase = "replaying";
+    const hourly = await readHourly(symbol);
+    if (hourly) {
+      const slowRecords = await replaySlow(symbol, hourly, historySpread(symbol, deps.spread(symbol)));
+      if (!slowRecords) return false;
+      for (const tf of TIMEFRAMES) mergeRecords(((r.slow ??= {})[tf] ??= {}), slowRecords[tf] ?? {});
+    }
+    r.markets[symbol] = { ...r.markets[symbol], slowIncluded: true };
     saveHistory();
     return true;
   };
 
+  // Markets already replayed whose slower trades are from an older slower replay: again, from their hourly candles.
+  for (const [symbol, m] of Object.entries(r.markets)) {
+    if (stopped()) return;
+    if (m.status === "done" && m.slowIncluded === false && !(await redoSlow(symbol))) return;
+  }
   for (const symbol of symbols) {
     if (stopped()) return;
     if (!r.markets[symbol] && !(await replayMarket(symbol))) return;
@@ -319,7 +395,7 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
       if (!(await replayMarket(symbol))) return;
     }
   }
-  r.finishedAt = deps.now();
+  if (replayedAny || r.finishedAt === null) r.finishedAt = deps.now();
   saveHistory();
   console.log(`[History] Replayed ${Object.values(r.markets).filter((m) => m.status === "done").length} of ${symbols.length} markets over ${HISTORY_DAYS} days.`);
 }
@@ -405,7 +481,7 @@ export function startHistoryJob(): void {
   loadHistory();
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);
-    if (!active && !otherWorkBusy() && (needsRun(run, Date.now()) || (run && run.finishedAt === null))) void startHistoryRun(false);
+    if (!active && !otherWorkBusy() && (needsRun(run, Date.now()) || (run && run.finishedAt === null) || slowRedoDue(run))) void startHistoryRun(false);
   };
   timer = setTimeout(check, START_DELAY_MS);
 }

@@ -391,7 +391,13 @@ export function generateOrderBook(
 
 // Classify market regime based on indicators
 export function classifyRegime(
-  barOrBars: MarketBar | MarketBar[]
+  barOrBars: MarketBar | MarketBar[],
+  /**
+   * For candles longer than 5 minutes: how much more they move (see
+   * volatilityScale). The limits below are tuned on 5-minute candles; a
+   * daily candle's usual range would otherwise always read as choppy.
+   */
+  volatilityScale: number = 1
 ): RegimeType {
   const bar = Array.isArray(barOrBars)
     ? barOrBars[barOrBars.length - 1]
@@ -399,7 +405,7 @@ export function classifyRegime(
   if (!bar) return "ranging_wide";
   const adx = bar.adx || 20;
   const atr = bar.atr || 1;
-  const atrPercent = (atr / bar.close) * 100;
+  const atrPercent = (atr / bar.close) * 100 / volatilityScale;
   const ema9 = bar.ema9 || bar.close;
   const ema21 = bar.ema21 || bar.close;
 

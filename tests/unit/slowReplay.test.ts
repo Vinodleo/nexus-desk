@@ -13,6 +13,9 @@ import {
 import { simulateExit } from "../../src/services/exitComparison";
 import { decorateBarsWithIndicators } from "../../src/services/marketDataService";
 import { nseDeliveryRoundTripRate, nseRoundTripRate } from "../../src/shared/nse";
+import { classifyRegime } from "../../src/services/marketDataService";
+import { volatilityScale } from "../../src/services/labSimulation";
+import { seeded } from "../../src/services/setupModel";
 
 // Slower trades: the traders on hourly and daily candles, held for days.
 
@@ -99,5 +102,31 @@ describe("slower candles", () => {
     expect(sum(trades)).toBeLessThan(sum(cheap));
     // Too few days for daily candles' warm-up: none.
     expect([...replayTimeframe("RELIANCE", timeframeSeries(hourly, "1d"), "1d", ["tight"], 0.005)].flat()).toEqual([]);
+  });
+
+  it("scales the volatility limits to the candles, so a coin's usual daily range isn't read as too choppy to trade", () => {
+    expect(volatilityScale("BTC/INR", HOUR)).toBeCloseTo(Math.sqrt(12), 9);
+    expect(volatilityScale("BTC/INR", DAY)).toBeCloseTo(Math.sqrt(288), 9);
+    // A stock's day is its session: 75 five-minute candles in Mumbai, 78 in New York.
+    expect(volatilityScale("TCS", DAY)).toBeCloseTo(Math.sqrt(75), 9);
+    expect(volatilityScale("SPY.US", 7 * DAY)).toBeCloseTo(Math.sqrt(78 * 5), 9);
+    // A daily candle ranging 4% with a strong trend: choppy by the 5-minute limits, trending by the day's.
+    const bar = { time: "", timestampMs: 0, open: 100, high: 102, low: 98, close: 100, volume: 1, atr: 4, adx: 30, ema9: 101, ema21: 100 };
+    expect(classifyRegime(bar)).toBe("high_volatility_choppy");
+    expect(classifyRegime(bar, volatilityScale("BTC/INR", DAY))).toBe("trending_bullish");
+
+    // Two years of a lively coin trending up in daily candles: trades are found.
+    const random = seeded(4);
+    const days = emptySeries();
+    let p = 100;
+    const bars: MarketBar[] = Array.from({ length: 730 }, (_, k) => {
+      const o = p;
+      p *= 1 + 0.004 + (random() - 0.5) * 0.06;
+      const t = Date.parse("2024-10-01T00:00:00Z") + k * DAY;
+      return { time: "", timestampMs: t, open: o, high: Math.max(o, p) * 1.02, low: Math.min(o, p) * 0.98, close: p, volume: 1000 + random() * 3000 };
+    });
+    appendBars(days, bars);
+    const trades = [...replayTimeframe("ETH/INR", days, "1d", ["tight"], 0.001, 0.001)].flat();
+    expect(trades.length).toBeGreaterThan(5);
   });
 });
