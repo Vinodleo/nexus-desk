@@ -64,6 +64,20 @@ describe("Traders over two years", () => {
     expect(screen.getByText("No results here.")).toBeTruthy();
   });
 
+  it("switches to the slower trades: the same traders on hourly or daily candles", async () => {
+    const slow = { "1h": { tight: { "2026-Q3": { "crypto:Marcus Swing Trend": rec(40, 18, 30, -20) } } }, "1d": {} };
+    vi.mocked(apiFetch).mockResolvedValue(reply(view({ slow })));
+    render(createElement(HistoryCard, { trailProfile: "tight" }));
+    await screen.findByTestId("history-traders");
+    expect(screen.getByTestId("history-timeframe").textContent).toMatch(/^As the desk trades today/);
+    fireEvent.click(screen.getByRole("tab", { name: "1 hour" }));
+    expect(screen.getByTestId("history-timeframe").textContent).toMatch(/^Slower: hourly candles, stops sized on them \(wider\), held up to 5 days/);
+    const rows = within(screen.getByTestId("history-traders")).getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining("Marcus Swing Trend40 setups · 45% won · win +1.67R · loss −0.91R+0.25R")]);
+    fireEvent.click(screen.getByRole("tab", { name: "1 day" }));
+    expect(screen.getByText("No results here.")).toBeTruthy();
+  });
+
   it("shows nothing for a reply without results (an older server)", async () => {
     vi.mocked(apiFetch).mockResolvedValue(reply({ success: true, events: [] }));
     const { container } = render(createElement(HistoryCard, { trailProfile: "tight" }));

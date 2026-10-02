@@ -7,25 +7,35 @@ import { fetchCoinHistory, fetchNseHistory, fetchUsHistory, type HistoryFetch } 
 import { scannerHeartbeat, stockUniverse, typicalSpread, usUniverse } from "../scanner/scannerService";
 import {
   addToRecords,
+  aggregateSeries,
+  hourOffsetMs,
   lastHourMove,
   replayHistory,
+  replayTimeframe,
   setupCsvHeader,
   setupCsvRow,
+  timeframeSeries,
+  TIMEFRAMES,
   type CandleSeries,
   type HistoryRecords,
+  type HistoryTrade,
+  type Timeframe,
 } from "../../src/services/historyReplay";
 import { TRADER_PERSONAS } from "../../src/services/personaEngine";
 import { TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
-import { MAX_COIN_SPREAD } from "../../src/shared/tradeCosts";
-import { isNseOpen, isNseSymbol } from "../../src/shared/nse";
+import { MAX_COIN_SPREAD, roundTripFeeRate } from "../../src/shared/tradeCosts";
+import { isNseOpen, isNseSymbol, nseDeliveryRoundTripRate } from "../../src/shared/nse";
 import { isUsSymbol } from "../../src/shared/usMarket";
 
 // The traders over the last two years: each market's 5-minute candles are
 // downloaded and replayed (src/services/historyReplay.ts) in the background,
-// one market at a time. The candles aren't kept, only the results (on the
-// volume, so a restart carries on from the next market) and every setup
-// found, with its readings and results (history_setups/, a compressed CSV
-// file per market: the data machine learning trains on). It runs a while
+// one market at a time. The 5-minute candles aren't kept, only the results
+// (on the volume, so a restart carries on from the next market), every
+// setup found, with its readings and results (history_setups/, a compressed
+// CSV file per market: the data machine learning trains on), and the
+// market's hourly candles (history_candles_1h/), for slower strategies to
+// be tried on without downloading again. Each market is also replayed on
+// 1-hour and 1-day candles (slower trades, held for days). It runs a while
 // after the server starts, then again weekly, or when the traders change.
 //
 // The server shares a CPU that only guarantees a small slice of a core
@@ -38,7 +48,7 @@ import { isUsSymbol } from "../../src/shared/usMarket";
 
 export const HISTORY_DAYS = 730;
 /** Bump when the replay changes enough that old results no longer compare. */
-export const HISTORY_VERSION = 3;
+export const HISTORY_VERSION = 4;
 /** Results this old are replayed again. */
 export const RERUN_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Share of a core the replay uses on average. */
@@ -70,6 +80,14 @@ export const MAX_SETUP_BYTES = 300 * 1024 * 1024;
 /** The markets whose last hour each saved setup records: Bitcoin for coins, SPY for US stocks. */
 const LEADERS = { crypto: "BTC/INR", us: "SPY.US" } as const;
 const gzipAsync = promisify(gzip);
+/** Each market's hourly candles, a compressed CSV file each ("t,o,h,l,c,v"). */
+export const hourlyDir = () => path.join(dataDir(), "history_candles_1h");
+/**
+ * What a slower Indian trade is charged: held overnight it's a delivery
+ * trade, costed at the amount per trade the desk uses (₹25,000; a ₹20
+ * depository charge weighs more on smaller ones).
+ */
+export const SLOW_NSE_TRADE_INR = 25_000;
 
 export interface HistoryMarket {
   status: "done" | "failed" | "skipped";
@@ -96,6 +114,8 @@ export interface HistoryRun {
   /** Each market finished so far, by symbol. */
   markets: Record<string, HistoryMarket>;
   records: HistoryRecords;
+  /** The same on slower candles (1-hour, 1-day). */
+  slow?: Partial<Record<Timeframe, HistoryRecords>>;
 }
 
 export type HistoryPhase = "idle" | "starting" | "downloading" | "replaying" | "waiting_for_nse";
@@ -197,9 +217,10 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
   phase = "starting";
   if (fresh || !run) {
     fs.rmSync(setupsDir(), { recursive: true, force: true });
+    fs.rmSync(hourlyDir(), { recursive: true, force: true });
     leaderSeries.clear();
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
-    run = { version: HISTORY_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: toMs - HISTORY_DAYS * DAY_MS, toMs, traders: traderIds(), markets: {}, records: {} };
+    run = { version: HISTORY_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: toMs - HISTORY_DAYS * DAY_MS, toMs, traders: traderIds(), markets: {}, records: {}, slow: {} };
     saveHistory();
   }
   const r = run;
@@ -258,7 +279,28 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
     }
     const saved = await saveSetups(r, symbol, rows, stopped);
     if (stopped()) return false;
+    // Slower trades: the hourly candles (kept), and 1-hour and 1-day replays.
+    const hourly = aggregateSeries(series, 60 * 60 * 1000, hourOffsetMs(symbol));
+    await saveHourly(symbol, hourly, stopped);
+    const slowFee = isNseSymbol(symbol) ? nseDeliveryRoundTripRate(SLOW_NSE_TRADE_INR) : roundTripFeeRate(symbol);
+    const slowRecords: Partial<Record<Timeframe, HistoryRecords>> = {};
+    for (const tf of TIMEFRAMES) {
+      const tfRecords: HistoryRecords = {};
+      const slowReplay = replayTimeframe(symbol, timeframeSeries(hourly, tf), tf, PROFILES, slowFee, spread);
+      for (;;) {
+        const started = deps.now();
+        const step: IteratorResult<HistoryTrade[]> = slowReplay.next();
+        const took = deps.now() - started;
+        if (step.done) break;
+        addToRecords(tfRecords, symbol, step.value);
+        await deps.sleep(Math.max(1, Math.round(took * (1 / CPU_SHARE - 1))));
+        while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
+        if (stopped()) return false;
+      }
+      slowRecords[tf] = tfRecords;
+    }
     mergeRecords(r.records, records);
+    for (const tf of TIMEFRAMES) mergeRecords(((r.slow ??= {})[tf] ??= {}), slowRecords[tf] ?? {});
     r.markets[symbol] = { ...market, ...saved };
     saveHistory();
     return true;
@@ -280,6 +322,21 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
   r.finishedAt = deps.now();
   saveHistory();
   console.log(`[History] Replayed ${Object.values(r.markets).filter((m) => m.status === "done").length} of ${symbols.length} markets over ${HISTORY_DAYS} days.`);
+}
+
+/** Writes a market's hourly candles (compressed CSV), for slower strategies to be tried on later. */
+async function saveHourly(symbol: string, hourly: CandleSeries, stopped: () => boolean): Promise<void> {
+  try {
+    const lines = hourly.t.map((t, k) => `${t},${hourly.o[k]},${hourly.h[k]},${hourly.l[k]},${hourly.c[k]},${hourly.v[k]}`);
+    const data = await gzipAsync(Buffer.from(`t,o,h,l,c,v\n${lines.join("\n")}\n`));
+    if (stopped()) return;
+    fs.mkdirSync(hourlyDir(), { recursive: true });
+    const target = path.join(hourlyDir(), setupsFileName(symbol));
+    fs.writeFileSync(`${target}.tmp`, data);
+    fs.renameSync(`${target}.tmp`, target);
+  } catch (err) {
+    console.warn(`[History] Couldn't save ${symbol}'s hourly candles:`, err);
+  }
 }
 
 /** Bytes the run's setup files take so far. */
@@ -388,6 +445,7 @@ export function historyView() {
         }
       : null,
     records: run?.records ?? {},
+    slow: run?.slow ?? {},
   };
 }
 

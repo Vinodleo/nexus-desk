@@ -49,7 +49,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   US from Alpaca, Nifty from Angel One outside NSE hours) and replays every trader under all four trailing stops
   (`src/services/historyReplay.ts`). It keeps the results (`history_results.json`) and every setup with its readings
   and results under each trailing stop (`history_setups/`, a gzipped CSV per market, capped at 300 MB): the data for
-  machine learning. The candles aren't kept. It runs weekly in the background
+  machine learning. The 5-minute candles aren't kept; hourly ones are (`history_candles_1h/`), for slower strategies.
+  Each market is also replayed on 1-hour and 1-day candles (`replayTimeframe`): stops sized on them, held up to 5 or 30
+  days, overnight included (Indian stocks as delivery trades, `nseDeliveryRoundTripRate`). It runs weekly in the background
   at about 3% of a core (`CPU_SHARE`): Fly's shared CPU guarantees only 6.25%, and draining its burst allowance slows the scanner.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). A market passes only if
@@ -77,6 +79,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - **Two new traders (added 28 Sept):** Nora Opening Range (US and Nifty stocks trading 2x their usual
   opening volume) and Ravi Late-Day Momentum (SPY, QQQ, IWM). They trade only once their records are positive over 10+ setups.
   Check "Traders with your exits" after a week or two; if either stays negative, remove it.
+- **Trading slower (owner's call, 2 Oct):** two years of replays and the machine-learning test showed every 5-minute
+  trader losing about its costs. Step 1: the same traders on 1-hour and 1-day candles (the Lab's timeframe switch).
+  Step 2: strategies with long records (trend following, momentum), tested on the kept hourly candles. Paper first.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 

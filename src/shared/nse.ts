@@ -26,7 +26,7 @@ export function isNseSymbol(symbol: string | undefined): boolean {
 
 // ---------- session (IST, Monday to Friday) ----------
 
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+export const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 /** Minutes after midnight IST. */
 export const NSE_OPEN = 9 * 60 + 15;
 /** No new trades after this: too little time left for a trade to work before square-off. */
@@ -104,4 +104,29 @@ export function nseTradeCosts(orders: { side: "BUY" | "SELL"; value: number }[])
 export function nseRoundTripRate(value: number): number {
   if (!(value > 0)) return 0;
   return nseTradeCosts([{ side: "BUY", value }, { side: "SELL", value }]) / value;
+}
+
+// ---------- costs (Angel One, equity delivery: held overnight) ----------
+// Not traded today (stock trades close the same day); the history replay's
+// slower trades use them. Brokerage, exchange and SEBI charges are as
+// intraday. STT is charged on the buy and the sell, and each sale pays the
+// depository a flat charge (Angel One: ₹20 a scrip, plus GST).
+
+/** Securities transaction tax on delivery, each way. */
+export const NSE_STT_DELIVERY = 0.001;
+/** Stamp duty on a delivery buy. */
+export const NSE_STAMP_DELIVERY_BUY = 0.00015;
+/** Depository charge on each delivery sale, before GST. */
+export const NSE_DP_CHARGE = 20;
+
+/** A delivery round trip's costs as a share of the trade's value. */
+export function nseDeliveryRoundTripRate(value: number): number {
+  if (!(value > 0)) return 0;
+  const brokerage = 2 * Math.max(NSE_BROKERAGE_MIN, Math.min(NSE_BROKERAGE_CAP, value * NSE_BROKERAGE_RATE));
+  const exchange = 2 * value * NSE_EXCHANGE_RATE;
+  const sebi = 2 * value * NSE_SEBI_RATE;
+  const stt = 2 * value * NSE_STT_DELIVERY;
+  const stamp = value * NSE_STAMP_DELIVERY_BUY;
+  const costs = brokerage + exchange + sebi + stt + stamp + NSE_DP_CHARGE + GST_RATE * (brokerage + exchange + sebi + NSE_DP_CHARGE);
+  return costs / value;
 }
