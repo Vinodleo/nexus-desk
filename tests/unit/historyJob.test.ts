@@ -283,6 +283,26 @@ describe("the history job", () => {
     expect(job.slowRedoDue(redone)).toBe(false);
   });
 
+  it("counts a market kept from an earlier coin list in the run's total, so progress never reads past it", async () => {
+    const first = fakes({ symbols: async () => ["OLD/INR"] });
+    await startHistoryRun(false, first.deps);
+    // The coin list changed since (it's picked hourly): the run carries on with OLD/INR kept.
+    fs.writeFileSync(path.join(dataDir, "history_results.json"), JSON.stringify({ ..._historyRun()!, finishedAt: null }));
+    _resetHistoryJob();
+    loadHistory();
+    const later = fakes({ symbols: async () => ["BTC/INR", "ETH/INR"] });
+    const seen: { finished: number; total: number }[] = [];
+    const download = later.deps.download;
+    later.deps.download = async (symbol, from, to) => {
+      const { finished, total } = historyView();
+      seen.push({ finished, total });
+      return download(symbol, from, to);
+    };
+    await startHistoryRun(false, later.deps);
+    expect(seen).toEqual([{ finished: 1, total: 3 }, { finished: 2, total: 3 }]);
+    expect(historyView()).toMatchObject({ running: false, finished: 3, total: 3 });
+  });
+
   it("carries on after a restart from the next market", async () => {
     const first = fakes({ symbols: async () => ["BTC/INR"] });
     await startHistoryRun(false, first.deps);

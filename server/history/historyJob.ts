@@ -273,7 +273,8 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
   /** Whether this run replays any market from its candles (a run that only redoes slower trades keeps its finish time). */
   let replayedAny = false;
   const symbols = await deps.symbols();
-  total = symbols.length;
+  // The markets this run covers: today's, and any kept from an earlier list (the coins are picked hourly by activity).
+  total = new Set([...symbols, ...Object.keys(r.markets)]).size;
 
   /** Downloads and replays one market into the run; false if the run was stopped. */
   const replayMarket = async (symbol: string): Promise<boolean> => {
