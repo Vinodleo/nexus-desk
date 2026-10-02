@@ -53,7 +53,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Each market is also replayed on 1-hour and 1-day candles (`replayTimeframe`): stops sized on them, held up to 5 or 30
   days, overnight included (Indian stocks as delivery trades, `nseDeliveryRoundTripRate`). Volatility limits tuned on
   5-minute candles scale with the candle (`volatilityScale`). Bumping `SLOW_VERSION` redoes only the slower replays,
-  from the kept hourly candles, without downloading again. It runs weekly in the background
+  from the kept hourly candles, without downloading again. The coins replayed are today's most active plus a fixed
+  list, the 20 biggest on 1 Oct 2024 (`FIXED_COINS`), and each market's slower results are kept on their own (`slowTotals`):
+  the Lab's coin check compares the two, in case today's picks flatter the traders. It runs weekly in the background
   at about 3% of a core (`CPU_SHARE`): Fly's shared CPU guarantees only 6.25%, and draining its burst allowance slows the scanner.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). A market passes only if

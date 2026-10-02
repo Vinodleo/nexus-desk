@@ -8,8 +8,10 @@ import { scannerHeartbeat, stockUniverse, typicalSpread, usUniverse } from "../s
 import {
   addToRecords,
   aggregateSeries,
+  FIXED_COINS,
   hourOffsetMs,
   lastHourMove,
+  marketTotals,
   replayHistory,
   replayTimeframe,
   setupCsvHeader,
@@ -19,6 +21,7 @@ import {
   type CandleSeries,
   type HistoryRecords,
   type HistoryTrade,
+  type MarketTotals,
   type Timeframe,
 } from "../../src/services/historyReplay";
 import { TRADER_PERSONAS } from "../../src/services/personaEngine";
@@ -53,7 +56,7 @@ export const HISTORY_VERSION = 4;
  * Bump when only the slower (1-hour, 1-day) replay changes: replayed
  * markets redo it from their kept hourly candles, without downloading again.
  */
-export const SLOW_VERSION = 3;
+export const SLOW_VERSION = 4;
 /** Results this old are replayed again. */
 export const RERUN_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Share of a core the replay uses on average. */
@@ -108,6 +111,8 @@ export interface HistoryMarket {
   setupBytes?: number;
   /** Its slower trades are in the run's slower results (false: to redo from its hourly candles). */
   slowIncluded?: boolean;
+  /** Its own slower results, every trader together (the coin check compares markets). */
+  slowTotals?: MarketTotals;
 }
 
 export interface HistoryRun {
@@ -145,12 +150,7 @@ export interface HistoryDeps {
 const realDeps: HistoryDeps = {
   now: () => Date.now(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  // Bitcoin and SPY first: the other coins' and US stocks' setups record their last hour.
-  symbols: async () => [
-    ...leaderFirst((await getCoinUniverse()).coins.map((c) => c.symbol), LEADERS.crypto),
-    ...leaderFirst(usUniverse(), LEADERS.us),
-    ...stockUniverse(),
-  ],
+  symbols: async () => marketsToReplay((await getCoinUniverse()).coins.map((c) => c.symbol), usUniverse(), stockUniverse()),
   download: (symbol, fromMs, toMs) =>
     isUsSymbol(symbol) ? fetchUsHistory(symbol, fromMs, toMs) : isNseSymbol(symbol) ? fetchNseHistory(symbol, fromMs, toMs) : fetchCoinHistory(symbol, fromMs, toMs),
   spread: typicalSpread,
@@ -159,6 +159,15 @@ const realDeps: HistoryDeps = {
 
 function leaderFirst(symbols: string[], leader: string): string[] {
   return symbols.includes(leader) ? [leader, ...symbols.filter((s) => s !== leader)] : symbols;
+}
+
+/**
+ * The markets a run replays, in order: today's most active coins and the
+ * coin check's fixed list, then US stocks, then Indian ones. Bitcoin and SPY
+ * come first: the other coins' and US stocks' setups record their last hour.
+ */
+export function marketsToReplay(coins: string[], us: string[], nse: string[]): string[] {
+  return [...leaderFirst([...new Set([...coins, ...FIXED_COINS])], LEADERS.crypto), ...leaderFirst(us, LEADERS.us), ...nse];
 }
 
 let run: HistoryRun | null = null;
@@ -344,7 +353,7 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
     if (!slowRecords) return false;
     mergeRecords(r.records, records);
     for (const tf of TIMEFRAMES) mergeRecords(((r.slow ??= {})[tf] ??= {}), slowRecords[tf] ?? {});
-    r.markets[symbol] = { ...market, ...saved, slowIncluded: true };
+    r.markets[symbol] = { ...market, ...saved, slowIncluded: true, slowTotals: marketTotals(slowRecords) };
     replayedAny = true;
     saveHistory();
     return true;
@@ -377,12 +386,14 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
     current = symbol;
     phase = "replaying";
     const hourly = await readHourly(symbol);
+    let slowTotals: MarketTotals | undefined;
     if (hourly) {
       const slowRecords = await replaySlow(symbol, hourly, historySpread(symbol, deps.spread(symbol)));
       if (!slowRecords) return false;
       for (const tf of TIMEFRAMES) mergeRecords(((r.slow ??= {})[tf] ??= {}), slowRecords[tf] ?? {});
+      slowTotals = marketTotals(slowRecords);
     }
-    r.markets[symbol] = { ...r.markets[symbol], slowIncluded: true };
+    r.markets[symbol] = { ...r.markets[symbol], slowIncluded: true, slowTotals };
     saveHistory();
     return true;
   };
@@ -532,6 +543,8 @@ export function historyView() {
       : null,
     records: run?.records ?? {},
     slow: run?.slow ?? {},
+    /** Each market's own slower results (the coin check). */
+    slowByMarket: Object.fromEntries(Object.entries(markets).flatMap(([symbol, m]) => (m.status === "done" && m.slowTotals ? [[symbol, m.slowTotals]] : []))) as Record<string, MarketTotals>,
   };
 }
 

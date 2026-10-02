@@ -496,3 +496,36 @@ export function* replayTimeframe(
     yield trades;
   }
 }
+
+// ---------- the coin check: each market on its own, and a fixed list of coins ----------
+// The coins replayed are the ones most active today, picked hourly. Those may
+// be coins that rose over the two years, which would flatter the traders'
+// results. So the replay also covers a list fixed in advance, and keeps each
+// market's slower results on their own, so the two can be compared.
+
+/**
+ * The 20 biggest coins by market value on 1 Oct 2024, when the two years
+ * replayed begin, leaving out stablecoins and coins Binance doesn't list:
+ * picked before anyone knew how they'd do.
+ */
+export const FIXED_COINS = [
+  "BTC/INR", "ETH/INR", "BNB/INR", "SOL/INR", "XRP/INR", "DOGE/INR", "TRX/INR", "TON/INR", "ADA/INR", "AVAX/INR",
+  "SHIB/INR", "LINK/INR", "BCH/INR", "DOT/INR", "NEAR/INR", "UNI/INR", "LTC/INR", "SUI/INR", "ICP/INR", "PEPE/INR",
+];
+
+/** One market's slower results: every trader together, per timeframe and exit profile. */
+export type MarketTotals = Partial<Record<Timeframe, Partial<Record<TrailProfileId, TraderRecord>>>>;
+
+/** Records summed over every period and trader, per exit profile. */
+export function totalsByProfile(records: HistoryRecords): Partial<Record<TrailProfileId, TraderRecord>> {
+  const out: Partial<Record<TrailProfileId, TraderRecord>> = {};
+  for (const [profile, byPeriod] of Object.entries(records) as [TrailProfileId, Record<string, Record<string, TraderRecord>>][]) {
+    out[profile] = sumRecords(Object.values(byPeriod).flatMap((byKey) => Object.values(byKey)));
+  }
+  return out;
+}
+
+/** A market's slower records as its totals. */
+export function marketTotals(slow: Partial<Record<Timeframe, HistoryRecords>>): MarketTotals {
+  return Object.fromEntries(TIMEFRAMES.map((tf) => [tf, totalsByProfile(slow[tf] ?? {})]));
+}
