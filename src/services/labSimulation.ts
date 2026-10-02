@@ -9,6 +9,7 @@ import { SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
 import { isNseSymbol, nseTakesEntries } from "../shared/nse";
 import { isUsSymbol, usTakesEntries } from "../shared/usMarket";
 import { holdMinutesFor } from "../shared/coinHolds";
+import { sessionClock } from "../shared/sessionBars";
 
 // The Lab's replay of live trading on historical 5-minute candles: the same
 // indicators, the same setup builders (the live trader panel, and the
@@ -89,7 +90,7 @@ export function candleSpacingMs(timestamps: number[]): number {
  * For slower candles, `periodMs` is the higher timeframe's length instead (a
  * day above hourly candles, a week above daily ones).
  */
-export function hourlyRegimeLookup(bars: MarketBar[], periodMs: number = 60 * 60 * 1000): (ms: number) => RegimeType | "neutral" {
+export function hourlyRegimeLookup(bars: MarketBar[], periodMs: number = 60 * 60 * 1000, scale: number = 1): (ms: number) => RegimeType | "neutral" {
   const hours: MarketBar[] = [];
   for (const b of bars) {
     const t = b.timestampMs ?? 0;
@@ -116,7 +117,7 @@ export function hourlyRegimeLookup(bars: MarketBar[], periodMs: number = 60 * 60
         lo = mid + 1;
       } else hi = mid - 1;
     }
-    return k >= 30 ? classifyRegime(decorated[k]) : "neutral";
+    return k >= 30 ? classifyRegime(decorated[k], scale) : "neutral";
   };
 }
 
@@ -203,6 +204,22 @@ export function simulateTunedBreakout(symbol: string, bars: MarketBar[], params:
 
 
 /**
+ * How much more a candle of `intervalMs` moves than a 5-minute one:
+ * volatility grows with the square root of time, so limits tuned on
+ * 5-minute candles are scaled by it for slower ones. A stock's day is its
+ * session (75 or 78 five-minute candles), its week five of them.
+ */
+export function volatilityScale(symbol: string, intervalMs: number): number {
+  const DAY = 24 * 60 * 60 * 1000;
+  const clock = sessionClock(symbol);
+  if (clock && intervalMs >= DAY) {
+    const sessions = intervalMs >= 7 * DAY ? 5 : intervalMs / DAY;
+    return Math.sqrt(((clock.close - clock.open) / 5) * sessions);
+  }
+  return Math.sqrt(intervalMs / LAB_INTERVAL_MS);
+}
+
+/**
  * Whether the live scanner takes a new trade in this market at `ms`: coins
  * any time, stocks only in their entry hours (a US stock from the open to
  * 3:30 New York time, an Indian one from the open to 3:00 IST).
@@ -247,14 +264,16 @@ export function panelSetupsOnHistory(
   } = {}
 ): { i: number; regime: RegimeType; macro: RegimeType | "neutral"; setups: StrategySetup[] }[] {
   const interval = range.intervalMs ?? LAB_INTERVAL_MS;
-  const macroAt = hourlyRegimeLookup(bars, range.higherMs);
+  // Slower candles move more: the volatility limits (tuned on 5-minute ones) scale with them.
+  const scale = range.intervalMs ? volatilityScale(symbol, interval) : 1;
+  const macroAt = hourlyRegimeLookup(bars, range.higherMs, range.higherMs ? volatilityScale(symbol, range.higherMs) : 1);
   const out: { i: number; regime: RegimeType; macro: RegimeType | "neutral"; setups: StrategySetup[] }[] = [];
   /** The last candle each trader (by setup name) is still spaced out until. */
   const spacedUntil = new Map<string, number>();
   const view = range.view ?? Infinity;
   for (let i = Math.max(WARMUP_BARS, range.from ?? 0); i < Math.min(bars.length - 1, range.to ?? Infinity); i++) {
     if (!range.anyTime && !takesEntriesAt(symbol, (bars[i].timestampMs as number) + interval)) continue;
-    const regime = classifyRegime(bars[i]);
+    const regime = classifyRegime(bars[i], scale);
     const macro = macroAt((bars[i].timestampMs as number) + interval);
     const panel = runPersonaPanel(
       {
@@ -265,6 +284,7 @@ export function panelSetupsOnHistory(
         eventWindowActive: false,
         longOnly,
         macroRegime: macro,
+        ...(scale !== 1 ? { volatilityScale: scale } : {}),
       },
       (setup) => computeMetaLabelScore({ setup, regime, empiricalWinRate: 0.5, sampleCount: 0, similarityScore: 1 }),
       "intraday"

@@ -258,6 +258,31 @@ describe("the history job", () => {
     expect(fs.existsSync(job.hourlyDir())).toBe(false);
   });
 
+  it("redoes only the slower trades, from the kept hourly candles, when the slower replay changes", async () => {
+    const first = fakes({ symbols: async () => ["BTC/INR"], download: async () => ({ series: series("2026-06-01T00:00:00Z", 12_000) }) });
+    await startHistoryRun(false, first.deps);
+    const done = _historyRun()!;
+    expect(done.slowVersion).toBe(job.SLOW_VERSION);
+    expect(done.markets["BTC/INR"].slowIncluded).toBe(true);
+    expect(job.slowRedoDue(done)).toBe(false);
+    // Kept from an older slower replay: its slower results are out of date.
+    const old = { ...done, slowVersion: job.SLOW_VERSION - 1, slow: { "1h": {} }, markets: { "BTC/INR": { ...done.markets["BTC/INR"], slowIncluded: undefined } } };
+    fs.writeFileSync(path.join(dataDir, "history_results.json"), JSON.stringify(old));
+    _resetHistoryJob();
+    loadHistory();
+    expect(job.slowRedoDue(_historyRun())).toBe(true);
+    const again = fakes({ symbols: async () => ["BTC/INR"] });
+    await startHistoryRun(false, again.deps);
+    const redone = _historyRun()!;
+    // Nothing downloaded; the same slower results as replaying from the candles; still the same finish.
+    expect(again.downloads).toEqual([]);
+    expect(redone.slow).toEqual(done.slow);
+    expect(redone.records).toEqual(done.records);
+    expect(redone.finishedAt).toBe(done.finishedAt);
+    expect(redone.markets["BTC/INR"].slowIncluded).toBe(true);
+    expect(job.slowRedoDue(redone)).toBe(false);
+  });
+
   it("carries on after a restart from the next market", async () => {
     const first = fakes({ symbols: async () => ["BTC/INR"] });
     await startHistoryRun(false, first.deps);
