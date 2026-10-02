@@ -51,6 +51,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   and results under each trailing stop (`history_setups/`, a gzipped CSV per market, capped at 300 MB): the data for
   machine learning. The candles aren't kept. It runs weekly in the background
   at about 3% of a core (`CPU_SHARE`): Fly's shared CPU guarantees only 6.25%, and draining its burst allowance slows the scanner.
+- **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
+  on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). A market passes only if
+  the picks, one at a time, average `MIN_EDGE_R`+ and clearly above zero. It runs after each replay, rests like it,
+  sizes what it loads to the server's free memory and stops before 450 MB. Its verdict (`ml_test.json`) decides nothing live.
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
   - It, the win-chance calibration and the trade memory count each trader's move once
     (`oneShadowAtATime` in `shadowTracker.ts`), not once per candle a setup stayed valid.

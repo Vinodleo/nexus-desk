@@ -23,6 +23,7 @@ import { router as pushRouter } from "./server/routes/push";
 import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
 import { startHistoryJob } from "./server/history/historyJob";
+import { startMlTestJob } from "./server/history/mlTest";
 import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
 import { startStockPrices } from "./server/stockPrices";
 import { startQuotes } from "./server/quotes";
@@ -132,6 +133,7 @@ async function startServer() {
   startExpiryGuard();
   startServerScanner();
   startHistoryJob();
+  startMlTestJob();
   startStockPrices();
   startUsPrices();
   startQuotes();
