@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../services/apiClient";
-import { historyRows, profileTotals, type HistoryRecords } from "../../services/historyReplay";
+import { historyRows, profileTotals, type HistoryRecords, type Timeframe } from "../../services/historyReplay";
 import { MARKET_KINDS, type MarketKind } from "../../services/exitExpectancy";
 import { DEFAULT_TRAIL_PROFILE, TRAIL_PROFILES, type TrailProfileId } from "../../shared/trailingStop";
 import { Card } from "./ui";
@@ -31,7 +31,18 @@ export interface HistoryView {
     problems: { symbol: string; note: string }[];
   } | null;
   records: HistoryRecords;
+  /** The same on slower candles (absent from servers before them). */
+  slow?: Partial<Record<Timeframe, HistoryRecords>>;
 }
+
+type CardTimeframe = "5m" | Timeframe;
+const TIMEFRAME_TAB: Record<CardTimeframe, string> = { "5m": "5 min", "1h": "1 hour", "1d": "1 day" };
+/** How each timeframe's trades are held, in a sentence. */
+const TIMEFRAME_RULE: Record<CardTimeframe, string> = {
+  "5m": "As the desk trades today: 5-minute candles, stocks closed the same day.",
+  "1h": "Slower: hourly candles, stops sized on them (wider), held up to 5 days, overnight included (Indian stocks as delivery trades, at about 0.5% a round trip).",
+  "1d": "Slowest: daily candles, stops sized on them (wider still), held up to 30 days (Indian stocks as delivery trades). The first months warm the indicators up, so it covers about the last year.",
+};
 
 const PHASE_LABEL: Record<Phase, string> = {
   idle: "",
@@ -52,6 +63,7 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
   const profile = trailProfile ?? DEFAULT_TRAIL_PROFILE;
   const [view, setView] = useState<HistoryView | null>(null);
   const [market, setMarket] = useState<MarketKind>("crypto");
+  const [timeframe, setTimeframe] = useState<CardTimeframe>("5m");
   const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
@@ -83,16 +95,17 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
   };
 
   if (!view) return null;
-  const { halves, rows } = historyRows(view.records, profile);
+  const records = timeframe === "5m" ? view.records : view.slow?.[timeframe] ?? {};
+  const { halves, rows } = historyRows(records, profile);
   const shown = rows.filter((r) => r.market === market);
-  const exits = profileTotals(view.records).filter((t) => t.market === market);
+  const exits = profileTotals(records).filter((t) => t.market === market);
   const counts = view.run?.markets;
 
   return (
     <Card aria-label="Traders over two years" className="flex flex-col gap-1">
       <div className="text-sm font-semibold">Traders over two years</div>
       <div className="text-xs text-muted leading-relaxed">
-        Every trader's setups on the last two years of 5-minute candles, played out with your {TRAIL_PROFILES[profile].label.toLowerCase()} trailing
+        Every trader's setups on the last two years of candles, played out with your {TRAIL_PROFILES[profile].label.toLowerCase()} trailing
         stop, the half banked at +1R and the time limit, after fees and spreads, one at a time. Coins use Binance's history (in dollars:
         results in R come out the same), charged their CoinDCX spread up to 0.2%, the most the desk trades at. It runs on the server in the
         background, slowly so live scanning isn't slowed: about half a day, then again each week.
@@ -119,6 +132,24 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
           {(view.run.setups.bytes / 1024 / 1024).toFixed(1)} MB){view.run.setups.full ? ", the most kept: later markets' aren't saved" : ""}
         </div>
       )}
+
+      <div role="tablist" aria-label="Candles" className="grid grid-cols-3 mt-2 p-0.5 rounded-full bg-inset border border-line">
+        {(["5m", "1h", "1d"] as const).map((tf) => (
+          <button
+            key={tf}
+            type="button"
+            role="tab"
+            aria-selected={tf === timeframe}
+            onClick={() => setTimeframe(tf)}
+            className={`min-h-9 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${tf === timeframe ? "bg-accent text-on-accent" : "text-muted"}`}
+          >
+            {TIMEFRAME_TAB[tf]}
+          </button>
+        ))}
+      </div>
+      <div className="text-xs text-muted" data-testid="history-timeframe">
+        {TIMEFRAME_RULE[timeframe]}
+      </div>
 
       <div role="tablist" aria-label="Market" className="grid grid-cols-3 mt-2 p-0.5 rounded-full bg-inset border border-line">
         {MARKET_KINDS.map((m) => (

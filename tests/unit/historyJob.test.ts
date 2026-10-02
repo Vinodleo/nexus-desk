@@ -75,6 +75,7 @@ beforeEach(() => {
   _resetHistoryJob();
   fs.rmSync(path.join(dataDir, "history_results.json"), { force: true });
   fs.rmSync(path.join(dataDir, "history_setups"), { recursive: true, force: true });
+  fs.rmSync(path.join(dataDir, "history_candles_1h"), { recursive: true, force: true });
 });
 
 afterAll(() => {
@@ -233,6 +234,28 @@ describe("the history job", () => {
     expect(run.markets["ETH/INR"]).toMatchObject({ status: "done", setups: 0, setupBytes: 0 });
     expect(fs.existsSync(path.join(setupsDir(), "ETH_INR.csv.gz"))).toBe(false);
     expect(historyView().run!.setups.full).toBe(true);
+  });
+
+  it("keeps each market's hourly candles and replays it on slower candles too", async () => {
+    // Six weeks of a coin: enough hours (about 1,000) for hourly trades, too few days for daily ones.
+    const { deps } = fakes({
+      symbols: async () => ["BTC/INR"],
+      download: async () => ({ series: series("2026-06-01T00:00:00Z", 12_000) }),
+    });
+    await startHistoryRun(false, deps);
+    const run = _historyRun()!;
+    const [header, ...rows] = gunzipSync(fs.readFileSync(path.join(job.hourlyDir(), "BTC_INR.csv.gz"))).toString().trim().split("\n");
+    expect(header).toBe("t,o,h,l,c,v");
+    expect(rows.length).toBe(1000);
+    const [t] = rows[0].split(",").map(Number);
+    expect(t % 3_600_000).toBe(0);
+    expect(Object.keys(run.slow!).sort()).toEqual(["1d", "1h"]);
+    expect(Object.keys(run.slow!["1h"]!).sort()).toEqual(["balanced", "fixed", "patient", "tight"]);
+    expect(run.slow!["1d"]).toEqual({});
+    expect(historyView().slow).toEqual(run.slow);
+    // A fresh run starts the hourly files again.
+    await startHistoryRun(true, fakes({ symbols: async () => [] }).deps);
+    expect(fs.existsSync(job.hourlyDir())).toBe(false);
   });
 
   it("carries on after a restart from the next market", async () => {

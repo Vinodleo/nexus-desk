@@ -3,9 +3,11 @@ import { decorateBarsWithIndicators } from "./marketDataService";
 import { LAB_INTERVAL_MS, panelSetupsOnHistory } from "./labSimulation";
 import { simulateExit } from "./exitComparison";
 import { expectancyKey, MARKET_KINDS, type MarketKind, type TraderRecord } from "./exitExpectancy";
-import { costsTooBigForStop } from "../shared/tradeCosts";
+import { costsTooBigForStop, MAX_COST_SHARE_OF_STOP } from "../shared/tradeCosts";
 import type { TrailProfileId } from "../shared/trailingStop";
 import { sessionClock } from "../shared/sessionBars";
+import { IST_OFFSET_MS, isNseSymbol, NSE_OPEN } from "../shared/nse";
+import { isUsSymbol, US_OPEN } from "../shared/usMarket";
 
 // The traders over years of history: every setup each trader would have put
 // forward on a market's past 5-minute candles, played forward under the live
@@ -379,4 +381,118 @@ export function profileTotals(records: HistoryRecords): { market: MarketKind; pr
     }
   }
   return out;
+}
+
+// ---------- slower trades: the same traders on 1-hour and 1-day candles ----------
+// Trades on 5-minute candles risk about 1% for moves too small to pay their
+// costs. Here the same traders read hourly or daily candles instead: their
+// stops are sized on those candles' own volatility (so wider), trades may
+// run for days (stocks held overnight: Indian ones as delivery trades, with
+// their higher charges), and the higher timeframe they check is a day
+// (above hourly candles) or a week (above daily ones). Exits are the live
+// ones otherwise: the trailing stop, half banked at +1R, a time limit.
+
+export type Timeframe = "1h" | "1d";
+export const TIMEFRAMES: Timeframe[] = ["1h", "1d"];
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+export const TIMEFRAME_RULES: Record<Timeframe, { intervalMs: number; higherMs: number; holdMs: number; warmupBars: number; anyTime: boolean }> = {
+  // Taken in stocks' entry hours, as live; held up to 5 days.
+  "1h": { intervalMs: HOUR_MS, higherMs: DAY_MS, holdMs: 5 * DAY_MS, warmupBars: 250, anyTime: false },
+  // Taken at the day's close; held up to 30 days.
+  "1d": { intervalMs: DAY_MS, higherMs: 7 * DAY_MS, holdMs: 30 * DAY_MS, warmupBars: 210, anyTime: true },
+};
+
+/**
+ * Where a market's hours start, past the UTC hour: on the hour for coins,
+ * from the open for stocks (9:15 IST is 03:45 UTC; 9:30 New York is :30 UTC
+ * in summer and winter alike, New York being whole hours from UTC).
+ */
+export function hourOffsetMs(symbol: string): number {
+  if (isNseSymbol(symbol)) return ((((NSE_OPEN - IST_OFFSET_MS / 60_000) % 60) + 60) % 60) * 60_000;
+  if (isUsSymbol(symbol)) return (US_OPEN % 60) * 60_000;
+  return 0;
+}
+
+/** 5-minute candles as longer ones (`periodMs`), each starting `offsetMs` past the period's boundary. */
+export function aggregateSeries(series: CandleSeries, periodMs: number, offsetMs: number = 0): CandleSeries {
+  const out = emptySeries();
+  for (let k = 0; k < series.t.length; k++) {
+    const start = Math.floor((series.t[k] - offsetMs) / periodMs) * periodMs + offsetMs;
+    const last = out.t.length - 1;
+    if (last >= 0 && out.t[last] === start) {
+      out.h[last] = Math.max(out.h[last], series.h[k]);
+      out.l[last] = Math.min(out.l[last], series.l[k]);
+      out.c[last] = series.c[k];
+      out.v[last] += series.v[k];
+    } else {
+      out.t.push(start);
+      out.o.push(series.o[k]);
+      out.h.push(series.h[k]);
+      out.l.push(series.l[k]);
+      out.c.push(series.c[k]);
+      out.v.push(series.v[k]);
+    }
+  }
+  return out;
+}
+
+/** A market's candles for a timeframe, from its hourly ones. */
+export function timeframeSeries(hourly: CandleSeries, tf: Timeframe): CandleSeries {
+  return tf === "1h" ? hourly : aggregateSeries(hourly, DAY_MS, 0);
+}
+
+/**
+ * Replays a market's slower candles (`series`, already `tf` long), yielding
+ * the trades taken every SLICE_BARS candles: one at a time per trader and
+ * exit profile, charged `feeRate` a round trip (a share of the price) plus
+ * the spread. Setups whose costs would take more than MAX_COST_SHARE_OF_STOP
+ * of the stop aren't taken, as live.
+ */
+export function* replayTimeframe(
+  symbol: string,
+  series: CandleSeries,
+  tf: Timeframe,
+  profiles: TrailProfileId[],
+  feeRate: number,
+  spreadPct: number = 0
+): Generator<HistoryTrade[]> {
+  const rules = TIMEFRAME_RULES[tf];
+  const n = series.t.length;
+  if (n < rules.warmupBars + 20) return;
+  // The candles' own volatility plans the stops (planAtr reads it as the hourly one).
+  const bars = decorateBarsWithIndicators(barsOf(series, 0, n));
+  for (const b of bars) b.atrHour = b.atr;
+  const held = { intervalMs: rules.intervalMs, holdMs: rules.holdMs, feeRate };
+  const busyUntil = new Map<string, number>();
+  const closeMs = (k: number) => (bars[k].timestampMs as number) + rules.intervalMs;
+  for (let from = rules.warmupBars; from < n - 1; from += SLICE_BARS) {
+    const trades: HistoryTrade[] = [];
+    const found = panelSetupsOnHistory(symbol, bars, undefined, {
+      from,
+      to: Math.min(n - 1, from + SLICE_BARS),
+      view: HISTORY_VIEW_BARS,
+      intervalMs: rules.intervalMs,
+      higherMs: rules.higherMs,
+      anyTime: rules.anyTime,
+    });
+    for (const { i, setups } of found) {
+      const entryMs = closeMs(i);
+      for (const setup of setups) {
+        const risk = Math.abs(setup.entryPrice - setup.stopLoss);
+        if (!(risk > 0) || ((feeRate + spreadPct) * setup.entryPrice) / risk > MAX_COST_SHARE_OF_STOP) continue;
+        for (const profile of profiles) {
+          const key = `${profile}|${setup.name}`;
+          if (entryMs < (busyUntil.get(key) ?? 0)) continue;
+          const result = simulateExit(setup, bars, i, profile, spreadPct, held);
+          if (!result || result.open) continue;
+          const exitMs = closeMs(result.exitIndex);
+          busyUntil.set(key, exitMs);
+          trades.push({ trader: setup.name, profile, entryMs, exitMs, r: result.r });
+        }
+      }
+    }
+    yield trades;
+  }
 }

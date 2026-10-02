@@ -30,20 +30,35 @@ export interface ExitResult {
 type SimPosition = TrailState & ExitState;
 
 /**
+ * How a slower trade is held (the history replay's 1-hour and 1-day
+ * trades): its candles' length, how long it may run, and what a round trip
+ * costs. It's held overnight, so stocks aren't closed at the session's end.
+ */
+export interface HeldExit {
+  intervalMs: number;
+  holdMs: number;
+  /** Fees for a round trip, as a share of the entry price. */
+  feeRate: number;
+}
+
+/**
  * Plays one setup, entered at the close of bar `i`, forward under a trail
  * profile. Null if the history ends within an hour of it.
  */
 /**
  * @param spreadPct the market's bid-ask spread as a share of price: a round
  *   trip buys at the ask and sells at the bid, so it's paid once per trade.
+ * @param held for a slower trade, how it's held; without, the live exits on
+ *   5-minute candles (time limits, and stocks closed before the bell).
  */
-export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number, profile: TrailProfileId, spreadPct: number = 0): ExitResult | null {
+export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number, profile: TrailProfileId, spreadPct: number = 0, held?: HeldExit): ExitResult | null {
   const entry = setup.entryPrice;
   const risk = Math.abs(entry - setup.stopLoss);
   if (!(risk > 0)) return null;
   const dir = setup.direction === "LONG" ? 1 : -1;
-  const openMs = (bars[i].timestampMs as number) + LAB_INTERVAL_MS;
-  const fee = feeFor(setup.symbol) + Math.max(0, spreadPct);
+  const intervalMs = held?.intervalMs ?? LAB_INTERVAL_MS;
+  const openMs = (bars[i].timestampMs as number) + intervalMs;
+  const fee = (held ? held.feeRate : feeFor(setup.symbol)) + Math.max(0, spreadPct);
   const p: SimPosition = {
     symbol: setup.symbol,
     direction: setup.direction,
@@ -59,7 +74,7 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
     trailMode: trailsAsRunner(setup) ? "TREND_RUNNER" : "SCALP_TIGHT",
     family: setup.family,
     trailProfile: profile,
-    expectedHoldingTimeMinutes: holdMinutesFor(setup),
+    expectedHoldingTimeMinutes: held ? held.holdMs / 60_000 : holdMinutesFor(setup),
     openTime: new Date(openMs).toISOString(),
     highestPrice: entry,
     lowestPrice: entry,
@@ -94,8 +109,8 @@ export function simulateExit(setup: StrategySetup, bars: MarketBar[], i: number,
     // A stop raised by the rise that the candle then fell back through.
     if (crossedStop(bar.close)) return finish(p.stopLoss, stopReason());
     // 3. The time limit, at the candle's close.
-    const closeMs = (bar.timestampMs as number) + LAB_INTERVAL_MS;
-    if (holdingDecision(p, closeMs) === "expire") return finish(bar.close, "EXPIRY_TIME");
+    const closeMs = (bar.timestampMs as number) + intervalMs;
+    if (held ? closeMs - openMs >= held.holdMs : holdingDecision(p, closeMs) === "expire") return finish(bar.close, "EXPIRY_TIME");
   }
   // History ended with the trade still open. Coin trades run for hours, so
   // leaving these out would drop exactly the winners still running while

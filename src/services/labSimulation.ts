@@ -86,13 +86,14 @@ export function candleSpacingMs(timestamps: number[]): number {
 /**
  * The 1-hour regime known at each moment, from hourly candles built out of
  * the 5-minute ones: what the live scanner's higher-timeframe check uses.
+ * For slower candles, `periodMs` is the higher timeframe's length instead (a
+ * day above hourly candles, a week above daily ones).
  */
-export function hourlyRegimeLookup(bars: MarketBar[]): (ms: number) => RegimeType | "neutral" {
-  const HOUR = 60 * 60 * 1000;
+export function hourlyRegimeLookup(bars: MarketBar[], periodMs: number = 60 * 60 * 1000): (ms: number) => RegimeType | "neutral" {
   const hours: MarketBar[] = [];
   for (const b of bars) {
     const t = b.timestampMs ?? 0;
-    const start = Math.floor(t / HOUR) * HOUR;
+    const start = Math.floor(t / periodMs) * periodMs;
     const last = hours[hours.length - 1];
     if (last && last.timestampMs === start) {
       last.high = Math.max(last.high, b.high);
@@ -110,7 +111,7 @@ export function hourlyRegimeLookup(bars: MarketBar[]): (ms: number) => RegimeTyp
     let k = -1;
     for (let lo = 0, hi = starts.length - 1; lo <= hi; ) {
       const mid = (lo + hi) >> 1;
-      if (starts[mid] + HOUR <= ms) {
+      if (starts[mid] + periodMs <= ms) {
         k = mid;
         lo = mid + 1;
       } else hi = mid - 1;
@@ -234,21 +235,31 @@ export function panelSetupsOnHistory(
   symbol: string,
   bars: MarketBar[],
   longOnly: boolean = !isNseSymbol(symbol),
-  range: { from?: number; to?: number; view?: number } = {}
+  range: {
+    from?: number;
+    to?: number;
+    view?: number;
+    /** Slower candles: their length, and the higher timeframe's (the trend check); 5 minutes and an hour by default. */
+    intervalMs?: number;
+    higherMs?: number;
+    /** Trades taken at any candle's close, not only in stocks' entry hours (daily candles close after them). */
+    anyTime?: boolean;
+  } = {}
 ): { i: number; regime: RegimeType; macro: RegimeType | "neutral"; setups: StrategySetup[] }[] {
-  const macroAt = hourlyRegimeLookup(bars);
+  const interval = range.intervalMs ?? LAB_INTERVAL_MS;
+  const macroAt = hourlyRegimeLookup(bars, range.higherMs);
   const out: { i: number; regime: RegimeType; macro: RegimeType | "neutral"; setups: StrategySetup[] }[] = [];
   /** The last candle each trader (by setup name) is still spaced out until. */
   const spacedUntil = new Map<string, number>();
   const view = range.view ?? Infinity;
   for (let i = Math.max(WARMUP_BARS, range.from ?? 0); i < Math.min(bars.length - 1, range.to ?? Infinity); i++) {
-    if (!takesEntriesAt(symbol, (bars[i].timestampMs as number) + LAB_INTERVAL_MS)) continue;
+    if (!range.anyTime && !takesEntriesAt(symbol, (bars[i].timestampMs as number) + interval)) continue;
     const regime = classifyRegime(bars[i]);
-    const macro = macroAt((bars[i].timestampMs as number) + LAB_INTERVAL_MS);
+    const macro = macroAt((bars[i].timestampMs as number) + interval);
     const panel = runPersonaPanel(
       {
         symbol,
-        timeframe: LAB_INTERVAL,
+        timeframe: range.intervalMs ? `${range.intervalMs / 60_000}m` : LAB_INTERVAL,
         bars: bars.slice(Math.max(0, i + 1 - view), i + 1),
         regime,
         eventWindowActive: false,
