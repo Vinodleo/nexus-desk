@@ -187,6 +187,29 @@ describe("the history job", () => {
     expect((await recordsWith(0.0005)).records).not.toEqual(atLimit.records);
   });
 
+  it("charges a stock an estimated spread before any is read, never nothing", async () => {
+    const { historySpread, UNREAD_STOCK_SPREAD } = job;
+    expect(historySpread("AAPL.US", undefined)).toBe(UNREAD_STOCK_SPREAD.us);
+    expect(historySpread("RELIANCE", undefined)).toBe(UNREAD_STOCK_SPREAD.nse);
+    expect(UNREAD_STOCK_SPREAD.us).toBeGreaterThan(0);
+    expect(UNREAD_STOCK_SPREAD.nse).toBeGreaterThan(0);
+    // One read is charged as it is.
+    expect(historySpread("AAPL.US", 0.0001)).toBe(0.0001);
+    expect(historySpread("RELIANCE", 0.00005)).toBe(0.00005);
+    // A US stock replayed just after a restart, before New York opens: charged the estimate, not free.
+    const recordsWith = async (spread: number | undefined) => {
+      _resetHistoryJob();
+      fs.rmSync(path.join(dataDir, "history_results.json"), { force: true });
+      const { deps } = fakes({ symbols: async () => ["AAPL.US"], spread: () => spread });
+      await startHistoryRun(false, deps);
+      return _historyRun()!;
+    };
+    const unread = await recordsWith(undefined);
+    expect(Object.keys(unread.records.tight ?? {}).length).toBeGreaterThan(0);
+    expect(unread.records).toEqual((await recordsWith(UNREAD_STOCK_SPREAD.us)).records);
+    expect(unread.records).not.toEqual((await recordsWith(0)).records);
+  });
+
   it("saves every setup with its readings and results, a compressed file per market", async () => {
     const { deps } = fakes({ symbols: async () => ["BTC/INR", "ETH/INR", "RELIANCE"] });
     await startHistoryRun(false, deps);
