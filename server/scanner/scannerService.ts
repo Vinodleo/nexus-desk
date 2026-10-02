@@ -68,6 +68,8 @@ export const SERVER_SCAN_FRESH_MS = 12 * 60 * 1000;
 
 const DATA_DIR = process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 const SHADOW_FILE = path.join(DATA_DIR, "scanner_shadows.json");
+/** The spreads read so far, so a restart (US stocks are read only while New York is open) doesn't leave the replays charging none. */
+const SPREAD_FILE = path.join(DATA_DIR, "spreads.json");
 
 // The server follows every setup in every market, well over a thousand a
 // day, so keeping only the newest 1,500 (what a phone keeps) left "When
@@ -102,11 +104,22 @@ function userState(uid: string): UserScanState {
 
 export function loadScannerState(): void {
   try {
-    if (!fs.existsSync(SHADOW_FILE)) return;
-    const saved = JSON.parse(fs.readFileSync(SHADOW_FILE, "utf8")) as Record<string, ShadowSignal[]>;
-    for (const [uid, shadows] of Object.entries(saved ?? {})) if (Array.isArray(shadows)) userState(uid).shadows = shadows;
+    if (fs.existsSync(SHADOW_FILE)) {
+      const saved = JSON.parse(fs.readFileSync(SHADOW_FILE, "utf8")) as Record<string, ShadowSignal[]>;
+      for (const [uid, shadows] of Object.entries(saved ?? {})) if (Array.isArray(shadows)) userState(uid).shadows = shadows;
+    }
   } catch (err) {
     console.warn("[ServerScanner] Couldn't read saved setups:", err);
+  }
+  try {
+    if (fs.existsSync(SPREAD_FILE)) {
+      const saved = JSON.parse(fs.readFileSync(SPREAD_FILE, "utf8")) as Record<string, unknown>;
+      for (const [symbol, spread] of Object.entries(saved ?? {})) {
+        if (typeof spread === "number" && Number.isFinite(spread) && spread >= 0 && !observedSpreads.has(symbol)) observedSpreads.set(symbol, spread);
+      }
+    }
+  } catch (err) {
+    console.warn("[ServerScanner] Couldn't read saved spreads:", err);
   }
 }
 
@@ -117,8 +130,10 @@ export function saveScannerState(): void {
     const out = Object.fromEntries([...users.entries()].map(([uid, s]) => [uid, s.shadows]));
     fs.writeFileSync(`${SHADOW_FILE}.tmp`, JSON.stringify(out), "utf8");
     fs.renameSync(`${SHADOW_FILE}.tmp`, SHADOW_FILE);
+    fs.writeFileSync(`${SPREAD_FILE}.tmp`, JSON.stringify(Object.fromEntries(observedSpreads)), "utf8");
+    fs.renameSync(`${SPREAD_FILE}.tmp`, SPREAD_FILE);
   } catch (err) {
-    console.warn("[ServerScanner] Couldn't save setups:", err);
+    console.warn("[ServerScanner] Couldn't save setups and spreads:", err);
   }
 }
 

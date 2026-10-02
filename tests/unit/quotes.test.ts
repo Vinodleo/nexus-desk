@@ -136,4 +136,23 @@ describe("observed spreads", () => {
     // Stocks aren't given a coin's spread.
     expect(typicalSpread("SBIN")).toBeUndefined();
   });
+
+  it("are kept across a restart, so the replays still have them while a market is closed", async () => {
+    const { recordSpread, typicalSpread, saveScannerState, loadScannerState, _resetServerScanner } = await import("../../server/scanner/scannerService");
+    _resetServerScanner();
+    recordSpread("BTC/INR", 0.004);
+    recordSpread("AAPL.US", 0.0002);
+    saveScannerState();
+    // Restarted: nothing read yet, the saved ones are back.
+    _resetServerScanner();
+    expect(typicalSpread("AAPL.US")).toBeUndefined();
+    loadScannerState();
+    expect(typicalSpread("BTC/INR")).toBeCloseTo(0.004, 9);
+    expect(typicalSpread("AAPL.US")).toBeCloseTo(0.0002, 9);
+    expect(typicalSpread("MSFT.US")).toBeCloseTo(0.0002, 9);
+    // A book read after the restart carries on from the saved one.
+    recordSpread("BTC/INR", 0.002);
+    expect(typicalSpread("BTC/INR")).toBeCloseTo(0.004 * 0.7 + 0.002 * 0.3, 9);
+    _resetServerScanner();
+  });
 });

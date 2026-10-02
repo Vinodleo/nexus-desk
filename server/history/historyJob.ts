@@ -53,7 +53,7 @@ export const HISTORY_VERSION = 4;
  * Bump when only the slower (1-hour, 1-day) replay changes: replayed
  * markets redo it from their kept hourly candles, without downloading again.
  */
-export const SLOW_VERSION = 2;
+export const SLOW_VERSION = 3;
 /** Results this old are replayed again. */
 export const RERUN_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Share of a core the replay uses on average. */
@@ -202,14 +202,23 @@ export function needsRun(saved: HistoryRun | null, now: number): boolean {
 }
 
 /**
+ * A stock's spread before any has been read (the server reads US stocks only
+ * while New York is open): about what the free IEX feed quotes a large US
+ * stock, wider than the whole market's, and a tick or two on a Nifty 50 one.
+ */
+export const UNREAD_STOCK_SPREAD = { us: 0.0003, nse: 0.0002 };
+
+/**
  * The spread a market's replayed trades pay. Today's spread doesn't decide
  * whether a coin's two years are replayed: the desk doesn't trade a coin
  * while its spread is wider than MAX_COIN_SPREAD, so its trades pay at most
  * that, and that's what it's charged when wider or not read yet (a server
- * just restarted has read few). Stocks pay theirs, as live.
+ * just restarted has read few). Stocks pay theirs, as live, or the estimate
+ * above, never nothing.
  */
 export function historySpread(symbol: string, read: number | undefined): number {
-  if (isUsSymbol(symbol) || isNseSymbol(symbol)) return read ?? 0;
+  if (isUsSymbol(symbol)) return read ?? UNREAD_STOCK_SPREAD.us;
+  if (isNseSymbol(symbol)) return read ?? UNREAD_STOCK_SPREAD.nse;
   return Math.min(read ?? MAX_COIN_SPREAD, MAX_COIN_SPREAD);
 }
 
