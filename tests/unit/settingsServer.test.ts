@@ -8,7 +8,7 @@ vi.mock("../../src/context/AuthContext", () => ({
 }));
 vi.mock("../../src/hooks/usePWAInstall", () => ({ usePWAInstall: () => ({ isInstallable: false, isInstalled: false, install: vi.fn() }) }));
 
-import { SettingsSheet, formatSpan, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
+import { SettingsSheet, backupSummary, formatSpan, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
 
 import { cleanMarketLimits } from "../../src/shared/marketLimits";
 afterEach(cleanup);
@@ -251,5 +251,33 @@ describe("Settings: motion", () => {
     fireEvent.click(btn);
     expect(btn.textContent).toContain("Checking…");
     expect(await screen.findByText("Up to date")).toBeTruthy();
+  });
+});
+
+describe("Settings: backups", () => {
+  const status = (backup?: object) =>
+    ({ startedAt: 0, uptimeSec: 60, cloudRun: null, storage: { dir: "/data", kept: true, note: "" }, scanner: { lastTickAt: 0, lastCycleDoneAt: 0, stalled: false }, backup }) as any;
+  const on = { configured: true, keepDays: 30, lastAt: null, files: 0, lastBytes: 0, lastError: null, lastErrorAt: null };
+  const now = Date.parse("2026-10-05T12:00:00Z");
+
+  it("say whether daily backups are on, when the last was, and when they fail", () => {
+    expect(backupSummary(status(), now)).toMatchObject({ badge: "—" });
+    expect(backupSummary(status({ ...on, configured: false }), now)).toEqual({
+      sub: "Not set up: run `fly storage create` in Cloud Shell (docs/hosting.md)", badge: "Off", tone: "text-warn",
+    });
+    expect(backupSummary(status(on), now)).toMatchObject({ badge: "On", sub: "Set up; the first backup runs a few minutes after the server starts" });
+    const last = { ...on, lastAt: now - 3 * 60 * 60 * 1000, files: 18 };
+    expect(backupSummary(status(last), now)).toEqual({ sub: "Last 3 h ago, 18 files · each kept 30 days", badge: "On", tone: "text-gain" });
+    // A failure after the last success shows; one before it doesn't.
+    expect(backupSummary(status({ ...last, lastError: "Upload refused (403 AccessDenied)", lastErrorAt: now - 60_000 }), now)).toEqual({
+      sub: "Last try failed: Upload refused (403 AccessDenied). It tries again every hour.", badge: "Failing", tone: "text-loss",
+    });
+    expect(backupSummary(status({ ...last, lastError: "old", lastErrorAt: now - 5 * 60 * 60 * 1000 }), now).badge).toBe("On");
+  });
+
+  it("show in the Server section", () => {
+    render(createElement(SettingsSheet, props({ serverStatus: status({ ...on, configured: false }) })));
+    expect(screen.getByText("Backups")).toBeTruthy();
+    expect(screen.getByText("Not set up: run `fly storage create` in Cloud Shell (docs/hosting.md)")).toBeTruthy();
   });
 });

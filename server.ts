@@ -36,6 +36,8 @@ import { alpacaStatus } from "./server/alpaca";
 import { reviewerStatus } from "./server/tradeReviewer";
 import { fxStatus } from "./server/fx";
 import { startUsPrices } from "./server/usPrices";
+import { backupStatus, restoreIfAsked, startBackups } from "./server/backup";
+import { notifyEveryone } from "./server/push";
 
 // Entry point: builds the Express app, mounts the route modules behind
 // Firebase auth, and starts the WebSocket fan-out, the CoinDCX price relay and
@@ -77,7 +79,7 @@ app.use(pushRouter);
 
 // Where the server runs and whether its saved state survives restarts.
 app.get("/api/server/status", (_req: Request, res: Response) => {
-  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus(), alpaca: alpacaStatus(), fx: fxStatus(), reviewer: reviewerStatus() });
+  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus(), alpaca: alpacaStatus(), fx: fxStatus(), reviewer: reviewerStatus(), backup: backupStatus() });
 });
 
 // Unknown API paths get a JSON 404 instead of falling through to the SPA's
@@ -101,6 +103,13 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 
 // Start server with Vite middleware in dev or static files in production
 async function startServer() {
+  // RESTORE_BACKUP=YYYY-MM-DD puts that day's backup back (once), then
+  // restarts so every part of the server loads the restored files.
+  if (await restoreIfAsked()) {
+    console.log("[Backup] Restarting to load the restored files.");
+    process.exit(1);
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
@@ -138,6 +147,7 @@ async function startServer() {
   startServerScanner();
   startHistoryJob();
   startMlTestJob();
+  startBackups((title, body) => void notifyEveryone({ title, body, tag: "backup-failed", url: "/" }));
   startDailyLongJob();
   startStocksLongJob();
   startDailyCoins();

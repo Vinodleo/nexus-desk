@@ -181,12 +181,50 @@ Logs and the machine's status are in the Fly dashboard, under the app's
 **Monitoring** page. To stop paying, destroy the app there or run
 `fly apps destroy nexus-desk-vinodleo`.
 
+### Daily backups (off the server)
+
+Once a day the server saves a copy of its saved state (open positions,
+live-order records, desk settings, trade records, the strategies' checks and
+replay results) to Fly's object storage, keeping each day's copy 30 days
+(`server/backup.ts`). Downloaded candles and saved setups aren't copied: the
+replays rebuild them. Angel One's login tokens aren't copied either.
+
+**Set it up once**, in Cloud Shell:
+
+```
+fly storage create -a nexus-desk-vinodleo
+```
+
+It asks for a bucket name (any, e.g. `nexus-desk-backups`), then sets the
+bucket's keys on the app as secrets itself (`AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`)
+and restarts it: no key to copy anywhere. A few minutes later **Settings →
+Server → Backups** says **On** with the first backup. A day's copy is small
+(a few MB at most), well within the storage's free allowance. If a backup
+fails, the row says why, a pop-up tells you once that day, and it tries
+again every hour.
+
+**To put a day back** (after a lost or broken disk, say). Backups are named by
+their day in UTC; Settings shows when the last one ran.
+
+1. `fly secrets set RESTORE_BACKUP=2026-10-05 -a nexus-desk-vinodleo`. The app
+   restarts, puts that day's files back (the ones they replace are kept in a
+   `before-restore-…` folder beside them), and restarts once more to load
+   them. `fly logs -a nexus-desk-vinodleo` shows
+   `[Backup] Restored … files from 2026-10-05`.
+2. `fly secrets unset RESTORE_BACKUP -a nexus-desk-vinodleo`. (It restores a
+   day once only, so forgetting this is harmless.)
+
+A restore brings back that day's open positions. With live trades, check
+them against CoinDCX afterwards.
+
 ## Checking it works
 
 - **In the app, Settings → Server:**
   - **Running for** keeps growing. If it keeps resetting, the server is being
     restarted.
   - **Saved state** says **Kept**.
+  - **Backups** says **On**, with a backup within the last day.
   - **Scanning** says **On the server** with a recent last scan.
 - **`https://YOUR_URL/api/health`** answers 200, and `scanner.lastTickAt` is
   within the last 5 minutes. It answers 503 if the scanner's loop has stopped.

@@ -62,6 +62,16 @@ export interface SettingsSheetProps {
 }
 
 /** "45 sec", "12 min", "3 h", "2 days". */
+/** The Backups row: whether daily off-site backups are on, the last one, and a failure. */
+export function backupSummary(status: ServerStatus | null, now: number = Date.now()): { sub: string; badge: string; tone: string } {
+  const b = status?.backup;
+  if (!status || !b) return { sub: "Daily copies of the server's saved state, off the server", badge: "—", tone: "text-muted" };
+  if (!b.configured) return { sub: "Not set up: run `fly storage create` in Cloud Shell (docs/hosting.md)", badge: "Off", tone: "text-warn" };
+  if (b.lastError && (!b.lastAt || (b.lastErrorAt ?? 0) > b.lastAt)) return { sub: `Last try failed: ${b.lastError}. It tries again every hour.`, badge: "Failing", tone: "text-loss" };
+  if (!b.lastAt) return { sub: "Set up; the first backup runs a few minutes after the server starts", badge: "On", tone: "text-gain" };
+  return { sub: `Last ${formatSpan(now - b.lastAt)} ago, ${b.files} files · each kept ${b.keepDays} days`, badge: "On", tone: "text-gain" };
+}
+
 export function formatSpan(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000));
   if (sec < 60) return `${sec} sec`;
@@ -626,6 +636,12 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             ) : (
               <span className="text-muted">—</span>
             )}
+          </Row>
+          <Row label="Backups" sub={backupSummary(props.serverStatus ?? null).sub}>
+            {(() => {
+              const { badge, tone } = backupSummary(props.serverStatus ?? null);
+              return <span className={tone}>{badge}</span>;
+            })()}
           </Row>
           <Row
             label="Alpaca"

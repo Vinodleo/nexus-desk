@@ -12,6 +12,8 @@ export interface ServerStatus {
   /** Alpaca (US stocks, paper) and the USD/INR rate US prices are converted at; missing on an older server. */
   alpaca?: { configured: boolean; accountStatus: string | null; lastError: string | null };
   fx?: { usdInr: number; at: number; source: string } | null;
+  /** Daily off-site backups of the saved state (server/backup.ts); missing on an older server. */
+  backup?: { configured: boolean; keepDays: number; lastAt: number | null; files: number; lastBytes: number; lastError: string | null; lastErrorAt: number | null };
   /** Gemini reviewing the server autopilot's trades, today (India time); missing on an older server. */
   reviewer?: {
     configured: boolean;
