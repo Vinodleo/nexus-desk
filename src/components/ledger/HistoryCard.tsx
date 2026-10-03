@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "../../services/apiClient";
+import { labGet, useLabFeed } from "./labFeed";
+import { CompareBars, Fold, LabChip } from "./labUi";
+import { MIN_EDGE_R, MIN_TRADER_TRADES } from "../../services/calibration";
 import { FIXED_COINS, historyRows, profileTotals, recordStats, sumRecords, type HistoryRecords, type MarketTotals, type Timeframe } from "../../services/historyReplay";
 import { MARKET_KINDS, type MarketKind, type TraderRecord } from "../../services/exitExpectancy";
 import { isNseSymbol } from "../../shared/nse";
@@ -73,7 +76,7 @@ const Figures: React.FC<{ rec: TraderRecord; brief?: boolean }> = ({ rec, brief 
 };
 
 /** A reply this card can show (an older server, or an error, has no results). */
-const isView = (body: any): body is HistoryView => !!body && typeof body.records === "object" && body.records !== null && typeof body.running === "boolean";
+export const isHistoryView = (body: any): body is HistoryView => !!body && typeof body.records === "object" && body.records !== null && typeof body.running === "boolean";
 
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
@@ -88,10 +91,9 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const load = () =>
-      apiFetch("/api/history")
-        .then((r) => (r.ok ? r.json() : null))
+      labGet("/api/history")
         .then((body) => {
-          if (cancelled || !isView(body)) return;
+          if (cancelled || !isHistoryView(body)) return;
           setView(body);
           if (body.running) timer = setTimeout(load, RUNNING_REFRESH_MS);
         })
@@ -107,7 +109,7 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
     setRestarting(true);
     apiFetch("/api/history/run", { method: "POST" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((body) => isView(body) && setView(body))
+      .then((body) => isHistoryView(body) && setView(body))
       .catch(() => {})
       .finally(() => setRestarting(false));
   };
@@ -118,33 +120,13 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
   const shown = rows.filter((r) => r.market === market);
   const exits = profileTotals(records).filter((t) => t.market === market);
   const counts = view.run?.markets;
-  // Each market's own result on the slower candles, best first; the coins split into the fixed list and today's picks.
-  const each =
-    timeframe === "5m"
-      ? []
-      : Object.entries(view.slowByMarket ?? {})
-          .filter(([symbol]) => kindOf(symbol) === market)
-          .flatMap(([symbol, totals]) => {
-            const rec = totals[timeframe]?.[profile];
-            return rec && rec.trades > 0 ? [{ symbol, rec, fixed: FIXED_COINS.includes(symbol) }] : [];
-          })
-          .sort((a, b) => b.rec.totalR / b.rec.trades - a.rec.totalR / a.rec.trades);
-  const coinGroups = [
-    { label: "Fixed list", list: each.filter((e) => e.fixed) },
-    { label: "Today's picks", list: each.filter((e) => !e.fixed) },
-  ].filter((g) => g.list.length > 0);
+  // Each market's own result on the slower candles, best first.
+  const each = timeframe === "5m" ? [] : eachMarket(view, market, timeframe, profile);
 
   return (
     <Card aria-label="Traders over two years" className="flex flex-col gap-1">
       <div className="text-sm font-semibold">Traders over two years</div>
-      <div className="text-xs text-muted leading-relaxed">
-        Every trader's setups on the last two years of candles, played out with your {TRAIL_PROFILES[profile].label.toLowerCase()} trailing
-        stop, the half banked at +1R and the time limit, after fees and spreads, one at a time. Coins use Binance's history (in dollars:
-        results in R come out the same), charged their CoinDCX spread up to 0.2%, the most the desk trades at. It runs on the server in the
-        background, slowly so live scanning isn't slowed: about half a day, then again each week.
-      </div>
-
-      <div className="text-xs tabular-nums mt-1" data-testid="history-status">
+      <div className="text-xs tabular-nums" data-testid="history-status">
         {view.running ? (
           <span className="text-ink">
             Replaying: {view.finished} of {view.total} markets checked
@@ -159,12 +141,20 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
         )}
       </div>
 
-      {view.run?.setups && view.run.setups.count > 0 && (
-        <div className="text-xs text-muted tabular-nums" data-testid="history-setups">
-          Setup details saved for machine learning: {view.run.setups.count.toLocaleString("en-IN")} setups (
-          {(view.run.setups.bytes / 1024 / 1024).toFixed(1)} MB){view.run.setups.full ? ", the most kept: later markets' aren't saved" : ""}
+      <Fold title="How this replay works">
+        <div className="text-xs text-muted leading-relaxed">
+          Every trader's setups on the last two years of candles, played out with your {TRAIL_PROFILES[profile].label.toLowerCase()} trailing
+          stop, the half banked at +1R and the time limit, after fees and spreads, one at a time. Coins use Binance's history (in dollars:
+          results in R come out the same), charged their CoinDCX spread up to 0.2%, the most the desk trades at. It runs on the server in
+          the background, slowly so live scanning isn't slowed: about half a day, then again each week.
         </div>
-      )}
+        {view.run?.setups && view.run.setups.count > 0 && (
+          <div className="text-xs text-muted tabular-nums" data-testid="history-setups">
+            Setup details saved for machine learning: {view.run.setups.count.toLocaleString("en-IN")} setups (
+            {(view.run.setups.bytes / 1024 / 1024).toFixed(1)} MB){view.run.setups.full ? ", the most kept: later markets' aren't saved" : ""}
+          </div>
+        )}
+      </Fold>
 
       <div role="tablist" aria-label="Candles" className="grid grid-cols-3 mt-2 p-0.5 rounded-full bg-inset border border-line">
         {(["5m", "1h", "1d"] as const).map((tf) => (
@@ -260,23 +250,6 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
 
       {each.length > 0 && (
         <div className="mt-2 p-2.5 rounded-xl bg-inset flex flex-col gap-1.5" data-testid="history-markets">
-          {market === "crypto" && (
-            <>
-              <div className="text-[11px] font-semibold text-muted">Coin check: a list fixed in advance against today's picks</div>
-              <div className="text-[11px] text-muted leading-relaxed">
-                Today's picks are the coins most active now, which can favour coins that rose. The fixed list is the {FIXED_COINS.length} biggest coins
-                on 1 Oct 2024, picked before the two years began. If the traders only do well on today's picks, the coins did the work.
-              </div>
-              {coinGroups.map((g) => (
-                <div key={g.label} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
-                  <span className="font-semibold">
-                    {g.label} · {g.list.length} {g.list.length === 1 ? "coin" : "coins"}
-                  </span>
-                  <Figures rec={sumRecords(g.list.map((e) => e.rec))} />
-                </div>
-              ))}
-            </>
-          )}
           <details>
             <summary className="text-[11px] font-semibold text-muted cursor-pointer">
               Each {market === "crypto" ? "coin" : "stock"} ({each.length})
@@ -314,6 +287,73 @@ export const HistoryCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trail
           Replay again
         </button>
       )}
+    </Card>
+  );
+};
+
+/** Each market's own result on slower candles with `profile`, best first, coins marked when on the fixed list. */
+function eachMarket(view: HistoryView, market: MarketKind, timeframe: Timeframe, profile: TrailProfileId) {
+  return Object.entries(view.slowByMarket ?? {})
+    .filter(([symbol]) => kindOf(symbol) === market)
+    .flatMap(([symbol, totals]) => {
+      const rec = totals[timeframe]?.[profile];
+      return rec && rec.trades > 0 ? [{ symbol, rec, fixed: FIXED_COINS.includes(symbol) }] : [];
+    })
+    .sort((a, b) => b.rec.totalR / b.rec.trades - a.rec.totalR / a.rec.trades);
+}
+
+/**
+ * The coin check on daily candles (the speed the desk trades coins slower
+ * at): every trader together on a list fixed in advance against today's
+ * picks, and whether the fixed list alone still earns the edge a trader needs.
+ */
+export function coinCheck(view: HistoryView, profile: TrailProfileId) {
+  const each = eachMarket(view, "crypto", "1d", profile);
+  const fixed = each.filter((e) => e.fixed);
+  const picks = each.filter((e) => !e.fixed);
+  if (fixed.length === 0) return null;
+  const fixedRec = sumRecords(fixed.map((e) => e.rec));
+  const fixedStats = recordStats(fixedRec);
+  return {
+    fixed: { coins: fixed.length, stats: fixedStats },
+    picks: picks.length > 0 ? { coins: picks.length, stats: recordStats(sumRecords(picks.map((e) => e.rec))) } : null,
+    passed: fixedStats.trades >= MIN_TRADER_TRADES && fixedStats.avgR >= MIN_EDGE_R,
+  };
+}
+
+/** The Lab's Tests tab: does a list of coins fixed in advance flatter the daily traders less than today's picks? */
+export const CoinCheckCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trailProfile }) => {
+  const view = useLabFeed("/api/history", isHistoryView);
+  const check = view ? coinCheck(view, trailProfile ?? DEFAULT_TRAIL_PROFILE) : null;
+  if (!check) return null;
+  const { fixed, picks, passed } = check;
+  const plural = (n: number) => `${n} ${n === 1 ? "coin" : "coins"}`;
+  return (
+    <Card aria-label="Coin check" className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-sm font-semibold">Coin check</div>
+        <LabChip status={passed ? "passes" : "fails"}>{passed ? "Passes" : "Doesn't pass"}</LabChip>
+      </div>
+      <div className="text-xs text-muted leading-snug" data-testid="coin-check-verdict">
+        {passed
+          ? `Do today's busiest coins flatter the daily traders? On a list fixed in advance they still average ${rSigned(fixed.stats.avgR)} a trade.`
+          : `On a list fixed in advance the daily traders average ${rSigned(fixed.stats.avgR)} a trade: today's busiest coins did the work.`}
+      </div>
+      <CompareBars
+        testId="coin-check"
+        rows={[
+          { label: "Fixed list", sub: `${plural(fixed.coins)} · ${fixed.stats.trades.toLocaleString("en-IN")} setups`, r: fixed.stats.avgR, strong: true },
+          ...(picks ? [{ label: "Today's picks", sub: `${plural(picks.coins)} · ${picks.stats.trades.toLocaleString("en-IN")} setups`, r: picks.stats.avgR }] : []),
+        ]}
+      />
+      <Fold title="How the coin check works">
+        <div className="text-xs text-muted leading-relaxed">
+          Every trader together on daily candles over the last two years, with your trailing stop. Today's picks are the coins most active
+          now, which can favour coins that rose. The fixed list is the {FIXED_COINS.length} biggest coins on 1 Oct 2024, picked before the
+          two years began. It passes when the fixed list alone averages {rSigned(MIN_EDGE_R)} or more over {MIN_TRADER_TRADES}+ setups; if
+          the traders only do well on today's picks, the coins did the work.
+        </div>
+      </Fold>
     </Card>
   );
 };

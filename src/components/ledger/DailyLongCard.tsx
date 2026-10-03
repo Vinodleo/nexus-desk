@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { apiFetch } from "../../services/apiClient";
+import React from "react";
+import { useLabFeed } from "./labFeed";
+import { Fold } from "./labUi";
 import { profileTotals, recordStats, sumRecords, type HistoryRecords } from "../../services/historyReplay";
 import type { TraderRecord } from "../../services/exitExpectancy";
 import { DEFAULT_TRAIL_PROFILE, TRAIL_PROFILES, type TrailProfileId } from "../../shared/trailingStop";
@@ -59,7 +60,7 @@ const Cell: React.FC<{ rec: TraderRecord | undefined; strong?: boolean }> = ({ r
 };
 
 /** A reply this card can show (an older server has no such route). */
-const isView = (body: any): body is DailyLongView =>
+export const isDailyLongView = (body: any): body is DailyLongView =>
   !!body && typeof body.records === "object" && body.records !== null && typeof body.running === "boolean" && typeof body.cohorts === "object";
 
 const RUNNING_REFRESH_MS = 60_000;
@@ -106,26 +107,7 @@ const Figures: React.FC<{ rec: TraderRecord; brief?: boolean }> = ({ rec, brief 
 
 export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ trailProfile }) => {
   const profile = trailProfile ?? DEFAULT_TRAIL_PROFILE;
-  const [view, setView] = useState<DailyLongView | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const load = () =>
-      apiFetch("/api/daily-long")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((body) => {
-          if (cancelled || !isView(body)) return;
-          setView(body);
-          if (body.running) timer = setTimeout(load, RUNNING_REFRESH_MS);
-        })
-        .catch(() => {});
-    void load();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
+  const view = useLabFeed("/api/daily-long", isDailyLongView, (v) => v.running, RUNNING_REFRESH_MS);
 
   if (!view) return null;
   const years = recordsByYear(view.records, profile);
@@ -142,14 +124,7 @@ export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ tra
   return (
     <Card aria-label="Coins on daily candles since 2017" className="flex flex-col gap-1">
       <div className="text-sm font-semibold">Coins on daily candles since 2017</div>
-      <div className="text-xs text-muted leading-relaxed">
-        The traders' daily coin trades over every year Binance has, through the 2018 and 2022 crashes. Each year trades only its 20
-        biggest coins on 1 January, picked before that year's results; coins since delisted come from Binance's archive. With your{" "}
-        {TRAIL_PROFILES[profile].label.toLowerCase()} trailing stop, held up to 30 days, after fees and spreads. Each trader's record here
-        decides whether it takes daily paper trades.
-      </div>
-
-      <div className="text-xs tabular-nums mt-1" data-testid="daily-long-status">
+      <div className="text-xs tabular-nums" data-testid="daily-long-status">
         {view.running ? (
           <span className="text-ink">
             Replaying: {view.finished} of {view.total} coins checked{view.current ? ` · ${coin(view.current)}` : ""}
@@ -167,57 +142,62 @@ export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ tra
         <div className="text-xs text-muted">{view.running ? "No results yet." : "No results."}</div>
       ) : (
         <>
-          <div className="mt-2 flex flex-col gap-1.5" data-testid="daily-long-years">
-            <div className="text-[11px] font-semibold text-muted">Every trader together, year by year</div>
-            {years.map(({ year, rec }) => (
-              <div key={year} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
-                <span>{year}</span>
-                <Figures rec={rec} />
+          <Fold title="Every trader together, year by year">
+            <div className="flex flex-col gap-1.5" data-testid="daily-long-years">
+              {years.map(({ year, rec }) => (
+                <div key={year} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
+                  <span>{year}</span>
+                  <Figures rec={rec} />
+                </div>
+              ))}
+              <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums border-t border-line pt-1.5">
+                <span className="font-semibold">All years</span>
+                <Figures rec={allYears} />
               </div>
-            ))}
-            <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums border-t border-line pt-1.5">
-              <span className="font-semibold">All years</span>
-              <Figures rec={allYears} />
             </div>
-          </div>
+          </Fold>
 
-          <div className="mt-2 flex flex-col gap-1.5" data-testid="daily-long-traders">
-            <div className="text-[11px] font-semibold text-muted">Each trader, all years</div>
-            {traders.map(({ trader, rec }) => (
-              <div key={trader} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
-                <span>{trader}</span>
-                <Figures rec={rec} brief />
-              </div>
-            ))}
-          </div>
+          <Fold title="Each trader, all years">
+            <div className="flex flex-col gap-1.5" data-testid="daily-long-traders">
+              {traders.map(({ trader, rec }) => (
+                <div key={trader} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
+                  <span>{trader}</span>
+                  <Figures rec={rec} brief />
+                </div>
+              ))}
+            </div>
+          </Fold>
         </>
       )}
 
       {view.classic && Object.keys(view.classic).length > 0 && (
-        <ClassicTable classic={view.classic} years={years} />
+        <Fold title="Classic strategies next to your traders">
+          <ClassicTable classic={view.classic} years={years} />
+        </Fold>
       )}
 
       {exits.length > 0 && (
-        <div className="mt-2 p-2.5 rounded-xl bg-inset flex flex-col gap-1.5" data-testid="daily-long-exits">
-          <div className="text-[11px] font-semibold text-muted">Every trader, by trailing stop (the same setups)</div>
-          {exits.map(({ profile: p, stats }) => (
-            <div key={p} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
-              <span className={p === profile ? "font-semibold" : "text-muted"}>
-                {TRAIL_PROFILES[p].label}
-                {p === profile ? " (yours)" : ""}
-              </span>
-              <span className="text-muted ml-auto">
-                {stats.trades} setups · {stats.winPct}% won · <span className={`font-semibold ${pnlTone(stats.avgR)}`}>{rSigned(stats.avgR)}</span>
-              </span>
-            </div>
-          ))}
-        </div>
+        <Fold title="Trailing stops compared">
+          <div className="flex flex-col gap-1.5" data-testid="daily-long-exits">
+            <div className="text-[11px] text-muted">Every trader, by trailing stop (the same setups)</div>
+            {exits.map(({ profile: p, stats }) => (
+              <div key={p} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
+                <span className={p === profile ? "font-semibold" : "text-muted"}>
+                  {TRAIL_PROFILES[p].label}
+                  {p === profile ? " (yours)" : ""}
+                </span>
+                <span className="text-muted ml-auto">
+                  {stats.trades} setups · {stats.winPct}% won · <span className={`font-semibold ${pnlTone(stats.avgR)}`}>{rSigned(stats.avgR)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </Fold>
       )}
 
       {coins.length > 0 && (
-        <details className="mt-1">
-          <summary className="text-[11px] font-semibold text-muted cursor-pointer">Each coin ({coins.length})</summary>
-          <ul className="m-0 p-0 list-none flex flex-col mt-1" data-testid="daily-long-coins">
+        <Fold title={`Each coin (${coins.length})`}>
+          <ul className="m-0 p-0 list-none flex flex-col" data-testid="daily-long-coins">
             {coins.map(({ symbol, rec }) => (
               <li key={symbol} className="flex flex-wrap items-baseline justify-between gap-x-2 py-1 text-xs tabular-nums">
                 <span>{coin(symbol)}</span>
@@ -225,12 +205,11 @@ export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ tra
               </li>
             ))}
           </ul>
-        </details>
+        </Fold>
       )}
 
-      <details className="mt-1">
-        <summary className="text-[11px] font-semibold text-muted cursor-pointer">Coins each year</summary>
-        <div className="flex flex-col gap-1 mt-1 text-[11px] text-muted" data-testid="daily-long-cohorts">
+      <Fold title="Coins each year">
+        <div className="flex flex-col gap-1 text-[11px] text-muted" data-testid="daily-long-cohorts">
           {Object.entries(view.cohorts).map(([year, list]) => (
             <div key={year}>
               <span className="font-semibold text-ink">{year}</span> {list.join(", ")}
@@ -238,7 +217,16 @@ export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ tra
           ))}
           <div>Later years use the last list.</div>
         </div>
-      </details>
+      </Fold>
+
+      <Fold title="How this replay works">
+        <div className="text-xs text-muted leading-relaxed">
+          The traders' daily coin trades over every year Binance has, through the 2018 and 2022 crashes. Each year trades only its 20
+          biggest coins on 1 January, picked before that year's results; coins since delisted come from Binance's archive. With your{" "}
+          {TRAIL_PROFILES[profile].label.toLowerCase()} trailing stop, held up to 30 days, after fees and spreads. Each trader's record here
+          decides whether it takes daily paper trades.
+        </div>
+      </Fold>
 
       {view.run && view.run.problems.length > 0 && (
         <div className="text-[11px] text-muted mt-1">
@@ -261,8 +249,8 @@ const ClassicTable: React.FC<{ classic: ClassicRecords; years: { year: string; r
   const columns = ["traders", ...CLASSIC_IDS] as const;
   const grid = { gridTemplateColumns: "3rem repeat(4, minmax(0, 1fr))" };
   return (
-    <div className="mt-2 flex flex-col gap-1.5" data-testid="daily-long-classic">
-      <div className="text-[11px] font-semibold text-muted">Classic strategies on the same coins and years (average R a trade)</div>
+    <div className="flex flex-col gap-1.5" data-testid="daily-long-classic">
+      <div className="text-[11px] text-muted">On the same coins and years, average R a trade</div>
       <div className="grid gap-x-2 gap-y-1 text-xs tabular-nums" style={grid}>
         <span />
         {columns.map((c) => (

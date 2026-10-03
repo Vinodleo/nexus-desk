@@ -46,12 +46,17 @@ describe("Coins on daily candles since 2017", () => {
     render(createElement(DailyLongCard, { trailProfile: "tight" }));
     const years = await screen.findByTestId("daily-long-years");
     // 2018: −1R over 20 setups; 2022: +6R over 20 (US records left out); all: +5R over 40.
-    expect(years.textContent).toBe(
-      "Every trader together, year by year" + "201820 setups · 25% won · −0.05R" + "202220 setups · 50% won · +0.30R" + "All years40 setups · 38% won · +0.13R"
-    );
-    expect(screen.getByTestId("daily-long-traders").textContent).toBe(
-      "Each trader, all years" + "Sofia Range Scalp30 setups · +0.13R" + "Marcus Swing Trend10 setups · +0.10R"
-    );
+    expect(years.textContent).toBe("201820 setups · 25% won · −0.05R" + "202220 setups · 50% won · +0.30R" + "All years40 setups · 38% won · +0.13R");
+    expect(screen.getByTestId("daily-long-traders").textContent).toBe("Sofia Range Scalp30 setups · +0.13R" + "Marcus Swing Trend10 setups · +0.10R");
+    // Each list folds away under a short title, the explanation too.
+    expect(screen.getAllByText(/./, { selector: "summary" }).map((s) => s.textContent)).toEqual([
+      "Every trader together, year by year›",
+      "Each trader, all years›",
+      "Trailing stops compared›",
+      "Each coin (2)›",
+      "Coins each year›",
+      "How this replay works›",
+    ]);
     const exits = screen.getByTestId("daily-long-exits").textContent;
     expect(exits).toContain("Tight (yours)40 setups · 38% won · +0.13R");
     expect(exits).toContain("Patient20 setups · 60% won · +0.60R");
@@ -73,7 +78,8 @@ describe("Coins on daily candles since 2017", () => {
     vi.mocked(apiFetch).mockResolvedValue(reply(view({ classic })));
     render(createElement(DailyLongCard, { trailProfile: "tight" }));
     const table = (await screen.findByTestId("daily-long-classic")).textContent!;
-    expect(table).toContain("Classic strategies on the same coins and years (average R a trade)TradersBreakout50/200Top 3");
+    expect(table).toContain("On the same coins and years, average R a tradeTradersBreakout50/200Top 3");
+    expect(screen.getByText("Classic strategies next to your traders", { exact: false, selector: "summary" })).toBeTruthy();
     // Your traders −0.05 and +0.30 (as above); breakout +0.75 then −0.33; the others only in 2022.
     expect(table).toContain("2018−0.05+0.75——");
     expect(table).toContain("2022+0.30−0.33+1.00+0.00");

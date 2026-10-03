@@ -15,6 +15,8 @@ const { LedgerLab, isResultPromoted } = await import("../../src/components/ledge
 import type { PromotedLabModel } from "../../src/types";
 
 afterEach(cleanup);
+/** The training tools sit in the Lab's Tools tab. */
+const openTools = () => fireEvent.click(screen.getByRole("tab", { name: "Tools" }));
 
 function result(over: Record<string, unknown> = {}) {
   return {
@@ -39,6 +41,7 @@ describe("LedgerLab", () => {
     service.runRealDataWalkForward.mockResolvedValue(result());
     const onPromote = vi.fn();
     render(createElement(LedgerLab, { promotedLabModel: null, onPromote, onRevert: vi.fn() }));
+    openTools();
     expect(screen.getByText(/No Lab model promoted/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Train on BTC/INR" }));
@@ -54,6 +57,7 @@ describe("LedgerLab", () => {
     service.fetchRealHistoricalCandles.mockResolvedValue([{ isSynthetic: true, sourceExchange: "Deterministic Fallback" }]);
     service.runRealDataWalkForward.mockResolvedValue(result());
     render(createElement(LedgerLab, { promotedLabModel: null, onPromote: vi.fn(), onRevert: vi.fn() }));
+    openTools();
     fireEvent.click(screen.getByRole("button", { name: "Train on BTC/INR" }));
     expect(await screen.findByText(/ran on generated prices/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Promote to live" })).toBeNull();
@@ -63,6 +67,7 @@ describe("LedgerLab", () => {
     service.fetchRealHistoricalCandles.mockResolvedValue([{ isSynthetic: false, sourceExchange: "Binance Public API" }]);
     service.runRealDataWalkForward.mockResolvedValue(result({ learnedMetrics: { ...result().learnedMetrics, tradesCount: 2 } }));
     render(createElement(LedgerLab, { promotedLabModel: null, onPromote: vi.fn(), onRevert: vi.fn() }));
+    openTools();
     fireEvent.click(screen.getByRole("button", { name: "Train on BTC/INR" }));
     expect(await screen.findByText(/Only 2 test trades/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Promote to live" })).toBeNull();
@@ -71,6 +76,7 @@ describe("LedgerLab", () => {
   it("shows the model in use and reverts it after a confirm", () => {
     const onRevert = vi.fn();
     render(createElement(LedgerLab, { promotedLabModel: promoted, onPromote: vi.fn(), onRevert }));
+    openTools();
     expect(screen.getByText(promoted.datasetName)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Revert to built-in rules" }));
     expect(onRevert).not.toHaveBeenCalled();
@@ -95,6 +101,7 @@ describe("LedgerLab progress", () => {
       return new Promise((r) => (finish = r));
     });
     render(createElement(LedgerLab, { promotedLabModel: null, onPromote: vi.fn(), onRevert: vi.fn() }));
+    openTools();
     fireEvent.click(screen.getByRole("button", { name: "Train on BTC/INR" }));
     const bar = await screen.findByRole("progressbar", { name: "Training progress" });
     // 15% for loading the history, then the run's 25% of the rest.
@@ -103,5 +110,25 @@ describe("LedgerLab progress", () => {
     finish(result());
     expect(await screen.findByRole("button", { name: "Promote to live" })).toBeTruthy();
     expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+});
+
+describe("LedgerLab tabs", () => {
+  it("opens on Today, shows one tab at a time, and remembers the last one on this device", () => {
+    localStorage.removeItem("nx-lab-tab");
+    render(createElement(LedgerLab, { promotedLabModel: null, onPromote: vi.fn(), onRevert: vi.fn() }));
+    expect(screen.getByRole("tab", { name: "Today" }).getAttribute("aria-selected")).toBe("true");
+    // The training tools wait in Tools.
+    expect(screen.queryByRole("button", { name: "Train on BTC/INR" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Records" }));
+    expect(screen.getByRole("tab", { name: "Records" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel").id).toBe("lab-records");
+    cleanup();
+
+    render(createElement(LedgerLab, { promotedLabModel: null, onPromote: vi.fn(), onRevert: vi.fn() }));
+    expect(screen.getByRole("tab", { name: "Records" }).getAttribute("aria-selected")).toBe("true");
+    openTools();
+    expect(screen.getByRole("button", { name: "Train on BTC/INR" })).toBeTruthy();
+    expect(screen.getByText(/Sandbox · nothing here places trades/)).toBeTruthy();
   });
 });

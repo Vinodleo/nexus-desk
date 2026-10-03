@@ -35,6 +35,7 @@ describe("Daily coin trades", () => {
         },
         traders,
         recordSpan: "since 2017",
+        coinSlots: { used: 2, max: 2 },
         nextAt: Date.parse("2026-10-04T00:10:00Z"),
       })
     );
@@ -42,11 +43,16 @@ describe("Daily coin trades", () => {
     expect((await screen.findByTestId("daily-status")).textContent).toMatch(/^Last check .+ · 34 coins · next /);
     const picks = within(screen.getByTestId("daily-picks")).getAllByRole("listitem").map((li) => li.textContent);
     expect(picks).toEqual([
-      "AVAX Sofia Range Scalpopened",
-      "LINK Sofia Range Scalpnot openedwould exceed 2 open coin trades at once",
-      "ETH Kenji Extreme Reversionpausedonly 8 replayed setups (needs 10)",
+      "↑AVAX Sofia Range Scalpopened",
+      "○LINK Sofia Range Scalpnot openedwould exceed 2 open coin trades at once",
+      "‖ETH Kenji Extreme Reversionpausedonly 8 replayed setups (needs 10)",
     ]);
     expect(screen.getByText("Couldn't read: MON.")).toBeTruthy();
+    // Both coin slots are taken: LINK waited for one, and the way to more is in Settings.
+    expect(screen.getByTestId("daily-slots").textContent).toBe(
+      "Coin slots: 2 of 2 in useLINK waited for a free slot. To take more, raise Settings → Coins: trades at once."
+    );
+    expect(screen.getByText("Which traders trade (1 of 2)", { exact: false, selector: "summary" })).toBeTruthy();
     const record = screen.getByTestId("daily-traders").textContent;
     expect(record).toMatch(/^Daily record since 2017 with your trailing stop/);
     expect(screen.getByText(/Only traders whose daily record since 2017 is positive/)).toBeTruthy();
@@ -92,11 +98,13 @@ describe("Daily coin trades", () => {
     );
     render(createElement(DailyCoinsCard));
     const picks = within(await screen.findByTestId("daily-picks")).getAllByRole("listitem").map((li) => li.textContent);
-    expect(picks).toEqual(["SOL Breakout 55/20opened", "XRP Breakout 55/20soldclosed below its 20-day low"]);
+    expect(picks).toEqual(["↑SOL Breakout 55/20opened", "↓XRP Breakout 55/20soldclosed below its 20-day low"]);
     expect(screen.getByTestId("daily-breakout").textContent).toBe("Breakout record since 2018Breakout 55/20476 trades · +0.98R");
     expect(screen.getByText(/it buys a close above the 55-day high and sells a\s+close below the 20-day low/)).toBeTruthy();
     cleanup();
 
+    // No coin slots from an older server.
+    expect(screen.queryByTestId("daily-slots")).toBeNull();
     // Paused; and before it has run (or an older server), no line.
     vi.mocked(apiFetch).mockResolvedValue(reply({ success: true, run: null, traders, breakout: { trader: "Breakout 55/20", trades: 476, avgR: -0.02, on: false }, nextAt: 2 }));
     render(createElement(DailyCoinsCard));
