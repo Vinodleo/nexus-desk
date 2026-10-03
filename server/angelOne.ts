@@ -20,7 +20,7 @@ const DATA_DIR = process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 const TOKEN_FILE = path.join(DATA_DIR, "angel_tokens.json");
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
-export type AngelInterval = "FIVE_MINUTE" | "ONE_HOUR";
+export type AngelInterval = "FIVE_MINUTE" | "ONE_HOUR" | "ONE_DAY";
 
 // ---------- TOTP (RFC 6238: SHA-1, 30 seconds, 6 digits) ----------
 
