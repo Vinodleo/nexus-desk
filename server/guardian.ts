@@ -3,7 +3,7 @@ import path from "path";
 import { Router, type Request, type Response } from "express";
 import type { AuthedRequest } from "./auth";
 import { applyGuardianTick, isPastHoldingTime, mergeSyncedGuardState } from "./guardianLogic";
-import { getLivePosition, isOpenLivePosition, requestLiveExit } from "./liveExecution";
+import { getLivePosition, isOpenLivePosition, requestLiveExit, setExchangeStopListener, setStopSource } from "./liveExecution";
 import { broadcastToUser } from "./realtime";
 import { computeClosedTradePnl } from "../src/shared/tradeMath";
 import { blendedExitPrice, riskAtOpen } from "../src/shared/exitRules";
@@ -405,6 +405,29 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
   broadcastToUser(pos.userId, { type: "DAEMON_POSITION_CLOSED", data: closedRecord });
   void notifyUser(pos.userId, tradeClosedMessage(closedRecord));
 }
+
+// The backup stops at CoinDCX (liveExecution.ts) follow this guardian's stop
+// for each live long; when one sells the position (the server missed the
+// stop, or was down), the guardian closes it at the price CoinDCX got.
+setStopSource((id) => {
+  const pos = daemonPositions.get(id);
+  return pos && pos.isLiveOrder && pos.direction === "LONG" ? pos.stopLoss : undefined;
+});
+setExchangeStopListener({
+  closed: (rec, price) => {
+    const pos = daemonPositions.get(rec.positionId);
+    if (!pos) return;
+    pos.currentPrice = price;
+    executeDaemonExit(pos, price, "STOP_LOSS");
+  },
+  refused: (rec) =>
+    void notifyUser(rec.userId, {
+      title: `Backup stop refused: ${rec.market}`,
+      body: `CoinDCX didn't take a stop order (${rec.exchangeStop?.lastError ?? "no reason given"}). The server still watches this trade's stop itself.`,
+      tag: `stop-refused-${rec.positionId}`,
+      url: "/",
+    }),
+});
 
 /**
  * Closes a guarded position at `price` now (a paper one; a live one gets its
