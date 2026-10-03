@@ -57,6 +57,13 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   list, the 20 biggest on 1 Oct 2024 (`FIXED_COINS`), and each market's slower results are kept on their own (`slowTotals`):
   the Lab's coin check compares the two, in case today's picks flatter the traders. It runs weekly in the background
   at about 3% of a core (`CPU_SHARE`): Fly's shared CPU guarantees only 6.25%, and draining its burst allowance slows the scanner.
+- **Coins on daily candles since 2017 (Lab):** `server/history/dailyLong.ts` replays the traders' daily coin trades over
+  every year Binance has (daily candles from its API, `fetchCoinDailySince`; delisted pairs from its monthly zip archive;
+  renamed coins via `DAILY_PAIRS`), to see whether they last through long falls (2018, 2022). Each year trades only its
+  20 biggest coins on 1 January (`COIN_COHORTS`, from memory of the rankings; later years use the last list), so today's
+  winners aren't replayed in years they were small. Same exits, fees and spreads as the two-year daily replay; results by
+  quarter (`daily_long.json`), shown by year. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
+  machine-learning test (`waitForOtherWork`, `backgroundWorkBusy`). It decides nothing live.
 - **Daily coin trades (paper, owner's call, 3 Oct):** `server/scanner/dailyCoins.ts`. Once a day, 10 minutes after the
   00:00 UTC daily close (until 6 hours after), the server reads each coin's daily candles from Binance (today's coins plus
   `FIXED_COINS`, those CoinDCX lists) and takes the setups the two-year replay would take there (`latestSlowSetups`).

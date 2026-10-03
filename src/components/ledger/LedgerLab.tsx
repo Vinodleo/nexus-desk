@@ -17,6 +17,7 @@ import { ExitSettings } from "./ExitSettings";
 import { HistoryCard } from "./HistoryCard";
 import { MlTestCard } from "./MlTestCard";
 import { DailyCoinsCard } from "./DailyCoinsCard";
+import { DailyLongCard } from "./DailyLongCard";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
 
@@ -199,6 +200,8 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
       </div>
 
       <HistoryCard trailProfile={trailProfile} />
+
+      <DailyLongCard trailProfile={trailProfile} />
 
       <MlTestCard />
 
