@@ -14,7 +14,7 @@ import { CheckPicks, SlotsMeter, waitedForSlot, when, type DailyCoinsView } from
 export interface UsBreakoutView {
   run: DailyCoinsView["run"];
   /** Its US record since 2016 and whether it trades; null before the stocks' replay has run. */
-  gate: { trader: string; trades: number; avgR: number; on: boolean } | null;
+  gate: { trader: string; trades: number; avgR: number; on: boolean; wins?: number; winR?: number; lossR?: number } | null;
   /** US breakout trades open now against breakout's own US slots; null before the app has sent its settings. */
   slots: { used: number; max: number } | null;
   nextAt: number;

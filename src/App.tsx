@@ -1840,6 +1840,8 @@ export default function App() {
           {activeTab === "lab" && (
             <LedgerLab
               promotedLabModel={promotedLabModel}
+              closedTrades={closedTrades}
+              positions={activePositions}
               trailProfile={trailProfileId}
               onTrailProfileChange={setTrailProfileId}
               onPromote={(result) => {

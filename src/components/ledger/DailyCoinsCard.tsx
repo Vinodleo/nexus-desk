@@ -20,11 +20,12 @@ export interface DailyCoinsView {
     picks: { symbol: string; trader: string; outcome: "opened" | "sold" | "waiting" | "paused"; reason?: string }[];
     note?: string;
   } | null;
-  traders: { trader: string; trades: number; avgR: number; on: boolean }[];
+  /** Each trader's record and whether it trades; with its wins and the R won and lost from servers since the scorecard. */
+  traders: { trader: string; trades: number; avgR: number; on: boolean; wins?: number; winR?: number; lossR?: number }[];
   /** The years the traders' records cover, in words ("since 2017"); absent from older servers (two years). */
   recordSpan?: string | null;
   /** Breakout 55/20's record since 2018 and whether it trades; null before it has run, absent from older servers. */
-  breakout?: { trader: string; trades: number; avgR: number; on: boolean } | null;
+  breakout?: { trader: string; trades: number; avgR: number; on: boolean; wins?: number; winR?: number; lossR?: number } | null;
   /**
    * Coin trades open now against the coin limit, and breakout's against its
    * own slots (absent from servers before them); null before the app has

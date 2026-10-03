@@ -31,8 +31,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   The Lab (`LedgerLab.tsx`) has four tabs, the last one picked remembered per device:
   - **Today:** what's trading and why (`LabSummary`), the daily coin check with its coin slots (`DailyCoinsCard`), and
     the US breakout check (`UsBreakoutCard`).
-  - **Records:** every coin strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`),
-    the classic strategies on stocks (`StocksLongCard`, US and India), then the replays' details.
+  - **Records:** the scorecard first (`PaperScorecard`, `services/paperScorecard.ts`): coin breakout's, US breakout's and
+    the daily coin traders' real paper trades from the Book against their replays (R, share won, average win and loss,
+    exits, stops that gapped; "in line", "behind" or "ahead" once 10+ trades, by two standard errors). Then every coin
+    strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`), the classic strategies
+    on stocks (`StocksLongCard`, US and India), and the replays' details.
   - **Tests:** the machine-learning test and the coin check (`CoinCheckCard`).
   - **Tools:** the older hands-on training tools.
   Explanations and long lists fold away (`Fold`); chips, bars and year columns are in `labUi.tsx`. The cards read

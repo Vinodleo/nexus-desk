@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Check, X, Upload, Loader2, AlertTriangle } from "lucide-react";
-import type { OptimizedParameters, PromotedLabModel } from "../../types";
+import type { HistoricalTrade, OptimizedParameters, Position, PromotedLabModel } from "../../types";
 import {
   fetchRealHistoricalCandles,
   parseCSVToCandles,
@@ -20,6 +20,7 @@ import { DailyCoinsCard } from "./DailyCoinsCard";
 import { DailyLongCard } from "./DailyLongCard";
 import { StocksLongCard } from "./StocksLongCard";
 import { UsBreakoutCard } from "./UsBreakoutCard";
+import { PaperScorecard } from "./PaperScorecard";
 import { LabSummary, StrategyRanking, YearByYear, type LabTab } from "./LabSummary";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
@@ -31,6 +32,9 @@ export interface LedgerLabProps {
   /** The trailing-stop profile new trades use, and changing it (the exit comparison). */
   trailProfile?: TrailProfileId;
   onTrailProfileChange?: (p: TrailProfileId) => void;
+  /** Closed trades and open positions, for the paper trades' scorecard. */
+  closedTrades?: HistoricalTrade[];
+  positions?: Position[];
 }
 
 const MARKETS = ["BTCINR", "ETHINR", "SOLINR", "XRPINR", "AVAXINR", "NEARINR", "BNBINR", "DOGEINR"];
@@ -136,7 +140,15 @@ export const LabProgressBar: React.FC<{ progress: LabProgress }> = ({ progress }
   );
 };
 
-export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted, onPromote, onRevert, trailProfile, onTrailProfileChange }) => {
+export const LedgerLab: React.FC<LedgerLabProps> = ({
+  promotedLabModel: promoted,
+  onPromote,
+  onRevert,
+  trailProfile,
+  onTrailProfileChange,
+  closedTrades = [],
+  positions = [],
+}) => {
   const [source, setSource] = useState<HistoricalSource>("BINANCE");
   const [market, setMarket] = useState("BTCINR");
   const [bars, setBars] = useState(3000);
@@ -263,6 +275,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
       </section>
 
       <section {...panel("records")}>
+        <PaperScorecard trades={closedTrades} positions={positions} />
         <StrategyRanking trailProfile={trailProfile} />
         <YearByYear trailProfile={trailProfile} />
         <StocksLongCard />

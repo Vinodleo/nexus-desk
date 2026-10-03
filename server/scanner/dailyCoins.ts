@@ -85,6 +85,10 @@ export interface TraderGate {
   trades: number;
   avgR: number;
   on: boolean;
+  /** The record's wins and the R won and lost: the Lab's scorecard sets paper trades against them. */
+  wins: number;
+  winR: number;
+  lossR: number;
 }
 
 interface Saved {
@@ -177,7 +181,7 @@ export function breakoutGate(classic: ClassicRecords | null): TraderGate | undef
   if (!classic) return undefined;
   const sum = sumRecords(Object.values(classic).map((byStrategy) => byStrategy.breakout));
   const avgR = sum.trades > 0 ? sum.totalR / sum.trades : 0;
-  return { trader: BREAKOUT_NAME, trades: sum.trades, avgR, on: sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R };
+  return { trader: BREAKOUT_NAME, trades: sum.trades, avgR, on: sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R, wins: sum.wins, winR: sum.winR, lossR: sum.lossR };
 }
 
 /** The setup a breakout at day `i`'s close makes, in the candles' prices: entry at the close, stop 2 ATR below, no target. */
@@ -225,7 +229,7 @@ export function dailyTraderGates(records: HistoryRecords | null, profile: TrailP
     .map(([trader, recs]) => {
       const sum = sumRecords(recs);
       const avgR = sum.trades > 0 ? sum.totalR / sum.trades : 0;
-      return { trader, trades: sum.trades, avgR, on: sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R };
+      return { trader, trades: sum.trades, avgR, on: sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R, wins: sum.wins, winR: sum.winR, lossR: sum.lossR };
     })
     .sort((a, b) => b.avgR - a.avgR);
 }
