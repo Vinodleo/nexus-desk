@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { gunzipSync, gzipSync } from "zlib";
-import { deleteObject, getObject, putObject, s3ConfigFromEnv, type S3Config } from "./s3";
+import { deleteObject, getObject, missingS3Settings, putObject, s3ConfigFromEnv, type S3Config } from "./s3";
 
 // Daily backups of the server's saved state, off this machine: every file at
 // the top of the data folder (open positions, live-order records, desk
@@ -191,12 +191,14 @@ export async function restoreIfAsked(env: NodeJS.ProcessEnv = process.env, deps:
 
 /** For Settings: whether backups are set up, the last one, and the last failure. */
 export function backupStatus(env: NodeJS.ProcessEnv = process.env) {
-  return { configured: s3ConfigFromEnv(env) !== null, keepDays: BACKUP_KEEP_DAYS, ...status };
+  return { configured: s3ConfigFromEnv(env) !== null, missing: missingS3Settings(env), keepDays: BACKUP_KEEP_DAYS, ...status };
 }
 
 /** Checks hourly (first a few minutes after start) whether today's backup is due. */
 export function startBackups(notify: BackupDeps["notify"]): void {
   loadStatus(dataDir());
+  const missing = missingS3Settings();
+  if (missing.length > 0) console.warn(`[Backup] Off: this server can't see ${missing.join(", ")} (fly secrets list; see docs/hosting.md).`);
   const deps = { ...realDeps, notify };
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);

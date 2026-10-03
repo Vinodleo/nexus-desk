@@ -262,8 +262,15 @@ describe("Settings: backups", () => {
 
   it("say whether daily backups are on, when the last was, and when they fail", () => {
     expect(backupSummary(status(), now)).toMatchObject({ badge: "—" });
-    expect(backupSummary(status({ ...on, configured: false }), now)).toEqual({
-      sub: "Not set up: run `fly storage create` in Cloud Shell (docs/hosting.md)", badge: "Off", tone: "text-warn",
+    const none = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL_S3", "BUCKET_NAME"];
+    expect(backupSummary(status({ ...on, configured: false, missing: none }), now)).toEqual({
+      sub: "The server sees no storage settings. If `fly secrets list` shows AWS_… and BUCKET_NAME, run `fly secrets deploy`; if not, `fly storage create -a nexus-desk-vinodleo` (docs/hosting.md)",
+      badge: "Off",
+      tone: "text-warn",
+    });
+    // Some there, some not: it names the ones the server can't see.
+    expect(backupSummary(status({ ...on, configured: false, missing: ["AWS_ENDPOINT_URL_S3", "BUCKET_NAME"] }), now)).toEqual({
+      sub: "The server can't see AWS_ENDPOINT_URL_S3, BUCKET_NAME: run `fly secrets deploy` in Cloud Shell (docs/hosting.md)", badge: "Off", tone: "text-warn",
     });
     expect(backupSummary(status(on), now)).toMatchObject({ badge: "On", sub: "Set up; the first backup runs a few minutes after the server starts" });
     const last = { ...on, lastAt: now - 3 * 60 * 60 * 1000, files: 18 };
@@ -276,8 +283,8 @@ describe("Settings: backups", () => {
   });
 
   it("show in the Server section", () => {
-    render(createElement(SettingsSheet, props({ serverStatus: status({ ...on, configured: false }) })));
+    render(createElement(SettingsSheet, props({ serverStatus: status({ ...on, configured: false, missing: ["BUCKET_NAME"] }) })));
     expect(screen.getByText("Backups")).toBeTruthy();
-    expect(screen.getByText("Not set up: run `fly storage create` in Cloud Shell (docs/hosting.md)")).toBeTruthy();
+    expect(screen.getByText("The server can't see BUCKET_NAME: run `fly secrets deploy` in Cloud Shell (docs/hosting.md)")).toBeTruthy();
   });
 });

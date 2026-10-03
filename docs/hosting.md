@@ -204,6 +204,12 @@ Server → Backups** says **On** with the first backup. A day's copy is small
 fails, the row says why, a pop-up tells you once that day, and it tries
 again every hour.
 
+If the row stays **Off** although `fly secrets list -a nexus-desk-vinodleo`
+shows the five settings, the server hasn't loaded them: run
+`fly secrets deploy -a nexus-desk-vinodleo` (a plain restart may keep the old
+ones). The row names any setting the server still can't see, and the server's
+log says so at start-up (`[Backup] Off: …`).
+
 **To put a day back** (after a lost or broken disk, say). Backups are named by
 their day in UTC; Settings shows when the last one ran.
 

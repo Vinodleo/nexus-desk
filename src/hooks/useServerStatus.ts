@@ -13,7 +13,7 @@ export interface ServerStatus {
   alpaca?: { configured: boolean; accountStatus: string | null; lastError: string | null };
   fx?: { usdInr: number; at: number; source: string } | null;
   /** Daily off-site backups of the saved state (server/backup.ts); missing on an older server. */
-  backup?: { configured: boolean; keepDays: number; lastAt: number | null; files: number; lastBytes: number; lastError: string | null; lastErrorAt: number | null };
+  backup?: { configured: boolean; /** The bucket settings the server can't see (names; absent from older servers). */ missing?: string[]; keepDays: number; lastAt: number | null; files: number; lastBytes: number; lastError: string | null; lastErrorAt: number | null };
   /** Gemini reviewing the server autopilot's trades, today (India time); missing on an older server. */
   reviewer?: {
     configured: boolean;
