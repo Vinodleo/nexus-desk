@@ -229,11 +229,13 @@ describe("the daily scan", () => {
       patient: { "2026-Q1": { "crypto:Priya Momentum Scalp": rec(30, 3) } },
     };
     // Sofia: 12 setups at +0.20R; Priya: +0.04R, under the +0.05R a trader needs. US records don't count.
-    expect(dailyTraderGates(records, "tight")).toEqual([
+    expect(dailyTraderGates(records, "tight")).toMatchObject([
       { trader: "Sofia Range Scalp", trades: 12, avgR: expect.closeTo(0.2, 9), on: true },
       { trader: "Priya Momentum Scalp", trades: 30, avgR: expect.closeTo(0.04, 9), on: false },
     ]);
-    expect(dailyTraderGates(records, "patient")).toEqual([{ trader: "Priya Momentum Scalp", trades: 30, avgR: expect.closeTo(0.1, 9), on: true }]);
+    expect(dailyTraderGates(records, "patient")).toMatchObject([{ trader: "Priya Momentum Scalp", trades: 30, avgR: expect.closeTo(0.1, 9), on: true }]);
+    // With the record's wins and the R won and lost, for the Lab's scorecard.
+    expect(dailyTraderGates(records, "patient")[0]).toMatchObject({ wins: 15, winR: 10.5, lossR: -7.5 });
     expect(dailyTraderGates(null, "tight")).toEqual([]);
   });
 });
@@ -359,7 +361,7 @@ describe("breakout 55/20 paper trades", () => {
       expect(daemonPositions.size).toBe(0);
       expect(daily._dailyCoinsState().runs.u.picks).toEqual([{ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "paused", reason }]);
     }
-    expect(daily.breakoutGate(record)).toEqual({ trader: "Breakout 55/20", trades: 476, avgR: expect.closeTo(0.98, 9), on: true });
+    expect(daily.breakoutGate(record)).toMatchObject({ trader: "Breakout 55/20", trades: 476, avgR: expect.closeTo(0.98, 9), on: true, wins: 119 });
   });
 
   it("sells on a close below the 20-day low at CoinDCX's bid, even with autopilot off, and holds on otherwise", async () => {
@@ -431,7 +433,7 @@ describe("the record daily traders are judged on", () => {
     reload();
     const view = dailyCoinsView("u");
     expect(view.recordSpan).toBe("since 2017");
-    expect(view.traders).toEqual([
+    expect(view.traders).toMatchObject([
       { trader: "Chen Conservative Trend", trades: 1728, avgR: expect.closeTo(0.09, 9), on: true },
       { trader: "Sofia Range Scalp", trades: 385, avgR: expect.closeTo(-0.04, 9), on: false },
     ]);
