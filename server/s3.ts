@@ -15,6 +15,12 @@ export interface S3Config {
   secretAccessKey: string;
 }
 
+/** The settings a bucket needs (AWS_REGION is optional: "auto"). */
+export const S3_SETTINGS = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL_S3", "BUCKET_NAME"] as const;
+
+/** Which of them this server can't see (names only, never values): what Settings shows when backups are off. */
+export const missingS3Settings = (env: NodeJS.ProcessEnv = process.env): string[] => S3_SETTINGS.filter((name) => !env[name]?.trim());
+
 /** The bucket from the environment, or null until one is set up. */
 export function s3ConfigFromEnv(env: NodeJS.ProcessEnv = process.env): S3Config | null {
   const endpoint = env.AWS_ENDPOINT_URL_S3?.trim();

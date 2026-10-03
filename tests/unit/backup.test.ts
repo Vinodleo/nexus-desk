@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { gunzipSync } from "zlib";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteObject, getObject, putObject, s3ConfigFromEnv, signObjectRequest, type S3Config } from "../../server/s3";
+import { deleteObject, getObject, missingS3Settings, putObject, s3ConfigFromEnv, signObjectRequest, type S3Config } from "../../server/s3";
 import * as backup from "../../server/backup";
 
 // Daily backups of the server's saved state to an S3 bucket (Fly's object
@@ -45,6 +45,10 @@ describe("S3 requests", () => {
     const env = { AWS_ACCESS_KEY_ID: "a", AWS_SECRET_ACCESS_KEY: "b", AWS_ENDPOINT_URL_S3: "https://fly.storage.tigris.dev/", BUCKET_NAME: "nexus-backups" };
     expect(s3ConfigFromEnv(env)).toEqual({ endpoint: "https://fly.storage.tigris.dev", region: "auto", bucket: "nexus-backups", accessKeyId: "a", secretAccessKey: "b" });
     expect(s3ConfigFromEnv({ ...env, BUCKET_NAME: "" })).toBeNull();
+    // What Settings names when backups are off: the settings this server can't see, never their values.
+    expect(missingS3Settings({ ...env, BUCKET_NAME: " ", AWS_SECRET_ACCESS_KEY: undefined })).toEqual(["AWS_SECRET_ACCESS_KEY", "BUCKET_NAME"]);
+    expect(missingS3Settings(env)).toEqual([]);
+    expect(backup.backupStatus({ ...env, BUCKET_NAME: "" })).toMatchObject({ configured: false, missing: ["BUCKET_NAME"] });
   });
 
   it("upload, download and delete, saying why S3 refused", async () => {

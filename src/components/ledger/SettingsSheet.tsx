@@ -66,7 +66,17 @@ export interface SettingsSheetProps {
 export function backupSummary(status: ServerStatus | null, now: number = Date.now()): { sub: string; badge: string; tone: string } {
   const b = status?.backup;
   if (!status || !b) return { sub: "Daily copies of the server's saved state, off the server", badge: "—", tone: "text-muted" };
-  if (!b.configured) return { sub: "Not set up: run `fly storage create` in Cloud Shell (docs/hosting.md)", badge: "Off", tone: "text-warn" };
+  if (!b.configured) {
+    // Some settings there but not all: name the ones the server can't see.
+    const some = b.missing && b.missing.length > 0 && b.missing.length < 4;
+    return some
+      ? { sub: `The server can't see ${b.missing!.join(", ")}: run \`fly secrets deploy\` in Cloud Shell (docs/hosting.md)`, badge: "Off", tone: "text-warn" }
+      : {
+          sub: "The server sees no storage settings. If `fly secrets list` shows AWS_… and BUCKET_NAME, run `fly secrets deploy`; if not, `fly storage create -a nexus-desk-vinodleo` (docs/hosting.md)",
+          badge: "Off",
+          tone: "text-warn",
+        };
+  }
   if (b.lastError && (!b.lastAt || (b.lastErrorAt ?? 0) > b.lastAt)) return { sub: `Last try failed: ${b.lastError}. It tries again every hour.`, badge: "Failing", tone: "text-loss" };
   if (!b.lastAt) return { sub: "Set up; the first backup runs a few minutes after the server starts", badge: "On", tone: "text-gain" };
   return { sub: `Last ${formatSpan(now - b.lastAt)} ago, ${b.files} files · each kept ${b.keepDays} days`, badge: "On", tone: "text-gain" };
