@@ -4,11 +4,11 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 // by page, US stocks from Alpaca and Indian ones from Angel One in pieces.
 
 const angel = vi.hoisted(() => ({ fetchStockCandles: vi.fn() }));
-const alpaca = vi.hoisted(() => ({ fetchUsCandles: vi.fn() }));
+const alpaca = vi.hoisted(() => ({ fetchUsCandles: vi.fn(), fetchUsDailyBars: vi.fn() }));
 vi.mock("../../server/angelOne", () => angel);
 vi.mock("../../server/alpaca", () => alpaca);
 
-const { fetchCoinHistory, fetchNseHistory, fetchUsHistory, binancePair, _resetHistoryCandles } = await import("../../server/history/historyCandles");
+const { fetchCoinHistory, fetchNseDaily, fetchNseHistory, fetchUsDaily, fetchUsHistory, binancePair, _resetHistoryCandles } = await import("../../server/history/historyCandles");
 
 const FIVE = 5 * 60_000;
 const DAY = 24 * 3_600_000;
@@ -36,6 +36,7 @@ beforeEach(() => {
   _resetHistoryCandles();
   angel.fetchStockCandles.mockReset();
   alpaca.fetchUsCandles.mockReset();
+  alpaca.fetchUsDailyBars.mockReset();
   vi.stubGlobal("fetch", async (input: string) => {
     const url = new URL(String(input));
     calls.push(url.host);
@@ -103,5 +104,34 @@ describe("stock history", () => {
     expect(angel.fetchStockCandles).toHaveBeenCalledTimes(1);
     angel.fetchStockCandles.mockReset().mockRejectedValue(new Error("Angel One getCandleData: No data found (AB2001)"));
     expect(await fetchNseHistory("RELIANCE", from, from + 100 * DAY)).toEqual({ error: "Angel One getCandleData: No data found (AB2001)" });
+  });
+
+  it("fetches daily stock candles for the stocks' long replay: US in one go, India 1,800 days at a time", async () => {
+    const from = Date.UTC(2015, 0, 1);
+    const to = Date.UTC(2026, 9, 3);
+    // Alpaca's daily candles start at New York's midnight; today's, still open, is left out.
+    alpaca.fetchUsDailyBars.mockResolvedValue([
+      [Date.parse("2016-01-04T05:00:00Z"), 100, 102, 99, 101, 1000],
+      [Date.parse("2026-10-03T04:00:00Z"), 200, 201, 199, 200, 1000],
+    ]);
+    const us = await fetchUsDaily("AAPL.US", from, to);
+    expect("series" in us && us.series.t).toEqual([Date.parse("2016-01-04T05:00:00Z")]);
+    alpaca.fetchUsDailyBars.mockResolvedValue([]);
+    expect(await fetchUsDaily("META.US", from, to)).toEqual({ error: "Alpaca has no daily candles for META" });
+    alpaca.fetchUsDailyBars.mockRejectedValue(new Error("Alpaca refused the keys: check ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY"));
+    expect(await fetchUsDaily("AAPL.US", from, to)).toEqual({ error: "Alpaca refused the keys: check ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY" });
+
+    // Angel One: the first piece is before it has candles; the rest come.
+    angel.fetchStockCandles.mockImplementation(async (_s: string, interval: string, start: number) => {
+      expect(interval).toBe("ONE_DAY");
+      if (start === from) throw new Error("Angel One getCandleData: No data found (AB2001)");
+      return [["2021-06-01T00:00:00+05:30", 2100, 2120, 2090, 2110, 50000]];
+    });
+    const nse = await fetchNseDaily("RELIANCE", from, to);
+    expect("series" in nse && nse.series.t).toEqual([Date.parse("2021-05-31T18:30:00Z")]);
+    expect(angel.fetchStockCandles.mock.calls.map((c) => Math.round((c[2] - from) / DAY))).toEqual([0, 1800, 3600]);
+    angel.fetchStockCandles.mockReset().mockRejectedValue(new Error("HDFC isn't listed at Angel One"));
+    expect(await fetchNseDaily("HDFC", from, to)).toEqual({ error: "HDFC isn't listed at Angel One" });
+    expect(angel.fetchStockCandles).toHaveBeenCalledTimes(1);
   });
 });

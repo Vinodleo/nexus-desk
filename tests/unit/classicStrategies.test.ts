@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { appendBars, emptySeries, type CandleSeries } from "../../src/services/historyReplay";
-import { addClassicTrades, atr, breakoutEntryAt, breakoutExitAt, breakoutTrades, btcUptrend, maTrendTrades, momentumTrades, resultR, sma, type ClassicRecords } from "../../src/services/classicStrategies";
+import {
+  addClassicTrades,
+  atr,
+  breakoutEntryAt,
+  breakoutExitAt,
+  breakoutTrades,
+  btcUptrend,
+  maTrendTrades,
+  momentumTrades,
+  resultR,
+  sma,
+  stockWeekClose,
+  type ClassicRecords,
+} from "../../src/services/classicStrategies";
 
 // Step 2 of trading slower: strategies with long public records, on daily
 // coin candles, each trade's result in R after costs.
@@ -139,6 +152,44 @@ describe("momentum, top 3", () => {
     expect(trades.map((t) => t.symbol).sort()).toEqual(["A/INR", "C/INR", "E/INR"]);
     const none = momentumTrades({ "D/INR": coins["D/INR"] }, btcUp, () => 0, () => true);
     expect(none).toEqual([]);
+  });
+});
+
+describe("momentum on stocks", () => {
+  const HOUR = 60 * 60 * 1000;
+  /** Weekday candles only (as stocks trade), from Monday 4 Jan 2016, each starting at `offset` past UTC midnight. */
+  function weekdays(daily: number, count: number, offset: number): CandleSeries {
+    const s = emptySeries();
+    let p = 100;
+    const bars = [];
+    for (let d = 0; bars.length < count; d++) {
+      const start = Date.parse("2016-01-04T00:00:00Z") + d * DAY;
+      const weekday = new Date(start).getUTCDay();
+      if (weekday === 0 || weekday === 6) continue;
+      const o = p;
+      p *= 1 + daily;
+      bars.push({ time: "", timestampMs: start + offset, open: o, high: p * 1.01, low: p * 0.99, close: p, volume: 1 });
+    }
+    appendBars(s, bars);
+    return s;
+  }
+
+  it("rebalances at each week's last session, which stocks have and coins' Sunday rule never finds", () => {
+    // New York's candles start at 05:00 UTC; India's at 18:30 UTC the day before.
+    const us = { "A.US": weekdays(0.004, 200, 5 * HOUR), "B.US": weekdays(0.002, 200, 5 * HOUR) };
+    const up = () => true;
+    expect(momentumTrades(us, up, () => 0, () => true)).toEqual([]);
+    const trades = momentumTrades(us, up, () => 0, () => true, stockWeekClose);
+    expect(trades.map((t) => t.symbol).sort()).toEqual(["A.US", "B.US"]);
+    // Bought at the first Friday with 90 sessions behind it: Friday 13 May 2016 (the 95th session).
+    for (const t of trades) expect(new Date(t.entryMs - DAY).toISOString().slice(0, 10)).toBe("2016-05-13");
+
+    // India's Friday candle starts on Thursday 18:30 UTC, and still closes the week.
+    const friday = Date.parse("2016-01-07T18:30:00Z");
+    expect(stockWeekClose(friday, friday + 3 * DAY)).toBe(true);
+    expect(stockWeekClose(friday - DAY, friday)).toBe(false);
+    // The last candle has no next one: no rebalance on it.
+    expect(stockWeekClose(friday, undefined)).toBe(false);
   });
 });
 

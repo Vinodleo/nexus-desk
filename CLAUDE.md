@@ -31,7 +31,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   The Lab (`LedgerLab.tsx`) has four tabs, the last one picked remembered per device:
   - **Today:** what's trading and why (`LabSummary`), then the daily check with its coin slots (`DailyCoinsCard`).
   - **Records:** every coin strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`),
-    then the replays' details.
+    the classic strategies on stocks (`StocksLongCard`, US and India), then the replays' details.
   - **Tests:** the machine-learning test and the coin check (`CoinCheckCard`).
   - **Tools:** the older hands-on training tools.
   Explanations and long lists fold away (`Fold`); chips, bars and year columns are in `labUi.tsx`. The cards read
@@ -79,6 +79,15 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   `CLASSIC_VERSION` redoes only them, from the kept candles, leaving the traders' results alone. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
   machine-learning test (`waitForOtherWork`, `backgroundWorkBusy`). Its records (the last finished run's while it reruns,
   `dailyLongRecords`) decide which traders take daily paper trades (owner's call, 4 Oct: nine years over two).
+- **Stocks on daily candles since 2016 (Lab):** `server/history/stocksLong.ts` runs the classic strategies on US and
+  Indian stocks' daily candles: US from Alpaca (all exchanges' trades where the plan allows, else IEX; adjusted for splits
+  and dividends, `fetchUsDailyBars`), India from Angel One (`fetchNseDaily`, unadjusted, so splits and bonus issues are found
+  and adjusted, `adjustForSplits`). Each year trades only its 20 biggest stocks on 1 January (`STOCK_COHORTS`, from memory,
+  nothing before 2016; a year of warm-up from 2015). Each market's index fund (`MARKET_FUND`: SPY, NIFTYBEES) is the
+  200-day guard in place of Bitcoin; momentum rebalances at each week's last session (`stockWeekClose`). Costs: Alpaca's
+  fees and a spread; for India, delivery charges (`stockCost`). Results by quarter per market (`stocks_long.json`), kept
+  on show while it reruns. Monthly, at `CPU_SHARE`, never alongside the other background work; Indian downloads wait for
+  NSE to close. It decides nothing: stocks paper-trade a strategy only if it clearly beats its costs and the owner says so.
 - **Daily coin trades (paper, owner's call, 3 Oct):** `server/scanner/dailyCoins.ts`. Once a day, 10 minutes after the
   00:00 UTC daily close (until 6 hours after), the server reads each coin's daily candles from Binance (today's coins plus
   `FIXED_COINS`, those CoinDCX lists) and takes the setups the two-year replay would take there (`latestSlowSetups`).
@@ -132,6 +141,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   the classic strategies in the Lab, next to the traders, year by year; paper only if they clearly beat them.
   Since 2018 breakout 55/20 averaged +0.98R over 476 trades (6 of 9 years positive): it paper-trades alongside the
   daily traders since 4 Oct (owner's call). Moving averages 50/200 (+1.13R, mostly 2020) and momentum (+0.17R) aren't traded.
+  Stocks (owner's call): US and Indian stocks stay paused on paper (their traders' records decide); the classic strategies
+  are tested on their daily candles since 2016 in the Lab, and trade only if one clearly beats its costs.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 

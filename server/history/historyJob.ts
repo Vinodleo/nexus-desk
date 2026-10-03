@@ -260,8 +260,8 @@ async function readHourly(symbol: string): Promise<CandleSeries | null> {
   }
 }
 
-/** NSE is open, or within 15 minutes of it (the scanner's last fetch comes just after the close). */
-const nseBusy = (now: number) => isNseOpen(now) || isNseOpen(now - 15 * 60_000) || isNseOpen(now + 15 * 60_000);
+/** NSE is open, or within 15 minutes of it (the scanner's last fetch comes just after the close): Angel One downloads wait. */
+export const nseBusy = (now: number) => isNseOpen(now) || isNseOpen(now - 15 * 60_000) || isNseOpen(now + 15 * 60_000);
 
 /** A source asking to slow down: the same market is tried again after a pause. */
 const SLOW_DOWN = /slow down|rate limit|too many|429/i;

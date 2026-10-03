@@ -18,6 +18,7 @@ import { CoinCheckCard, HistoryCard } from "./HistoryCard";
 import { MlTestCard } from "./MlTestCard";
 import { DailyCoinsCard } from "./DailyCoinsCard";
 import { DailyLongCard } from "./DailyLongCard";
+import { StocksLongCard } from "./StocksLongCard";
 import { LabSummary, StrategyRanking, YearByYear, type LabTab } from "./LabSummary";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
@@ -262,6 +263,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
       <section {...panel("records")}>
         <StrategyRanking trailProfile={trailProfile} />
         <YearByYear trailProfile={trailProfile} />
+        <StocksLongCard />
         <DailyLongCard trailProfile={trailProfile} />
         <HistoryCard trailProfile={trailProfile} />
       </section>

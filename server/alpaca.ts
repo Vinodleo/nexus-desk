@@ -40,7 +40,9 @@ async function get<T>(url: string): Promise<T> {
     try {
       message = JSON.parse(text)?.message ?? message;
     } catch {}
-    lastError = res.status === 401 || res.status === 403 ? "Alpaca refused the keys: check ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY" : `Alpaca: ${message}`;
+    // A 403 about the plan ("subscription does not permit…") isn't the keys: the daily download tries another feed.
+    const keys = res.status === 401 || (res.status === 403 && !/subscription|permit/i.test(message));
+    lastError = keys ? "Alpaca refused the keys: check ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY" : `Alpaca: ${message}`;
     throw new Error(lastError);
   }
   lastError = null;
@@ -101,6 +103,48 @@ export async function fetchUsCandles(symbols: string[], timeframe: AlpacaTimefra
     if (!pageToken) break;
   }
   return out;
+}
+
+/** Alpaca's feeds: every exchange's trades (allowed for history on the free plan), or IEX's alone. */
+const DAILY_FEEDS = ["sip", FEED];
+
+/**
+ * A US stock's daily candles ("AAPL.US") between two times, in dollars (the
+ * long replay counts in R, so no conversion), adjusted for splits and
+ * dividends, as [openTimeMs, open, high, low, close, volume] rows. Every
+ * exchange's trades where the plan allows them for history, else IEX's.
+ */
+export async function fetchUsDailyBars(symbol: string, fromMs: number, toMs: number): Promise<unknown[]> {
+  let refused: unknown = null;
+  for (const feed of DAILY_FEEDS) {
+    const rows: unknown[] = [];
+    let pageToken: string | null = null;
+    try {
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const params = new URLSearchParams({
+          symbols: usTicker(symbol),
+          timeframe: "1Day",
+          start: new Date(fromMs).toISOString(),
+          end: new Date(toMs).toISOString(),
+          limit: "10000",
+          adjustment: "all",
+          feed,
+          sort: "asc",
+        });
+        if (pageToken) params.set("page_token", pageToken);
+        const body = await get<{ bars?: Record<string, AlpacaBar[]>; next_page_token?: string | null }>(`${DATA_URL}/stocks/bars?${params}`);
+        for (const b of body.bars?.[usTicker(symbol)] ?? []) rows.push([Date.parse(b.t), b.o, b.h, b.l, b.c, b.v]);
+        pageToken = body.next_page_token ?? null;
+        if (!pageToken) break;
+      }
+      return rows;
+    } catch (err) {
+      // The plan doesn't allow this feed: try the next. Anything else (keys refused, Alpaca down) stops here.
+      if (!/subscription|permit|not allowed|forbidden/i.test((err as Error)?.message ?? "")) throw err;
+      refused = err;
+    }
+  }
+  throw refused;
 }
 
 /**

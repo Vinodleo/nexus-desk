@@ -1,7 +1,7 @@
 import { inflateRawSync } from "zlib";
 import { fetchWithTimeout } from "../http";
 import { fetchStockCandles } from "../angelOne";
-import { fetchUsCandles } from "../alpaca";
+import { fetchUsCandles, fetchUsDailyBars } from "../alpaca";
 import { SIGNAL_INTERVAL_MS, toClosedBars } from "../../src/services/liveMarketStreamService";
 import { appendBars, emptySeries, type CandleSeries } from "../../src/services/historyReplay";
 
@@ -19,8 +19,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Binance's public market data (no key needed), and its main address as a fallback. */
 export const BINANCE_HOSTS = ["https://data-api.binance.vision", "https://api.binance.com"];
 const BINANCE_LIMIT = 1000;
-/** Days per request: Angel One allows 100 of 5-minute candles; Alpaca's pages hold 10,000 candles. */
+/** Days per request: Angel One allows 100 of 5-minute candles (2,000 of daily ones); Alpaca's pages hold 10,000 candles. */
 const NSE_CHUNK_DAYS = 90;
+const NSE_DAILY_CHUNK_DAYS = 1800;
 const US_CHUNK_DAYS = 120;
 /** Waits between requests, kind to each source's limits. */
 const PAUSE_MS = { binance: 200, alpaca: 400 };
@@ -238,6 +239,38 @@ export async function fetchNseHistory(symbol: string, fromMs: number, toMs: numb
     }
   }
   return series.t.length === 0 && lastError ? { error: lastError } : { series };
+}
+
+/** A US stock's daily candles from Alpaca, in dollars, adjusted for splits and dividends (the stocks' long replay). */
+export async function fetchUsDaily(symbol: string, fromMs: number, toMs: number): Promise<HistoryFetch> {
+  try {
+    const series = emptySeries();
+    appendBars(series, toClosedBars(await fetchUsDailyBars(symbol, fromMs, toMs), DAY_MS, toMs));
+    return series.t.length > 0 ? { series } : { error: `Alpaca has no daily candles for ${symbol.replace(/\.US$/, "")}` };
+  } catch (err: any) {
+    return { error: err?.message || "Couldn't reach Alpaca" };
+  }
+}
+
+/**
+ * An Indian stock's daily candles from Angel One, in pieces it allows. A
+ * piece it has nothing for (before the stock listed) is skipped; a refusal
+ * that means "later" stops the download.
+ */
+export async function fetchNseDaily(symbol: string, fromMs: number, toMs: number): Promise<HistoryFetch> {
+  const series = emptySeries();
+  let lastError: string | null = null;
+  for (let start = fromMs; start < toMs; start += NSE_DAILY_CHUNK_DAYS * DAY_MS) {
+    const end = Math.min(toMs, start + NSE_DAILY_CHUNK_DAYS * DAY_MS);
+    try {
+      appendBars(series, toClosedBars(await fetchStockCandles(symbol, "ONE_DAY", start, end), DAY_MS, end));
+    } catch (err: any) {
+      lastError = err?.message || "Couldn't reach Angel One";
+      if (NSE_STOPS.test(lastError!)) return { error: lastError! };
+    }
+  }
+  if (series.t.length > 0) return { series };
+  return { error: lastError ?? `Angel One has no daily candles for ${symbol}` };
 }
 
 /** Test hook. */

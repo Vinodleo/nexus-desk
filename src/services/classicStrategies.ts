@@ -152,14 +152,35 @@ export function breakoutTrades(symbol: string, s: CandleSeries, cost: number, el
   return trades;
 }
 
-/** Bitcoin above its 200-day average at a day's close, by the day's start (ms); undefined before it has one. */
-export function btcUptrend(btc: CandleSeries): (dayStartMs: number) => boolean | undefined {
-  const avg = sma(btc.c, SLOW_DAYS);
+/**
+ * A market above its 200-day average at a day's close, by the day's start
+ * (ms); undefined before it has one. Bitcoin for coins; for stocks the
+ * market's index fund (SPY, the Nifty ETF), whose candles start when the
+ * stocks' do.
+ */
+export function uptrend(market: CandleSeries): (dayStartMs: number) => boolean | undefined {
+  const avg = sma(market.c, SLOW_DAYS);
   const byDay = new Map<number, boolean>();
-  btc.t.forEach((t, i) => {
-    if (avg[i] !== undefined) byDay.set(t, btc.c[i] > avg[i]!);
+  market.t.forEach((t, i) => {
+    if (avg[i] !== undefined) byDay.set(t, market.c[i] > avg[i]!);
   });
   return (dayStartMs) => byDay.get(dayStartMs);
+}
+/** Bitcoin above its 200-day average at a day's close (coins' guard). */
+export const btcUptrend = uptrend;
+
+/** Coins rebalance at the weekly close: the candle that ends at the start of Monday (UTC). */
+export const coinWeekClose = (day: number) => new Date(day + DAY_MS).getUTCDay() === 1;
+
+/**
+ * Stocks rebalance at the week's last session: the candle whose next one is
+ * in another week. A stock's daily candle starts at local midnight (New York's
+ * 04:00 or 05:00 UTC, India's 18:30 UTC the day before), so its date is read
+ * half a day on; weeks start on Monday.
+ */
+export function stockWeekClose(day: number, next: number | undefined): boolean {
+  const week = (ms: number) => Math.floor((Math.floor((ms + DAY_MS / 2) / DAY_MS) + 3) / 7);
+  return next !== undefined && week(next) !== week(day);
 }
 
 /**
@@ -204,16 +225,18 @@ export function maTrendTrades(
 }
 
 /**
- * Momentum, top 3, across coins: each Monday close (UTC), the coins on that
- * year's list (`eligible`) that rose most over 90 days, if they rose and
- * Bitcoin is above its 200-day average. Coins leaving the top are sold at
- * that close; between Mondays a coin can stop out.
+ * Momentum, top 3, across coins (or stocks): each week's close, the ones on that
+ * year's list (`eligible`) that rose most over 90 days, if they rose and the
+ * market (Bitcoin, or the stocks' index fund) is above its 200-day average.
+ * Those leaving the top are sold at that close; between weeks one can stop out.
  */
 export function momentumTrades(
   coins: Record<string, CandleSeries>,
   btcUp: (dayStartMs: number) => boolean | undefined,
   costFor: (symbol: string) => number,
-  eligible: (symbol: string, ms: number) => boolean
+  eligible: (symbol: string, ms: number) => boolean,
+  /** Whether a candle (by its start, and the next one's) is the week's close: coins' Sunday by default. */
+  weekClose: (day: number, next: number | undefined) => boolean = coinWeekClose
 ): ClassicTrade[] {
   const symbols = Object.keys(coins);
   const index = new Map(symbols.map((sym) => [sym, new Map(coins[sym].t.map((t, i) => [t, i]))]));
@@ -225,14 +248,14 @@ export function momentumTrades(
     trades.push(close("momentum", sym, coins[sym], held.get(sym)!, i, exit, costFor(sym), open));
     held.delete(sym);
   };
-  for (const day of days) {
+  for (const [k, day] of days.entries()) {
     // Stops first, on every held coin's candle that day.
     for (const [sym, h] of [...held]) {
       const i = index.get(sym)!.get(day);
       if (i !== undefined && coins[sym].l[i] <= h.stop) sell(sym, i, stopFill(coins[sym], i, h.stop));
     }
-    // Rebalanced at the close of the candle that ends on a Monday (UTC).
-    if (new Date(day + DAY_MS).getUTCDay() !== 1) continue;
+    // Rebalanced at the week's close.
+    if (!weekClose(day, days[k + 1])) continue;
     const up = btcUp(day) === true;
     const ranked = up
       ? symbols
