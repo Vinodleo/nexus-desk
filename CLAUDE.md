@@ -47,7 +47,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - Exit rules, trailing stops and trade maths.
   - Market sessions: `nse.ts`, `usMarket.ts`.
   - Per-market limits: `marketLimits.ts`, the amount per trade, risk per trade and trades at once for each market,
-    and at most 2 open trades in one stock sector (`sectorOf`).
+    and at most 2 open trades in one stock sector (`sectorOf`). Breakout 55/20 has slots of its own in coins and US
+    stocks (`breakoutTrades`, 3 until chosen, none switches it off): breakout trades count only against them and every
+    other trade only against trades at once (`openInSlots`, `slotsFor`), in the autopilot and the risk check alike, so
+    the daily traders can't keep breakout out.
 - **Trader records ("Traders with your exits"):** `src/services/exitExpectancy.ts`.
   - It replays every trader's setups under the live exits, after fees and spreads.
   - One trade at a time per trader and market; the server keeps 30 days of trades (`server/scanner/traderRecords.ts`).
@@ -102,7 +105,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   (`cohortFor`): a close above the 55-day high buys at CoinDCX's ask, the stop 2 ATR below (`breakoutEntryAt`, shared
   with the replay); a close below the 20-day low sells at the bid (`breakoutExitAt`, `closeServerPosition`), even with
   autopilot off. No target, no trailing stop (`trailProfile` "fixed"), nothing banked at +1R, one trade per coin at a
-  time, held up to a year (`BREAKOUT_HOLD_MINUTES`). Same coin limits and slots as the daily traders. It trades only
+  time, held up to a year (`BREAKOUT_HOLD_MINUTES`). The coin amount and risk per trade, on breakout's own coin slots
+  (owner's call). It trades only
   while its record since 2018 (the long replay's `classic`) averages `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ trades
   (`breakoutGate`). Positions carry `strategy: "breakout"`, labelled "breakout".
 - **US breakout 55/20 trades (paper, owner's call):** `server/scanner/usBreakout.ts`. Each US weekday at 3:45 pm New

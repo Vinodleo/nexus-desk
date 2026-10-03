@@ -26,6 +26,13 @@ export interface MarketLimit {
    * app), only the amount per trade caps the size.
    */
   riskPerTradeInr?: number;
+  /**
+   * Breakout 55/20 trades open at the same time in this market (coins and US
+   * stocks), on slots of their own: they don't count against maxOpenTrades,
+   * and the other trades don't count against these, so the daily traders'
+   * many small-edge trades can't keep breakout out. cleanMarketLimits fills it in.
+   */
+  breakoutTrades?: number;
 }
 
 export type MarketLimits = Record<MarketKey, MarketLimit>;
@@ -33,6 +40,10 @@ export type MarketLimits = Record<MarketKey, MarketLimit>;
 export const AMOUNT_CHOICES = [1000, 2000, 3000, 5000, 10000, 25000, 50000];
 export const MAX_TRADES_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10];
 export const RISK_CHOICES = [25, 50, 75, 100, 150, 200, 300, 500, 1000];
+/** Breakout slots: none switches breakout off in that market. */
+export const BREAKOUT_TRADES_CHOICES = [0, 1, 2, 3, 4, 5, 6, 8, 10];
+/** Until you choose: breakout's own slots in each market it trades (none for Indian stocks). */
+export const DEFAULT_BREAKOUT_TRADES: Record<MarketKey, number> = { coins: 3, stocks: 0, us: 3 };
 
 /**
  * Until you choose, a trade may lose 1% of the market's amount per trade
@@ -48,9 +59,9 @@ export function defaultRiskPerTrade(amountPerTradeInr: number): number {
 }
 
 export const DEFAULT_MARKET_LIMITS: MarketLimits = {
-  coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50 },
-  stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50 },
-  us: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50 },
+  coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3 },
+  stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 0 },
+  us: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3 },
 };
 
 export const MARKET_LABEL: Record<MarketKey, string> = { coins: "coin", stocks: "Indian stock", us: "US stock" };
@@ -66,12 +77,15 @@ export function cleanMarketLimits(raw: unknown): MarketLimits {
     const amount = Number(r[key]?.amountPerTradeInr);
     const trades = Number(r[key]?.maxOpenTrades);
     const risk = Number(r[key]?.riskPerTradeInr);
+    // Absent (limits from before breakout's slots) reads as NaN: the default.
+    const breakout = r[key]?.breakoutTrades === undefined ? NaN : Number(r[key].breakoutTrades);
     const amountPerTradeInr = Number.isFinite(amount) && amount >= 100 && amount <= 1_000_000 ? Math.round(amount) : d.amountPerTradeInr;
     return {
       amountPerTradeInr,
       maxOpenTrades: Number.isInteger(trades) && trades >= 1 && trades <= 20 ? trades : d.maxOpenTrades,
       // Saved before it existed (or odd): 1% of this market's amount.
       riskPerTradeInr: Number.isFinite(risk) && risk >= 10 && risk <= 100_000 ? Math.round(risk) : defaultRiskPerTrade(amountPerTradeInr),
+      breakoutTrades: Number.isInteger(breakout) && breakout >= 0 && breakout <= 20 ? breakout : DEFAULT_BREAKOUT_TRADES[key],
     };
   };
   return { coins: one("coins"), stocks: one("stocks"), us: one("us") };
@@ -105,4 +119,17 @@ export function openInSector<T extends { symbol: string }>(positions: T[], symbo
 export function openInMarket<T extends { symbol: string }>(positions: T[], symbol: string): T[] {
   const market = marketOf(symbol);
   return positions.filter((p) => marketOf(p.symbol) === market);
+}
+
+/** A breakout 55/20 trade (or proposal's setup): it has slots of its own. */
+export const isBreakoutTrade = (p: { strategy?: string } | undefined): boolean => p?.strategy === "breakout";
+
+/** Positions open in `symbol`'s market on the same slots as a new trade of that kind: breakout trades, or the rest. */
+export function openInSlots<T extends { symbol: string; strategy?: string }>(positions: T[], symbol: string, breakout: boolean): T[] {
+  return openInMarket(positions, symbol).filter((p) => isBreakoutTrade(p) === breakout);
+}
+
+/** How many trades of a kind may be open at once in a market: breakout's own slots, or the rest's. */
+export function slotsFor(limit: MarketLimit, breakout: boolean): number {
+  return breakout ? limit.breakoutTrades ?? 0 : limit.maxOpenTrades;
 }

@@ -15,7 +15,7 @@ export interface UsBreakoutView {
   run: DailyCoinsView["run"];
   /** Its US record since 2016 and whether it trades; null before the stocks' replay has run. */
   gate: { trader: string; trades: number; avgR: number; on: boolean } | null;
-  /** US trades open now against the US limit; null before the app has sent its settings. */
+  /** US breakout trades open now against breakout's own US slots; null before the app has sent its settings. */
   slots: { used: number; max: number } | null;
   nextAt: number;
 }
@@ -50,7 +50,17 @@ export const UsBreakoutCard: React.FC = () => {
         )}
       </div>
 
-      {view.slots && <SlotsMeter used={view.slots.used} max={view.slots.max} waited={waitedForSlot(run?.picks ?? [])} label="US" setting="US stocks" testId="us-slots" />}
+      {view.slots && (
+        <SlotsMeter
+          used={view.slots.used}
+          max={view.slots.max}
+          waited={waitedForSlot(run?.picks ?? [], true)}
+          label="Breakout"
+          setting="US stocks"
+          row="breakout trades at once"
+          testId="us-slots"
+        />
+      )}
 
       {run && <CheckPicks run={run} testId="us-picks" empty="No breakouts that day." />}
 
@@ -59,7 +69,8 @@ export const UsBreakoutCard: React.FC = () => {
           Each US trading day at 3:45 pm New York (about 1:15 am in India, 2:15 am in winter), just before the close, the server checks this
           year's 20 biggest US stocks. One priced above its last 55 days' high is bought at the ask, with a stop 2 ATR below; one held and
           priced below its last 20 days' low is sold at the bid. No target and no trailing stop. Trades are held overnight, for weeks, in
-          fractions of a share, within your US limits. It trades only while its record since 2016 is positive over 10+ trades.
+          fractions of a share, within your US limits, on breakout's own slots. It trades only while its record since 2016 is positive
+          over 10+ trades.
         </div>
       </Fold>
     </Card>

@@ -3,7 +3,6 @@ import path from "path";
 import type { TradeProposal } from "../../src/types";
 import { appendBars, emptySeries, type CandleSeries } from "../../src/services/historyReplay";
 import { breakoutExitAt, type ClassicRecords } from "../../src/services/classicStrategies";
-import { cleanMarketLimits } from "../../src/shared/marketLimits";
 import { isUsSymbol, nyParts, usSymbol, US_SQUARE_OFF } from "../../src/shared/usMarket";
 import { toClosedBars } from "../../src/services/liveMarketStreamService";
 import { fetchUsDailyBars, fetchUsSnapshots, type UsQuote } from "../alpaca";
@@ -22,6 +21,7 @@ import {
   deskNote,
   PAPER_HOOKS,
   pausedReason,
+  slotsInUse,
   type DailyPick,
   type DailyRun,
   type TraderGate,
@@ -248,11 +248,11 @@ export function nextUsCheckAt(now: number, lastDay: string | null): number {
 /** What the Lab shows a user: the last check, breakout's US record and whether it trades, the US slots, and the next check. */
 export function usBreakoutView(uid: string, now: number = Date.now()) {
   const desk = getDeskState(uid);
-  const used = [...daemonPositions.values()].filter((p) => p.userId === uid && isUsSymbol(p.symbol)).length;
   return {
     run: state.runs[uid] ?? null,
     gate: breakoutGate(realDeps.classic()) ?? null,
-    slots: desk ? { used, max: cleanMarketLimits(desk.riskLimits.marketLimits).us.maxOpenTrades } : null,
+    /** US breakout trades open now against breakout's own US slots. */
+    slots: desk ? slotsInUse(uid, desk, "us", true) : null,
     nextAt: nextUsCheckAt(now, state.lastDay),
   };
 }

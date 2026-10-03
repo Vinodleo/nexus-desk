@@ -1,4 +1,4 @@
-import { MARKET_LABEL, marketOf, openInMarket, openInSector, sectorOf, type MarketLimits } from "../shared/marketLimits";
+import { isBreakoutTrade, MARKET_LABEL, marketOf, openInSector, openInSlots, sectorOf, slotsFor, type MarketLimits } from "../shared/marketLimits";
 import {
   StrategySetup,
   MetaLabelScore,
@@ -236,11 +236,14 @@ export function evaluateRiskEngine(
   // Check Maximum Simultaneous Positions: per market when set in Settings.
   const marketLimit = policy.marketLimits?.[marketOf(setup.symbol)];
   if (marketLimit) {
-    const inMarket = openInMarket(activePositions, setup.symbol).length;
-    if (passed && inMarket >= marketLimit.maxOpenTrades) {
+    // Breakout 55/20 trades have slots of their own: each kind counts only its own.
+    const breakout = isBreakoutTrade(setup);
+    const inMarket = openInSlots(activePositions, setup.symbol, breakout).length;
+    const max = slotsFor(marketLimit, breakout);
+    if (passed && inMarket >= max) {
       passed = false;
       rejectionCode = "max_positions";
-      rejectionReason = `REJECTED BY RISK: Maximum open ${MARKET_LABEL[marketOf(setup.symbol)]} trades reached (${inMarket}/${marketLimit.maxOpenTrades}).`;
+      rejectionReason = `REJECTED BY RISK: Maximum open ${MARKET_LABEL[marketOf(setup.symbol)]}${breakout ? " breakout" : ""} trades reached (${inMarket}/${max}).`;
     }
   } else if (passed && activePositions.length >= maxSimultaneousPositions) {
     passed = false;

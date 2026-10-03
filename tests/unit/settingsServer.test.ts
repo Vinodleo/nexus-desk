@@ -82,20 +82,37 @@ describe("Settings: trade size per market", () => {
   it("sets amount per trade and trades at once separately for coins, Indian stocks and US stocks", () => {
     const onRiskLimitsChange = vi.fn();
     render(createElement(SettingsSheet, props({ onRiskLimitsChange })));
-    expect(screen.getByText("Up to ₹10,000 in coins at a time")).toBeTruthy();
+    expect(screen.getByText("Up to ₹10,000 in coins at a time, besides breakout's")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Coins: amount per trade"), { target: { value: "3000" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 3000, maxOpenTrades: 2, riskPerTradeInr: 50 } },
+      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 3000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3 } },
     });
     fireEvent.change(screen.getByLabelText("Indian stocks: trades at once"), { target: { value: "4" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { ...cleanMarketLimits(null), stocks: { amountPerTradeInr: 5000, maxOpenTrades: 4, riskPerTradeInr: 50 } },
+      marketLimits: { ...cleanMarketLimits(null), stocks: { amountPerTradeInr: 5000, maxOpenTrades: 4, riskPerTradeInr: 50, breakoutTrades: 0 } },
     });
     fireEvent.change(screen.getByLabelText("US stocks: amount per trade"), { target: { value: "2000" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { ...cleanMarketLimits(null), us: { amountPerTradeInr: 2000, maxOpenTrades: 2, riskPerTradeInr: 50 } },
+      marketLimits: { ...cleanMarketLimits(null), us: { amountPerTradeInr: 2000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3 } },
     });
     expect(screen.queryByLabelText("Largest trade")).toBeNull();
+  });
+
+  it("sets breakout 55/20's own slots for coins and US stocks (none for Indian stocks), and switches it off at none", () => {
+    const onRiskLimitsChange = vi.fn();
+    render(createElement(SettingsSheet, props({ onRiskLimitsChange })));
+    expect(screen.getByLabelText("Coins: breakout trades at once")).toBeTruthy();
+    expect(screen.getByLabelText("US stocks: breakout trades at once")).toBeTruthy();
+    expect(screen.queryByLabelText("Indian stocks: breakout trades at once")).toBeNull();
+    expect(screen.getAllByText("Breakout 55/20's own slots, up to ₹15,000 more: other trades can't fill them")).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText("Coins: breakout trades at once"), { target: { value: "5" } });
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
+      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 5 } },
+    });
+    fireEvent.change(screen.getByLabelText("US stocks: breakout trades at once"), { target: { value: "0" } });
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
+      marketLimits: { ...cleanMarketLimits(null), us: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 0 } },
+    });
   });
 
   it("sets the most a trade may lose, per market, and says when the amount caps it", () => {
@@ -105,7 +122,7 @@ describe("Settings: trade size per market", () => {
     expect(screen.getAllByText("Sized to lose this at the stop; less if the stop is under 1% away")).toHaveLength(3);
     fireEvent.change(screen.getByLabelText("Coins: most to lose per trade"), { target: { value: "150" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
-      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 150 } },
+      marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 150, breakoutTrades: 3 } },
     });
   });
 

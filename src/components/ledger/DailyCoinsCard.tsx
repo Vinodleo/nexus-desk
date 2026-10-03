@@ -25,8 +25,12 @@ export interface DailyCoinsView {
   recordSpan?: string | null;
   /** Breakout 55/20's record since 2018 and whether it trades; null before it has run, absent from older servers. */
   breakout?: { trader: string; trades: number; avgR: number; on: boolean } | null;
-  /** Coin trades open now against the coin limit; null before the app has sent its settings, absent from older servers. */
-  coinSlots?: { used: number; max: number } | null;
+  /**
+   * Coin trades open now against the coin limit, and breakout's against its
+   * own slots (absent from servers before them); null before the app has
+   * sent its settings, absent from older servers.
+   */
+  coinSlots?: { used: number; max: number; breakout?: { used: number; max: number } } | null;
   nextAt: number;
 }
 
@@ -44,26 +48,34 @@ const OUTCOME = {
   paused: { label: "paused", icon: "‖", tone: "text-muted" },
 } as const;
 
-/** The autopilot's reason when a market's limit was full ("would exceed 2 open coin trades at once"). */
+/** The autopilot's reason when a market's slots were full ("would exceed 2 open coin trades at once"), and breakout's own. */
 const NO_FREE_SLOT = /open (coin|US stock) trades? at once/;
+const NO_FREE_BREAKOUT_SLOT = /open (coin|US stock) breakout trades? at once/;
 /** A coin or US stock without its suffix ("SOL", "AAPL"). */
 export const shortName = (symbol: string) => symbol.replace(/\/INR$|\.US$/, "");
 
 type Pick = NonNullable<DailyCoinsView["run"]>["picks"][number];
 
-/** The day's setups that waited for a free slot. */
-export const waitedForSlot = (picks: Pick[]): string[] =>
-  [...new Set(picks.filter((p) => p.outcome === "waiting" && NO_FREE_SLOT.test(p.reason ?? "")).map((p) => p.symbol))];
+/** The day's setups that waited for a free slot: breakout's own, or the rest's. */
+export const waitedForSlot = (picks: Pick[], breakout = false): string[] =>
+  [...new Set(picks.filter((p) => p.outcome === "waiting" && (breakout ? NO_FREE_BREAKOUT_SLOT : NO_FREE_SLOT).test(p.reason ?? "")).map((p) => p.symbol))];
 
 /** A market's trades open now against its limit, and which of the day's setups waited for a slot. */
-export const SlotsMeter: React.FC<{ used: number; max: number; waited: string[]; label: string; setting: string; testId: string }> = ({
+export const SlotsMeter: React.FC<{ used: number; max: number; waited: string[]; label: string; setting: string; testId: string; row?: string }> = ({
   used,
   max,
   waited,
   label,
   setting,
   testId,
+  row = "trades at once",
 }) => {
+  if (max === 0)
+    return (
+      <div className="p-2.5 rounded-xl bg-inset text-xs text-muted" data-testid={testId}>
+        {label} slots: off. Settings → {setting}: {row} turns them on.
+      </div>
+    );
   const segments = Math.min(max, 12);
   const width = segments <= 4 ? "w-6" : segments <= 8 ? "w-3.5" : "w-2";
   return (
@@ -79,7 +91,7 @@ export const SlotsMeter: React.FC<{ used: number; max: number; waited: string[];
         </span>
         {waited.length > 0 && (
           <span className="block text-muted">
-            {waited.map(shortName).join(", ")} waited for a free slot. To take more, raise Settings → {setting}: trades at once.
+            {waited.map(shortName).join(", ")} waited for a free slot. To take more, raise Settings → {setting}: {row}.
           </span>
         )}
       </div>
@@ -139,6 +151,17 @@ export const DailyCoinsCard: React.FC = () => {
       </div>
 
       {view.coinSlots && <SlotsMeter used={view.coinSlots.used} max={view.coinSlots.max} waited={waited} label="Coin" setting="Coins" testId="daily-slots" />}
+      {view.coinSlots?.breakout && (
+        <SlotsMeter
+          used={view.coinSlots.breakout.used}
+          max={view.coinSlots.breakout.max}
+          waited={waitedForSlot(run?.picks ?? [], true)}
+          label="Breakout"
+          setting="Coins"
+          row="breakout trades at once"
+          testId="daily-breakout-slots"
+        />
+      )}
 
       {run && <CheckPicks run={run} testId="daily-picks" empty="No setups that day." />}
 

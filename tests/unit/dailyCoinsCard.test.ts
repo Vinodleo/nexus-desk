@@ -35,7 +35,7 @@ describe("Daily coin trades", () => {
         },
         traders,
         recordSpan: "since 2017",
-        coinSlots: { used: 2, max: 2 },
+        coinSlots: { used: 2, max: 2, breakout: { used: 1, max: 3 } },
         nextAt: Date.parse("2026-10-04T00:10:00Z"),
       })
     );
@@ -53,6 +53,8 @@ describe("Daily coin trades", () => {
       "Coin slots: 2 of 2 in useLINK waited for a free slot. To take more, raise Settings → Coins: trades at once."
     );
     expect(screen.getByText("Which traders trade (1 of 2)", { exact: false, selector: "summary" })).toBeTruthy();
+    // Breakout's own slots, apart from the traders'.
+    expect(screen.getByTestId("daily-breakout-slots").textContent).toBe("Breakout slots: 1 of 3 in use");
     const record = screen.getByTestId("daily-traders").textContent;
     expect(record).toMatch(/^Daily record since 2017 with your trailing stop/);
     expect(screen.getByText(/Only traders whose daily record since 2017 is positive/)).toBeTruthy();

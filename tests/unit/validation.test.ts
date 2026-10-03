@@ -129,4 +129,12 @@ describe("deskStateBody", () => {
     expect(parsed.riskLimits.marketLimits?.stocks.riskPerTradeInr).toBeUndefined();
     expect(deskStateBody.safeParse(desk({ coins: { ...limit, riskPerTradeInr: -1 }, stocks: limit })).success).toBe(false);
   });
+
+  it("keeps breakout's own slots (none switches it off), and still takes limits from an app without them", () => {
+    const parsed = deskStateBody.parse(desk({ coins: { ...limit, breakoutTrades: 0 }, stocks: limit, us: { ...limit, breakoutTrades: 5 } }));
+    expect(parsed.riskLimits.marketLimits?.coins.breakoutTrades).toBe(0);
+    expect(parsed.riskLimits.marketLimits?.us?.breakoutTrades).toBe(5);
+    expect(parsed.riskLimits.marketLimits?.stocks.breakoutTrades).toBeUndefined();
+    for (const odd of [21, 1.5, -1]) expect(deskStateBody.safeParse(desk({ coins: { ...limit, breakoutTrades: odd }, stocks: limit })).success).toBe(false);
+  });
 });
