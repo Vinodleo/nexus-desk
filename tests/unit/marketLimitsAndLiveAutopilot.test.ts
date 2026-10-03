@@ -48,8 +48,8 @@ describe("per-market limits", () => {
   it("keep only sensible values, defaulting the rest", () => {
     expect(cleanMarketLimits(null)).toEqual(DEFAULT_MARKET_LIMITS);
     expect(cleanMarketLimits({ coins: { amountPerTradeInr: 2500, maxOpenTrades: 4 }, stocks: { amountPerTradeInr: -5, maxOpenTrades: 99 } })).toEqual({
-      // Saved before risk per trade existed: 1% of the amount.
-      coins: { amountPerTradeInr: 2500, maxOpenTrades: 4, riskPerTradeInr: 25 },
+      // Saved before risk per trade existed: 1% of the amount; before breakout's own slots: 3.
+      coins: { amountPerTradeInr: 2500, maxOpenTrades: 4, riskPerTradeInr: 25, breakoutTrades: 3 },
       stocks: DEFAULT_MARKET_LIMITS.stocks,
       // Saved before US stocks existed: the default.
       us: DEFAULT_MARKET_LIMITS.us,
@@ -152,6 +152,46 @@ describe("per-market limits", () => {
     const { accepted, deferred } = selectAutopilotTrades(batch, { positions: [held("HDFCBANK")], openedLastHour: 0, quarantines: {} }, roomy, () => 1000, now);
     expect(accepted.map((a) => a.proposal.symbol)).toEqual(["SBIN", "TCS"]);
     expect(deferred.map((d) => [d.proposal.symbol, d.reason])).toEqual([["ICICIBANK", "would exceed 2 open trades in banking"]]);
+  });
+
+  it("give breakout 55/20 slots of its own in coins and US stocks: the other trades can't fill them, nor it theirs", () => {
+    expect([DEFAULT_MARKET_LIMITS.coins.breakoutTrades, DEFAULT_MARKET_LIMITS.stocks.breakoutTrades, DEFAULT_MARKET_LIMITS.us.breakoutTrades]).toEqual([3, 0, 3]);
+    const cleaned = cleanMarketLimits({
+      coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, breakoutTrades: 0 },
+      stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2 },
+      us: { amountPerTradeInr: 5000, maxOpenTrades: 2, breakoutTrades: 99 },
+    });
+    // None switches breakout off; nonsense falls back to the default.
+    expect([cleaned.coins.breakoutTrades, cleaned.us.breakoutTrades]).toEqual([0, 3]);
+
+    const roomy = { ...policy, marketLimits: { ...limits, coins: { ...limits.coins, breakoutTrades: 2 } }, autopilotMaxApprovalsPerHour: 10 };
+    const breakout = (symbol: string) => proposal(symbol, {}, { strategy: "breakout" });
+    const heldBreakout = (symbol: string) => ({ ...held(symbol), strategy: "breakout" as const });
+    // Two daily coin trades fill the coin slots: breakout still opens on its own two.
+    const daily = [held("A/INR"), held("B/INR")];
+    const batch = [breakout("C/INR"), proposal("D/INR"), breakout("E/INR"), breakout("F/INR")];
+    const { accepted, deferred } = selectAutopilotTrades(batch, { positions: daily, openedLastHour: 0, quarantines: {} }, roomy, () => 1000, now);
+    expect(accepted.map((a) => a.proposal.symbol)).toEqual(["C/INR", "E/INR"]);
+    expect(deferred.map((d) => [d.proposal.symbol, d.reason])).toEqual([
+      ["D/INR", "would exceed 2 open coin trades at once"],
+      ["F/INR", "would exceed 2 open coin breakout trades at once"],
+    ]);
+    // Two breakout trades held: the daily traders' slots are still free.
+    const breakouts = [heldBreakout("X/INR"), heldBreakout("Y/INR")];
+    expect(selectAutopilotTrades([proposal("D/INR")], { positions: breakouts, openedLastHour: 0, quarantines: {} }, roomy, () => 1000, now).accepted).toHaveLength(1);
+
+    // The scanner's risk check counts the same way.
+    const score = { calibratedWinProbability: 0.6, confidence: 0.6 } as MetaLabelScore;
+    const ev = { isPositiveEdge: true, expectedNetValue: 100 } as ExpectedValueAssessment;
+    const noDrills = {
+      globalKillSwitchActive: false, simulateAgentTimeout: false, simulateStaleMarketData: false,
+      simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
+    };
+    const setup = { symbol: "SOL/INR", direction: "LONG", entryPrice: 1000, stopLoss: 980, takeProfit: 1060, riskRewardRatio: 3 } as StrategySetup;
+    const run = (s: StrategySetup, positions: any[]) => evaluateRiskEngine(s, score, ev, positions, 0, 80, roomy, noDrills, false);
+    expect(run(setup, breakouts).passedAllChecks).toBe(true);
+    expect(run({ ...setup, strategy: "breakout" }, breakouts).rejectionReason).toMatch(/Maximum open coin breakout trades reached \(2\/2\)/);
+    expect(run({ ...setup, strategy: "breakout" }, daily).passedAllChecks).toBe(true);
   });
 
   it("hold the autopilot to each market's count across one batch", () => {

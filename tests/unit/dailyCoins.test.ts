@@ -330,6 +330,17 @@ describe("breakout 55/20 paper trades", () => {
     expect(holdingDecision(p, day1 + 31 * DAY)).toBe("hold");
   });
 
+  it("buys on breakout's own slots, even with both coin slots taken by the daily traders", async () => {
+    const daily = await fresh();
+    const guardian = await import("../../server/guardian");
+    for (const symbol of ["ETH/INR", "BTC/INR"]) {
+      guardian.daemonPositions.set(symbol, { id: symbol, symbol, userId: "u", direction: "LONG", entryPrice: 1, quantity: 1, timeframe: "1d" } as never);
+    }
+    await daily.runDailyCoins(await deps(day1, breakout));
+    expect(daily._dailyCoinsState().runs.u.picks).toEqual([{ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "opened" }]);
+    expect([...guardian.daemonPositions.values()].filter((p) => p.strategy === "breakout").map((p) => p.symbol)).toEqual(["SOL/INR"]);
+  });
+
   it("buys only this year's biggest coins, and only while its record since 2018 is positive", async () => {
     let daily = await fresh();
     const { daemonPositions } = await import("../../server/guardian");
@@ -448,7 +459,7 @@ describe("Traders with your exits", () => {
 });
 
 describe("the Lab's coin slots", () => {
-  it("count every coin trade you have open against your coin limit", async () => {
+  it("count the coin trades you have open against your coin limit, and breakout's against its own", async () => {
     const { dailyCoinsView } = await import("../../server/scanner/dailyCoins");
     const { setDeskState, _resetDeskStates } = await import("../../server/scanner/deskState");
     const guardian = await import("../../server/guardian");
@@ -465,13 +476,16 @@ describe("the Lab's coin slots", () => {
       },
       quarantines: {}, promotedModel: null,
     } as never);
-    const open = (id: string, symbol: string, userId = "slots") => guardian.daemonPositions.set(id, { id, symbol, userId, direction: "LONG", entryPrice: 1, quantity: 1 } as never);
+    const open = (id: string, symbol: string, userId = "slots", strategy?: string) =>
+      guardian.daemonPositions.set(id, { id, symbol, userId, direction: "LONG", entryPrice: 1, quantity: 1, ...(strategy ? { strategy } : {}) } as never);
     // Two coin trades (a daily one and a 5-minute one count alike); a stock and someone else's coin don't.
     open("a", "SOL/INR");
     open("b", "BTC/INR");
     open("c", "RELIANCE");
     open("d", "ETH/INR", "someone-else");
-    expect(dailyCoinsView("slots").coinSlots).toEqual({ used: 2, max: 4 });
+    // A breakout trade counts on breakout's own slots (3 until you choose).
+    open("e", "XRP/INR", "slots", "breakout");
+    expect(dailyCoinsView("slots").coinSlots).toEqual({ used: 2, max: 4, breakout: { used: 1, max: 3 } });
     guardian._resetGuardian();
     _resetDeskStates();
   });

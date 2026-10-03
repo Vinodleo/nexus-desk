@@ -138,6 +138,8 @@ const marketLimit = z.object({
   maxOpenTrades: z.number().int().min(1).max(20),
   // Sent by apps from the risk-per-trade update on.
   riskPerTradeInr: positiveNumber.max(1_000_000).optional(),
+  // Breakout 55/20's own slots (none switches it off), from the separate-slots update on.
+  breakoutTrades: z.number().int().min(0).max(20).optional(),
 });
 
 export const deskStateBody = z.object({

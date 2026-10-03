@@ -5,7 +5,7 @@ import { ruleFor } from "./marketRulesStore";
 import { isBuiltOnSyntheticPrices } from "./dataProvenance";
 import { openQuantity, planPartialQuantity } from "../shared/exitRules";
 import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
-import { MARKET_LABEL, marketOf, sectorOf, type MarketKey } from "../shared/marketLimits";
+import { isBreakoutTrade, MARKET_LABEL, marketOf, sectorOf, slotsFor, type MarketKey } from "../shared/marketLimits";
 
 // Self-Approve (autopilot): which proposals it opens on its own. Shared by the
 // app and the server scanner, so a trade is let through by the same rules
@@ -30,7 +30,7 @@ export interface AutopilotSelection {
 
 export interface AutopilotBook {
   /** Open positions (quantity and price, for exposure and held coins). */
-  positions: Pick<Position, "symbol" | "quantity" | "bankedQuantity" | "currentPrice">[];
+  positions: Pick<Position, "symbol" | "quantity" | "bankedQuantity" | "currentPrice" | "strategy">[];
   /** Positions autopilot opened in the last hour, open or closed. */
   openedLastHour: number;
   quarantines: Record<string, { quarantinedUntilMs: number }>;
@@ -81,8 +81,10 @@ export function selectAutopilotTrades(
   // against at scan time: several proposals from one scan could each pass
   // alone and together break the position or exposure limit.
   let positionCount = book.positions.length;
+  // Per market, on each kind's own slots: breakout 55/20's, and the rest's.
   const openByMarket: Record<MarketKey, number> = { coins: 0, stocks: 0, us: 0 };
-  for (const p of book.positions) openByMarket[marketOf(p.symbol)]++;
+  const breakoutsByMarket: Record<MarketKey, number> = { coins: 0, stocks: 0, us: 0 };
+  for (const p of book.positions) (isBreakoutTrade(p) ? breakoutsByMarket : openByMarket)[marketOf(p.symbol)]++;
   const openBySector = new Map<string, number>();
   for (const p of book.positions) {
     const key = sectorOf(p.symbol)?.key;
@@ -135,8 +137,10 @@ export function selectAutopilotTrades(
     // Per market when set in Settings (amount per trade × trades at once bounds exposure then).
     const market = marketOf(proposal.symbol);
     const marketLimit = policy.marketLimits?.[market];
+    const breakout = isBreakoutTrade(proposal.setup);
+    const slots = breakout ? breakoutsByMarket : openByMarket;
     const tooMany = marketLimit
-      ? openByMarket[market] + 1 > marketLimit.maxOpenTrades
+      ? slots[market] + 1 > slotsFor(marketLimit, breakout)
       : positionCount + 1 > policy.maxSimultaneousPositions;
     const tooExposed = !marketLimit && (exposure + added) / policy.equity > policy.maxAllowedExposureFraction;
     const sector = sectorOf(proposal.symbol);
@@ -153,7 +157,7 @@ export function selectAutopilotTrades(
       if (tooMany)
         reasons.push(
           marketLimit
-            ? `would exceed ${marketLimit.maxOpenTrades} open ${MARKET_LABEL[market]} trade${marketLimit.maxOpenTrades === 1 ? "" : "s"} at once`
+            ? `would exceed ${slotsFor(marketLimit, breakout)} open ${MARKET_LABEL[market]}${breakout ? " breakout" : ""} trade${slotsFor(marketLimit, breakout) === 1 ? "" : "s"} at once`
             : `would exceed max ${policy.maxSimultaneousPositions} simultaneous positions`
         );
       if (tooExposed) reasons.push(`would exceed max ${(policy.maxAllowedExposureFraction * 100).toFixed(0)}% portfolio exposure`);
@@ -170,7 +174,7 @@ export function selectAutopilotTrades(
 
     accepted.push({ proposal, entryPrice: priced.entryPrice, units: priced.units });
     positionCount += 1;
-    openByMarket[market] += 1;
+    slots[market] += 1;
     if (sector) openBySector.set(sector.key, (openBySector.get(sector.key) ?? 0) + 1);
     exposure += added;
     hourly += 1;

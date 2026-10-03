@@ -7,7 +7,7 @@ import { usePWAInstall } from "../../hooks/usePWAInstall";
 import { RoundIconButton, Switch } from "./ui";
 import type { NotifyState } from "../../hooks/useTradeNotifications";
 import type { RiskLimits } from "../../hooks/useRiskPolicy";
-import { AMOUNT_CHOICES, defaultRiskPerTrade, MAX_TRADES_CHOICES, RISK_CHOICES, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
+import { AMOUNT_CHOICES, BREAKOUT_TRADES_CHOICES, DEFAULT_BREAKOUT_TRADES, defaultRiskPerTrade, MAX_TRADES_CHOICES, RISK_CHOICES, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
 import { formatMoney } from "./format";
 import type { ServerStatus } from "../../hooks/useServerStatus";
 import { prefersReducedMotion, usePresence } from "./motion";
@@ -206,6 +206,9 @@ const MarketLimitRows: React.FC<{
   const overCap = liveCapInr !== undefined && mine.amountPerTradeInr > liveCapInr;
   const withCurrent = (choices: number[], current: number) => (choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b));
   const risk = mine.riskPerTradeInr ?? defaultRiskPerTrade(mine.amountPerTradeInr);
+  // Breakout 55/20 trades coins and US stocks, on slots of its own.
+  const trades = market !== "stocks";
+  const breakout = mine.breakoutTrades ?? DEFAULT_BREAKOUT_TRADES[market];
   // A stop closer than this (share of price) reaches the amount per trade first, so risks less.
   const fullRiskStopPct = (risk / mine.amountPerTradeInr) * 100;
   return (
@@ -248,7 +251,7 @@ const MarketLimitRows: React.FC<{
       </Row>
       <Row
         label={`${title}: trades at once`}
-        sub={`Up to ${formatMoney(mine.amountPerTradeInr * mine.maxOpenTrades, { decimals: 0 })} in ${title.toLowerCase()} at a time`}
+        sub={`Up to ${formatMoney(mine.amountPerTradeInr * mine.maxOpenTrades, { decimals: 0 })} in ${title.toLowerCase()} at a time${trades ? ", besides breakout's" : ""}`}
       >
         <RollingSelect
           label={`${title}: trades at once`}
@@ -258,6 +261,24 @@ const MarketLimitRows: React.FC<{
           onChange={(v) => set({ maxOpenTrades: v })}
         />
       </Row>
+      {trades && (
+        <Row
+          label={`${title}: breakout trades at once`}
+          sub={
+            breakout > 0
+              ? `Breakout 55/20's own slots, up to ${formatMoney(mine.amountPerTradeInr * breakout, { decimals: 0 })} more: other trades can't fill them`
+              : "Breakout 55/20 doesn't trade here"
+          }
+        >
+          <RollingSelect
+            label={`${title}: breakout trades at once`}
+            value={breakout}
+            options={withCurrent(BREAKOUT_TRADES_CHOICES, breakout)}
+            format={(v) => (v === 0 ? "Off" : String(v))}
+            onChange={(v) => set({ breakoutTrades: v })}
+          />
+        </Row>
+      )}
     </>
   );
 };

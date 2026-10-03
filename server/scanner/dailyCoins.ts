@@ -7,7 +7,7 @@ import { breakoutEntryAt, breakoutExitAt, CLASSIC_STRATEGIES, type ClassicRecord
 import { MIN_EDGE_R, MIN_TRADER_TRADES } from "../../src/services/calibration";
 import { roundPrice } from "../../src/services/strategyEngine";
 import { ruleFor } from "../../src/services/marketRulesStore";
-import { cleanMarketLimits, marketOf } from "../../src/shared/marketLimits";
+import { cleanMarketLimits, isBreakoutTrade, marketOf, slotsFor, type MarketKey } from "../../src/shared/marketLimits";
 import { fitQuantity } from "../../src/shared/marketRules";
 import { MAX_COIN_SPREAD, roundTripFeeRate, spreadTooWide } from "../../src/shared/tradeCosts";
 import { DEFAULT_TRAIL_PROFILE, TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
@@ -315,7 +315,7 @@ export function dailyProposal(
       portfolioExposureFraction: 0,
       maxAllowedExposureFraction: policy.maxAllowedExposureFraction,
       openPositionCount: 0,
-      maxSimultaneousPositions: limit.maxOpenTrades,
+      maxSimultaneousPositions: slotsFor(limit, isBreakoutTrade(setup)),
       fractionalKellyFraction: 0,
       recommendedPositionSizeUnits: units,
       recommendedDollarExposure: Number((units * ask).toFixed(2)),
@@ -478,10 +478,15 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
   }
 }
 
-/** Coin trades this user has open, and how many the coin limit allows at once (the autopilot's count). */
-export function coinSlots(uid: string, desk: DeskState): { used: number; max: number } {
-  const used = [...daemonPositions.values()].filter((p) => p.userId === uid && marketOf(p.symbol) === "coins").length;
-  return { used, max: cleanMarketLimits(desk.riskLimits.marketLimits).coins.maxOpenTrades };
+/** A market's trades of one kind this user has open (breakout's, or the rest), and how many its slots allow at once. */
+export function slotsInUse(uid: string, desk: DeskState, market: MarketKey, breakout: boolean): { used: number; max: number } {
+  const used = [...daemonPositions.values()].filter((p) => p.userId === uid && marketOf(p.symbol) === market && isBreakoutTrade(p) === breakout).length;
+  return { used, max: slotsFor(cleanMarketLimits(desk.riskLimits.marketLimits)[market], breakout) };
+}
+
+/** Coin trades this user has open against the coin limit, and breakout's against its own slots (the autopilot's counts). */
+export function coinSlots(uid: string, desk: DeskState): { used: number; max: number; breakout: { used: number; max: number } } {
+  return { ...slotsInUse(uid, desk, "coins", false), breakout: slotsInUse(uid, desk, "coins", true) };
 }
 
 /** What the Lab shows a user: the last scan, each trader's daily record and whether it trades, and the next scan. */
@@ -498,7 +503,7 @@ export function dailyCoinsView(uid: string, now: number = Date.now()) {
     recordSpan: judged?.span ?? null,
     /** Breakout 55/20's record since 2018 and whether it trades (null before the classic strategies have run). */
     breakout: breakoutGate(realDeps.classic!()) ?? null,
-    /** Coin trades open now against your coin limit (every coin trade, the 5-minute ones too), or null before the app has sent its settings. */
+    /** Coin trades open now against your coin limit (the 5-minute ones too), and breakout's against its own slots; null before the app has sent its settings. */
     coinSlots: desk ? coinSlots(uid, desk) : null,
     nextAt: (todayDone ? dayStart + DAY_MS : dayStart) + DAILY_SCAN_AFTER_MS,
   };

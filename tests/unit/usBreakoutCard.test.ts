@@ -22,7 +22,7 @@ const view = (over: Record<string, unknown> = {}) => ({
     picks: [
       { symbol: "AAPL.US", trader: "Breakout 55/20", outcome: "opened" },
       { symbol: "MSFT.US", trader: "Breakout 55/20", outcome: "sold", reason: "closed below its 20-day low" },
-      { symbol: "NVDA.US", trader: "Breakout 55/20", outcome: "waiting", reason: "would exceed 2 open US stock trades at once" },
+      { symbol: "NVDA.US", trader: "Breakout 55/20", outcome: "waiting", reason: "would exceed 2 open US stock breakout trades at once" },
     ],
   },
   gate: { trader: "Breakout 55/20", trades: 554, avgR: 0.39, on: true },
@@ -39,10 +39,13 @@ describe("US breakout trades", () => {
     expect(within(screen.getByTestId("us-picks")).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
       "↑AAPL Breakout 55/20opened",
       "↓MSFT Breakout 55/20soldclosed below its 20-day low",
-      "○NVDA Breakout 55/20not openedwould exceed 2 open US stock trades at once",
+      "○NVDA Breakout 55/20not openedwould exceed 2 open US stock breakout trades at once",
     ]);
     expect(screen.getByText("Couldn't read: HD.")).toBeTruthy();
-    expect(screen.getByTestId("us-slots").textContent).toBe("US slots: 2 of 2 in useNVDA waited for a free slot. To take more, raise Settings → US stocks: trades at once.");
+    // Breakout's own US slots.
+    expect(screen.getByTestId("us-slots").textContent).toBe(
+      "Breakout slots: 2 of 2 in useNVDA waited for a free slot. To take more, raise Settings → US stocks: breakout trades at once."
+    );
     expect(screen.getByTestId("us-record").textContent).toBe("Record since 2016: 554 trades · +0.39R●Trading");
     expect(screen.getByText(/at 3:45 pm New York/)).toBeTruthy();
   });
@@ -52,6 +55,12 @@ describe("US breakout trades", () => {
     render(createElement(UsBreakoutCard));
     expect((await screen.findByTestId("us-status")).textContent).toMatch(/^First check /);
     expect(screen.getByTestId("us-record").textContent).toBe("Record since 2016: 554 trades · −0.02R‖Paused");
+    cleanup();
+
+    // Breakout switched off in Settings.
+    vi.mocked(apiFetch).mockResolvedValue(reply(view({ slots: { used: 0, max: 0 } })));
+    render(createElement(UsBreakoutCard));
+    expect((await screen.findByTestId("us-slots")).textContent).toBe("Breakout slots: off. Settings → US stocks: breakout trades at once turns them on.");
     cleanup();
 
     vi.mocked(apiFetch).mockResolvedValue(reply(view({ gate: null, slots: null })));
