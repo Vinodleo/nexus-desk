@@ -106,7 +106,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   00:00 UTC daily close (until 6 hours after), the server reads each coin's daily candles from Binance (today's coins plus
   `FIXED_COINS`, those CoinDCX lists) and takes the setups the two-year replay would take there (`latestSlowSetups`).
   They open through the server autopilot within the coin limits, priced at CoinDCX's ask with the stop and target scaled
-  from Binance's chart, never live and without Gemini's review. A trader trades only if its daily coin record with the
+  from Binance's chart, never live (a live desk gets none) and without Gemini's review. A trader trades only if its daily coin record with the
   owner's trailing stop averages `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ setups (`dailyTraderGates`): the record since
   2017 once that replay has finished, until then the two-year one's. Each trades alone (no panel vote). Positions carry `timeframe: "1d"`: held up to 30 days and closed at that limit exactly
   (`holdingDecision`), trailed on the daily ATR, labelled "daily", and left out of the 5-minute traders' real record.
@@ -116,7 +116,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   with the replay); a close below the 20-day low sells at the bid (`breakoutExitAt`, `closeServerPosition`), even with
   autopilot off. No target, no trailing stop (`trailProfile` "fixed"), nothing banked at +1R, one trade per coin at a
   time, held up to a year (`BREAKOUT_HOLD_MINUTES`). The coin amount and risk per trade, on breakout's own coin slots
-  (owner's call). It trades only
+  (owner's call). On a desk in live mode it's the one daily-check strategy that trades live: real CoinDCX orders through
+  the server's live checks (`placeLiveEntry`: `LIVE_TRADING_ENABLED`, `LIVE_ALLOWED_MARKETS`, caps), with its backup stop;
+  the daily traders open nothing there (`LIVE_DAILY_NOTE`), and US checks stay paper. It trades only
   while its record since 2018 (the long replay's `classic`) averages `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ trades
   (`breakoutGate`). Positions carry `strategy: "breakout"`, labelled "breakout".
 - **US breakout 55/20 trades (paper, owner's call):** `server/scanner/usBreakout.ts`. Each US weekday at 3:45 pm New
@@ -188,7 +190,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   breakout +0.39R over 554 trades (8 of 11 years up), momentum +0.26R (9 of 11), moving averages +0.32R (5 of 11): US
   breakout and US momentum paper-trade (owner's call), each on its own slots. India: breakout +0.23R but 5 of 11 years and mostly 2020; not traded.
 - **Going live:** only when the owner asks. The checklist is `docs/going-live.md` (proof on paper, the builds still
-  needed: a live path for coin breakout, backups, a daily check against CoinDCX; setup; the watched first trade).
+  needed: backups, a daily check against CoinDCX; setup; the watched first trade). Coin breakout's live path is built.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 
 ## Gotchas
