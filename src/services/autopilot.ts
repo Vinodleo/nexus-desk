@@ -222,7 +222,8 @@ export function positionFromProposal(
     takeProfit: setup.takeProfit,
     initialTakeProfit: setup.takeProfit,
     initialStopLoss: setup.stopLoss,
-    partialQuantity: planPartialQuantity(units, entryPrice, ruleFor(proposal.symbol, entryPrice)),
+    // A breakout trade isn't banked early: it runs whole until its exit, as replayed.
+    partialQuantity: setup.strategy === "breakout" ? undefined : planPartialQuantity(units, entryPrice, ruleFor(proposal.symbol, entryPrice)),
     unrealizedPnl: 0,
     unrealizedPnlPercent: 0,
     openTime: new Date(opts.now ?? Date.now()).toISOString(),
@@ -236,9 +237,11 @@ export function positionFromProposal(
     family: setup.family,
     horizon: setup.horizon,
     trailMode: runner ? "TREND_RUNNER" : "SCALP_TIGHT",
-    trailProfile: opts.trailProfile,
+    // A breakout trade keeps its first stop (it's sold on a close below the 20-day low instead of trailing).
+    trailProfile: setup.strategy === "breakout" ? "fixed" : opts.trailProfile,
     // A daily-candle trade: held up to 30 days (holdMinutesFor), closed at that limit exactly.
     ...(setup.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
+    ...(setup.strategy === "breakout" ? { strategy: "breakout" as const } : {}),
   };
 }
 

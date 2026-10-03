@@ -82,6 +82,7 @@ const syncedPosition = z
     setupName: z.string().max(200).optional().catch(undefined),
     signalPrice: positiveNumber.optional().catch(undefined),
     timeframe: z.enum(["1d"]).optional().catch(undefined),
+    strategy: z.enum(["breakout"]).optional().catch(undefined),
   })
   // The client restores its book from what it synced, so keep its other
   // display fields; the guardian only reads the ones validated above.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appendBars, emptySeries, type CandleSeries } from "../../src/services/historyReplay";
-import { addClassicTrades, atr, breakoutTrades, btcUptrend, maTrendTrades, momentumTrades, resultR, sma, type ClassicRecords } from "../../src/services/classicStrategies";
+import { addClassicTrades, atr, breakoutEntryAt, breakoutExitAt, breakoutTrades, btcUptrend, maTrendTrades, momentumTrades, resultR, sma, type ClassicRecords } from "../../src/services/classicStrategies";
 
 // Step 2 of trading slower: strategies with long public records, on daily
 // coin candles, each trade's result in R after costs.
@@ -53,6 +53,17 @@ describe("breakout 55/20", () => {
     const [t] = breakoutTrades("SOL/INR", gap, 0, always);
     expect(t.exitMs).toBe(T0 + 62 * DAY);
     expect(t.r).toBeCloseTo(resultR(105, 95, 4.4, 0), 9);
+  });
+
+  it("reads a day's entry and exit the same way the daily paper trades do", () => {
+    // Day 60 closes above the 55-day high: in at its close, 2 ATR of risk.
+    expect(breakoutEntryAt(s, 60)).toEqual({ entry: 105, risk: expect.closeTo(4.4, 9), atr: expect.closeTo(2.2, 9) });
+    // Not on a quiet day, nor before 55 days of history.
+    expect(breakoutEntryAt(s, 59)).toBeNull();
+    expect(breakoutEntryAt(candles([...flat(40), [100, 106, 100, 105]]), 40)).toBeNull();
+    // The last day closes below the 20-day low; the day before doesn't.
+    expect(breakoutExitAt(s, 101)).toBe(true);
+    expect(breakoutExitAt(s, 100)).toBe(false);
   });
 
   it("opens only on a coin on that year's list, and judges a trade still open at the last close", () => {

@@ -83,6 +83,8 @@ export interface StrategySetup {
   horizon?: "intraday" | "swing";
   /** The ATR its stop and target were sized on, and its trailing stop steps by (hourly for coins). */
   planAtr?: number;
+  /** "breakout": the breakout 55/20 strategy's (no target, no trailing, sold on a close below the 20-day low). */
+  strategy?: "breakout";
   features: {
     emaAlignment: boolean;
     volumeSurgeRatio: number;
@@ -324,6 +326,8 @@ export interface Position {
   signalPrice?: number;
   /** "1d": a coin trade on daily candles, held up to 30 days (server/scanner/dailyCoins.ts). */
   timeframe?: "1d";
+  /** "breakout": the breakout 55/20 strategy's, on daily candles: no target, a fixed stop, sold on a close below the 20-day low. */
+  strategy?: "breakout";
 }
 
 export interface HistoricalTrade {
@@ -351,6 +355,8 @@ export interface HistoricalTrade {
   signalPrice?: number;
   /** "1d": a coin trade on daily candles. */
   timeframe?: "1d";
+  /** "breakout": the breakout 55/20 strategy's. */
+  strategy?: "breakout";
   isWin: boolean;
   exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL" | "EXPIRY_TIME";
   openedAt: string;

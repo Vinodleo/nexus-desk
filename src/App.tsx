@@ -848,6 +848,7 @@ export default function App() {
         ...(pos.openedByServer ? { openedByServer: true } : {}),
         ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
         ...(pos.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
+        ...(pos.strategy === "breakout" ? { strategy: "breakout" as const } : {}),
         fillAtExit: exitPrice,
         // The best and worst prices seen while open, for how far it went each way.
         highestPrice: Math.max(pos.highestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),

@@ -80,6 +80,13 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   2017 once that replay has finished, until then the two-year one's. Each trades alone (no panel vote). Positions carry `timeframe: "1d"`: held up to 30 days and closed at that limit exactly
   (`holdingDecision`), trailed on the daily ATR, labelled "daily", and left out of the 5-minute traders' real record.
   The Lab's "Daily coin trades" card shows each day's check.
+- **Breakout 55/20 trades (paper, owner's call, 4 Oct):** in the same daily check, on this year's biggest coins
+  (`cohortFor`): a close above the 55-day high buys at CoinDCX's ask, the stop 2 ATR below (`breakoutEntryAt`, shared
+  with the replay); a close below the 20-day low sells at the bid (`breakoutExitAt`, `closeServerPosition`), even with
+  autopilot off. No target, no trailing stop (`trailProfile` "fixed"), nothing banked at +1R, one trade per coin at a
+  time, held up to a year (`BREAKOUT_HOLD_MINUTES`). Same coin limits and slots as the daily traders. It trades only
+  while its record since 2018 (the long replay's `classic`) averages `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ trades
+  (`breakoutGate`). Positions carry `strategy: "breakout"`, labelled "breakout".
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if
@@ -115,6 +122,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   daily traders averaged +0.07R (7 of 9 years positive, 2022 about even). The machine-learning test on daily setups
   didn't pass (its picks +0.05R against +0.14R for every setup, latest year): no filter. Step 2 (owner's call, 4 Oct):
   the classic strategies in the Lab, next to the traders, year by year; paper only if they clearly beat them.
+  Since 2018 breakout 55/20 averaged +0.98R over 476 trades (6 of 9 years positive): it paper-trades alongside the
+  daily traders since 4 Oct (owner's call). Moving averages 50/200 (+1.13R, mostly 2020) and momentum (+0.17R) aren't traded.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 
