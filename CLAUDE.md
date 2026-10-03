@@ -63,7 +63,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   20 biggest coins on 1 January (`COIN_COHORTS`, from memory of the rankings; later years use the last list), so today's
   winners aren't replayed in years they were small. Same exits, fees and spreads as the two-year daily replay; results by
   quarter (`daily_long.json`), shown by year. Every setup in a coin's list years is saved with its readings (Bitcoin's last
-  30 days as the market's) and results (`daily_long_setups/`, `replayTimeframe`'s `onSetup`), for the machine-learning test. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
+  30 days as the market's) and results (`daily_long_setups/`, `replayTimeframe`'s `onSetup`), for the machine-learning test.
+  Each coin's daily candles are kept (`daily_long_candles/`), and at the end the classic strategies of step 2 run on them
+  (`src/services/classicStrategies.ts`: breakout 55/20, moving averages 50/200 with Bitcoin's 200-day as a guard, momentum
+  top 3 weekly), on the same coins and years, costs included, results in R by quarter (`classic`). Bumping
+  `CLASSIC_VERSION` redoes only them, from the kept candles, leaving the traders' results alone. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
   machine-learning test (`waitForOtherWork`, `backgroundWorkBusy`). Its records (the last finished run's while it reruns,
   `dailyLongRecords`) decide which traders take daily paper trades (owner's call, 4 Oct: nine years over two).
 - **Daily coin trades (paper, owner's call, 3 Oct):** `server/scanner/dailyCoins.ts`. Once a day, 10 minutes after the
@@ -106,7 +110,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   trader losing about its costs. Step 1: the same traders on 1-hour and 1-day candles (the Lab's timeframe switch).
   Step 2: strategies with long records (trend following, momentum), tested on the kept hourly candles. Paper first.
   Done so far: coins on daily candles passed the coin check (+0.12R a trade on the fixed list) and paper-trade daily
-  since 3 Oct. US daily was only slightly positive and India lost at every speed: not traded slower.
+  since 3 Oct. US daily was only slightly positive and India lost at every speed: not traded slower. Since 2017 the
+  daily traders averaged +0.07R (7 of 9 years positive, 2022 about even). The machine-learning test on daily setups
+  didn't pass (its picks +0.05R against +0.14R for every setup, latest year): no filter. Step 2 (owner's call, 4 Oct):
+  the classic strategies in the Lab, next to the traders, year by year; paper only if they clearly beat them.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 

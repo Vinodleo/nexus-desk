@@ -64,6 +64,34 @@ describe("Coins on daily candles since 2017", () => {
     expect(screen.getByTestId("daily-long-status").textContent).toBe("1 Aug 2017 – 3 Oct 2026 · 2 coins · updated 3 Oct 2026");
   });
 
+  it("sets the classic strategies next to your traders, year by year, with each one's total and rule", async () => {
+    const classic = {
+      "2018-Q2": { breakout: rec(4, 1, 6, -3) },
+      "2022-Q1": { breakout: rec(6, 2, 3, -5), momentum: rec(3, 1, 2, -2) },
+      "2022-Q4": { maTrend: rec(2, 1, 3, -1) },
+    };
+    vi.mocked(apiFetch).mockResolvedValue(reply(view({ classic })));
+    render(createElement(DailyLongCard, { trailProfile: "tight" }));
+    const table = (await screen.findByTestId("daily-long-classic")).textContent!;
+    expect(table).toContain("Classic strategies on the same coins and years (average R a trade)TradersBreakout50/200Top 3");
+    // Your traders −0.05 and +0.30 (as above); breakout +0.75 then −0.33; the others only in 2022.
+    expect(table).toContain("2018−0.05+0.75——");
+    expect(table).toContain("2022+0.30−0.33+1.00+0.00");
+    expect(table).toContain("All+0.13+0.10+1.00+0.00");
+    const rules = screen.getByTestId("daily-long-classic-rules").textContent!;
+    expect(rules).toContain("Breakout 55/2010 trades · 30% won · +0.10R");
+    expect(rules).toContain("Buys a close above the last 55 days' high");
+    expect(rules).toContain("Moving averages 50/2002 trades · 50% won · +1.00R");
+    expect(rules).toContain("Momentum, top 33 trades · 33% won · +0.00R");
+    cleanup();
+
+    // Before they've run (or an older server): no table.
+    vi.mocked(apiFetch).mockResolvedValue(reply(view({ classic: null })));
+    render(createElement(DailyLongCard, { trailProfile: "tight" }));
+    await screen.findByTestId("daily-long-years");
+    expect(screen.queryByTestId("daily-long-classic")).toBeNull();
+  });
+
   it("shows its progress while it runs, and nothing for an older server", async () => {
     vi.mocked(apiFetch).mockResolvedValue(reply(view({ running: true, current: "LUNA/INR", finished: 12, total: 46, records: {}, byMarket: {} })));
     render(createElement(DailyLongCard, { trailProfile: "tight" }));

@@ -287,6 +287,46 @@ describe("the long daily replay", () => {
     expect(fs.existsSync(long.dailySetupsDir())).toBe(false);
   });
 
+  it("runs the classic strategies on the same coins' kept candles, and redoes only them when they change", async () => {
+    const { deps, downloads } = fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] });
+    await long.startDailyLong(false, deps);
+    const run = long._dailyLongRun()!;
+    expect(downloads).toEqual(["BTC/INR", "LUNA/INR"]);
+    expect(run.classicVersion).toBe(long.CLASSIC_VERSION);
+    const classic = run.classic!;
+    const trades = Object.values(classic).flatMap((byStrategy) => Object.values(byStrategy)).reduce((n, rec) => n + rec!.trades, 0);
+    expect(trades).toBeGreaterThan(0);
+    // Only in years a coin was on that year's list: LUNA's candles end in 2022, Bitcoin's run 2020–2023.
+    expect(Object.keys(classic).every((q) => q >= "2020" && q < "2024")).toBe(true);
+    expect(fs.readdirSync(long.dailyCandlesDir()).sort()).toEqual(["BTC_INR.csv.gz", "LUNA_INR.csv.gz"]);
+    expect(long.dailyLongView().classic).toEqual(classic);
+
+    // The strategies changed: redone from the kept candles, nothing downloaded, the traders' results and finish kept.
+    const kept = { ...run, classic: undefined, classicVersion: long.CLASSIC_VERSION - 1 };
+    fs.writeFileSync(path.join(dataDir, "daily_long.json"), JSON.stringify(kept));
+    long._resetDailyLong();
+    long.loadDailyLong();
+    expect(long.dailyLongDue(long._dailyLongRun(), deps.now())).toBe(false);
+    const again = fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] });
+    await long.startDailyLong(false, again.deps);
+    const redone = long._dailyLongRun()!;
+    expect(again.downloads).toEqual([]);
+    expect(redone.classic).toEqual(classic);
+    expect(redone.records).toEqual(run.records);
+    expect(redone.finishedAt).toBe(run.finishedAt);
+
+    // Candles not kept (results from before this): fetched once, then kept.
+    fs.rmSync(long.dailyCandlesDir(), { recursive: true, force: true });
+    fs.writeFileSync(path.join(dataDir, "daily_long.json"), JSON.stringify(kept));
+    long._resetDailyLong();
+    long.loadDailyLong();
+    const fetched = fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] });
+    await long.startDailyLong(false, fetched.deps);
+    expect(fetched.downloads.sort()).toEqual(["BTC/INR", "LUNA/INR"]);
+    expect(long._dailyLongRun()!.classic).toEqual(classic);
+    expect(fs.readdirSync(long.dailyCandlesDir()).length).toBe(2);
+  });
+
   it("carries on after a restart from the next coin, and waits for a scan cycle to finish", async () => {
     const first = fakes({ symbols: () => ["LUNA/INR"] });
     await long.startDailyLong(false, first.deps);
