@@ -113,8 +113,10 @@ describe("each year's coins", () => {
       expect(list.length).toBe(20);
       expect(new Set(list).size).toBe(20);
     }
-    // Before the lists, the first; after them, the last.
-    expect(long.cohortFor(2017)).toBe(long.COIN_COHORTS[2018]);
+    // After the lists, the last. Before them nothing: 2018's biggest coins were 2017's winners.
+    expect(long.cohortFor(2017)).toEqual([]);
+    expect(long.inCohort("BTC/INR", utc("2017-12-31"))).toBe(false);
+    expect(long.inCohort("BTC/INR", utc("2018-01-01"))).toBe(true);
     expect(long.cohortFor(2026)).toBe(long.COIN_COHORTS[2025]);
     // Terra's LUNA was among the biggest only on 1 January 2022.
     expect(long.inCohort("LUNA/INR", utc("2022-05-09"))).toBe(true);
@@ -285,6 +287,14 @@ describe("the long daily replay", () => {
     // A fresh run starts the files again.
     await long.startDailyLong(true, fakes({ symbols: () => [] }).deps);
     expect(fs.existsSync(long.dailySetupsDir())).toBe(false);
+  });
+
+  it("counts no classic trade before 2018, the first year with a list known at its start", async () => {
+    const { deps } = fakes({ symbols: () => ["BTC/INR"], download: async () => ({ series: dailySeries("2017-08-17", "2019-06-01", 3) }) });
+    await long.startDailyLong(false, deps);
+    const quarters = Object.keys(long._dailyLongRun()!.classic!);
+    expect(quarters.length).toBeGreaterThan(0);
+    expect(quarters.every((q) => q >= "2018")).toBe(true);
   });
 
   it("runs the classic strategies on the same coins' kept candles, and redoes only them when they change", async () => {
