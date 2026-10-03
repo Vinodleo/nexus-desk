@@ -51,6 +51,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     any exit (it holds the coins), and a fill there closes the trade in the guardian at CoinDCX's price
     (`setExchangeStopListener`). If CoinDCX refuses it, a pop-up says so once and the guardian watches the stop alone.
   - Web Push sends the trade pop-ups.
+  - Daily backups (`server/backup.ts`): every top-level file in the data folder (not the rebuildable folders, not
+    `angel_tokens.json`) as one gzipped JSON a day to an S3 bucket (Fly's Tigris, set up by `fly storage create`, which
+    sets the `AWS_*`/`BUCKET_NAME` secrets itself; `server/s3.ts` signs requests with SigV4, no SDK), 30 days kept,
+    shown in Settings → Server → Backups, a pop-up once a day if failing. `RESTORE_BACKUP=YYYY-MM-DD` restores a day at
+    start-up (once, `.restored` marker; replaced files kept in `before-restore-…`) and restarts (docs/hosting.md).
 - **Shared rules:** `src/shared/` and `src/services/`, used by both the app and the server.
   - Exit rules, trailing stops and trade maths.
   - Market sessions: `nse.ts`, `usMarket.ts`.
@@ -190,7 +195,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   breakout +0.39R over 554 trades (8 of 11 years up), momentum +0.26R (9 of 11), moving averages +0.32R (5 of 11): US
   breakout and US momentum paper-trade (owner's call), each on its own slots. India: breakout +0.23R but 5 of 11 years and mostly 2020; not traded.
 - **Going live:** only when the owner asks. The checklist is `docs/going-live.md` (proof on paper, the builds still
-  needed: backups, a daily check against CoinDCX; setup; the watched first trade). Coin breakout's live path is built.
+  needed: a daily check against CoinDCX; setup; the watched first trade). Coin breakout's live path and backups are built.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 
 ## Gotchas

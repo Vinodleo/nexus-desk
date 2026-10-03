@@ -27,8 +27,10 @@ early Oct).
       opens real CoinDCX orders through the server's live checks (`LIVE_TRADING_ENABLED`,
       `LIVE_ALLOWED_MARKETS`, the order caps), with its backup stop; the daily traders open
       nothing there (paper only, `LIVE_DAILY_NOTE`). US stocks stay paper.
-- [ ] **Daily off-site backups** of the server's data (`/data` on Fly: positions,
-      live-order records, settings), with a tested restore.
+- [x] **Daily off-site backups** (Oct 2026): the server's saved state, once a day, to Fly's
+      object storage, 30 days kept; restore with `RESTORE_BACKUP` (docs/hosting.md).
+      Still to do by the owner: set it up (`fly storage create`, step 3) and **try one
+      restore** while on paper.
 - [ ] **A daily check against CoinDCX**: the coins held there match the open live
       trades the app knows; a pop-up on any mismatch.
 - [ ] **Verify CoinDCX's API** where the code assumes (no docs could be reached from the
@@ -39,6 +41,8 @@ early Oct).
 
 ## 3. One-time setup (the owner, from Google Cloud Shell; never secrets in chat)
 
+- [ ] **Backups on**: `fly storage create -a nexus-desk-vinodleo`; Settings → Server →
+      Backups says On. Try one restore while on paper (docs/hosting.md).
 - [ ] **Uptime alert**: a free UptimeRobot (or similar) check on
       `https://nexus-desk-vinodleo.fly.dev/api/health`, alerting your phone and email
       (docs/hosting.md). It answers 503 when the scanner has stopped.

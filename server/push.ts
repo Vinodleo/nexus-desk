@@ -115,6 +115,13 @@ export async function notifyUser(uid: string | undefined, message: PushMessage):
   return sent;
 }
 
+/** Sends to every subscribed device, whoever subscribed it (server-wide news, like a failed backup). */
+export async function notifyEveryone(message: PushMessage): Promise<number> {
+  let sent = 0;
+  for (const uid of Object.keys(subscriptions())) sent += await notifyUser(uid, message);
+  return sent;
+}
+
 export { tradeOpenedMessage, tradeClosedMessage, swingWaitingMessage } from "../src/shared/tradeMessages";
 
 /** Test hook. */
