@@ -47,7 +47,7 @@ export const DAILY_LONG_VERSION = 2;
  * classicStrategies.ts): they're replayed again from the kept daily candles,
  * leaving the traders' results (and the daily trades they decide) as they are.
  */
-export const CLASSIC_VERSION = 1;
+export const CLASSIC_VERSION = 2;
 /** From Binance's first candles (August 2017). */
 export const DAILY_LONG_FROM_MS = Date.UTC(2017, 7, 1);
 const RERUN_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
@@ -74,10 +74,14 @@ export const COIN_COHORTS: Record<number, string[]> = {
 };
 const COHORT_YEARS = Object.keys(COIN_COHORTS).map(Number).sort((a, b) => a - b);
 
-/** The list a year trades: its own, or the nearest year's before or after the lists. */
+/**
+ * The list a year trades: its own, or after the lists the last one. Before
+ * the first list nothing: 1 January 2018's biggest coins were the ones that
+ * had just risen most in 2017, so trading them in 2017 would be hindsight.
+ */
 export function cohortFor(year: number): string[] {
-  const y = Math.min(COHORT_YEARS[COHORT_YEARS.length - 1], Math.max(COHORT_YEARS[0], year));
-  return COIN_COHORTS[y];
+  if (year < COHORT_YEARS[0]) return [];
+  return COIN_COHORTS[Math.min(COHORT_YEARS[COHORT_YEARS.length - 1], year)];
 }
 
 /** Whether a trade opened at `ms` on `symbol` counts: the coin was on that year's list. */
