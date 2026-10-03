@@ -193,7 +193,7 @@ describe("the daily scan", () => {
     expect(daily._dailyCoinsState().runs).toEqual({});
   });
 
-  it("leaves paused traders paused, and opens nothing for a desk in live mode or with autopilot off", async () => {
+  it("leaves paused traders paused, and opens none of the daily traders' for a desk in live mode (paper only) or with autopilot off", async () => {
     let daily = await fresh();
     const paused = await deps({ records: () => ({ span: "since 2017", records: { tight: { "2026-Q3": { [`crypto:${trader}`]: rec(9, 3) } } } }) });
     await daily.runDailyCoins(paused);
@@ -206,7 +206,7 @@ describe("the daily scan", () => {
     expect(daily._dailyCoinsState().runs.u.picks[0].reason).toBe("daily record since 2017 −0.05R (needs +0.05R)");
 
     for (const [over, note] of [
-      [{ tradingMode: "LIVE_COINDCX" }, "Your desk is in live mode; daily trades are paper only for now."],
+      [{ tradingMode: "LIVE_COINDCX" }, "Your desk is in live mode: the daily traders are paper only, so they open nothing; breakout 55/20 trades live."],
       [{ autopilot: false }, "Autopilot is off, so no daily trades were opened."],
     ] as const) {
       daily = await fresh();
@@ -396,6 +396,38 @@ describe("breakout 55/20 paper trades", () => {
     await daily.runDailyCoins(await deps(day2, [...breakout, [101, 101, 97, 98]], { quote: async () => null }));
     expect(daemonPositions.size).toBe(1);
     expect(daily._dailyCoinsState().runs.u.picks[0]).toMatchObject({ outcome: "waiting", reason: expect.stringContaining("its stop still guards it") });
+  });
+
+  it("trades live on a live desk, through the server's live checks: a real buy at CoinDCX, guarded as a live trade", async () => {
+    const { daemonPositions } = await import("../../server/guardian");
+    const liveDesk = { ...desk, tradingMode: "LIVE_COINDCX" as const };
+    // Live orders blocked on the server (LIVE_TRADING_ENABLED isn't on): it waits, and says why.
+    let daily = await fresh();
+    const blockedEntry = vi.fn();
+    await daily.runDailyCoins(await deps(day1, breakout, { desks: () => [["u", liveDesk]], liveEntry: blockedEntry }));
+    expect(blockedEntry).not.toHaveBeenCalled();
+    expect(daemonPositions.size).toBe(0);
+    expect(daily._dailyCoinsState().runs.u.picks).toEqual([
+      { symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "waiting", reason: expect.stringContaining("LIVE_TRADING_ENABLED isn't on") },
+    ]);
+    expect(daily._dailyCoinsState().runs.u.note).toBe(daily.LIVE_DAILY_NOTE);
+
+    // Allowed: bought at CoinDCX through the live entry (its caps and allowed coins), filled at 10,005.
+    vi.stubEnv("LIVE_TRADING_ENABLED", "true");
+    try {
+      daily = await fresh();
+      const liveEntry = vi.fn(async (req: { quantity: number }) => ({ ok: true as const, orderId: "o1", executedPrice: 10005, quantity: req.quantity }));
+      await daily.runDailyCoins(await deps(day1, breakout, { desks: () => [["u", liveDesk]], liveEntry }));
+      expect(liveEntry).toHaveBeenCalledWith(expect.objectContaining({ userId: "u", symbol: "SOL/INR", side: "buy", price: 10000 }));
+      const [held] = [...daemonPositions.values()];
+      expect(held).toMatchObject({ symbol: "SOL/INR", strategy: "breakout", isLiveOrder: true, entryPrice: 10005, trailProfile: "fixed" });
+      expect(tradeOpenedMessage(held, "server").title).toBe("Bought SOL/INR (breakout, live)");
+      expect(daily._dailyCoinsState().runs.u.picks).toEqual([{ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "opened" }]);
+      // Paper trades still say so.
+      expect(tradeOpenedMessage({ ...held, isLiveOrder: false }, "server").title).toBe("Bought SOL/INR (breakout, paper)");
+    } finally {
+      vi.stubEnv("LIVE_TRADING_ENABLED", "false");
+    }
   });
 
   it("leaves US breakout trades to the US check: never reads them as coins, nor sells them", async () => {

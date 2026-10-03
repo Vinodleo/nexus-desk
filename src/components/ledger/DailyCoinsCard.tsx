@@ -206,7 +206,8 @@ export const DailyCoinsCard: React.FC = () => {
           Once a day, just after the daily candle closes (5:30 am), the server checks coins on daily candles and opens paper trades within
           your coin limits. Only traders whose daily record {span} is positive over 10+ setups trade. Trades are held up to 30 days.
           Breakout 55/20 trades alongside them on this year's biggest coins: it buys a close above the 55-day high and sells a close below
-          the 20-day low, with no target and no trailing stop.
+          the 20-day low, with no target and no trailing stop. If you switch your desk to live, breakout trades with real money (once the
+          server allows live orders) and the daily traders open nothing: they stay paper only.
         </div>
       </Fold>
     </Card>

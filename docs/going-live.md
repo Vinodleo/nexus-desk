@@ -23,10 +23,10 @@ early Oct).
 - [x] **Backup stops at CoinDCX** (Oct 2026): each live coin trade gets a stop-limit
       sell resting at CoinDCX, 0.5% under the server's stop, so a server outage can't
       leave it unprotected (`server/liveExecution.ts`).
-- [ ] **A live path for coin breakout.** Today a desk in live mode gets **no** daily or
-      breakout trades (`deskNote` in `server/scanner/dailyCoins.ts`, and `PAPER_HOOKS`
-      refuses live entries): live mode would leave only the 5-minute traders, which are
-      paused. Needed: let the strategy chosen in step 1 open live, the rest staying paper.
+- [x] **A live path for coin breakout** (Oct 2026): on a desk in live mode, coin breakout
+      opens real CoinDCX orders through the server's live checks (`LIVE_TRADING_ENABLED`,
+      `LIVE_ALLOWED_MARKETS`, the order caps), with its backup stop; the daily traders open
+      nothing there (paper only, `LIVE_DAILY_NOTE`). US stocks stay paper.
 - [ ] **Daily off-site backups** of the server's data (`/data` on Fly: positions,
       live-order records, settings), with a tested restore.
 - [ ] **A daily check against CoinDCX**: the coins held there match the open live

@@ -20,6 +20,7 @@ import { cohortFor, dailyLongRecords, dailyLongRunInfo, inCohort } from "../hist
 import { closeServerPosition, daemonPositions, type DaemonPosition } from "../guardian";
 import { getDeskState, scanningDesks, type DeskState } from "./deskState";
 import { runServerAutopilot, serverAutopilotOn, type ServerAutopilotHooks } from "./autopilot";
+import { placeLiveEntry } from "../liveEntry";
 import { riskPolicyFor, serverDailyPnl, typicalSpread } from "./scannerService";
 
 // Coin trades on daily candles, paper only. Two years of replays found the
@@ -41,8 +42,10 @@ import { riskPolicyFor, serverDailyPnl, typicalSpread } from "./scannerService";
 // every year's biggest coins, the 2018 and 2022 falls included) once it has
 // finished, until then the two-year replay's daily trades. Each trader
 // trades alone (no panel vote): that's how the replay judged them. Gemini
-// doesn't review these (it reads 5-minute candles), and a desk in live mode
-// gets none.
+// doesn't review these (it reads 5-minute candles). The daily traders are
+// paper only: a desk in live mode gets none of theirs. Breakout 55/20 (below)
+// trades live on a live desk, through the server's live checks
+// (LIVE_TRADING_ENABLED, the allowed coins, the order caps).
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Scanned this long after the day's close (Binance publishes it at once; a little margin). */
@@ -121,6 +124,8 @@ export interface DailyCoinsDeps {
   /** Open positions (breakout ones are sold on a close below their 20-day low), and closing one at a price. */
   positions?: () => DaemonPosition[];
   close?: (id: string, price: number) => boolean;
+  /** Places a live breakout entry at CoinDCX (server/liveEntry.ts) on a live desk. */
+  liveEntry?: typeof placeLiveEntry;
 }
 
 const realDeps: DailyCoinsDeps = {
@@ -153,6 +158,7 @@ const realDeps: DailyCoinsDeps = {
   classic: () => dailyLongRunInfo()?.classic ?? null,
   positions: () => [...daemonPositions.values()],
   close: (id, price) => closeServerPosition(id, price, "TRAILING_STOP"),
+  liveEntry: placeLiveEntry,
 };
 
 /** Never a live order, and no Gemini review: see above. */
@@ -160,6 +166,9 @@ export const PAPER_HOOKS: ServerAutopilotHooks = {
   placeLiveEntry: async () => ({ ok: false, status: 400, error: "Daily coin trades are paper only." }),
   reviewTrade: async () => ({ outcome: "unreviewed", reason: "Daily trades aren't reviewed.", off: true }),
 };
+
+/** On a live desk the daily traders open nothing; breakout trades live. */
+export const LIVE_DAILY_NOTE = "Your desk is in live mode: the daily traders are paper only, so they open nothing; breakout 55/20 trades live.";
 
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, sold: 1, kept: 2, waiting: 3, paused: 4 };
@@ -346,10 +355,10 @@ export function dailyPolicy(desk: DeskState): RiskPolicyConfig {
   return { ...policy, marketLimits: cleanMarketLimits(desk.riskLimits.marketLimits), autopilotMinConsensus: 0, autopilotMinPersonaVotes: 1 };
 }
 
-/** Why a desk gets no daily trades today, or null. */
-export function deskNote(uid: string, desk: DeskState, policy: RiskPolicyConfig, deps: Pick<DailyCoinsDeps, "dailyPnl">, now: number): string | null {
+/** Why a desk gets no daily trades today, or null. `liveOk`: trades that may go live (coin breakout) aren't held back on a live desk. */
+export function deskNote(uid: string, desk: DeskState, policy: RiskPolicyConfig, deps: Pick<DailyCoinsDeps, "dailyPnl">, now: number, liveOk = false): string | null {
   if (!serverAutopilotOn(desk)) return "Autopilot is off, so no daily trades were opened.";
-  if ((desk.tradingMode ?? "PAPER") !== "PAPER") return "Your desk is in live mode; daily trades are paper only for now.";
+  if (!liveOk && (desk.tradingMode ?? "PAPER") !== "PAPER") return "Your desk is in live mode; daily trades are paper only for now.";
   if (deps.dailyPnl(uid, desk, now) <= -policy.hardDailyLossLimit) return "Today's loss limit is reached.";
   return null;
 }
@@ -423,7 +432,10 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
       const gates = dailyTraderGates(judged?.records ?? null, profile);
       const gateOf = (trader: string) => (trader === BREAKOUT_NAME ? breakout : gates.find((g) => g.trader === trader));
       const policy = dailyPolicy(desk);
-      const note = deskNote(uid, desk, policy, deps, now);
+      // On a live desk breakout trades live; the daily traders, paper only, open nothing.
+      const live = (desk.tradingMode ?? "PAPER") !== "PAPER";
+      const breakoutNote = deskNote(uid, desk, policy, deps, now, true);
+      const note = live ? breakoutNote ?? LIVE_DAILY_NOTE : breakoutNote;
       const picks: DailyPick[] = [...(soldFor.get(uid) ?? [])];
       const candidates: { proposal: TradeProposal; avgR: number }[] = [];
       // One breakout trade at a time per coin, as replayed: a new high while holding one isn't another.
@@ -452,14 +464,25 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
       }
       // The best records first: they get the coin slots.
       const proposals = candidates.sort((a, b) => b.avgR - a.avgR).map((c) => c.proposal);
-      if (note) {
-        for (const p of proposals) picks.push({ symbol: p.symbol, trader: p.setup.name, outcome: "waiting", reason: note });
-      } else if (proposals.length > 0) {
-        const livePrice = (s: string, direction: "LONG" | "SHORT") => {
-          const q = quotes.get(s);
-          return q ? (direction === "LONG" ? q.ask : q.bid) : undefined;
-        };
-        const marked = await deps.open(uid, desk, proposals, policy, { livePrice, barAtr: () => undefined }, now, PAPER_HOOKS);
+      const livePrice = (s: string, direction: "LONG" | "SHORT") => {
+        const q = quotes.get(s);
+        return q ? (direction === "LONG" ? q.ask : q.bid) : undefined;
+      };
+      // A paper desk opens them all on paper; a live desk opens breakout's live (no Gemini review, as replayed).
+      const liveHooks: ServerAutopilotHooks = { placeLiveEntry: deps.liveEntry ?? realDeps.liveEntry!, reviewTrade: PAPER_HOOKS.reviewTrade };
+      const groups = live
+        ? [
+            { list: proposals.filter((p) => p.setup.strategy === "breakout"), note: breakoutNote, hooks: liveHooks },
+            { list: proposals.filter((p) => p.setup.strategy !== "breakout"), note, hooks: PAPER_HOOKS },
+          ]
+        : [{ list: proposals, note, hooks: PAPER_HOOKS }];
+      for (const group of groups) {
+        if (group.note) {
+          for (const p of group.list) picks.push({ symbol: p.symbol, trader: p.setup.name, outcome: "waiting", reason: group.note });
+          continue;
+        }
+        if (group.list.length === 0) continue;
+        const marked = await deps.open(uid, desk, group.list, policy, { livePrice, barAtr: () => undefined }, now, group.hooks);
         for (const p of marked) {
           picks.push(
             p.status === "APPROVED"
