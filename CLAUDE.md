@@ -63,14 +63,15 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   20 biggest coins on 1 January (`COIN_COHORTS`, from memory of the rankings; later years use the last list), so today's
   winners aren't replayed in years they were small. Same exits, fees and spreads as the two-year daily replay; results by
   quarter (`daily_long.json`), shown by year. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
-  machine-learning test (`waitForOtherWork`, `backgroundWorkBusy`). It decides nothing live.
+  machine-learning test (`waitForOtherWork`, `backgroundWorkBusy`). Its records (the last finished run's while it reruns,
+  `dailyLongRecords`) decide which traders take daily paper trades (owner's call, 4 Oct: nine years over two).
 - **Daily coin trades (paper, owner's call, 3 Oct):** `server/scanner/dailyCoins.ts`. Once a day, 10 minutes after the
   00:00 UTC daily close (until 6 hours after), the server reads each coin's daily candles from Binance (today's coins plus
   `FIXED_COINS`, those CoinDCX lists) and takes the setups the two-year replay would take there (`latestSlowSetups`).
   They open through the server autopilot within the coin limits, priced at CoinDCX's ask with the stop and target scaled
-  from Binance's chart, never live and without Gemini's review. A trader trades only if its two-year daily coin record
-  with the owner's trailing stop averages `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ setups (`dailyTraderGates`); each
-  trades alone (no panel vote). Positions carry `timeframe: "1d"`: held up to 30 days and closed at that limit exactly
+  from Binance's chart, never live and without Gemini's review. A trader trades only if its daily coin record with the
+  owner's trailing stop averages `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ setups (`dailyTraderGates`): the record since
+  2017 once that replay has finished, until then the two-year one's. Each trades alone (no panel vote). Positions carry `timeframe: "1d"`: held up to 30 days and closed at that limit exactly
   (`holdingDecision`), trailed on the daily ATR, labelled "daily", and left out of the 5-minute traders' real record.
   The Lab's "Daily coin trades" card shows each day's check.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)

@@ -279,6 +279,50 @@ describe("the long daily replay", () => {
   });
 });
 
+describe("the records the daily trades are judged on", () => {
+  beforeEach(() => {
+    long._resetDailyLong();
+    fs.rmSync(path.join(dataDir, "daily_long.json"), { force: true });
+  });
+
+  it("are the finished replay's, and the last finished one's while it replays again", async () => {
+    expect(long.dailyLongRecords()).toBeNull();
+    const luna = dailySeries("2020-08-21", "2022-06-01", 5);
+    const deps = (download: () => Promise<{ series: CandleSeries }>) => ({
+      now: () => utc("2026-10-03"),
+      sleep: async () => {},
+      symbols: () => ["LUNA/INR"],
+      download,
+      spread: () => 0.001,
+      scannerBusy: () => false,
+    });
+    await long.startDailyLong(false, deps(async () => ({ series: luna })));
+    const finished = long._dailyLongRun()!.records;
+    expect(Object.keys(finished.tight ?? {}).length).toBeGreaterThan(0);
+    expect(long.dailyLongRecords()).toEqual(finished);
+
+    // Replaying from the start again, held up on its first download.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const again = long.startDailyLong(
+      true,
+      deps(async () => {
+        await held;
+        return { series: dailySeries("2021-06-01", "2022-06-01", 9) };
+      })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(long._dailyLongRun()!.finishedAt).toBeNull();
+    expect(long.dailyLongRecords()).toEqual(finished);
+    // Saved with the run, so a restart mid-run keeps them too.
+    expect(JSON.parse(fs.readFileSync(path.join(dataDir, "daily_long.json"), "utf8")).lastRecords).toEqual(finished);
+    release();
+    await again;
+    expect(long._dailyLongRun()!.finishedAt).not.toBeNull();
+    expect(long.dailyLongRecords()).toEqual(long._dailyLongRun()!.records);
+  });
+});
+
 describe("background work", () => {
   it("waits for any of the other jobs that's running", () => {
     let a = false;

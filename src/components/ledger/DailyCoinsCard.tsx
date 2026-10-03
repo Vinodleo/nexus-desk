@@ -6,7 +6,8 @@ import { rSigned } from "./LedgerBreakdown";
 
 // Coin trades on daily candles (server/scanner/dailyCoins.ts): the server's
 // check once a day, what it found and did, and which traders trade (their
-// two-year daily record decides). Paper only.
+// daily record decides: since 2017 once that replay has finished, else over
+// the last two years). Paper only.
 
 export interface DailyCoinsView {
   run: {
@@ -18,6 +19,8 @@ export interface DailyCoinsView {
     note?: string;
   } | null;
   traders: { trader: string; trades: number; avgR: number; on: boolean }[];
+  /** The years the traders' records cover, in words ("since 2017"); absent from older servers (two years). */
+  recordSpan?: string | null;
   nextAt: number;
 }
 
@@ -47,14 +50,15 @@ export const DailyCoinsCard: React.FC = () => {
   const { run } = view;
   const on = view.traders.filter((t) => t.on);
   const paused = view.traders.filter((t) => !t.on);
+  const span = view.recordSpan ?? "over two years";
 
   return (
     <Card aria-label="Daily coin trades" className="flex flex-col gap-1">
       <div className="text-sm font-semibold">Daily coin trades (paper)</div>
       <div className="text-xs text-muted leading-relaxed">
         Once a day, just after the daily candle closes (5:30 am), the server checks coins on daily candles and opens paper trades
-        within your coin limits. Only traders whose two-year daily record is positive over 10+ setups trade. Trades are held up to
-        30 days.
+        within your coin limits. Only traders whose daily record {span} is positive over 10+ setups trade. Trades are held up to 30
+        days.
       </div>
 
       <div className="text-xs tabular-nums mt-1" data-testid="daily-status">
@@ -95,7 +99,7 @@ export const DailyCoinsCard: React.FC = () => {
 
       {view.traders.length > 0 && (
         <div className="mt-2 p-2.5 rounded-xl bg-inset flex flex-col gap-1.5" data-testid="daily-traders">
-          <div className="text-[11px] font-semibold text-muted">Two-year daily record with your trailing stop</div>
+          <div className="text-[11px] font-semibold text-muted">Daily record {span} with your trailing stop</div>
           {[...on, ...paused].map((t) => (
             <div key={t.trader} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
               <span className={t.on ? "" : "text-muted"}>

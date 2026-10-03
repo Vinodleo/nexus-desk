@@ -34,6 +34,7 @@ describe("Daily coin trades", () => {
           ],
         },
         traders,
+        recordSpan: "since 2017",
         nextAt: Date.parse("2026-10-04T00:10:00Z"),
       })
     );
@@ -47,6 +48,8 @@ describe("Daily coin trades", () => {
     ]);
     expect(screen.getByText("Couldn't read: MON.")).toBeTruthy();
     const record = screen.getByTestId("daily-traders").textContent;
+    expect(record).toMatch(/^Daily record since 2017 with your trailing stop/);
+    expect(screen.getByText(/Only traders whose daily record since 2017 is positive/)).toBeTruthy();
     expect(record).toContain("Sofia Range Scalp145 setups · +0.22R");
     expect(record).toContain("Kenji Extreme Reversion · paused8 setups · +0.28R");
   });
@@ -55,6 +58,8 @@ describe("Daily coin trades", () => {
     vi.mocked(apiFetch).mockResolvedValue(reply({ success: true, run: null, traders, nextAt: Date.parse("2026-10-04T00:10:00Z") }));
     render(createElement(DailyCoinsCard));
     expect((await screen.findByTestId("daily-status")).textContent).toMatch(/^First check /);
+    // An older server: the two-year record.
+    expect(screen.getByTestId("daily-traders").textContent).toMatch(/^Daily record over two years with your trailing stop/);
     expect(screen.queryByTestId("daily-picks")).toBeNull();
     cleanup();
 
