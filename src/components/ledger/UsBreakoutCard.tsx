@@ -54,7 +54,7 @@ export const UsBreakoutCard: React.FC = () => {
         <SlotsMeter
           used={view.slots.used}
           max={view.slots.max}
-          waited={waitedForSlot(run?.picks ?? [], true)}
+          waited={waitedForSlot(run?.picks ?? [], "breakout")}
           label="Breakout"
           setting="US stocks"
           row="breakout trades at once"

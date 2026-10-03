@@ -224,6 +224,30 @@ export function maTrendTrades(
   return trades;
 }
 
+/** How much a coin or stock rose over the last 90 days (sessions, for stocks) to day `i`'s close; undefined before it has 90. */
+export function momentumRise(s: CandleSeries, i: number): number | undefined {
+  return i >= MOMENTUM_DAYS ? s.c[i] / s.c[i - MOMENTUM_DAYS] - 1 : undefined;
+}
+
+/** Momentum's picks among `rises`: the MOMENTUM_HOLD that rose most, if they rose at all, best first. */
+export function momentumTop<T extends { rise: number }>(rises: T[]): T[] {
+  return rises
+    .filter((x) => x.rise > 0)
+    .sort((a, b) => b.rise - a.rise)
+    .slice(0, MOMENTUM_HOLD);
+}
+
+/**
+ * A momentum entry at day `i`'s close: the close, with a stop 3 ATR below;
+ * null without an ATR yet. The replay and the US paper trades
+ * (server/scanner/usMomentum.ts) both enter by it.
+ */
+export function momentumEntryAt(s: CandleSeries, i: number, range: (number | undefined)[] = atr(s)): { entry: number; risk: number; atr: number } | null {
+  const a = range[i];
+  if (a === undefined || !(a > 0)) return null;
+  return { entry: s.c[i], risk: TREND_STOP_ATR * a, atr: a };
+}
+
 /**
  * Momentum, top 3, across coins (or stocks): each week's close, the ones on that
  * year's list (`eligible`) that rose most over 90 days, if they rose and the
@@ -258,17 +282,14 @@ export function momentumTrades(
     if (!weekClose(day, days[k + 1])) continue;
     const up = btcUp(day) === true;
     const ranked = up
-      ? symbols
-          .flatMap((sym) => {
+      ? momentumTop(
+          symbols.flatMap((sym) => {
             const i = index.get(sym)!.get(day);
-            const s = coins[sym];
-            if (i === undefined || i < MOMENTUM_DAYS || !eligible(sym, closeMs(s, i))) return [];
-            const rise = s.c[i] / s.c[i - MOMENTUM_DAYS] - 1;
-            return rise > 0 ? [{ sym, rise }] : [];
+            if (i === undefined || !eligible(sym, closeMs(coins[sym], i))) return [];
+            const rise = momentumRise(coins[sym], i);
+            return rise !== undefined ? [{ sym, rise }] : [];
           })
-          .sort((a, b) => b.rise - a.rise)
-          .slice(0, MOMENTUM_HOLD)
-          .map((x) => x.sym)
+        ).map((x) => x.sym)
       : [];
     for (const sym of [...held.keys()]) {
       if (ranked.includes(sym)) continue;
@@ -279,11 +300,8 @@ export function momentumTrades(
     for (const sym of ranked) {
       if (held.has(sym)) continue;
       const i = index.get(sym)!.get(day)!;
-      const a = ranges.get(sym)![i];
-      if (a === undefined || !(a > 0)) continue;
-      const s = coins[sym];
-      const risk = TREND_STOP_ATR * a;
-      held.set(sym, { i, entry: s.c[i], stop: s.c[i] - risk, risk });
+      const entry = momentumEntryAt(coins[sym], i, ranges.get(sym)!);
+      if (entry) held.set(sym, { i, entry: entry.entry, stop: entry.entry - entry.risk, risk: entry.risk });
     }
   }
   for (const sym of [...held.keys()]) sell(sym, coins[sym].t.length - 1, coins[sym].c[coins[sym].t.length - 1], true);

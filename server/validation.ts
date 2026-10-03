@@ -82,7 +82,7 @@ const syncedPosition = z
     setupName: z.string().max(200).optional().catch(undefined),
     signalPrice: positiveNumber.optional().catch(undefined),
     timeframe: z.enum(["1d"]).optional().catch(undefined),
-    strategy: z.enum(["breakout"]).optional().catch(undefined),
+    strategy: z.enum(["breakout", "momentum"]).optional().catch(undefined),
   })
   // The client restores its book from what it synced, so keep its other
   // display fields; the guardian only reads the ones validated above.
@@ -140,6 +140,8 @@ const marketLimit = z.object({
   riskPerTradeInr: positiveNumber.max(1_000_000).optional(),
   // Breakout 55/20's own slots (none switches it off), from the separate-slots update on.
   breakoutTrades: z.number().int().min(0).max(20).optional(),
+  // US momentum's own slots (none switches it off), from the momentum update on.
+  momentumTrades: z.number().int().min(0).max(20).optional(),
 });
 
 export const deskStateBody = z.object({

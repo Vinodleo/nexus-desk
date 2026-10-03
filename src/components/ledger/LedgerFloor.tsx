@@ -521,6 +521,8 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             </span>
             {p.strategy === "breakout" ? (
               <div className="text-xs text-accent">Breakout 55/20 · opened {dayMonth(Date.parse(p.openTime))} · sold on a close below the 20-day low</div>
+            ) : p.strategy === "momentum" ? (
+              <div className="text-xs text-accent">Momentum, top 3 · opened {dayMonth(Date.parse(p.openTime))} · sold at a Friday check once out of the top 3</div>
             ) : p.timeframe === "1d" ? (
               <div className="text-xs text-accent">
                 Daily trade · opened {dayMonth(Date.parse(p.openTime))} · closes by {dayMonth(Date.parse(p.openTime) + p.expectedHoldingTimeMinutes * 60_000)}
@@ -533,15 +535,15 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
           </Flash>
         </div>
-        {/* A breakout trade has no target to draw a line to. */}
-        {p.strategy !== "breakout" && <PositionTrack position={p} bankedKey={bankedKey} stopRaise={stopRaise} />}
+        {/* A breakout or momentum trade has no target to draw a line to. */}
+        {!p.strategy && <PositionTrack position={p} bankedKey={bankedKey} stopRaise={stopRaise} />}
         <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted tabular-nums">
           <span>Entry {formatPrice(p.entryPrice)}</span>
           <Flash value={p.currentPrice} className="px-1 -mx-1 text-ink">
             Now {formatPrice(p.currentPrice)}
           </Flash>
           <span>Stop {formatPrice(p.stopLoss)}</span>
-          <span>{p.strategy === "breakout" ? "No target" : `Target ${formatPrice(p.takeProfit)}`}</span>
+          <span>{p.strategy ? "No target" : `Target ${formatPrice(p.takeProfit)}`}</span>
           <span className={tone}>{formatPct(p.unrealizedPnlPercent)}</span>
         </div>
         <div className="flex items-center justify-between gap-3">

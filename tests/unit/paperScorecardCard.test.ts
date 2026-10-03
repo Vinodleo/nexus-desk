@@ -26,6 +26,8 @@ const routes: Record<string, unknown> = {
     nextAt: 0,
   },
   "/api/us-breakout": { success: true, run: null, gate: { trader: "Breakout 55/20", trades: 554, avgR: 0.39, on: true, wins: 205, winR: 600, lossR: -383.94 }, slots: null, nextAt: 0 },
+  // +0.26R over 341: 53% won.
+  "/api/us-momentum": { success: true, run: null, gate: { trader: "Momentum, top 3", trades: 341, avgR: 0.26, on: true, wins: 181, winR: 300, lossR: -211.34 }, slots: null, nextAt: 0 },
 };
 beforeEach(() => {
   vi.mocked(apiFetch).mockReset();
@@ -52,6 +54,13 @@ describe("Paper trades against the replay", () => {
     // None closed yet: what the replay expects.
     expect(screen.getByTestId("score-usBreakout").textContent).toBe("US breakout 55/20–Too earlyNo paper trades yet. The replay expects +0.39R a trade, 37% won.");
     expect(screen.getByTestId("score-dailyCoins").textContent).toBe("Daily coin traders–Too early1 open, none closed yet. The replay expects +0.22R a trade, 41% won.");
+    // US momentum's trades: sold at the weekly check, or at the stop.
+    expect(screen.getByTestId("score-usMomentum").textContent).toBe("US momentum, top 3–Too earlyNo paper trades yet. The replay expects +0.26R a trade, 53% won.");
+    cleanup();
+    render(createElement(PaperScorecard, { trades: [trade(2, { id: "mo1", symbol: "NVDA.US", strategy: "momentum" })], positions: [{ symbol: "AAPL.US", strategy: "momentum" }] as Position[] }));
+    const momentum = await screen.findByTestId("score-usMomentum");
+    expect(momentum.textContent).toContain("1 open · 100% won (replay 53%)");
+    expect(momentum.textContent).toContain("Exits: 1 sold at the weekly check.");
   });
 
   it("calls 10+ trades in line with the replay, behind it or ahead of it", async () => {

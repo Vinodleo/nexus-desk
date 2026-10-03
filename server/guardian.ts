@@ -11,6 +11,8 @@ import { closeoutPrice, type Quote } from "../src/shared/quotes";
 import { notifyUser, tradeClosedMessage, tradeOpenedMessage } from "./push";
 
 import { validate, syncPositionsBody, closedEventsQuery } from "./validation";
+import { slowStrategyOf } from "../src/shared/marketLimits";
+import type { SlowStrategy } from "../src/types";
 
 export const router = Router();
 
@@ -55,8 +57,8 @@ export interface DaemonPosition {
   clientSeen?: boolean;
   /** "1d": a coin trade on daily candles, held up to 30 days (scanner/dailyCoins.ts). */
   timeframe?: "1d";
-  /** "breakout": the breakout 55/20 strategy's (scanner/dailyCoins.ts sells it on a close below the 20-day low). */
-  strategy?: "breakout";
+  /** A slower classic strategy's: breakout 55/20's (scanner/dailyCoins.ts, usBreakout.ts sell it on a close below the 20-day low) or US momentum's (scanner/usMomentum.ts sells it once it leaves the top 3). */
+  strategy?: SlowStrategy;
 }
 
 export interface DaemonClosedTrade {
@@ -90,7 +92,7 @@ export interface DaemonClosedTrade {
   lowestPrice?: number;
   signalPrice?: number;
   timeframe?: "1d";
-  strategy?: "breakout";
+  strategy?: SlowStrategy;
 }
 
 interface DaemonPersistedState {
@@ -378,7 +380,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     lowestPrice: Math.min(pos.lowestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
     ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
     ...(pos.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
-    ...(pos.strategy === "breakout" ? { strategy: "breakout" as const } : {}),
+    ...(slowStrategyOf(pos.strategy) ? { strategy: slowStrategyOf(pos.strategy) } : {}),
   };
 
   daemonClosedTrades.unshift(closedRecord);

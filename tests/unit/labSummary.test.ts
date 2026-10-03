@@ -28,6 +28,7 @@ const routes: Record<string, unknown> = {
     nextAt: 0,
   },
   "/api/us-breakout": { success: true, run: null, gate: { trader: "Breakout 55/20", trades: 554, avgR: 0.39, on: true }, slots: { used: 0, max: 2 }, nextAt: 0 },
+  "/api/us-momentum": { success: true, run: null, gate: { trader: "Momentum, top 3", trades: 341, avgR: 0.26, on: true }, slots: { used: 0, max: 3 }, nextAt: 0 },
   "/api/scanner/exit-edge": {
     success: true,
     table: {
@@ -88,6 +89,7 @@ describe("What's trading", () => {
       "Daily traders●1 of 2 trading+0.22R a trade since 2017, all together · 153 setups›",
       "Coin breakout 55/20●Trading+0.98R a trade since 2018 · 476 trades›",
       "US breakout 55/20●Trading+0.39R a trade since 2016 · 554 trades›",
+      "US momentum, top 3●Trading+0.26R a trade since 2016 · 341 trades · weekly›",
       "5-minute traders●2 of 3 tradingeach trader in each market, with your exits · since 27 Sept›",
       "Machine-learning filter✕Doesn't passits picks +0.05R against +0.14R for every setup · not used live›",
     ]);

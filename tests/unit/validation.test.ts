@@ -53,6 +53,11 @@ describe("syncPositionsBody", () => {
     expect(syncPositionsBody.parse({ positions: [{ ...pos, signalPrice: -1 }] }).positions[0].signalPrice).toBeUndefined();
   });
 
+  it("keeps a slower strategy's mark (breakout, momentum), dropping one it doesn't know", () => {
+    for (const strategy of ["breakout", "momentum"]) expect(syncPositionsBody.parse({ positions: [{ ...pos, strategy }] }).positions[0].strategy).toBe(strategy);
+    expect(syncPositionsBody.parse({ positions: [{ ...pos, strategy: "martingale" }] }).positions[0].strategy).toBeUndefined();
+  });
+
   it.each([
     ["missing stopLoss", { ...pos, stopLoss: undefined }],
     ["zero entry price", { ...pos, entryPrice: 0 }],
@@ -128,6 +133,13 @@ describe("deskStateBody", () => {
     expect(parsed.riskLimits.marketLimits?.coins.riskPerTradeInr).toBe(150);
     expect(parsed.riskLimits.marketLimits?.stocks.riskPerTradeInr).toBeUndefined();
     expect(deskStateBody.safeParse(desk({ coins: { ...limit, riskPerTradeInr: -1 }, stocks: limit })).success).toBe(false);
+  });
+
+  it("keeps US momentum's own slots (none switches it off)", () => {
+    const parsed = deskStateBody.parse(desk({ coins: limit, stocks: limit, us: { ...limit, momentumTrades: 0 } }));
+    expect(parsed.riskLimits.marketLimits?.us?.momentumTrades).toBe(0);
+    expect(parsed.riskLimits.marketLimits?.coins.momentumTrades).toBeUndefined();
+    for (const odd of [21, 1.5, -1]) expect(deskStateBody.safeParse(desk({ coins: limit, stocks: limit, us: { ...limit, momentumTrades: odd } })).success).toBe(false);
   });
 
   it("keeps breakout's own slots (none switches it off), and still takes limits from an app without them", () => {

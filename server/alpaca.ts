@@ -192,6 +192,17 @@ export async function fetchUsSnapshots(symbols: string[]): Promise<Record<string
   return out;
 }
 
+/**
+ * The US trading days from one New York day to another ("2026-10-02"), from
+ * the paper account's market calendar: weekends and exchange holidays left
+ * out. US momentum rebalances on each week's last one.
+ */
+export async function fetchUsSessions(from: string, to: string): Promise<string[]> {
+  const params = new URLSearchParams({ start: from, end: to });
+  const days = await get<{ date?: string }[]>(`${PAPER_URL}/calendar?${params}`);
+  return (Array.isArray(days) ? days : []).flatMap((d) => (typeof d?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? [d.date] : []));
+}
+
 /** Checks the keys against the paper account (at most every 10 minutes); the status page shows the result. */
 export async function checkAlpacaAccount(now: number = Date.now()): Promise<void> {
   if (!alpacaConfigured() || now - lastCheckAt < 10 * 60 * 1000) return;

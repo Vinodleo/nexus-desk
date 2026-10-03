@@ -97,7 +97,7 @@ describe("US breakout trades' rules", () => {
     expect(ruleFor("RELIANCE", 1400)).toMatchObject({ quantityStep: 1, minQuantity: 1 });
   });
 
-  it("hold a breakout trade past the 3:50 close and overnight, where an intraday one is closed", () => {
+  it("hold a breakout or momentum trade past the 3:50 close and overnight, where an intraday one is closed", () => {
     const pos = {
       symbol: "AAPL.US", direction: "LONG" as const, entryPrice: 100, stopLoss: 90, quantity: 0.25,
       openTime: new Date(now).toISOString(), expectedHoldingTimeMinutes: 365 * 24 * 60,
@@ -109,6 +109,9 @@ describe("US breakout trades' rules", () => {
     expect(holdingDecision({ ...pos, strategy: "breakout", timeframe: "1d" }, nextWeek)).toBe("hold");
     // The year's limit still applies.
     expect(holdingDecision({ ...pos, strategy: "breakout", timeframe: "1d" }, now + 366 * 24 * 3_600_000)).toBe("expire");
+    // Momentum's too.
+    expect(holdingDecision({ ...pos, strategy: "momentum", timeframe: "1d" }, at350)).toBe("hold");
+    expect(holdingDecision({ ...pos, strategy: "momentum", timeframe: "1d" }, nextWeek)).toBe("hold");
   });
 });
 

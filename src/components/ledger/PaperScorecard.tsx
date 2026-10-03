@@ -17,6 +17,7 @@ import { useLabFeed } from "./labFeed";
 import { CompareBars, LabChip, type LabStatus } from "./labUi";
 import { isDailyCoinsView } from "./DailyCoinsCard";
 import { isUsBreakoutView } from "./UsBreakoutCard";
+import { isUsMomentumView } from "./UsMomentumCard";
 
 // The Lab's scorecard (Records tab): each slower strategy's real paper
 // trades so far next to what its replay expects (services/paperScorecard).
@@ -39,7 +40,7 @@ const VERDICT: Record<"early" | "inLine" | "behind" | "ahead", { status: LabStat
 /** How each strategy's exits read. */
 const EXIT_WORDS = (strategy: PaperStrategy): Record<ExitKind, string> => ({
   stop: "at the stop",
-  sale: strategy === "dailyCoins" ? "trailing stop" : "sold below the 20-day low",
+  sale: strategy === "dailyCoins" ? "trailing stop" : strategy === "usMomentum" ? "sold at the weekly check" : "sold below the 20-day low",
   target: "at the target",
   time: "at the time limit",
   you: "closed by you",
@@ -52,11 +53,13 @@ const avgLoss = (r: ReplayRecord) => (r.trades - r.wins > 0 ? r.lossR / (r.trade
 export const PaperScorecard: React.FC<{ trades: HistoricalTrade[]; positions: Position[] }> = ({ trades, positions }) => {
   const dc = useLabFeed("/api/daily-coins", isDailyCoinsView);
   const us = useLabFeed("/api/us-breakout", isUsBreakoutView);
-  if (!dc && !us) return null;
+  const momentum = useLabFeed("/api/us-momentum", isUsMomentumView);
+  if (!dc && !us && !momentum) return null;
 
   const replays: Record<PaperStrategy, { record: ReplayRecord; detail: boolean } | null> = {
     coinBreakout: dc?.breakout ? { record: asRecord(dc.breakout), detail: hasDetail(dc.breakout) } : null,
     usBreakout: us?.gate ? { record: asRecord(us.gate), detail: hasDetail(us.gate) } : null,
+    usMomentum: momentum?.gate ? { record: asRecord(momentum.gate), detail: hasDetail(momentum.gate) } : null,
     // The daily traders that trade now, together.
     dailyCoins: (() => {
       const on = (dc?.traders ?? []).filter((t) => t.on);

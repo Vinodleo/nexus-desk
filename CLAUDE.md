@@ -29,10 +29,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Colours are tokens in `src/index.css`. Themes are Ivory (default), Graphite (dark) and Blush (pink),
   set per device (`src/services/theme.ts`). Use the tokens, never fixed colours.
   The Lab (`LedgerLab.tsx`) has four tabs, the last one picked remembered per device:
-  - **Today:** what's trading and why (`LabSummary`), the daily coin check with its coin slots (`DailyCoinsCard`), and
-    the US breakout check (`UsBreakoutCard`).
-  - **Records:** the scorecard first (`PaperScorecard`, `services/paperScorecard.ts`): coin breakout's, US breakout's and
-    the daily coin traders' real paper trades from the Book against their replays (R, share won, average win and loss,
+  - **Today:** what's trading and why (`LabSummary`), the daily coin check with its coin slots (`DailyCoinsCard`),
+    the US breakout check (`UsBreakoutCard`) and the weekly US momentum check (`UsMomentumCard`).
+  - **Records:** the scorecard first (`PaperScorecard`, `services/paperScorecard.ts`): coin breakout's, US breakout's,
+    US momentum's and the daily coin traders' real paper trades from the Book against their replays (R, share won, average win and loss,
     exits, stops that gapped; "in line", "behind" or "ahead" once 10+ trades, by two standard errors). Then every coin
     strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`), the classic strategies
     on stocks (`StocksLongCard`, US and India), and the replays' details.
@@ -51,9 +51,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - Market sessions: `nse.ts`, `usMarket.ts`.
   - Per-market limits: `marketLimits.ts`, the amount per trade, risk per trade and trades at once for each market,
     and at most 2 open trades in one stock sector (`sectorOf`). Breakout 55/20 has slots of its own in coins and US
-    stocks (`breakoutTrades`, 3 until chosen, none switches it off): breakout trades count only against them and every
-    other trade only against trades at once (`openInSlots`, `slotsFor`), in the autopilot and the risk check alike, so
-    the daily traders can't keep breakout out.
+    stocks (`breakoutTrades`, 3 until chosen, none switches it off), and US momentum in US stocks (`momentumTrades`,
+    0 to 3, 3 until chosen): each kind counts only against its own (`SlotKind`, `slotKindOf`, `openInSlots`, `slotsFor`),
+    every other trade only against trades at once, in the autopilot and the risk check alike, so the daily traders
+    can't keep them out. Their scheduled checks open past the autopilot's hourly cap (their slots bound them) but
+    still count toward it. Positions of these slower strategies carry `strategy` (`SlowStrategy` in `types.ts`).
 - **Trader records ("Traders with your exits"):** `src/services/exitExpectancy.ts`.
   - It replays every trader's setups under the live exits, after fees and spreads.
   - One trade at a time per trader and market; the server keeps 30 days of trades (`server/scanner/traderRecords.ts`).
@@ -121,6 +123,17 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   overnight, up to a year. US stocks trade in fractions of a share (`ruleFor`, `US_FRACTION`); any US stock is known,
   share classes too ("BRK.B.US"). It trades only while the stocks' replay's US breakout record since 2016 averages
   `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ trades (`stocksLongClassic`). If Alpaca's prices fail, it tries again each minute until 3:50.
+- **US momentum, top 3 (paper, owner's call):** `server/scanner/usMomentum.ts`. On each week's last US session
+  (`weekLastSession`, from Alpaca's market calendar `fetchUsSessions`; Friday without it) at 3:45 pm New York, right
+  after US breakout's check (one timer runs both in turn, `startUsChecks`, so they see each other's trades): this year's
+  20 biggest US stocks ranked by their rise over 90 sessions (`momentumRise`, `momentumTop`, shared with the replay),
+  the top 3 that rose are the week's picks while SPY is above its 200-day average (`fundUp`), none when it isn't. A
+  held momentum trade no longer picked is sold at the bid (even with autopilot off); one still picked is kept; a pick
+  not held is bought at the ask, the stop 3 ATR below (`momentumEntryAt`, `momentumSetup`), no target, no trailing,
+  nothing banked, held overnight up to a year. One trade per stock across strategies and the sector limit still
+  apply. It trades only while the stocks' replay's US momentum record since 2016 averages `MIN_EDGE_R`+ over
+  `MIN_TRADER_TRADES`+ trades (`momentumGate`, `classicGate`). Positions carry `strategy: "momentum"`, labelled
+  "momentum". Without prices or SPY's candles it tries again each minute until 3:50. State in `us_momentum.json`.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if
@@ -161,7 +174,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Stocks (owner's call): US and Indian stocks stay paused on paper (their traders' records decide); the classic strategies
   are tested on their daily candles since 2016 in the Lab, and trade only if one clearly beats its costs. US since 2016:
   breakout +0.39R over 554 trades (8 of 11 years up), momentum +0.26R (9 of 11), moving averages +0.32R (5 of 11): US
-  breakout paper-trades (owner's call). India: breakout +0.23R but 5 of 11 years and mostly 2020; not traded.
+  breakout and US momentum paper-trade (owner's call), each on its own slots. India: breakout +0.23R but 5 of 11 years and mostly 2020; not traded.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 

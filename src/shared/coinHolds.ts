@@ -31,8 +31,9 @@ export const SWING_HOLD_MINUTES = 4320;
 /** Daily-candle coin trades (server/scanner/dailyCoins.ts): 30 days, as the two-year replay held them. */
 export const DAILY_HOLD_MINUTES = 30 * 24 * 60;
 /**
- * Breakout 55/20 trades have no time limit in their replay (they're sold on
- * a close below the 20-day low); a year, so none is ever held forever.
+ * Breakout 55/20 and momentum trades have no time limit in their replays
+ * (they're sold on a close below the 20-day low, or once out of the top 3);
+ * a year, so none is ever held forever.
  */
 export const BREAKOUT_HOLD_MINUTES = 365 * 24 * 60;
 /** The least a coin trade's stop sits from entry: about twice the typical spread. */
@@ -54,7 +55,7 @@ export const plansHourly = (symbol: string | undefined): boolean => isCoin(symbo
 
 /** How long a trade may run before the time limit applies. */
 export function holdMinutesFor(setup: { symbol?: string; horizon?: "intraday" | "swing"; timeframe?: string; strategy?: string }): number {
-  if (setup.strategy === "breakout") return BREAKOUT_HOLD_MINUTES;
+  if (setup.strategy === "breakout" || setup.strategy === "momentum") return BREAKOUT_HOLD_MINUTES;
   if (setup.timeframe === "1d") return DAILY_HOLD_MINUTES;
   if (setup.horizon === "swing") return SWING_HOLD_MINUTES;
   return isCoin(setup.symbol) ? COIN_HOLD_MINUTES : isNseStock(setup.symbol) ? NSE_HOLD_MINUTES : INTRADAY_HOLD_MINUTES;

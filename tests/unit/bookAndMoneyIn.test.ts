@@ -39,6 +39,17 @@ describe("trades closed by the server guardian", () => {
     } as DaemonCloseEvent;
     expect(daemonEventToTrade(ev)).toMatchObject({ highestPrice: 201500, lowestPrice: 198900, signalPrice: 199800 });
   });
+
+  it("carry a slower strategy's mark (breakout, momentum), and drop one it doesn't know", () => {
+    const ev = {
+      id: "daemon-closed-3-p9", positionId: "p9", symbol: "NVDA.US", direction: "LONG", entryPrice: 16000, exitPrice: 17000,
+      quantity: 0.1, moneyPlaced: 1600, grossPnl: 100, feesPaid: 1, realizedPnl: 99, realizedPnlPercent: 6, isWin: true,
+      exitReason: "TRAILING_STOP", closedAt: "2026-10-16T19:46:00.000Z", openedAt: "2026-10-09T19:46:00.000Z", timeframe: "1d",
+    } as DaemonCloseEvent;
+    expect(daemonEventToTrade({ ...ev, strategy: "momentum" }).strategy).toBe("momentum");
+    expect(daemonEventToTrade({ ...ev, strategy: "breakout" }).strategy).toBe("breakout");
+    expect(daemonEventToTrade({ ...ev, strategy: "martingale" as never }).strategy).toBeUndefined();
+  });
 });
 
 describe("repairing saved trades", () => {
@@ -62,6 +73,11 @@ describe("repairing saved trades", () => {
     expect(container.textContent).toContain("2 trades");
     expect(container.textContent).toContain("SOL/INR");
     expect(container.textContent).toContain("XRP/INR");
+  });
+
+  it("label a momentum trade", () => {
+    const { container } = render(createElement(LedgerBookTrades, { trades: [trade({ symbol: "NVDA.US", strategy: "momentum", timeframe: "1d", exitReason: "TRAILING_STOP" })] }));
+    expect(container.textContent).toContain(" · momentum");
   });
 });
 
@@ -91,5 +107,19 @@ describe("money in open positions", () => {
     expect(text).toContain("Long · 0.5 · ₹7,000 in");
     expect(text).toContain("Long · 100 · ₹5,000 in");
     expect(text).toContain("In trades · 12.0%₹12,000");
+  });
+
+  it("say how a momentum trade ends, with no target", () => {
+    const props = {
+      isLive: false, equity: 100000, dailyPnl: 0, allTimePnl: 0, autopilotOn: false, onAutopilotChange: vi.fn(),
+      exposureFraction: 0.02, dailyLossLeft: 2500, stopped: false, onToggleStop: vi.fn(),
+      positions: [position({ symbol: "NVDA.US", strategy: "momentum", timeframe: "1d", takeProfit: 14_000_000, openTime: "2026-10-09T10:00:00.000Z" })],
+      onClosePosition: vi.fn(), guardianOnline: true, liveTradingEnabled: false, market: [], candleStatus: [],
+      watching: { count: 25, fallback: false }, pendingProposals: 0, scan: { analyzed: 0, selected: 0, rejected: 0 },
+      onOpenQueue: vi.fn(), onOpenSettings: vi.fn(),
+    } as LedgerFloorProps;
+    const text = render(createElement(LedgerFloor, props)).container.textContent ?? "";
+    expect(text).toContain("Momentum, top 3 · opened 9 Oct · sold at a Friday check once out of the top 3");
+    expect(text).toContain("No target");
   });
 });

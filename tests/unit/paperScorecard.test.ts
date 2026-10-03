@@ -16,9 +16,10 @@ function trade(r: number, over: Partial<HistoricalTrade> = {}): HistoricalTrade 
 }
 
 describe("the paper scorecard", () => {
-  it("knows each slower strategy's trades: coin and US breakout, and the daily coin traders", () => {
+  it("knows each slower strategy's trades: coin and US breakout, US momentum, and the daily coin traders", () => {
     expect(strategyOf({ symbol: "SOL/INR", strategy: "breakout" })).toBe("coinBreakout");
     expect(strategyOf({ symbol: "AAPL.US", strategy: "breakout" })).toBe("usBreakout");
+    expect(strategyOf({ symbol: "NVDA.US", strategy: "momentum", timeframe: "1d" })).toBe("usMomentum");
     expect(strategyOf({ symbol: "ETH/INR", timeframe: "1d" })).toBe("dailyCoins");
     // The 5-minute traders' aren't on it.
     expect(strategyOf({ symbol: "ETH/INR" })).toBeNull();
