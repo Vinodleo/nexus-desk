@@ -100,6 +100,7 @@ import { useEventWindow } from "./hooks/useEventWindow";
 import { useTrailProfile } from "./hooks/useTrailProfile";
 import { showLocalTradePopup, useTradeNotifications } from "./hooks/useTradeNotifications";
 import { tradeClosedMessage } from "./shared/tradeMessages";
+import { slowStrategyOf } from "./shared/marketLimits";
 import { holdMinutesFor, trailsAsRunner } from "./shared/coinHolds";
 import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, autopilotQueue, newPositionId, PHONE_SCAN_HOLD_REASON, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
@@ -848,7 +849,7 @@ export default function App() {
         ...(pos.openedByServer ? { openedByServer: true } : {}),
         ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
         ...(pos.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
-        ...(pos.strategy === "breakout" ? { strategy: "breakout" as const } : {}),
+        ...(slowStrategyOf(pos.strategy) ? { strategy: slowStrategyOf(pos.strategy) } : {}),
         fillAtExit: exitPrice,
         // The best and worst prices seen while open, for how far it went each way.
         highestPrice: Math.max(pos.highestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),

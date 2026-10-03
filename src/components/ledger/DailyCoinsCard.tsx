@@ -17,7 +17,7 @@ export interface DailyCoinsView {
     day: string;
     coins: number;
     failed: string[];
-    picks: { symbol: string; trader: string; outcome: "opened" | "sold" | "waiting" | "paused"; reason?: string }[];
+    picks: { symbol: string; trader: string; outcome: "opened" | "sold" | "kept" | "waiting" | "paused"; reason?: string }[];
     note?: string;
   } | null;
   /** Each trader's record and whether it trades; with its wins and the R won and lost from servers since the scorecard. */
@@ -45,21 +45,21 @@ export const when = (ms: number) =>
 const OUTCOME = {
   opened: { label: "opened", icon: "↑", tone: "text-gain" },
   sold: { label: "sold", icon: "↓", tone: "text-accent" },
+  kept: { label: "kept", icon: "=", tone: "text-ink" },
   waiting: { label: "not opened", icon: "○", tone: "text-warn" },
   paused: { label: "paused", icon: "‖", tone: "text-muted" },
 } as const;
 
-/** The autopilot's reason when a market's slots were full ("would exceed 2 open coin trades at once"), and breakout's own. */
-const NO_FREE_SLOT = /open (coin|US stock) trades? at once/;
-const NO_FREE_BREAKOUT_SLOT = /open (coin|US stock) breakout trades? at once/;
+/** The autopilot's reason when a market's slots were full ("would exceed 2 open coin trades at once"), or breakout's or momentum's own. */
+const noFreeSlot = (kind: "breakout" | "momentum" | null) => new RegExp(`open (coin|US stock)${kind ? ` ${kind}` : ""} trades? at once`);
 /** A coin or US stock without its suffix ("SOL", "AAPL"). */
 export const shortName = (symbol: string) => symbol.replace(/\/INR$|\.US$/, "");
 
 type Pick = NonNullable<DailyCoinsView["run"]>["picks"][number];
 
-/** The day's setups that waited for a free slot: breakout's own, or the rest's. */
-export const waitedForSlot = (picks: Pick[], breakout = false): string[] =>
-  [...new Set(picks.filter((p) => p.outcome === "waiting" && (breakout ? NO_FREE_BREAKOUT_SLOT : NO_FREE_SLOT).test(p.reason ?? "")).map((p) => p.symbol))];
+/** The check's picks that waited for a free slot: breakout's or momentum's own, or the rest's. */
+export const waitedForSlot = (picks: Pick[], kind: "breakout" | "momentum" | null = null): string[] =>
+  [...new Set(picks.filter((p) => p.outcome === "waiting" && noFreeSlot(kind).test(p.reason ?? "")).map((p) => p.symbol))];
 
 /** A market's trades open now against its limit, and which of the day's setups waited for a slot. */
 export const SlotsMeter: React.FC<{ used: number; max: number; waited: string[]; label: string; setting: string; testId: string; row?: string }> = ({
@@ -156,7 +156,7 @@ export const DailyCoinsCard: React.FC = () => {
         <SlotsMeter
           used={view.coinSlots.breakout.used}
           max={view.coinSlots.breakout.max}
-          waited={waitedForSlot(run?.picks ?? [], true)}
+          waited={waitedForSlot(run?.picks ?? [], "breakout")}
           label="Breakout"
           setting="Coins"
           row="breakout trades at once"

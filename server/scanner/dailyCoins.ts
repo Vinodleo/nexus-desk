@@ -3,11 +3,11 @@ import path from "path";
 import type { StrategySetup, TradeProposal } from "../../src/types";
 import type { RiskPolicyConfig } from "../../src/services/riskEngine";
 import { FIXED_COINS, latestSlowSetups, sumRecords, type CandleSeries, type HistoryRecords } from "../../src/services/historyReplay";
-import { breakoutEntryAt, breakoutExitAt, CLASSIC_STRATEGIES, type ClassicRecords } from "../../src/services/classicStrategies";
+import { breakoutEntryAt, breakoutExitAt, CLASSIC_STRATEGIES, type ClassicId, type ClassicRecords } from "../../src/services/classicStrategies";
 import { MIN_EDGE_R, MIN_TRADER_TRADES } from "../../src/services/calibration";
 import { roundPrice } from "../../src/services/strategyEngine";
 import { ruleFor } from "../../src/services/marketRulesStore";
-import { cleanMarketLimits, isBreakoutTrade, marketOf, slotsFor, type MarketKey } from "../../src/shared/marketLimits";
+import { cleanMarketLimits, marketOf, slotKindOf, slotsFor, type MarketKey, type SlotKind } from "../../src/shared/marketLimits";
 import { fitQuantity } from "../../src/shared/marketRules";
 import { MAX_COIN_SPREAD, roundTripFeeRate, spreadTooWide } from "../../src/shared/tradeCosts";
 import { DEFAULT_TRAIL_PROFILE, TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
@@ -61,8 +61,8 @@ const file = () => path.join(process.env.NEXUS_DATA_DIR || path.join(process.cwd
 export interface DailyPick {
   symbol: string;
   trader: string;
-  /** "sold": a breakout trade sold on a close below its 20-day low. */
-  outcome: "opened" | "sold" | "waiting" | "paused";
+  /** "sold": a breakout trade sold on a close below its 20-day low (or a momentum one out of the top 3); "kept": a momentum trade still in the top 3. */
+  outcome: "opened" | "sold" | "kept" | "waiting" | "paused";
   reason?: string;
 }
 
@@ -162,7 +162,7 @@ export const PAPER_HOOKS: ServerAutopilotHooks = {
 };
 
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, sold: 1, waiting: 2, paused: 3 };
+const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, sold: 1, kept: 2, waiting: 3, paused: 4 };
 
 // ---------- breakout 55/20 (step 2 of trading slower) ----------
 // The classic strategy that did best on the coins since 2018
@@ -173,16 +173,19 @@ const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, sold: 1
 // since 2018 averages MIN_EDGE_R+ over MIN_TRADER_TRADES+ trades.
 
 export const BREAKOUT_NAME = CLASSIC_STRATEGIES.breakout.name;
-/** A breakout trade has no target: this far above, so the guardian's target never closes it. */
-const NO_TARGET = 1000;
+/** A breakout or momentum trade has no target: this far above, so the guardian's target never closes it. */
+export const NO_TARGET = 1000;
 
-/** Breakout's record since 2018, as a gate (whether it trades), or undefined before the classic strategies have run. */
-export function breakoutGate(classic: ClassicRecords | null): TraderGate | undefined {
+/** A classic strategy's record (breakout's since 2018 on coins; on stocks since 2016), as a gate (whether it trades), or undefined before the classic strategies have run. */
+export function classicGate(classic: ClassicRecords | null, id: ClassicId): TraderGate | undefined {
   if (!classic) return undefined;
-  const sum = sumRecords(Object.values(classic).map((byStrategy) => byStrategy.breakout));
+  const sum = sumRecords(Object.values(classic).map((byStrategy) => byStrategy[id]));
   const avgR = sum.trades > 0 ? sum.totalR / sum.trades : 0;
-  return { trader: BREAKOUT_NAME, trades: sum.trades, avgR, on: sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R, wins: sum.wins, winR: sum.winR, lossR: sum.lossR };
+  return { trader: CLASSIC_STRATEGIES[id].name, trades: sum.trades, avgR, on: sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R, wins: sum.wins, winR: sum.winR, lossR: sum.lossR };
 }
+
+/** Breakout's record, as a gate. */
+export const breakoutGate = (classic: ClassicRecords | null): TraderGate | undefined => classicGate(classic, "breakout");
 
 /** The setup a breakout at day `i`'s close makes, in the candles' prices: entry at the close, stop 2 ATR below, no target. */
 export function breakoutSetup(symbol: string, s: CandleSeries, i: number): StrategySetup | null {
@@ -319,7 +322,7 @@ export function dailyProposal(
       portfolioExposureFraction: 0,
       maxAllowedExposureFraction: policy.maxAllowedExposureFraction,
       openPositionCount: 0,
-      maxSimultaneousPositions: slotsFor(limit, isBreakoutTrade(setup)),
+      maxSimultaneousPositions: slotsFor(limit, slotKindOf(setup)),
       fractionalKellyFraction: 0,
       recommendedPositionSizeUnits: units,
       recommendedDollarExposure: Number((units * ask).toFixed(2)),
@@ -482,15 +485,15 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
   }
 }
 
-/** A market's trades of one kind this user has open (breakout's, or the rest), and how many its slots allow at once. */
-export function slotsInUse(uid: string, desk: DeskState, market: MarketKey, breakout: boolean): { used: number; max: number } {
-  const used = [...daemonPositions.values()].filter((p) => p.userId === uid && marketOf(p.symbol) === market && isBreakoutTrade(p) === breakout).length;
-  return { used, max: slotsFor(cleanMarketLimits(desk.riskLimits.marketLimits)[market], breakout) };
+/** A market's trades of one kind this user has open (breakout's, momentum's, or the rest), and how many its slots allow at once. */
+export function slotsInUse(uid: string, desk: DeskState, market: MarketKey, kind: SlotKind): { used: number; max: number } {
+  const used = [...daemonPositions.values()].filter((p) => p.userId === uid && marketOf(p.symbol) === market && slotKindOf(p) === kind).length;
+  return { used, max: slotsFor(cleanMarketLimits(desk.riskLimits.marketLimits)[market], kind) };
 }
 
 /** Coin trades this user has open against the coin limit, and breakout's against its own slots (the autopilot's counts). */
 export function coinSlots(uid: string, desk: DeskState): { used: number; max: number; breakout: { used: number; max: number } } {
-  return { ...slotsInUse(uid, desk, "coins", false), breakout: slotsInUse(uid, desk, "coins", true) };
+  return { ...slotsInUse(uid, desk, "coins", null), breakout: slotsInUse(uid, desk, "coins", "breakout") };
 }
 
 /** What the Lab shows a user: the last scan, each trader's daily record and whether it trades, and the next scan. */

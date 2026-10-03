@@ -13,8 +13,8 @@ import { classicByYear } from "./DailyLongCard";
 // The classic strategies on US and Indian stocks' daily candles since 2016
 // (server/history/stocksLong.ts): each strategy's average a trade after
 // costs against the edge a strategy needs, year by year, market by market.
-// It decides nothing: paper trading follows only if one clearly beats its
-// costs, and only when you say so.
+// US breakout's and momentum's records decide whether those paper-trade
+// (server/scanner/usBreakout.ts, usMomentum.ts); the rest decides nothing.
 
 type StockMarket = "us" | "nse";
 
@@ -203,7 +203,9 @@ export const StocksLongCard: React.FC = () => {
           {market === "us"
             ? " Candles from Alpaca, adjusted for splits and dividends; costs are Alpaca's fees and a typical spread."
             : " Candles from Angel One, with splits and bonus issues adjusted; costs are delivery charges (held overnight, about 0.5% a round trip) and a typical spread."}{" "}
-          It decides nothing: paper trading follows only if a strategy clearly beats its costs, and only when you say so.
+          {market === "us"
+            ? `Breakout's and momentum's records here decide whether they paper-trade US stocks (each needs ${rSigned(MIN_EDGE_R)} a trade over ${MIN_TRADER_TRADES}+ trades); moving averages isn't traded.`
+            : "It decides nothing: paper trading follows only if a strategy clearly beats its costs, and only when you say so."}
         </div>
         <ul className="m-0 p-0 list-none flex flex-col gap-1">
           {CLASSIC_IDS.map((id) => (

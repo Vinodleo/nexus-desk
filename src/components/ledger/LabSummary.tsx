@@ -12,6 +12,7 @@ import { classicByYear, isDailyLongView, recordsByYear } from "./DailyLongCard";
 import { isHistoryView } from "./HistoryCard";
 import { isMlTestView } from "./MlTestCard";
 import { isUsBreakoutView } from "./UsBreakoutCard";
+import { isUsMomentumView } from "./UsMomentumCard";
 
 // The Lab's answers first: what's trading now and why (the Today tab), and
 // every coin strategy's record side by side, overall and year by year (the
@@ -69,6 +70,7 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
   const edge = useLabFeed("/api/scanner/exit-edge", isEdgeView);
   const ml = useLabFeed("/api/ml-test", isMlTestView);
   const us = useLabFeed("/api/us-breakout", isUsBreakoutView);
+  const momentum = useLabFeed("/api/us-momentum", isUsMomentumView);
   const rows: React.ReactNode[] = [];
 
   if (dc && dc.traders.length > 0) {
@@ -104,6 +106,18 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
         status={us.gate.on ? "trading" : "paused"}
         label={us.gate.on ? "Trading" : "Paused"}
         detail={`${rSigned(us.gate.avgR)} a trade since 2016 · ${us.gate.trades} trades`}
+        onOpen={onOpen && (() => onOpen("records"))}
+      />
+    );
+  }
+  if (momentum?.gate) {
+    rows.push(
+      <SummaryRow
+        key="us-momentum"
+        name="US momentum, top 3"
+        status={momentum.gate.on ? "trading" : "paused"}
+        label={momentum.gate.on ? "Trading" : "Paused"}
+        detail={`${rSigned(momentum.gate.avgR)} a trade since 2016 · ${momentum.gate.trades} trades · weekly`}
         onOpen={onOpen && (() => onOpen("records"))}
       />
     );

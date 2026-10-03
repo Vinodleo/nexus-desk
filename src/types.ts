@@ -14,6 +14,14 @@ export type StrategyFamily =
 
 export type TradeDirection = "LONG" | "SHORT";
 
+/**
+ * The slower classic strategies that paper-trade on daily candles, each on
+ * slots of its own: "breakout" (breakout 55/20: no target, a fixed stop,
+ * sold on a close below the 20-day low) and "momentum" (US momentum, top 3:
+ * a fixed stop, sold at the weekly check once it leaves the top 3).
+ */
+export type SlowStrategy = "breakout" | "momentum";
+
 export type DecisionMode = "MANUAL" | "SEMI_AUTO" | "AUTO_WITHIN_LIMITS";
 
 export interface MarketBar {
@@ -83,8 +91,8 @@ export interface StrategySetup {
   horizon?: "intraday" | "swing";
   /** The ATR its stop and target were sized on, and its trailing stop steps by (hourly for coins). */
   planAtr?: number;
-  /** "breakout": the breakout 55/20 strategy's (no target, no trailing, sold on a close below the 20-day low). */
-  strategy?: "breakout";
+  /** A slower classic strategy's (no target, no trailing, sold by its own rule). */
+  strategy?: SlowStrategy;
   features: {
     emaAlignment: boolean;
     volumeSurgeRatio: number;
@@ -326,8 +334,8 @@ export interface Position {
   signalPrice?: number;
   /** "1d": a coin trade on daily candles, held up to 30 days (server/scanner/dailyCoins.ts). */
   timeframe?: "1d";
-  /** "breakout": the breakout 55/20 strategy's, on daily candles: no target, a fixed stop, sold on a close below the 20-day low. */
-  strategy?: "breakout";
+  /** A slower classic strategy's, on daily candles: no target, a fixed stop, sold by its own rule (SlowStrategy). */
+  strategy?: SlowStrategy;
 }
 
 export interface HistoricalTrade {
@@ -355,8 +363,8 @@ export interface HistoricalTrade {
   signalPrice?: number;
   /** "1d": a coin trade on daily candles. */
   timeframe?: "1d";
-  /** "breakout": the breakout 55/20 strategy's. */
-  strategy?: "breakout";
+  /** A slower classic strategy's (SlowStrategy). */
+  strategy?: SlowStrategy;
   isWin: boolean;
   exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL" | "EXPIRY_TIME";
   openedAt: string;

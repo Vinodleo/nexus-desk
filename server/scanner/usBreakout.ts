@@ -44,7 +44,6 @@ import {
 
 /** 3:45 pm New York: the check runs from then until the 3:50 close of intraday trades. */
 export const US_CHECK_AT = 15 * 60 + 45;
-const CHECK_EVERY_MS = 60_000;
 /** Enough completed sessions for the 55-day high and the 20-day ATR. */
 const HISTORY_DAYS = 130;
 const PAUSE_MS = 300;
@@ -62,7 +61,6 @@ interface Saved {
 
 let state: Saved = { lastDay: null, runs: {} };
 let running = false;
-let timer: ReturnType<typeof setInterval> | null = null;
 
 export interface UsBreakoutDeps {
   now: () => number;
@@ -96,7 +94,7 @@ const realDeps: UsBreakoutDeps = {
   close: (id, price) => closeServerPosition(id, price, "TRAILING_STOP"),
 };
 
-const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, sold: 1, waiting: 2, paused: 3 };
+const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, sold: 1, kept: 2, waiting: 3, paused: 4 };
 
 /** This year's list, as the desk names US stocks ("AAPL.US"). */
 export const usBreakoutStocks = (year: number) => stockCohortFor("us", year).map(usSymbol);
@@ -252,7 +250,7 @@ export function usBreakoutView(uid: string, now: number = Date.now()) {
     run: state.runs[uid] ?? null,
     gate: breakoutGate(realDeps.classic()) ?? null,
     /** US breakout trades open now against breakout's own US slots. */
-    slots: desk ? slotsInUse(uid, desk, "us", true) : null,
+    slots: desk ? slotsInUse(uid, desk, "us", "breakout") : null,
     nextAt: nextUsCheckAt(now, state.lastDay),
   };
 }
@@ -277,18 +275,13 @@ function save(): void {
   }
 }
 
-/** Checks every minute whether the day's check is due. */
-export function startUsBreakout(): void {
-  loadUsBreakout();
-  timer = setInterval(() => void runUsBreakout(), CHECK_EVERY_MS);
-}
+/** Whether a check is under way (US momentum's waits for it, so the two don't buy the same stock at once). */
+export const usBreakoutBusy = () => running;
 
 /** Test hooks. */
 export function _resetUsBreakout(): void {
   state = { lastDay: null, runs: {} };
   running = false;
-  if (timer) clearInterval(timer);
-  timer = null;
 }
 export function _usBreakoutState(): Saved {
   return state;

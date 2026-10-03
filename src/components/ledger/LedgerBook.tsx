@@ -181,7 +181,7 @@ const TradeRow: React.FC<{
           <span className="text-xs text-muted tabular-nums">
             {timeOf(t)} · {reason}
             {t.isSelfApproved ? (t.openedByServer ? " · autopilot (server)" : " · autopilot") : ""}
-            {t.strategy === "breakout" ? " · breakout" : t.timeframe === "1d" ? " · daily" : ""}
+            {t.strategy ? ` · ${t.strategy}` : t.timeframe === "1d" ? " · daily" : ""}
           </span>
           {!open && t.autopsy && <span className="text-xs font-semibold text-accent">Read autopsy</span>}
         </span>

@@ -9,11 +9,12 @@ import { isUsSymbol } from "../shared/usMarket";
 // replay: wins and losses the size it expects, exits as it makes them, and
 // stops that hold rather than gap past.
 
-export type PaperStrategy = "coinBreakout" | "usBreakout" | "dailyCoins";
+export type PaperStrategy = "coinBreakout" | "usBreakout" | "usMomentum" | "dailyCoins";
 
 export const PAPER_STRATEGIES: { id: PaperStrategy; name: string }[] = [
   { id: "coinBreakout", name: "Coin breakout 55/20" },
   { id: "usBreakout", name: "US breakout 55/20" },
+  { id: "usMomentum", name: "US momentum, top 3" },
   { id: "dailyCoins", name: "Daily coin traders" },
 ];
 
@@ -27,6 +28,7 @@ const GAP_PAST_STOP = 0.0025;
 /** Which of the slower strategies a trade or position belongs to, or null for the 5-minute traders' and the rest. */
 export function strategyOf(t: Pick<HistoricalTrade, "symbol" | "strategy" | "timeframe">): PaperStrategy | null {
   if (t.strategy === "breakout") return isUsSymbol(t.symbol) ? "usBreakout" : marketOf(t.symbol) === "coins" ? "coinBreakout" : null;
+  if (t.strategy === "momentum") return isUsSymbol(t.symbol) ? "usMomentum" : null;
   if (t.timeframe === "1d" && marketOf(t.symbol) === "coins") return "dailyCoins";
   return null;
 }

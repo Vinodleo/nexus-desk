@@ -48,8 +48,8 @@ describe("per-market limits", () => {
   it("keep only sensible values, defaulting the rest", () => {
     expect(cleanMarketLimits(null)).toEqual(DEFAULT_MARKET_LIMITS);
     expect(cleanMarketLimits({ coins: { amountPerTradeInr: 2500, maxOpenTrades: 4 }, stocks: { amountPerTradeInr: -5, maxOpenTrades: 99 } })).toEqual({
-      // Saved before risk per trade existed: 1% of the amount; before breakout's own slots: 3.
-      coins: { amountPerTradeInr: 2500, maxOpenTrades: 4, riskPerTradeInr: 25, breakoutTrades: 3 },
+      // Saved before risk per trade existed: 1% of the amount; before breakout's own slots: 3; before momentum's: none for coins.
+      coins: { amountPerTradeInr: 2500, maxOpenTrades: 4, riskPerTradeInr: 25, breakoutTrades: 3, momentumTrades: 0 },
       stocks: DEFAULT_MARKET_LIMITS.stocks,
       // Saved before US stocks existed: the default.
       us: DEFAULT_MARKET_LIMITS.us,
@@ -192,6 +192,51 @@ describe("per-market limits", () => {
     expect(run(setup, breakouts).passedAllChecks).toBe(true);
     expect(run({ ...setup, strategy: "breakout" }, breakouts).rejectionReason).toMatch(/Maximum open coin breakout trades reached \(2\/2\)/);
     expect(run({ ...setup, strategy: "breakout" }, daily).passedAllChecks).toBe(true);
+  });
+
+  it("give US momentum slots of its own too: breakout's and the other trades can't fill them, nor it theirs", () => {
+    expect([DEFAULT_MARKET_LIMITS.coins.momentumTrades, DEFAULT_MARKET_LIMITS.stocks.momentumTrades, DEFAULT_MARKET_LIMITS.us.momentumTrades]).toEqual([0, 0, 3]);
+    const cleaned = cleanMarketLimits({ coins: { amountPerTradeInr: 5000, maxOpenTrades: 2 }, stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2 }, us: { amountPerTradeInr: 5000, maxOpenTrades: 2, momentumTrades: 0 } });
+    expect(cleaned.us.momentumTrades).toBe(0);
+    expect(cleanMarketLimits({ us: { amountPerTradeInr: 5000, maxOpenTrades: 2, momentumTrades: 99 } }).us.momentumTrades).toBe(3);
+
+    const roomy = { ...policy, marketLimits: { ...limits, us: { ...limits.us, breakoutTrades: 1, momentumTrades: 2 } }, autopilotMaxApprovalsPerHour: 10 };
+    const momentum = (symbol: string) => proposal(symbol, {}, { strategy: "momentum" });
+    // A US intraday trade and a US breakout trade fill their slots (1 each): momentum still opens on its own two.
+    const book = [held("XOM.US"), { ...held("UNH.US"), strategy: "breakout" as const }];
+    const batch = [momentum("JPM.US"), proposal("COST.US"), momentum("LLY.US"), momentum("NFLX.US"), proposal("WMT.US", {}, { strategy: "breakout" })];
+    const { accepted, deferred } = selectAutopilotTrades(batch, { positions: book, openedLastHour: 0, quarantines: {} }, roomy, () => 1000, now);
+    expect(accepted.map((a) => a.proposal.symbol)).toEqual(["JPM.US", "LLY.US"]);
+    expect(deferred.map((d) => [d.proposal.symbol, d.reason])).toEqual([
+      ["COST.US", "would exceed 1 open US stock trade at once"],
+      ["NFLX.US", "would exceed 2 open US stock momentum trades at once"],
+      ["WMT.US", "would exceed 1 open US stock breakout trade at once"],
+    ]);
+
+    // The scanner's risk check counts the same way.
+    const score = { calibratedWinProbability: 0.6, confidence: 0.6 } as MetaLabelScore;
+    const ev = { isPositiveEdge: true, expectedNetValue: 100 } as ExpectedValueAssessment;
+    const noDrills = {
+      globalKillSwitchActive: false, simulateAgentTimeout: false, simulateStaleMarketData: false,
+      simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
+    };
+    const setup = { symbol: "V.US", direction: "LONG", entryPrice: 1000, stopLoss: 940, takeProfit: 1e6, riskRewardRatio: 3, strategy: "momentum" } as StrategySetup;
+    const run = (positions: any[]) => evaluateRiskEngine(setup, score, ev, positions, 0, 80, roomy, noDrills, false);
+    expect(run(book).passedAllChecks).toBe(true);
+    const twoMomentum = [{ ...held("JPM.US"), strategy: "momentum" as const }, { ...held("LLY.US"), strategy: "momentum" as const }];
+    expect(run(twoMomentum).rejectionReason).toMatch(/Maximum open US stock momentum trades reached \(2\/2\)/);
+  });
+
+  it("let breakout's and momentum's checks open their picks past the hourly cap (their own slots bound them), and count them toward it", () => {
+    const roomy = { ...policy, marketLimits: { ...limits, coins: { ...limits.coins, maxOpenTrades: 5, breakoutTrades: 3 }, us: { ...limits.us, momentumTrades: 3 } }, autopilotMaxApprovalsPerHour: 3 };
+    const batch = [proposal("NVDA.US", {}, { strategy: "momentum" }), proposal("SOL/INR", {}, { strategy: "breakout" }), proposal("ETH/INR")];
+    // Three opened in the last hour already: the cap is reached.
+    const { accepted, deferred } = selectAutopilotTrades(batch, { positions: [], openedLastHour: 3, quarantines: {} }, roomy, () => 1000, now);
+    expect(accepted.map((a) => a.proposal.symbol)).toEqual(["NVDA.US", "SOL/INR"]);
+    expect(deferred.map((d) => [d.proposal.symbol, d.reason])).toEqual([["ETH/INR", "would exceed 3 autonomous approvals/hour"]]);
+    // A momentum pick counts toward the hour for the trades after it.
+    const after = selectAutopilotTrades([proposal("V.US", {}, { strategy: "momentum" }), proposal("A/INR"), proposal("B/INR"), proposal("C/INR")], { positions: [], openedLastHour: 1, quarantines: {} }, roomy, () => 1000, now);
+    expect(after.accepted.map((a) => a.proposal.symbol)).toEqual(["V.US", "A/INR"]);
   });
 
   it("hold the autopilot to each market's count across one batch", () => {

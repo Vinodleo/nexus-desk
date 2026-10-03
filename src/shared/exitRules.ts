@@ -49,7 +49,7 @@ export interface ExitState {
   isLiveOrder?: boolean;
   /** "1d": opened on daily candles (shared/coinHolds DAILY_HOLD_MINUTES). */
   timeframe?: string;
-  /** "breakout": breakout 55/20's, held for weeks (overnight too) until its own exit. */
+  /** "breakout" or "momentum": a slower strategy's, held for weeks (overnight too) until its own exit. */
   strategy?: string;
 }
 
@@ -79,8 +79,8 @@ export function stopLocksProfit(p: Pick<ExitState, "symbol" | "direction" | "ent
  */
 export function holdingDecision(p: ExitState, nowMs: number = Date.now()): "hold" | "expire" {
   // Stock positions are intraday: closed at 3:20 IST (US: 3:50 New York) whatever else holds,
-  // except breakout trades, held overnight until their own exit.
-  const intraday = p.strategy !== "breakout";
+  // except breakout and momentum trades, held overnight until their own exit.
+  const intraday = p.strategy !== "breakout" && p.strategy !== "momentum";
   if (intraday && isNseSymbol(p.symbol) && nseSquareOffDue(p.openTime, nowMs)) return "expire";
   if (intraday && isUsSymbol(p.symbol) && usSquareOffDue(p.openTime, nowMs)) return "expire";
   const openedMs = p.openTime ? new Date(p.openTime).getTime() : nowMs;

@@ -5,7 +5,7 @@ import { ruleFor } from "./marketRulesStore";
 import { isBuiltOnSyntheticPrices } from "./dataProvenance";
 import { openQuantity, planPartialQuantity } from "../shared/exitRules";
 import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
-import { isBreakoutTrade, MARKET_LABEL, marketOf, sectorOf, slotsFor, type MarketKey } from "../shared/marketLimits";
+import { MARKET_LABEL, marketOf, sectorOf, slotKindOf, slotsFor, type MarketKey, type SlotKind } from "../shared/marketLimits";
 
 // Self-Approve (autopilot): which proposals it opens on its own. Shared by the
 // app and the server scanner, so a trade is let through by the same rules
@@ -81,10 +81,13 @@ export function selectAutopilotTrades(
   // against at scan time: several proposals from one scan could each pass
   // alone and together break the position or exposure limit.
   let positionCount = book.positions.length;
-  // Per market, on each kind's own slots: breakout 55/20's, and the rest's.
-  const openByMarket: Record<MarketKey, number> = { coins: 0, stocks: 0, us: 0 };
-  const breakoutsByMarket: Record<MarketKey, number> = { coins: 0, stocks: 0, us: 0 };
-  for (const p of book.positions) (isBreakoutTrade(p) ? breakoutsByMarket : openByMarket)[marketOf(p.symbol)]++;
+  // Per market, on each kind's own slots: breakout 55/20's, momentum's, and the rest's.
+  const slotsByKind = new Map<SlotKind, Record<MarketKey, number>>();
+  const slotsOf = (kind: SlotKind) => {
+    if (!slotsByKind.has(kind)) slotsByKind.set(kind, { coins: 0, stocks: 0, us: 0 });
+    return slotsByKind.get(kind)!;
+  };
+  for (const p of book.positions) slotsOf(slotKindOf(p))[marketOf(p.symbol)]++;
   const openBySector = new Map<string, number>();
   for (const p of book.positions) {
     const key = sectorOf(p.symbol)?.key;
@@ -137,16 +140,20 @@ export function selectAutopilotTrades(
     // Per market when set in Settings (amount per trade × trades at once bounds exposure then).
     const market = marketOf(proposal.symbol);
     const marketLimit = policy.marketLimits?.[market];
-    const breakout = isBreakoutTrade(proposal.setup);
-    const slots = breakout ? breakoutsByMarket : openByMarket;
+    const kind = slotKindOf(proposal.setup);
+    const slots = slotsOf(kind);
     const tooMany = marketLimit
-      ? slots[market] + 1 > slotsFor(marketLimit, breakout)
+      ? slots[market] + 1 > slotsFor(marketLimit, kind)
       : positionCount + 1 > policy.maxSimultaneousPositions;
     const tooExposed = !marketLimit && (exposure + added) / policy.equity > policy.maxAllowedExposureFraction;
     const sector = sectorOf(proposal.symbol);
     const sectorFull = !!sector && (openBySector.get(sector.key) ?? 0) + 1 > policy.maxCorrelatedPositionsPerGroup;
     const alreadyHeld = held.has(proposal.symbol);
-    const overHourly = hourly + 1 > policy.autopilotMaxApprovalsPerHour;
+    // The hourly cap stops a burst of 5-minute trades. Breakout's and
+    // momentum's checks open their picks together once a day or week, on
+    // slots of their own that bound them, so it doesn't hold them back (a
+    // momentum pick turned away would wait a week); they still count toward it.
+    const overHourly = !kind && hourly + 1 > policy.autopilotMaxApprovalsPerHour;
     // A split or thin panel vote is left for a human.
     const agreement = proposal.ensembleAgreement ?? 1;
     const votes = proposal.personaVotesCast ?? 1;
@@ -157,7 +164,7 @@ export function selectAutopilotTrades(
       if (tooMany)
         reasons.push(
           marketLimit
-            ? `would exceed ${slotsFor(marketLimit, breakout)} open ${MARKET_LABEL[market]}${breakout ? " breakout" : ""} trade${slotsFor(marketLimit, breakout) === 1 ? "" : "s"} at once`
+            ? `would exceed ${slotsFor(marketLimit, kind)} open ${MARKET_LABEL[market]}${kind ? ` ${kind}` : ""} trade${slotsFor(marketLimit, kind) === 1 ? "" : "s"} at once`
             : `would exceed max ${policy.maxSimultaneousPositions} simultaneous positions`
         );
       if (tooExposed) reasons.push(`would exceed max ${(policy.maxAllowedExposureFraction * 100).toFixed(0)}% portfolio exposure`);
@@ -213,6 +220,7 @@ export function positionFromProposal(
 ): Position {
   const { setup } = proposal;
   const runner = trailsAsRunner(setup);
+  const slow = slotKindOf(setup);
   return {
     id: opts.id,
     symbol: proposal.symbol,
@@ -226,8 +234,8 @@ export function positionFromProposal(
     takeProfit: setup.takeProfit,
     initialTakeProfit: setup.takeProfit,
     initialStopLoss: setup.stopLoss,
-    // A breakout trade isn't banked early: it runs whole until its exit, as replayed.
-    partialQuantity: setup.strategy === "breakout" ? undefined : planPartialQuantity(units, entryPrice, ruleFor(proposal.symbol, entryPrice)),
+    // A breakout or momentum trade isn't banked early: it runs whole until its exit, as replayed.
+    partialQuantity: slow ? undefined : planPartialQuantity(units, entryPrice, ruleFor(proposal.symbol, entryPrice)),
     unrealizedPnl: 0,
     unrealizedPnlPercent: 0,
     openTime: new Date(opts.now ?? Date.now()).toISOString(),
@@ -241,11 +249,11 @@ export function positionFromProposal(
     family: setup.family,
     horizon: setup.horizon,
     trailMode: runner ? "TREND_RUNNER" : "SCALP_TIGHT",
-    // A breakout trade keeps its first stop (it's sold on a close below the 20-day low instead of trailing).
-    trailProfile: setup.strategy === "breakout" ? "fixed" : opts.trailProfile,
+    // A breakout or momentum trade keeps its first stop (it's sold by its own rule instead of trailing).
+    trailProfile: slow ? "fixed" : opts.trailProfile,
     // A daily-candle trade: held up to 30 days (holdMinutesFor), closed at that limit exactly.
     ...(setup.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
-    ...(setup.strategy === "breakout" ? { strategy: "breakout" as const } : {}),
+    ...(slow ? { strategy: slow } : {}),
   };
 }
 

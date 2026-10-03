@@ -28,8 +28,8 @@ export function tradeOpenedMessage(
   by: "server" | "app"
 ): TradeMessage {
   return {
-    title: `${p.direction === "LONG" ? "Bought" : "Sold short"} ${p.symbol}${p.strategy === "breakout" ? " (breakout, paper)" : p.timeframe === "1d" ? " (daily, paper)" : ""}`,
-    body: `${p.quantity} @ ${inr(p.entryPrice)} (${inr(p.quantity * p.entryPrice)}) · stop ${inr(p.stopLoss)} · ${p.strategy === "breakout" ? "no target" : `target ${inr(p.takeProfit)}`}${
+    title: `${p.direction === "LONG" ? "Bought" : "Sold short"} ${p.symbol}${p.strategy === "breakout" || p.strategy === "momentum" ? ` (${p.strategy}, paper)` : p.timeframe === "1d" ? " (daily, paper)" : ""}`,
+    body: `${p.quantity} @ ${inr(p.entryPrice)} (${inr(p.quantity * p.entryPrice)}) · stop ${inr(p.stopLoss)} · ${p.strategy === "breakout" || p.strategy === "momentum" ? "no target" : `target ${inr(p.takeProfit)}`}${
       p.setupName ? ` · ${p.setupName}` : ""
     }${by === "server" ? " · opened by the server" : ""}`,
     tag: `open-${p.id}`,
