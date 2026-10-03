@@ -310,6 +310,16 @@ describe("the long daily replay", () => {
     expect(Object.keys(classic).every((q) => q >= "2020" && q < "2024")).toBe(true);
     expect(fs.readdirSync(long.dailyCandlesDir()).sort()).toEqual(["BTC_INR.csv.gz", "LUNA_INR.csv.gz"]);
     expect(long.dailyLongView().classic).toEqual(classic);
+    // Each closed breakout trade saved with its readings at entry, for the machine-learning test on breakout trades.
+    const { readBreakoutSetups } = await import("../../server/history/breakoutSetups");
+    const { BREAKOUT_READINGS } = await import("../../src/services/breakoutModel");
+    const setups = readBreakoutSetups("coins")!;
+    const breakoutTrades = Object.values(classic).reduce((n, q) => n + (q.breakout?.trades ?? 0), 0);
+    expect(setups.setups.length).toBeGreaterThan(0);
+    expect(setups.setups.length).toBeLessThanOrEqual(breakoutTrades);
+    expect(setups.setups.every((s) => ["BTC/INR", "LUNA/INR"].includes(s.symbol) && s.x.length === BREAKOUT_READINGS.length)).toBe(true);
+    // Bitcoin's trend at each entry: known once it has 200 days.
+    expect(setups.setups.some((s) => s.x[BREAKOUT_READINGS.findIndex((r) => r.name === "marketUp")] !== null)).toBe(true);
 
     // The strategies changed: redone from the kept candles, nothing downloaded, the traders' results and finish kept.
     const kept = { ...run, classic: undefined, classicVersion: long.CLASSIC_VERSION - 1 };

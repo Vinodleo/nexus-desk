@@ -6,6 +6,9 @@ import { backgroundWorkBusy, CPU_SHARE, historyRunInfo, historyRunning, setupsDi
 import { scannerHeartbeat } from "../scanner/scannerService";
 import { scanningDesks } from "../scanner/deskState";
 import { dailyLongRunInfo, dailyLongRunning, dailySetupsDir } from "./dailyLong";
+import { stocksLongRunning } from "./stocksLong";
+import { BREAKOUT_MARKETS, readBreakoutSetups, type BreakoutMarket } from "./breakoutSetups";
+import { BREAKOUT_READINGS_VERSION, walkForward, type BreakoutMlVerdict } from "../../src/services/breakoutModel";
 import {
   addRow,
   binEdges,
@@ -41,6 +44,11 @@ import { isUsSymbol } from "../../src/shared/usMarket";
 // scan cycle runs, and doesn't start while a replay is going. It runs once a
 // replay has finished (again after each new one), or when asked from the Lab,
 // and keeps only its verdict (ml_test.json). It decides nothing live.
+//
+// A third test, on breakout 55/20's replayed trades (coins since 2018, US
+// stocks since 2016, saved by those replays: history/breakoutSetups.ts), is
+// judged year by year instead: they're a few hundred, too few for the split
+// above (src/services/breakoutModel.ts). It's small and quick.
 
 /** Bump when the test changes enough that an old verdict no longer stands. */
 export const ML_TEST_VERSION = 1;
@@ -72,9 +80,11 @@ const gunzipAsync = promisify(gunzip);
 
 const dataDir = () => process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 
-/** Which saved setups a test learns from: the two-year replay's 5-minute ones, or the daily coin ones since 2017. */
-export type MlSource = "5m" | "daily";
-export const ML_SOURCES: MlSource[] = ["daily", "5m"];
+/** Which saved setups a test learns from: the two-year replay's 5-minute ones, the daily coin ones since 2017, or breakout's trades. */
+export type MlSource = "5m" | "daily" | "breakout";
+export const ML_SOURCES: MlSource[] = ["daily", "5m", "breakout"];
+/** The tests on the replays' saved CSV setups. */
+type CsvSource = Exclude<MlSource, "breakout">;
 
 /** A finished replay's saved setups, as a test reads them. */
 interface SourceRun {
@@ -86,7 +96,7 @@ interface SourceRun {
 
 /** How each source is tested: where its setups are, how long its periods are, and how its readings read. */
 const SOURCE: Record<
-  MlSource,
+  CsvSource,
   { run: () => SourceRun | null; running: () => boolean; dir: () => string; file: string; testDays: number; validDays: number; barMs: number; labels: Record<string, string>; boost: BoostOptions }
 > = {
   "5m": {
@@ -113,7 +123,8 @@ const SOURCE: Record<
     boost: { ...DEFAULT_BOOST, minLeaf: 200 },
   },
 };
-const fileOf = (source: MlSource) => path.join(dataDir(), SOURCE[source].file);
+const fileOf = (source: MlSource) => path.join(dataDir(), source === "breakout" ? BREAKOUT_FILE : SOURCE[source].file);
+const BREAKOUT_FILE = "ml_test_breakout.json";
 const hasSetups = (run: SourceRun | null) => !!run?.finishedAt && Object.values(run.markets).some((m) => (m.setups ?? 0) > 0);
 
 export interface MlTestResult {
@@ -130,6 +141,18 @@ export interface MlTestResult {
   importance: { label: string; share: number }[];
   markets: Record<MarketKind, MarketVerdict | null>;
 }
+
+/** The test on breakout trades: each market's verdict, judged year by year. */
+export interface BreakoutMlResult {
+  version: number;
+  ranAt: number;
+  /** When each market's setups were saved (the test is due again when they're saved anew). */
+  savedAt: Record<BreakoutMarket, number | null>;
+  /** Each market's verdict; null with too few years of trades. */
+  markets: Record<BreakoutMarket, (BreakoutMlVerdict & { setups: number }) | null>;
+}
+/** Its version: the test's and the readings'. */
+const BREAKOUT_ML_VERSION = ML_TEST_VERSION * 100 + BREAKOUT_READINGS_VERSION;
 
 export type MlPhase = "idle" | "reading" | "training" | "judging";
 
@@ -153,7 +176,8 @@ const realDeps: MlDeps = {
   memory: () => process.memoryUsage().rss,
 };
 
-const results: Record<MlSource, MlTestResult | null> = { "5m": null, daily: null };
+const results: Record<CsvSource, MlTestResult | null> = { "5m": null, daily: null };
+let breakoutResult: BreakoutMlResult | null = null;
 /** The test running now. */
 let testing: MlSource | null = null;
 let phase: MlPhase = "idle";
@@ -165,7 +189,10 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 export function loadMlTest(): void {
   for (const source of ML_SOURCES) {
     try {
-      if (fs.existsSync(fileOf(source))) results[source] = JSON.parse(fs.readFileSync(fileOf(source), "utf8")) as MlTestResult;
+      if (!fs.existsSync(fileOf(source))) continue;
+      const saved = JSON.parse(fs.readFileSync(fileOf(source), "utf8"));
+      if (source === "breakout") breakoutResult = saved as BreakoutMlResult;
+      else results[source] = saved as MlTestResult;
     } catch (err) {
       console.warn(`[MlTest] Couldn't read the saved ${source} verdict:`, err);
     }
@@ -175,7 +202,7 @@ export function loadMlTest(): void {
 function saveMlTest(source: MlSource): void {
   try {
     fs.mkdirSync(dataDir(), { recursive: true });
-    fs.writeFileSync(`${fileOf(source)}.tmp`, JSON.stringify(results[source]), "utf8");
+    fs.writeFileSync(`${fileOf(source)}.tmp`, JSON.stringify(source === "breakout" ? breakoutResult : results[source]), "utf8");
     fs.renameSync(`${fileOf(source)}.tmp`, fileOf(source));
   } catch (err) {
     console.warn(`[MlTest] Couldn't save the ${source} verdict:`, err);
@@ -187,6 +214,12 @@ const marketOf = (symbol: string): MarketKind => (isUsSymbol(symbol) ? "us" : is
 /** Whether a source's finished replay has setups its verdict didn't learn from (either source, without one named). */
 export function mlTestDue(source?: MlSource): boolean {
   if (!source) return ML_SOURCES.some((s) => mlTestDue(s));
+  if (source === "breakout") {
+    const saved = BREAKOUT_MARKETS.map((m) => readBreakoutSetups(m)?.savedAt ?? null);
+    if (saved.every((at) => at === null)) return false;
+    const r = breakoutResult;
+    return !r || r.version !== BREAKOUT_ML_VERSION || BREAKOUT_MARKETS.some((m, k) => r.savedAt[m] !== saved[k]);
+  }
   const run = SOURCE[source].run();
   if (!hasSetups(run)) return false;
   const result = results[source];
@@ -194,9 +227,28 @@ export function mlTestDue(source?: MlSource): boolean {
 }
 
 /** A source can be tested: its replay has finished with setups saved, and isn't replaying. */
-const testable = (source: MlSource) => hasSetups(SOURCE[source].run()) && !SOURCE[source].running();
+const testable = (source: MlSource) =>
+  source === "breakout"
+    ? BREAKOUT_MARKETS.some((m) => (readBreakoutSetups(m)?.setups.length ?? 0) > 0) && !dailyLongRunning() && !stocksLongRunning()
+    : hasSetups(SOURCE[source].run()) && !SOURCE[source].running();
 
-async function work(source: MlSource, deps: MlDeps): Promise<void> {
+/** The test on breakout trades: each market's saved setups, judged year by year. Quick: a few hundred trades. */
+function breakoutWork(deps: MlDeps): void {
+  phase = "judging";
+  const savedAt = {} as BreakoutMlResult["savedAt"];
+  const markets = {} as BreakoutMlResult["markets"];
+  for (const market of BREAKOUT_MARKETS) {
+    const saved = readBreakoutSetups(market);
+    savedAt[market] = saved?.savedAt ?? null;
+    const verdict = saved && saved.setups.length > 0 ? walkForward(saved.setups) : null;
+    markets[market] = verdict ? { ...verdict, setups: saved!.setups.length } : null;
+  }
+  breakoutResult = { version: BREAKOUT_ML_VERSION, ranAt: deps.now(), savedAt, markets };
+  saveMlTest("breakout");
+  console.log(`[MlTest] breakout done: passed in ${BREAKOUT_MARKETS.filter((m) => markets[m]?.passed).join(", ") || "no market"}.`);
+}
+
+async function work(source: CsvSource, deps: MlDeps): Promise<void> {
   const cfg = SOURCE[source];
   const run = cfg.run();
   if (!run?.finishedAt) throw new Error(source === "daily" ? "The replay since 2017 hasn't finished yet." : "The two-year replay hasn't finished yet.");
@@ -320,7 +372,8 @@ export function startMlTest(deps: MlDeps = realDeps, sources: MlSource[] = ML_SO
     for (const source of todo) {
       testing = source;
       try {
-        await work(source, deps);
+        if (source === "breakout") breakoutWork(deps);
+        else await work(source, deps);
       } catch (err: any) {
         lastError = err?.message || String(err);
         console.error(`[MlTest] ${source} failed:`, err);
@@ -359,6 +412,8 @@ export function mlTestView() {
     ready: testable("5m"),
     result: results["5m"],
     daily: { ready: testable("daily"), result: results.daily },
+    /** The test on breakout trades, coins and US stocks. */
+    breakout: { ready: testable("breakout"), result: breakoutResult },
   };
 }
 
@@ -366,6 +421,7 @@ export function mlTestView() {
 export function _resetMlTest(): void {
   results["5m"] = null;
   results.daily = null;
+  breakoutResult = null;
   testing = null;
   phase = "idle";
   trees = 0;

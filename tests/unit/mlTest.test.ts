@@ -5,6 +5,7 @@ import { gzipSync } from "zlib";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SETUP_READINGS, setupCsvHeader, setupCsvRow, type SetupDetail } from "../../src/services/historyReplay";
 import { seeded } from "../../src/services/setupModel";
+import { BREAKOUT_READINGS } from "../../src/services/breakoutModel";
 
 // The machine-learning test on the server: it reads the replay's saved
 // setups, learns from the older months and is judged on the latest six.
@@ -224,5 +225,53 @@ describe("the machine-learning test on daily coin trades", () => {
     expect(ml.mlTestView().result).not.toBeNull();
     expect(ml.mlTestView().daily.result).not.toBeNull();
     expect(ml.mlTestDue()).toBe(false);
+  });
+});
+
+describe("the machine-learning test on breakout trades", () => {
+  const saved = async () => await import("../../server/history/breakoutSetups");
+  /** 60 breakouts a year: with `edge`, the strong ones (first reading over 1) win 2R and the rest lose 1R; without, a third win 4R whatever they read. */
+  function breakouts(firstYear: number, edge: boolean, seed: number) {
+    const random = seeded(seed);
+    return Array.from({ length: (2026 - firstYear) * 60 }, (_, k) => {
+      const entryMs = Date.UTC(firstYear + Math.floor(k / 60), 0, 1) + (k % 60) * 5 * DAY;
+      const x = BREAKOUT_READINGS.map(() => random() * 2);
+      const r = edge ? (x[0] > 1 ? 2 : -1) + (random() - 0.5) : random() < 0.3 ? 4 : -1;
+      return { symbol: `S${k % 20}`, entryMs, exitMs: entryMs + 20 * DAY, r, x };
+    });
+  }
+
+  it("judges each market's breakout trades year by year, once their replays have saved them, and again when they save anew", async () => {
+    const { saveBreakoutSetups } = await saved();
+    expect(ml.mlTestDue("breakout")).toBe(false);
+    expect(ml.mlTestView().breakout.ready).toBe(false);
+    // Coins since 2018 with an edge to find; US stocks since 2016 without one.
+    saveBreakoutSetups("coins", breakouts(2018, true, 1), 1000);
+    saveBreakoutSetups("us", breakouts(2016, false, 2), 2000);
+    expect(ml.mlTestDue("breakout")).toBe(true);
+    expect(ml.mlTestView().breakout.ready).toBe(true);
+    await ml.startMlTest(deps, ["breakout"]);
+    const result = ml.mlTestView().breakout.result!;
+    expect(result.savedAt).toEqual({ coins: 1000, us: 2000 });
+    // Coins: learns from 2018–2020, judges 2022 to 2025.
+    expect(result.markets.coins).toMatchObject({ fromYear: 2022, toYear: 2025, setups: 480, passed: true });
+    expect(result.markets.coins!.skipped.avgR).toBeLessThan(0);
+    expect(result.markets.us).toMatchObject({ fromYear: 2020, toYear: 2025, setups: 600, passed: false });
+    // Kept on its own, the others left alone; not due again until a replay saves anew.
+    expect(fs.existsSync(path.join(dataDir, "ml_test_breakout.json"))).toBe(true);
+    expect(ml.mlTestView().result).toBeNull();
+    expect(ml.mlTestDue("breakout")).toBe(false);
+    ml._resetMlTest();
+    ml.loadMlTest();
+    expect(ml.mlTestView().breakout.result).toEqual(result);
+    saveBreakoutSetups("us", breakouts(2016, false, 2), 3000);
+    expect(ml.mlTestDue("breakout")).toBe(true);
+  });
+
+  it("gives no verdict for a market with too few years of trades", async () => {
+    const { saveBreakoutSetups } = await saved();
+    saveBreakoutSetups("coins", breakouts(2023, true, 1), 1000);
+    await ml.startMlTest(deps, ["breakout"]);
+    expect(ml.mlTestView().breakout.result!.markets).toEqual({ coins: null, us: null });
   });
 });

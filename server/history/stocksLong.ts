@@ -7,6 +7,8 @@ import { nseDeliveryRoundTripRate } from "../../src/shared/nse";
 import { fetchNseDaily, fetchUsDaily, type HistoryFetch } from "./historyCandles";
 import { backgroundWorkBusy, CPU_SHARE, historyRunning, nseBusy, SLOW_NSE_TRADE_INR, UNREAD_STOCK_SPREAD, waitForOtherWork } from "./historyJob";
 import { CLASSIC_VERSION } from "./dailyLong";
+import { breakoutSetups, marketCandles, type BreakoutSetup } from "../../src/services/breakoutModel";
+import { saveBreakoutSetups } from "./breakoutSetups";
 import { scannerHeartbeat } from "../scanner/scannerService";
 
 // The classic strategies (src/services/classicStrategies.ts) on US and
@@ -293,13 +295,18 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
 
     const fund = symbolOf(market, MARKET_FUND[market]);
     const up = series[fund] ? uptrend(series[fund]) : () => undefined;
+    // US breakout trades with their readings at entry, for the machine-learning test on breakout trades.
+    const fundMarket = series[fund] ? marketCandles(series[fund]) : undefined;
+    const setups: BreakoutSetup[] = [];
     const cost = stockCost(market);
     const stocks = Object.fromEntries(Object.entries(series).filter(([symbol]) => symbol !== fund));
     const classic: ClassicRecords = {};
     for (const [symbol, s] of Object.entries(stocks)) {
       const started = deps.now();
       const eligible = (ms: number) => inStockCohort(symbol, ms);
-      addClassicTrades(classic, breakoutTrades(symbol, s, cost, eligible));
+      const breakouts = breakoutTrades(symbol, s, cost, eligible);
+      addClassicTrades(classic, breakouts);
+      if (market === "us") setups.push(...breakoutSetups(s, breakouts, fundMarket));
       addClassicTrades(classic, maTrendTrades(symbol, s, up, cost, eligible));
       await rest(deps.now() - started);
       if (stopped()) return;
@@ -310,6 +317,7 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
     if (stopped()) return;
     r.classic[market] = classic;
     r.done.push(market);
+    if (market === "us") saveBreakoutSetups("us", setups, deps.now());
     save();
   }
   r.finishedAt = deps.now();
@@ -374,7 +382,10 @@ export function stocksLongView() {
   };
 }
 
-/** A market's classic results by quarter (the last finished run's while it reruns), or null before any: US breakout trades are judged on them. */
+/** A run is going (the machine-learning test on breakout trades waits for it). */
+export const stocksLongRunning = (): boolean => active !== null;
+
+/** A market's classic results by quarter (the last finished run's while it reruns), or null before any: US breakout and momentum trades are judged on them. */
 export function stocksLongClassic(market: StockMarket): ClassicRecords | null {
   return run?.classic[market] ?? null;
 }

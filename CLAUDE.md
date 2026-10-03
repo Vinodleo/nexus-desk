@@ -36,7 +36,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     exits, stops that gapped; "in line", "behind" or "ahead" once 10+ trades, by two standard errors). Then every coin
     strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`), the classic strategies
     on stocks (`StocksLongCard`, US and India), and the replays' details.
-  - **Tests:** the machine-learning test and the coin check (`CoinCheckCard`).
+  - **Tests:** the machine-learning tests (daily coins, breakout trades, 5-minute) and the coin check (`CoinCheckCard`).
   - **Tools:** the older hands-on training tools.
   Explanations and long lists fold away (`Fold`); chips, bars and year columns are in `labUi.tsx`. The cards read
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
@@ -139,6 +139,13 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if
   the picks, one at a time, average `MIN_EDGE_R`+ and clearly above zero. It runs after each replay, rests like it,
   sizes what it loads to the server's free memory and stops before 450 MB. Its verdict (`ml_test.json`) decides nothing live.
+  A third test runs on breakout 55/20's replayed trades (`MlSource` "breakout", `src/services/breakoutModel.ts`): the
+  coins' since 2018 and US stocks' since 2016, each saved with its readings at entry by those replays' classic step
+  (`breakoutSetups`, `breakout_setups_coins.json`, `breakout_setups_us.json`; trades still open left out). Too few for
+  the split above, so it's judged year by year (`walkForward`): each year from the fifth is judged by a model trained on
+  the years before but the last, which sets the cut (the middle of its predictions); the model's picks are its more
+  promising half. It passes only if the trades it would skip clearly lost (`highR` below zero) and its picks are
+  `MIN_EDGE_R`+ ahead of every trade (`ml_test_breakout.json`). Decides nothing live.
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
   - It, the win-chance calibration and the trade memory count each trader's move once
     (`oneShadowAtATime` in `shadowTracker.ts`), not once per candle a setup stayed valid.
