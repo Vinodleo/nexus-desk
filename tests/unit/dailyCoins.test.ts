@@ -397,6 +397,28 @@ describe("breakout 55/20 paper trades", () => {
     expect(daemonPositions.size).toBe(1);
     expect(daily._dailyCoinsState().runs.u.picks[0]).toMatchObject({ outcome: "waiting", reason: expect.stringContaining("its stop still guards it") });
   });
+
+  it("leaves US breakout trades to the US check: never reads them as coins, nor sells them", async () => {
+    const { daemonPositions } = await import("../../server/guardian");
+    const usTrade = { id: "us1", userId: "u", symbol: "AAPL.US", direction: "LONG", entryPrice: 20000, stopLoss: 19000, takeProfit: 2e7, quantity: 0.1, strategy: "breakout", timeframe: "1d", openTime: new Date(day1 - DAY).toISOString() };
+    // Held alone, with no desk scanning: nothing to check.
+    let daily = await fresh();
+    daemonPositions.set("us1", { ...usTrade } as never);
+    const idle = await deps(day1, breakout, { desks: () => [], daily: vi.fn(async () => ({ series: candles(breakout, day1) })) });
+    await daily.runDailyCoins(idle);
+    expect(idle.daily).not.toHaveBeenCalled();
+
+    // Alongside a coin breakout trade, on a day both "close below the 20-day low": only the coin's is judged and sold.
+    daily = await fresh();
+    await daily.runDailyCoins(await deps(day1, breakout));
+    daemonPositions.set("us1", { ...usTrade } as never);
+    const read = vi.fn(async (_symbol: string) => ({ series: candles([...breakout, [101, 101, 97, 98]], day2) }));
+    await daily.runDailyCoins(await deps(day2, [...breakout, [101, 101, 97, 98]], { daily: read }));
+    expect(read.mock.calls.map((c) => c[0])).toEqual(["SOL/INR"]);
+    expect([...daemonPositions.values()].map((p) => p.symbol)).toEqual(["AAPL.US"]);
+    expect(daily._dailyCoinsState().runs.u).toMatchObject({ coins: 1, failed: [] });
+    expect(daily._dailyCoinsState().runs.u.picks).toEqual([{ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "sold", reason: "closed below its 20-day low" }]);
+  });
 });
 
 describe("the record daily traders are judged on", () => {

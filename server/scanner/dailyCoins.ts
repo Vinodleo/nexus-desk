@@ -366,7 +366,8 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
   const since = now - dayStart;
   if (running || state.lastDay === day || since < DAILY_SCAN_AFTER_MS || since > DAILY_SCAN_UNTIL_MS) return;
   const desks = deps.desks(now);
-  const breakoutsHeld = (deps.positions ?? realDeps.positions!)().filter((p) => p.strategy === "breakout");
+  // Coin breakout trades only: US ones are the US check's (usBreakout.ts), and Binance has no candles for them.
+  const breakoutsHeld = (deps.positions ?? realDeps.positions!)().filter((p) => p.strategy === "breakout" && marketOf(p.symbol) === "coins");
   if (desks.length === 0 && breakoutsHeld.length === 0) return;
   running = true;
   // Marked first: a restart mid-scan doesn't open the day's trades twice.
