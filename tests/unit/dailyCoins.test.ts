@@ -446,3 +446,33 @@ describe("Traders with your exits", () => {
     expect(real.get("crypto:Amara Confirmed Breakout")).toEqual({ trades: 1, avgR: 2 });
   });
 });
+
+describe("the Lab's coin slots", () => {
+  it("count every coin trade you have open against your coin limit", async () => {
+    const { dailyCoinsView } = await import("../../server/scanner/dailyCoins");
+    const { setDeskState, _resetDeskStates } = await import("../../server/scanner/deskState");
+    const guardian = await import("../../server/guardian");
+    guardian._resetGuardian();
+    _resetDeskStates();
+    // Before the app has sent its settings: no limit to count against.
+    expect(dailyCoinsView("slots").coinSlots).toBeNull();
+    setDeskState("slots", {
+      equity: 100000, dailyRealizedPnl: 0, autopilot: true, tradingMode: "PAPER", trailProfile: "tight", killSwitch: false, scanning: true,
+      riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 1, marketLimits: { coins: { amountPerTradeInr: 5000, maxOpenTrades: 4, riskPerTradeInr: 50 } } },
+      failureState: {
+        simulateAgentTimeout: false, simulateStaleMarketData: false, simulateDailyLossBreach: false,
+        simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false, globalKillSwitchActive: false,
+      },
+      quarantines: {}, promotedModel: null,
+    } as never);
+    const open = (id: string, symbol: string, userId = "slots") => guardian.daemonPositions.set(id, { id, symbol, userId, direction: "LONG", entryPrice: 1, quantity: 1 } as never);
+    // Two coin trades (a daily one and a 5-minute one count alike); a stock and someone else's coin don't.
+    open("a", "SOL/INR");
+    open("b", "BTC/INR");
+    open("c", "RELIANCE");
+    open("d", "ETH/INR", "someone-else");
+    expect(dailyCoinsView("slots").coinSlots).toEqual({ used: 2, max: 4 });
+    guardian._resetGuardian();
+    _resetDeskStates();
+  });
+});

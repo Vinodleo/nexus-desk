@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
-const { HistoryCard } = await import("../../src/components/ledger/HistoryCard");
+const { CoinCheckCard, HistoryCard } = await import("../../src/components/ledger/HistoryCard");
 
 afterEach(cleanup);
 
@@ -78,16 +78,17 @@ describe("Traders over two years", () => {
     expect(screen.getByText("No results here.")).toBeTruthy();
   });
 
-  it("checks the coins against a list fixed in advance, and shows each market's own result on slower candles", async () => {
-    const slow = { "1h": {}, "1d": { tight: { "2026-Q3": { "crypto:Marcus Swing Trend": rec(40, 21, 18, -8) } } } };
-    const slowByMarket = {
-      "BTC/INR": { "1d": { tight: rec(10, 6, 6, -2), patient: rec(10, 2, 1, -8) } },
-      "PEPE/INR": { "1d": { tight: rec(10, 3, 2, -6) } },
-      "WIF/INR": { "1d": { tight: rec(20, 12, 10, -4) } },
-      // No setups with your trailing stop: left out.
-      "ETH/INR": { "1d": { patient: rec(5, 3, 2, -1) } },
-      "AAPL.US": { "1d": { tight: rec(5, 3, 2, -1) } },
-    };
+  const slow = { "1h": {}, "1d": { tight: { "2026-Q3": { "crypto:Marcus Swing Trend": rec(40, 21, 18, -8) } } } };
+  const slowByMarket = {
+    "BTC/INR": { "1d": { tight: rec(10, 6, 6, -2), patient: rec(10, 2, 1, -8) } },
+    "PEPE/INR": { "1d": { tight: rec(10, 3, 2, -6) } },
+    "WIF/INR": { "1d": { tight: rec(20, 12, 10, -4) } },
+    // No setups with your trailing stop: left out.
+    "ETH/INR": { "1d": { patient: rec(5, 3, 2, -1) } },
+    "AAPL.US": { "1d": { tight: rec(5, 3, 2, -1) } },
+  };
+
+  it("shows each market's own result on slower candles", async () => {
     vi.mocked(apiFetch).mockResolvedValue(reply(view({ slow, slowByMarket })));
     render(createElement(HistoryCard, { trailProfile: "tight" }));
     await screen.findByTestId("history-traders");
@@ -95,10 +96,8 @@ describe("Traders over two years", () => {
     expect(screen.queryByTestId("history-markets")).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: "1 day" }));
     const box = screen.getByTestId("history-markets");
-    // Bitcoin and Pepe are on the fixed list (+0.40R and −0.40R), WIF is one of today's picks.
-    expect(box.textContent).toContain("Coin check: a list fixed in advance against today's picks");
-    expect(box.textContent).toContain("Fixed list · 2 coins20 setups · 45% won · +0.00R");
-    expect(box.textContent).toContain("Today's picks · 1 coin20 setups · 60% won · +0.30R");
+    // The coin check has a card of its own (in the Tests tab).
+    expect(box.textContent).not.toContain("Coin check");
     expect(box.textContent).toContain("Each coin (3)");
     expect(within(box).getAllByRole("listitem", { hidden: true }).map((li) => li.textContent)).toEqual([
       "BTCfixed list10 setups · +0.40R",
@@ -111,6 +110,32 @@ describe("Traders over two years", () => {
     expect(us.textContent).not.toContain("Coin check");
     expect(us.textContent).toContain("Each stock (1)");
     expect(within(us).getAllByRole("listitem", { hidden: true }).map((li) => li.textContent)).toEqual(["AAPL5 setups · +0.20R"]);
+  });
+
+  it("checks the daily traders on a list of coins fixed in advance against today's picks", async () => {
+    vi.mocked(apiFetch).mockResolvedValue(reply(view({ slow, slowByMarket })));
+    render(createElement(CoinCheckCard, { trailProfile: "tight" }));
+    // Bitcoin and Pepe are on the fixed list (+0.40R and −0.40R: +0.00R over 20), WIF is one of today's picks (+0.30R).
+    expect((await screen.findByTestId("coin-check")).textContent).toBe("Fixed list2 coins · 20 setups+0.00R" + "Today's picks1 coin · 20 setups+0.30R");
+    expect(screen.getByText("Doesn't pass")).toBeTruthy();
+    expect(screen.getByTestId("coin-check-verdict").textContent).toBe("On a list fixed in advance the daily traders average +0.00R a trade: today's busiest coins did the work.");
+    cleanup();
+
+    // The fixed list earning +0.05R or more over 10+ setups passes.
+    const better = { ...slowByMarket, "PEPE/INR": { "1d": { tight: rec(10, 5, 4, -2) } } };
+    vi.mocked(apiFetch).mockResolvedValue(reply(view({ slow, slowByMarket: better })));
+    render(createElement(CoinCheckCard, { trailProfile: "tight" }));
+    expect((await screen.findByTestId("coin-check-verdict")).textContent).toBe(
+      "Do today's busiest coins flatter the daily traders? On a list fixed in advance they still average +0.30R a trade."
+    );
+    expect(screen.getByText("Passes")).toBeTruthy();
+    cleanup();
+
+    // Before the slower replays (or with no fixed-list coin): no card.
+    vi.mocked(apiFetch).mockResolvedValue(reply(view()));
+    const { container } = render(createElement(CoinCheckCard, { trailProfile: "tight" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.innerHTML).toBe("");
   });
 
   it("shows nothing for a reply without results (an older server)", async () => {

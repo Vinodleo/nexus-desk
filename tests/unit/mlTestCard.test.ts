@@ -99,6 +99,13 @@ describe("the machine-learning test card", () => {
       "CoinsPassesEvery setup: +0.07R over 1,100 tradesIts picks (the best 50%): +0.15R over 560 trades · 28% won · at worst about +0.06R"
     );
     expect(screen.getByTestId("ml-daily-importance").textContent).toBe("What it relied on most: Bitcoin's last 30 days 40%.");
+    // First the verdict, its picks against every setup, and each market's 5-minute picks; the numbers above sit under "Details".
+    expect(screen.getByTestId("ml-verdict").textContent).toBe(
+      "Can a model pick the better daily coin setups? On the latest year, which it never saw, its picks averaged +0.15R a trade against +0.07R for every setup. It decides nothing live."
+    );
+    expect(screen.getByTestId("ml-compare").textContent).toBe("Every setup1,100 trades+0.07R" + "Its picks560 trades+0.15R");
+    expect(screen.getByTestId("ml-five-minute").textContent).toBe("Coins+0.09R✓Passes" + "India−0.12R✕No");
+    expect(screen.getByText("Details", { exact: false, selector: "summary" })).toBeTruthy();
     // The 5-minute verdict below, as before.
     expect(screen.getByText("5-minute trades over two years")).toBeTruthy();
     expect(screen.getByTestId("ml-markets").textContent).toContain("CoinsPasses");

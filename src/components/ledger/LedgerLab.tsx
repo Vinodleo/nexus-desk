@@ -12,12 +12,13 @@ import {
 } from "../../services/realDataBacktestService";
 import { liveMarketStream } from "../../services/liveMarketStreamService";
 import { Card } from "./ui";
-import { GrowBar, staggerDelay } from "./motion";
+import { GrowBar, staggerDelay, useSlideFrom } from "./motion";
 import { ExitSettings } from "./ExitSettings";
-import { HistoryCard } from "./HistoryCard";
+import { CoinCheckCard, HistoryCard } from "./HistoryCard";
 import { MlTestCard } from "./MlTestCard";
 import { DailyCoinsCard } from "./DailyCoinsCard";
 import { DailyLongCard } from "./DailyLongCard";
+import { LabSummary, StrategyRanking, YearByYear, type LabTab } from "./LabSummary";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
 
@@ -34,6 +35,27 @@ const MARKETS = ["BTCINR", "ETHINR", "SOLINR", "XRPINR", "AVAXINR", "NEARINR", "
 const marketLabel = (m: string) => m.replace(/INR$/, "/INR");
 /** Coins "Train on all coins" uses: the most traded ones the scanner watches. */
 const GLOBAL_TRAINING_COINS = 8;
+
+/**
+ * The Lab's tabs: what's trading today, the strategies' records, the tests
+ * behind them, and the older hands-on tools. The picked one is remembered on
+ * this device.
+ */
+const LAB_TABS: { id: LabTab; label: string }[] = [
+  { id: "today", label: "Today" },
+  { id: "records", label: "Records" },
+  { id: "tests", label: "Tests" },
+  { id: "tools", label: "Tools" },
+];
+const TAB_KEY = "nx-lab-tab";
+function savedTab(): LabTab {
+  try {
+    const t = localStorage.getItem(TAB_KEY);
+    return LAB_TABS.find((x) => x.id === t)?.id ?? "today";
+  } catch {
+    return "today";
+  }
+}
 
 /** Fewer test trades than this and the candidate's win rate is mostly noise. */
 export const MIN_TEST_TRADES = 10;
@@ -123,6 +145,24 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
   const [result, setResult] = useState<RealDataLearningResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmRevert, setConfirmRevert] = useState(false);
+  const [tab, setTabState] = useState<LabTab>(savedTab);
+  const slide = useSlideFrom(tab, LAB_TABS.map((t) => t.id));
+  const setTab = (t: LabTab) => {
+    setTabState(t);
+    try {
+      localStorage.setItem(TAB_KEY, t);
+    } catch {
+      // Private browsing: the tab just isn't remembered.
+    }
+  };
+  /** A tab's panel: all stay mounted (their cards keep what they've loaded and picked), only the picked one shows. */
+  const panel = (id: LabTab) => ({
+    id: `lab-${id}`,
+    role: "tabpanel",
+    "aria-labelledby": `lab-tab-${id}`,
+    hidden: tab !== id,
+    className: `${tab === id ? `flex ${slide ?? ""}` : "hidden"} flex-col gap-4`,
+  });
 
   const run = async (kind: "one" | "all" | "csv", work: () => Promise<RealDataLearningResult>) => {
     setBusy(kind);
@@ -189,269 +229,302 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
     <div className="font-ui text-ink flex flex-col gap-4 pb-4 select-none">
       <header className="pt-1">
         <h1 className="m-0 font-display text-[26px] font-semibold">Lab</h1>
-        <div className="text-[13px] text-muted">Test strategy changes before they trade</div>
+        <div className="text-[13px] text-muted">Paper trading, and the tests behind it</div>
       </header>
 
-      <DailyCoinsCard />
-
-      <div className="flex items-center gap-2 text-xs text-muted">
-        <span className="w-2 h-2 rounded-full bg-warn" />
-        Sandbox · nothing here places trades until you promote it
+      <div role="tablist" aria-label="Lab" className="relative grid grid-cols-4 p-0.5 rounded-full bg-inset border border-line">
+        <span
+          aria-hidden="true"
+          className="nx-segment-pill absolute inset-y-0.5 left-0.5 rounded-full bg-accent"
+          style={{ width: "calc((100% - 4px) / 4)", transform: `translateX(${LAB_TABS.findIndex((t) => t.id === tab) * 100}%)` }}
+        />
+        {LAB_TABS.map((t) => (
+          <button
+            key={t.id}
+            id={`lab-tab-${t.id}`}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            aria-controls={`lab-${t.id}`}
+            onClick={() => setTab(t.id)}
+            className={`relative min-h-9 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${tab === t.id ? "text-on-accent" : "text-muted"}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <HistoryCard trailProfile={trailProfile} />
+      <section {...panel("today")}>
+        <LabSummary onOpen={setTab} />
+        <DailyCoinsCard />
+      </section>
 
-      <DailyLongCard trailProfile={trailProfile} />
+      <section {...panel("records")}>
+        <StrategyRanking trailProfile={trailProfile} />
+        <YearByYear trailProfile={trailProfile} />
+        <DailyLongCard trailProfile={trailProfile} />
+        <HistoryCard trailProfile={trailProfile} />
+      </section>
 
-      <MlTestCard />
+      <section {...panel("tests")}>
+        <MlTestCard />
+        <CoinCheckCard trailProfile={trailProfile} />
+      </section>
 
-      <Card aria-label="Model in use" className="flex flex-col gap-2.5">
-        <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em]">In use</div>
-        {promoted ? (
-          <>
-            <div className="text-[15px] font-semibold">{promoted.datasetName}</div>
-            <div className="text-[13px] text-muted tabular-nums">
-              {promoted.winRatePct.toFixed(0)}% win rate · {promoted.accuracyPct}% accuracy in testing · promoted{" "}
-              {new Date(promoted.promotedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-            </div>
-            {promoted.optimizedParameters && (
-              <div className="text-[13px] leading-relaxed bg-inset rounded-[10px] px-3 py-2">
-                <strong>Votes on the panel as a tuned breakout trader.</strong>{" "}
-                {describeTunedSettings(promoted.optimizedParameters)}.
+      <section {...panel("tools")}>
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <span className="w-2 h-2 rounded-full bg-warn" />
+          Sandbox · nothing here places trades until you promote it
+        </div>
+
+        <Card aria-label="Model in use" className="flex flex-col gap-2.5">
+          <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em]">In use</div>
+          {promoted ? (
+            <>
+              <div className="text-[15px] font-semibold">{promoted.datasetName}</div>
+              <div className="text-[13px] text-muted tabular-nums">
+                {promoted.winRatePct.toFixed(0)}% win rate · {promoted.accuracyPct}% accuracy in testing · promoted{" "}
+                {new Date(promoted.promotedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
               </div>
-            )}
-            {confirmRevert ? (
-              <div className="flex flex-wrap items-center gap-2 text-[13px]">
-                <span>Go back to the built-in rules?</span>
+              {promoted.optimizedParameters && (
+                <div className="text-[13px] leading-relaxed bg-inset rounded-[10px] px-3 py-2">
+                  <strong>Votes on the panel as a tuned breakout trader.</strong>{" "}
+                  {describeTunedSettings(promoted.optimizedParameters)}.
+                </div>
+              )}
+              {confirmRevert ? (
+                <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                  <span>Go back to the built-in rules?</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmRevert(false);
+                      onRevert();
+                    }}
+                    className="min-h-9 px-3.5 rounded-full bg-accent text-on-accent font-semibold cursor-pointer"
+                  >
+                    Revert
+                  </button>
+                  <button type="button" onClick={() => setConfirmRevert(false)} className="min-h-9 px-3 text-muted cursor-pointer">
+                    Cancel
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  onClick={() => {
-                    setConfirmRevert(false);
-                    onRevert();
-                  }}
-                  className="min-h-9 px-3.5 rounded-full bg-accent text-on-accent font-semibold cursor-pointer"
+                  onClick={() => setConfirmRevert(true)}
+                  className="self-start min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer"
                 >
-                  Revert
+                  Revert to built-in rules
                 </button>
-                <button type="button" onClick={() => setConfirmRevert(false)} className="min-h-9 px-3 text-muted cursor-pointer">
-                  Cancel
-                </button>
+              )}
+            </>
+          ) : (
+            <div className="text-[13px] text-muted">Built-in rules, adjusted by live learning. No Lab model promoted.</div>
+          )}
+        </Card>
+
+        <Card aria-label="Train" className="flex flex-col gap-3">
+          <div>
+            <div className="text-sm font-semibold">Train on price history</div>
+            <div className="text-xs text-muted mt-0.5 leading-relaxed">
+              5-minute candles, like live trading. Trades are judged the live way: target, stop or the time limit (4 hours for a coin), after fees.
+            </div>
+          </div>
+          <div className="flex p-0.5 rounded-full bg-inset border border-line" role="group" aria-label="History source">
+            {(["BINANCE", "COINBASE"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={source === s}
+                onClick={() => setSource(s)}
+                className={`flex-1 min-h-9 rounded-full text-[13px] font-semibold cursor-pointer ${
+                  source === s ? "bg-surface border border-line text-ink" : "text-muted"
+                }`}
+              >
+                {s === "BINANCE" ? "Binance" : "Coinbase"}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Market">
+              <select className={selectClass} value={market} onChange={(e) => setMarket(e.target.value)}>
+                {MARKETS.map((m) => (
+                  <option key={m} value={m}>
+                    {marketLabel(m)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="History">
+              <select className={selectClass} value={bars} onChange={(e) => setBars(Number(e.target.value))}>
+                <option value={1000}>1,000 · 3½ days</option>
+                <option value={3000}>3,000 · 10 days</option>
+                <option value={6000}>6,000 · 3 weeks</option>
+              </select>
+            </Field>
+          </div>
+          <button
+            type="button"
+            onClick={trainOne}
+            disabled={busy !== null}
+            className="min-h-12 rounded-full bg-accent text-on-accent font-semibold text-[15px] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+          >
+            {busy === "one" && <Loader2 className="w-4 h-4 animate-spin" />}
+            {busy === "one" ? "Training…" : `Train on ${marketLabel(market)}`}
+          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={trainAll}
+              disabled={busy !== null}
+              className="flex-1 min-h-11 rounded-full border border-line bg-surface text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+            >
+              {busy === "all" && <Loader2 className="w-4 h-4 animate-spin" />}
+              {busy === "all" ? "Training all…" : "Train on all markets"}
+            </button>
+            <label
+              className={`flex-1 min-h-11 rounded-full border border-line bg-surface text-sm font-semibold flex items-center justify-center gap-2 ${
+                busy !== null ? "opacity-60 pointer-events-none" : "cursor-pointer"
+              }`}
+            >
+              {busy === "csv" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {busy === "csv" ? "Reading…" : "Upload CSV"}
+              <input type="file" accept=".csv,text/csv" onChange={onCsv} className="hidden" aria-label="Upload a CSV of candles" />
+            </label>
+          </div>
+          {busy && progress && <LabProgressBar progress={progress} />}
+          {error && <div className="text-xs text-loss">{error}</div>}
+        </Card>
+
+        {result && b && l && (
+          <Card key={resultKey} aria-label="Result" className="flex flex-col gap-3 nx-pop-in">
+            <div>
+              <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em]">Candidate</div>
+              <div className="text-[15px] font-semibold mt-0.5">{result.datasetName}</div>
+              <div className="text-xs text-muted">
+                {result.dateRange.start} → {result.dateRange.end}
               </div>
+            </div>
+
+            {result.isSynthetic && (
+              <div className="flex gap-2.5 p-3 rounded-xl bg-danger-soft border border-danger-line text-xs leading-relaxed text-loss">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-px" strokeWidth={1.8} />
+                <span>
+                  The exchange couldn't be reached, so this ran on generated prices, not market history. Its numbers say
+                  nothing about real trading and it can't be promoted. Try again, try the other source, or upload a CSV.
+                </span>
+              </div>
+            )}
+
+            <div className="flex flex-col">
+              <div className="text-xs text-muted pb-1">Before learning → after, on data it didn't train on</div>
+              <CompareRow
+                index={0}
+                label="Accuracy"
+                before={`${b.accuracyPercent}%`}
+                after={`${l.accuracyPercent}%`}
+                better={l.accuracyPercent === b.accuracyPercent ? null : l.accuracyPercent > b.accuracyPercent}
+              />
+              <CompareRow
+                index={1}
+                label="Win rate"
+                before={`${b.winRate}%`}
+                after={`${l.winRate}%`}
+                better={l.winRate === b.winRate ? null : l.winRate > b.winRate}
+              />
+              <CompareRow
+                index={2}
+                label="Worst drop"
+                before={`${b.maxDrawdownPercent}%`}
+                after={`${l.maxDrawdownPercent}%`}
+                better={l.maxDrawdownPercent === b.maxDrawdownPercent ? null : l.maxDrawdownPercent < b.maxDrawdownPercent}
+              />
+              <CompareRow index={3} label="Trades" before={`${b.tradesCount}`} after={`${l.tradesCount}`} better={null} />
+            </div>
+
+            {result.folds.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <div className="flex justify-between text-[13px]">
+                  <span className="font-semibold">Walk-forward test</span>
+                  <span className={foldsPassed === result.folds.length ? "text-gain font-semibold" : "text-muted"}>
+                    {foldsPassed} of {result.folds.length} periods passed
+                  </span>
+                </div>
+                <div className="flex gap-1.5">
+                  {result.folds.map((f, i) => (
+                    <div
+                      key={f.fold}
+                      style={{ animationDelay: `${400 + i * 110}ms` }}
+                      title={`${f.testRange}: ${f.outOfSampleAccuracy}% accuracy`}
+                      aria-label={`Period ${f.fold} ${f.passed ? "passed" : "failed"}`}
+                      className={`flex-1 h-7 rounded-md flex items-center justify-center nx-badge-pop ${
+                        f.passed ? "bg-accent-soft text-gain" : "bg-danger-soft text-loss"
+                      }`}
+                    >
+                      {f.passed ? <Check className="w-3.5 h-3.5" strokeWidth={2.2} /> : <X className="w-3.5 h-3.5" strokeWidth={2.2} />}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-xs text-muted leading-relaxed">
+                  Trained on one stretch of history, then tested on the next, {result.folds.length} times over.
+                </div>
+              </div>
+            )}
+
+            {result.distilledLessons.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[13px] font-semibold">What it learned</div>
+                <ul className="list-none m-0 p-0 flex flex-col gap-1.5">
+                  {result.distilledLessons.slice(0, 5).map((lesson, i) => (
+                    <li
+                      key={lesson.id}
+                      className="text-[13px] leading-relaxed bg-inset rounded-[10px] px-3 py-2 nx-row-in"
+                      style={{ animationDelay: `${900 + i * 80}ms` }}
+                    >
+                      {lesson.rule}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {!result.isSynthetic && tooFewTrades && (
+              <div className="text-xs leading-relaxed text-warn-ink bg-warn-soft rounded-xl px-3 py-2.5">
+                Only {l.tradesCount} test {l.tradesCount === 1 ? "trade" : "trades"}, too few to trust these numbers, so it
+                can't be promoted. Train on more history.
+              </div>
+            )}
+
+            {result.optimizedParameters && !result.isSynthetic && !alreadyPromoted && (
+              <div className="text-xs text-muted leading-relaxed">
+                Promoting adds a breakout trader with these settings to the panel:{" "}
+                {describeTunedSettings(result.optimizedParameters)}.
+              </div>
+            )}
+
+            {result.isSynthetic || tooFewTrades ? null : alreadyPromoted ? (
+              <div className="text-[13px] text-gain font-semibold">This model is in use.</div>
             ) : (
               <button
                 type="button"
-                onClick={() => setConfirmRevert(true)}
-                className="self-start min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer"
+                onClick={() => onPromote(result)}
+                className="min-h-12 rounded-full bg-accent text-on-accent font-semibold text-[15px] cursor-pointer"
               >
-                Revert to built-in rules
+                Promote to live
               </button>
             )}
-          </>
-        ) : (
-          <div className="text-[13px] text-muted">Built-in rules, adjusted by live learning. No Lab model promoted.</div>
+          </Card>
         )}
-      </Card>
 
-      <Card aria-label="Train" className="flex flex-col gap-3">
-        <div>
-          <div className="text-sm font-semibold">Train on price history</div>
-          <div className="text-xs text-muted mt-0.5 leading-relaxed">
-            5-minute candles, like live trading. Trades are judged the live way: target, stop or the time limit (4 hours for a coin), after fees.
-          </div>
-        </div>
-        <div className="flex p-0.5 rounded-full bg-inset border border-line" role="group" aria-label="History source">
-          {(["BINANCE", "COINBASE"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              aria-pressed={source === s}
-              onClick={() => setSource(s)}
-              className={`flex-1 min-h-9 rounded-full text-[13px] font-semibold cursor-pointer ${
-                source === s ? "bg-surface border border-line text-ink" : "text-muted"
-              }`}
-            >
-              {s === "BINANCE" ? "Binance" : "Coinbase"}
-            </button>
-          ))}
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Market">
-            <select className={selectClass} value={market} onChange={(e) => setMarket(e.target.value)}>
-              {MARKETS.map((m) => (
-                <option key={m} value={m}>
-                  {marketLabel(m)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="History">
-            <select className={selectClass} value={bars} onChange={(e) => setBars(Number(e.target.value))}>
-              <option value={1000}>1,000 · 3½ days</option>
-              <option value={3000}>3,000 · 10 days</option>
-              <option value={6000}>6,000 · 3 weeks</option>
-            </select>
-          </Field>
-        </div>
-        <button
-          type="button"
-          onClick={trainOne}
-          disabled={busy !== null}
-          className="min-h-12 rounded-full bg-accent text-on-accent font-semibold text-[15px] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-        >
-          {busy === "one" && <Loader2 className="w-4 h-4 animate-spin" />}
-          {busy === "one" ? "Training…" : `Train on ${marketLabel(market)}`}
-        </button>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={trainAll}
-            disabled={busy !== null}
-            className="flex-1 min-h-11 rounded-full border border-line bg-surface text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-          >
-            {busy === "all" && <Loader2 className="w-4 h-4 animate-spin" />}
-            {busy === "all" ? "Training all…" : "Train on all markets"}
-          </button>
-          <label
-            className={`flex-1 min-h-11 rounded-full border border-line bg-surface text-sm font-semibold flex items-center justify-center gap-2 ${
-              busy !== null ? "opacity-60 pointer-events-none" : "cursor-pointer"
-            }`}
-          >
-            {busy === "csv" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            {busy === "csv" ? "Reading…" : "Upload CSV"}
-            <input type="file" accept=".csv,text/csv" onChange={onCsv} className="hidden" aria-label="Upload a CSV of candles" />
-          </label>
-        </div>
-        {busy && progress && <LabProgressBar progress={progress} />}
-        {error && <div className="text-xs text-loss">{error}</div>}
-      </Card>
-
-      {result && b && l && (
-        <Card key={resultKey} aria-label="Result" className="flex flex-col gap-3 nx-pop-in">
-          <div>
-            <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em]">Candidate</div>
-            <div className="text-[15px] font-semibold mt-0.5">{result.datasetName}</div>
-            <div className="text-xs text-muted">
-              {result.dateRange.start} → {result.dateRange.end}
-            </div>
-          </div>
-
-          {result.isSynthetic && (
-            <div className="flex gap-2.5 p-3 rounded-xl bg-danger-soft border border-danger-line text-xs leading-relaxed text-loss">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-px" strokeWidth={1.8} />
-              <span>
-                The exchange couldn't be reached, so this ran on generated prices, not market history. Its numbers say
-                nothing about real trading and it can't be promoted. Try again, try the other source, or upload a CSV.
-              </span>
-            </div>
-          )}
-
-          <div className="flex flex-col">
-            <div className="text-xs text-muted pb-1">Before learning → after, on data it didn't train on</div>
-            <CompareRow
-              index={0}
-              label="Accuracy"
-              before={`${b.accuracyPercent}%`}
-              after={`${l.accuracyPercent}%`}
-              better={l.accuracyPercent === b.accuracyPercent ? null : l.accuracyPercent > b.accuracyPercent}
-            />
-            <CompareRow
-              index={1}
-              label="Win rate"
-              before={`${b.winRate}%`}
-              after={`${l.winRate}%`}
-              better={l.winRate === b.winRate ? null : l.winRate > b.winRate}
-            />
-            <CompareRow
-              index={2}
-              label="Worst drop"
-              before={`${b.maxDrawdownPercent}%`}
-              after={`${l.maxDrawdownPercent}%`}
-              better={l.maxDrawdownPercent === b.maxDrawdownPercent ? null : l.maxDrawdownPercent < b.maxDrawdownPercent}
-            />
-            <CompareRow index={3} label="Trades" before={`${b.tradesCount}`} after={`${l.tradesCount}`} better={null} />
-          </div>
-
-          {result.folds.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <div className="flex justify-between text-[13px]">
-                <span className="font-semibold">Walk-forward test</span>
-                <span className={foldsPassed === result.folds.length ? "text-gain font-semibold" : "text-muted"}>
-                  {foldsPassed} of {result.folds.length} periods passed
-                </span>
-              </div>
-              <div className="flex gap-1.5">
-                {result.folds.map((f, i) => (
-                  <div
-                    key={f.fold}
-                    style={{ animationDelay: `${400 + i * 110}ms` }}
-                    title={`${f.testRange}: ${f.outOfSampleAccuracy}% accuracy`}
-                    aria-label={`Period ${f.fold} ${f.passed ? "passed" : "failed"}`}
-                    className={`flex-1 h-7 rounded-md flex items-center justify-center nx-badge-pop ${
-                      f.passed ? "bg-accent-soft text-gain" : "bg-danger-soft text-loss"
-                    }`}
-                  >
-                    {f.passed ? <Check className="w-3.5 h-3.5" strokeWidth={2.2} /> : <X className="w-3.5 h-3.5" strokeWidth={2.2} />}
-                  </div>
-                ))}
-              </div>
-              <div className="text-xs text-muted leading-relaxed">
-                Trained on one stretch of history, then tested on the next, {result.folds.length} times over.
-              </div>
-            </div>
-          )}
-
-          {result.distilledLessons.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <div className="text-[13px] font-semibold">What it learned</div>
-              <ul className="list-none m-0 p-0 flex flex-col gap-1.5">
-                {result.distilledLessons.slice(0, 5).map((lesson, i) => (
-                  <li
-                    key={lesson.id}
-                    className="text-[13px] leading-relaxed bg-inset rounded-[10px] px-3 py-2 nx-row-in"
-                    style={{ animationDelay: `${900 + i * 80}ms` }}
-                  >
-                    {lesson.rule}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {!result.isSynthetic && tooFewTrades && (
-            <div className="text-xs leading-relaxed text-warn-ink bg-warn-soft rounded-xl px-3 py-2.5">
-              Only {l.tradesCount} test {l.tradesCount === 1 ? "trade" : "trades"}, too few to trust these numbers, so it
-              can't be promoted. Train on more history.
-            </div>
-          )}
-
-          {result.optimizedParameters && !result.isSynthetic && !alreadyPromoted && (
-            <div className="text-xs text-muted leading-relaxed">
-              Promoting adds a breakout trader with these settings to the panel:{" "}
-              {describeTunedSettings(result.optimizedParameters)}.
-            </div>
-          )}
-
-          {result.isSynthetic || tooFewTrades ? null : alreadyPromoted ? (
-            <div className="text-[13px] text-gain font-semibold">This model is in use.</div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onPromote(result)}
-              className="min-h-12 rounded-full bg-accent text-on-accent font-semibold text-[15px] cursor-pointer"
-            >
-              Promote to live
-            </button>
-          )}
-        </Card>
-      )}
-
-      {trailProfile && onTrailProfileChange && (
-        <ExitSettings
-          profile={trailProfile}
-          onChange={onTrailProfileChange}
-          onCompare={() => runExitComparison(liveMarketStream.getCryptoSymbols().slice(0, GLOBAL_TRAINING_COINS), bars)}
-        />
-      )}
+        {trailProfile && onTrailProfileChange && (
+          <ExitSettings
+            profile={trailProfile}
+            onChange={onTrailProfileChange}
+            onCompare={() => runExitComparison(liveMarketStream.getCryptoSymbols().slice(0, GLOBAL_TRAINING_COINS), bars)}
+          />
+        )}
+      </section>
     </div>
   );
 };

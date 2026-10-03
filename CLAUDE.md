@@ -28,6 +28,14 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - **App:** React 19 + Vite + Tailwind v4 in `src/`. Screens are in `src/components/ledger/`.
   Colours are tokens in `src/index.css`. Themes are Ivory (default), Graphite (dark) and Blush (pink),
   set per device (`src/services/theme.ts`). Use the tokens, never fixed colours.
+  The Lab (`LedgerLab.tsx`) has four tabs, the last one picked remembered per device:
+  - **Today:** what's trading and why (`LabSummary`), then the daily check with its coin slots (`DailyCoinsCard`).
+  - **Records:** every coin strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`),
+    then the replays' details.
+  - **Tests:** the machine-learning test and the coin check (`CoinCheckCard`).
+  - **Tools:** the older hands-on training tools.
+  Explanations and long lists fold away (`Fold`); chips, bars and year columns are in `labUi.tsx`. The cards read
+  their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume
   (`NEXUS_DATA_DIR`), so it keeps working with the app closed.
   - The scanner runs after every 5-minute candle close (`server/scanner/`).

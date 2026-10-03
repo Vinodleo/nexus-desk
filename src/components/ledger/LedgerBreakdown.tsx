@@ -221,7 +221,7 @@ export const MARKET_TITLE = { crypto: "Coins", nse: "Indian stocks", us: "US sto
 /** The same, keyed as the per-market limits are. */
 const MARKET_TITLE_BY_KEY = { coins: MARKET_TITLE.crypto, stocks: MARKET_TITLE.nse, us: MARKET_TITLE.us } as const;
 
-interface EdgeRow {
+export interface EdgeRow {
   market: "crypto" | "nse" | "us";
   trader: string;
   trades: number;
@@ -233,7 +233,7 @@ interface EdgeRow {
   /** What the trader's record in the other market adds to judgedR (0 with none there). */
   otherMarketR?: number;
 }
-interface EdgeTable {
+export interface EdgeTable {
   profile: string;
   measuredAt: number;
   symbols: number;
@@ -242,6 +242,15 @@ interface EdgeTable {
   recordDays?: number;
   minMarketTrades: number;
   rows: EdgeRow[];
+}
+
+/**
+ * Whether a trader is held back in its market: once the market has enough
+ * setups to be judged, a record under the edge or too short pauses it.
+ */
+export function edgePaused(table: Pick<EdgeTable, "rows" | "minMarketTrades">, row: EdgeRow): boolean {
+  const measured = table.rows.filter((r) => r.market === row.market).reduce((n, r) => n + r.trades, 0);
+  return measured >= table.minMarketTrades && traderHeldBack(row.judgedR, row.trades);
 }
 
 /** What the records cover: "since 27 Sep (the server keeps up to 30 days)", or the day of candles from a server that doesn't keep them. */
@@ -534,7 +543,7 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: Historic
   if (!table || table.rows.length === 0 || !market) return null;
 
   const judgingIn = (m: EdgeMarket) => table.rows.filter((r) => r.market === m).reduce((n, r) => n + r.trades, 0) >= table.minMarketTrades;
-  const pausedIn = (r: EdgeRow) => judgingIn(r.market) && traderHeldBack(r.judgedR, r.trades);
+  const pausedIn = (r: EdgeRow) => edgePaused(table, r);
   const pick = (m: EdgeMarket) => {
     setPicked(m);
     setOpenTrader(null);
