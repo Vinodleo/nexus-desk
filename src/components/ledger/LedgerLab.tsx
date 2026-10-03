@@ -16,6 +16,7 @@ import { GrowBar, staggerDelay } from "./motion";
 import { ExitSettings } from "./ExitSettings";
 import { HistoryCard } from "./HistoryCard";
 import { MlTestCard } from "./MlTestCard";
+import { DailyCoinsCard } from "./DailyCoinsCard";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
 
@@ -189,6 +190,8 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({ promotedLabModel: promoted
         <h1 className="m-0 font-display text-[26px] font-semibold">Lab</h1>
         <div className="text-[13px] text-muted">Test strategy changes before they trade</div>
       </header>
+
+      <DailyCoinsCard />
 
       <div className="flex items-center gap-2 text-xs text-muted">
         <span className="w-2 h-2 rounded-full bg-warn" />

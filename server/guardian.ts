@@ -53,6 +53,8 @@ export interface DaemonPosition {
   signalPrice?: number;
   /** The app has synced it back at least once, so it knows about it. */
   clientSeen?: boolean;
+  /** "1d": a coin trade on daily candles, held up to 30 days (scanner/dailyCoins.ts). */
+  timeframe?: "1d";
 }
 
 export interface DaemonClosedTrade {
@@ -85,6 +87,7 @@ export interface DaemonClosedTrade {
   highestPrice?: number;
   lowestPrice?: number;
   signalPrice?: number;
+  timeframe?: "1d";
 }
 
 interface DaemonPersistedState {
@@ -268,6 +271,8 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
       ...mergeSyncedGuardState(p.direction, p.entryPrice, existing, p),
       openedByServer: existing?.openedByServer,
       clientSeen: existing?.openedByServer ? true : undefined,
+      // Set by the server when it opened a daily trade: an app that doesn't know the field keeps it.
+      ...(existing?.timeframe ? { timeframe: existing.timeframe } : {}),
     });
   }
 
@@ -368,6 +373,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     highestPrice: Math.max(pos.highestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
     lowestPrice: Math.min(pos.lowestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
     ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
+    ...(pos.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
   };
 
   daemonClosedTrades.unshift(closedRecord);

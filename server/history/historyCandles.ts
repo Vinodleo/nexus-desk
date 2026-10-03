@@ -35,8 +35,8 @@ let binanceHost = BINANCE_HOSTS[0];
 /** The coin's Binance pair, e.g. "BTC/INR" → "BTCUSDT". */
 export const binancePair = (symbol: string) => `${symbol.split("/")[0].toUpperCase()}USDT`;
 
-async function binancePage(pair: string, startMs: number, endMs: number): Promise<{ rows: unknown[] } | { error: string; unknownPair?: boolean }> {
-  const query = `/api/v3/klines?symbol=${pair}&interval=5m&startTime=${startMs}&endTime=${endMs}&limit=${BINANCE_LIMIT}`;
+async function binancePage(pair: string, startMs: number, endMs: number, interval: "5m" | "1d" = "5m"): Promise<{ rows: unknown[] } | { error: string; unknownPair?: boolean }> {
+  const query = `/api/v3/klines?symbol=${pair}&interval=${interval}&startTime=${startMs}&endTime=${endMs}&limit=${BINANCE_LIMIT}`;
   let last = "";
   // The host that last worked first, then the other.
   for (const host of [binanceHost, ...BINANCE_HOSTS.filter((h) => h !== binanceHost)]) {
@@ -56,6 +56,18 @@ async function binancePage(pair: string, startMs: number, endMs: number): Promis
     }
   }
   return { error: last };
+}
+
+/**
+ * A coin's last `days` daily candles from Binance (COINUSDT, UTC days, as
+ * the replay builds them), closed by `now`: what the daily coin trades read.
+ */
+export async function fetchCoinDaily(symbol: string, days: number, now: number): Promise<HistoryFetch> {
+  const page = await binancePage(binancePair(symbol), now - Math.min(days, BINANCE_LIMIT) * DAY_MS, now, "1d");
+  if ("error" in page) return { error: page.error };
+  const series = emptySeries();
+  appendBars(series, toClosedBars(page.rows, DAY_MS, now));
+  return { series };
 }
 
 /** A coin's 5-minute candles from Binance (COINUSDT), from `fromMs` to `toMs`. */

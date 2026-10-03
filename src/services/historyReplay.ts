@@ -1,11 +1,12 @@
-import type { MarketBar, StrategySetup } from "../types";
+import type { MarketBar, RegimeType, StrategySetup } from "../types";
 import { decorateBarsWithIndicators } from "./marketDataService";
-import { LAB_INTERVAL_MS, panelSetupsOnHistory } from "./labSimulation";
+import { LAB_INTERVAL_MS, panelSetupsOnHistory, REPLAY_COOLDOWN_BARS } from "./labSimulation";
 import { simulateExit } from "./exitComparison";
 import { expectancyKey, MARKET_KINDS, type MarketKind, type TraderRecord } from "./exitExpectancy";
 import { costsTooBigForStop, MAX_COST_SHARE_OF_STOP } from "../shared/tradeCosts";
 import type { TrailProfileId } from "../shared/trailingStop";
 import { sessionClock } from "../shared/sessionBars";
+import { DAILY_HOLD_MINUTES } from "../shared/coinHolds";
 import { IST_OFFSET_MS, isNseSymbol, NSE_OPEN } from "../shared/nse";
 import { isUsSymbol, US_OPEN } from "../shared/usMarket";
 
@@ -401,7 +402,7 @@ export const TIMEFRAME_RULES: Record<Timeframe, { intervalMs: number; higherMs: 
   // Taken in stocks' entry hours, as live; held up to 5 days.
   "1h": { intervalMs: HOUR_MS, higherMs: DAY_MS, holdMs: 5 * DAY_MS, warmupBars: 250, anyTime: false },
   // Taken at the day's close; held up to 30 days.
-  "1d": { intervalMs: DAY_MS, higherMs: 7 * DAY_MS, holdMs: 30 * DAY_MS, warmupBars: 210, anyTime: true },
+  "1d": { intervalMs: DAY_MS, higherMs: 7 * DAY_MS, holdMs: DAILY_HOLD_MINUTES * 60_000, warmupBars: 210, anyTime: true },
 };
 
 /**
@@ -461,9 +462,7 @@ export function* replayTimeframe(
   const rules = TIMEFRAME_RULES[tf];
   const n = series.t.length;
   if (n < rules.warmupBars + 20) return;
-  // The candles' own volatility plans the stops (planAtr reads it as the hourly one).
-  const bars = decorateBarsWithIndicators(barsOf(series, 0, n));
-  for (const b of bars) b.atrHour = b.atr;
+  const bars = slowBars(series);
   const held = { intervalMs: rules.intervalMs, holdMs: rules.holdMs, feeRate };
   const busyUntil = new Map<string, number>();
   const closeMs = (k: number) => (bars[k].timestampMs as number) + rules.intervalMs;
@@ -495,6 +494,53 @@ export function* replayTimeframe(
     }
     yield trades;
   }
+}
+
+/** Candles before the last that latestSlowSetups replays, for the traders' spacing (REPLAY_COOLDOWN_BARS) to carry over as in the replay. */
+export const SPACING_LOOKBACK_BARS = 10 * REPLAY_COOLDOWN_BARS;
+
+/** A market's slower candles with their indicators; their own volatility plans the stops (planAtr reads it as the hourly one). */
+function slowBars(series: CandleSeries): MarketBar[] {
+  const bars = decorateBarsWithIndicators(barsOf(series, 0, series.t.length));
+  for (const b of bars) b.atrHour = b.atr;
+  return bars;
+}
+
+/**
+ * The setups the replay would take at the close of the last candle in
+ * `series` (just closed, live): the same traders, candles, spacing and cost
+ * check as replayTimeframe, so a live trade is one the replay would have
+ * taken. Entry, stop and target are in the candles' prices; the regime is
+ * the candle's (null without setups). Null with too few candles.
+ */
+export function latestSlowSetups(
+  symbol: string,
+  series: CandleSeries,
+  tf: Timeframe,
+  feeRate: number,
+  spreadPct: number = 0
+): { regime: RegimeType | null; setups: StrategySetup[] } | null {
+  const rules = TIMEFRAME_RULES[tf];
+  const n = series.t.length;
+  if (n < rules.warmupBars + 1) return null;
+  const bars = slowBars(series);
+  const last = n - 1;
+  // From a month of candles back, so a trader who signalled just before is spaced out, as in the replay.
+  const found = panelSetupsOnHistory(symbol, bars, undefined, {
+    from: Math.max(rules.warmupBars, last - SPACING_LOOKBACK_BARS),
+    view: HISTORY_VIEW_BARS,
+    intervalMs: rules.intervalMs,
+    higherMs: rules.higherMs,
+    anyTime: rules.anyTime,
+    throughLast: true,
+  });
+  const at = found.find((f) => f.i === last);
+  if (!at) return { regime: null, setups: [] };
+  const setups = at.setups.filter((s) => {
+    const risk = Math.abs(s.entryPrice - s.stopLoss);
+    return risk > 0 && ((feeRate + spreadPct) * s.entryPrice) / risk <= MAX_COST_SHARE_OF_STOP;
+  });
+  return { regime: at.regime, setups };
 }
 
 // ---------- the coin check: each market on its own, and a fixed list of coins ----------

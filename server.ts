@@ -24,6 +24,7 @@ import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
 import { startHistoryJob } from "./server/history/historyJob";
 import { startMlTestJob } from "./server/history/mlTest";
+import { startDailyCoins } from "./server/scanner/dailyCoins";
 import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
 import { startStockPrices } from "./server/stockPrices";
 import { startQuotes } from "./server/quotes";
@@ -134,6 +135,7 @@ async function startServer() {
   startServerScanner();
   startHistoryJob();
   startMlTestJob();
+  startDailyCoins();
   startStockPrices();
   startUsPrices();
   startQuotes();

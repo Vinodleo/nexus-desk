@@ -57,6 +57,15 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   list, the 20 biggest on 1 Oct 2024 (`FIXED_COINS`), and each market's slower results are kept on their own (`slowTotals`):
   the Lab's coin check compares the two, in case today's picks flatter the traders. It runs weekly in the background
   at about 3% of a core (`CPU_SHARE`): Fly's shared CPU guarantees only 6.25%, and draining its burst allowance slows the scanner.
+- **Daily coin trades (paper, owner's call, 3 Oct):** `server/scanner/dailyCoins.ts`. Once a day, 10 minutes after the
+  00:00 UTC daily close (until 6 hours after), the server reads each coin's daily candles from Binance (today's coins plus
+  `FIXED_COINS`, those CoinDCX lists) and takes the setups the two-year replay would take there (`latestSlowSetups`).
+  They open through the server autopilot within the coin limits, priced at CoinDCX's ask with the stop and target scaled
+  from Binance's chart, never live and without Gemini's review. A trader trades only if its two-year daily coin record
+  with the owner's trailing stop averages `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ setups (`dailyTraderGates`); each
+  trades alone (no panel vote). Positions carry `timeframe: "1d"`: held up to 30 days and closed at that limit exactly
+  (`holdingDecision`), trailed on the daily ATR, labelled "daily", and left out of the 5-minute traders' real record.
+  The Lab's "Daily coin trades" card shows each day's check.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). A market passes only if
   the picks, one at a time, average `MIN_EDGE_R`+ and clearly above zero. It runs after each replay, rests like it,
@@ -86,6 +95,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - **Trading slower (owner's call, 2 Oct):** two years of replays and the machine-learning test showed every 5-minute
   trader losing about its costs. Step 1: the same traders on 1-hour and 1-day candles (the Lab's timeframe switch).
   Step 2: strategies with long records (trend following, momentum), tested on the kept hourly candles. Paper first.
+  Done so far: coins on daily candles passed the coin check (+0.12R a trade on the fixed list) and paper-trade daily
+  since 3 Oct. US daily was only slightly positive and India lost at every speed: not traded slower.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 

@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { Position } from "../../src/types";
 import { scanAllMarkets, type FullScanReport } from "../../src/services/marketScannerService";
-import { DEFAULT_RISK_POLICY } from "../../src/services/riskEngine";
+import { DEFAULT_RISK_POLICY, type RiskPolicyConfig } from "../../src/services/riskEngine";
 import { SIGNAL_INTERVAL_MS, nextCandleFetchAt } from "../../src/services/liveMarketStreamService";
 import { recentBeats } from "../../src/shared/scanHeartbeat";
 import { MAX_KEPT, mergeShadows, resolveShadows, type ShadowSignal } from "../../src/services/shadowTracker";
@@ -256,6 +256,16 @@ export function serverDailyPnl(uid: string, desk: DeskState, now: number = Date.
   return Number((dailyPnlToday(desk, now) + later).toFixed(2));
 }
 
+/** The risk policy a user's desk settings make. */
+export function riskPolicyFor(desk: DeskState): RiskPolicyConfig {
+  return {
+    ...DEFAULT_RISK_POLICY,
+    ...desk.riskLimits,
+    ...(desk.riskLimits.marketLimits ? { marketLimits: cleanMarketLimits(desk.riskLimits.marketLimits) } : {}),
+    equity: desk.equity > 0 ? desk.equity : DEFAULT_RISK_POLICY.equity,
+  };
+}
+
 /** Scans `symbols` for one user and records the results. */
 export async function scanForUser(uid: string, desk: DeskState, symbols: string[], now: number = Date.now()): Promise<ServerScanReport> {
   const state = userState(uid);
@@ -263,12 +273,7 @@ export async function scanForUser(uid: string, desk: DeskState, symbols: string[
     const bars = market.getBars(s);
     return bars ? [[s, bars]] : [];
   }));
-  const riskPolicy = {
-    ...DEFAULT_RISK_POLICY,
-    ...desk.riskLimits,
-    ...(desk.riskLimits.marketLimits ? { marketLimits: cleanMarketLimits(desk.riskLimits.marketLimits) } : {}),
-    equity: desk.equity > 0 ? desk.equity : DEFAULT_RISK_POLICY.equity,
-  };
+  const riskPolicy = riskPolicyFor(desk);
   const report = await scanAllMarkets({
     symbols,
     cryptoSymbols: universe,

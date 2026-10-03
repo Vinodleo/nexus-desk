@@ -10,6 +10,7 @@ import { expectancyRows, MIN_MARKET_TRADES, RECORD_DAYS } from "../../src/servic
 import { getEvents } from "../eventCalendar";
 import { historyView, startHistoryRun } from "../history/historyJob";
 import { mlTestView, startMlTest } from "../history/mlTest";
+import { dailyCoinsView } from "../scanner/dailyCoins";
 import { PAUSE_AFTER_MS, eventWindowAt } from "../../src/shared/eventCalendar";
 
 // The app's side of the server scanner: it sends its desk settings, and
@@ -88,6 +89,11 @@ router.get("/api/ml-test", (_req: Request, res: Response) => {
 router.post("/api/ml-test/run", (_req: Request, res: Response) => {
   void startMlTest();
   res.json({ success: true, ...mlTestView() });
+});
+
+// Coin trades on daily candles (the Lab): the last daily scan, and which traders trade.
+router.get("/api/daily-coins", (req: Request, res: Response) => {
+  res.json({ success: true, ...dailyCoinsView(uidOf(req)) });
 });
 
 // "Scan now": every coin, immediately.

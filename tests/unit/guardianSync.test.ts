@@ -127,6 +127,13 @@ describe("positions the server's autopilot opened", () => {
     await syncAs([]);
   });
 
+  it("stay daily trades when an app that doesn't know the mark syncs them back", async () => {
+    guardian.openServerPosition("u2", { ...opened, id: "srv-daily", timeframe: "1d", expectedHoldingTimeMinutes: 43200 });
+    await syncAs([{ ...opened, id: "srv-daily", userId: "u2", openedByServer: true, clientSeen: false, expectedHoldingTimeMinutes: 43200 }]);
+    expect(guardian.daemonPositions.get("srv-daily")).toMatchObject({ timeframe: "1d", clientSeen: true });
+    await syncAs([]);
+  });
+
   it("can't be claimed by the app for a position the server didn't open", async () => {
     await syncAs([{ ...opened, id: "fake-1", openedByServer: true, clientSeen: false }]);
     expect(guardian.daemonPositions.get("fake-1")?.openedByServer).toBeUndefined();

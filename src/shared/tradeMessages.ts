@@ -24,11 +24,11 @@ const EXIT_WORDS: Record<string, string> = {
 };
 
 export function tradeOpenedMessage(
-  p: { id: string; symbol: string; direction: "LONG" | "SHORT"; quantity: number; entryPrice: number; stopLoss: number; takeProfit: number; setupName?: string },
+  p: { id: string; symbol: string; direction: "LONG" | "SHORT"; quantity: number; entryPrice: number; stopLoss: number; takeProfit: number; setupName?: string; timeframe?: string },
   by: "server" | "app"
 ): TradeMessage {
   return {
-    title: `${p.direction === "LONG" ? "Bought" : "Sold short"} ${p.symbol}`,
+    title: `${p.direction === "LONG" ? "Bought" : "Sold short"} ${p.symbol}${p.timeframe === "1d" ? " (daily, paper)" : ""}`,
     body: `${p.quantity} @ ${inr(p.entryPrice)} (${inr(p.quantity * p.entryPrice)}) · stop ${inr(p.stopLoss)} · target ${inr(p.takeProfit)}${
       p.setupName ? ` · ${p.setupName}` : ""
     }${by === "server" ? " · opened by the server" : ""}`,

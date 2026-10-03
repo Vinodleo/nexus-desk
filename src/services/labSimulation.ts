@@ -30,7 +30,7 @@ const WINDOW_BARS = 21;
 /** Candles handed to resolution: the setup's time limit in candles, and a little extra for its close. */
 const resolveBarsFor = (setup: StrategySetup) => Math.ceil((holdMinutesFor(setup) * 60 * 1000) / LAB_INTERVAL_MS) + 2;
 /** After a trader's signal, their next few candles on the same coin aren't counted again. */
-const REPLAY_COOLDOWN_BARS = 3;
+export const REPLAY_COOLDOWN_BARS = 3;
 
 export interface LabParams {
   slMultiplier: number;
@@ -261,6 +261,8 @@ export function panelSetupsOnHistory(
     higherMs?: number;
     /** Trades taken at any candle's close, not only in stocks' entry hours (daily candles close after them). */
     anyTime?: boolean;
+    /** The last candle too (live: the one just closed), which a replay leaves for the trade to play out on. */
+    throughLast?: boolean;
   } = {}
 ): { i: number; regime: RegimeType; macro: RegimeType | "neutral"; setups: StrategySetup[] }[] {
   const interval = range.intervalMs ?? LAB_INTERVAL_MS;
@@ -271,7 +273,8 @@ export function panelSetupsOnHistory(
   /** The last candle each trader (by setup name) is still spaced out until. */
   const spacedUntil = new Map<string, number>();
   const view = range.view ?? Infinity;
-  for (let i = Math.max(WARMUP_BARS, range.from ?? 0); i < Math.min(bars.length - 1, range.to ?? Infinity); i++) {
+  const end = range.throughLast ? bars.length : bars.length - 1;
+  for (let i = Math.max(WARMUP_BARS, range.from ?? 0); i < Math.min(end, range.to ?? Infinity); i++) {
     if (!range.anyTime && !takesEntriesAt(symbol, (bars[i].timestampMs as number) + interval)) continue;
     const regime = classifyRegime(bars[i], scale);
     const macro = macroAt((bars[i].timestampMs as number) + interval);
