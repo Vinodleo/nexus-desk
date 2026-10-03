@@ -45,6 +45,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - The scanner runs after every 5-minute candle close (`server/scanner/`).
   - The server autopilot is in `server/scanner/autopilot.ts`.
   - The guardian (`server/guardian.ts`) manages stops and exits 24/7.
+  - Live coin trades (`server/liveExecution.ts`): the server sends every exit itself (idempotent, retried). Each live
+    long also has a backup stop resting at CoinDCX (a `stop_limit` sell `BACKSTOP_GAP` 0.5% under the guardian's stop,
+    `reconcileExchangeStops` every 15 s): moved up as the stop trails (by 0.5%+, cancel then replace), cancelled before
+    any exit (it holds the coins), and a fill there closes the trade in the guardian at CoinDCX's price
+    (`setExchangeStopListener`). If CoinDCX refuses it, a pop-up says so once and the guardian watches the stop alone.
   - Web Push sends the trade pop-ups.
 - **Shared rules:** `src/shared/` and `src/services/`, used by both the app and the server.
   - Exit rules, trailing stops and trade maths.
@@ -182,7 +187,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   are tested on their daily candles since 2016 in the Lab, and trade only if one clearly beats its costs. US since 2016:
   breakout +0.39R over 554 trades (8 of 11 years up), momentum +0.26R (9 of 11), moving averages +0.32R (5 of 11): US
   breakout and US momentum paper-trade (owner's call), each on its own slots. India: breakout +0.23R but 5 of 11 years and mostly 2020; not traded.
-- **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
+- **Going live:** only when the owner asks. The checklist is `docs/going-live.md` (proof on paper, the builds still
+  needed: a live path for coin breakout, backups, a daily check against CoinDCX; setup; the watched first trade).
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 
 ## Gotchas

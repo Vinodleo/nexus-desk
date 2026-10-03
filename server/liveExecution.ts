@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { recordLiveOrder, withLiveOrderLock } from "./liveOrderGuard";
+import { getMarketRule } from "./marketRules";
 
 // Server-owned lifecycle for LIVE CoinDCX positions.
 //
@@ -15,10 +16,40 @@ import { recordLiveOrder, withLiveOrderLock } from "./liveOrderGuard";
 // order with that client_order_id already exists, and only re-send if it
 // doesn't. That relies on /exchange/v1/orders/status accepting
 // `client_order_id` — verify against CoinDCX's docs before going live.
+//
+// Each live long also has a backup stop resting at CoinDCX (a stop-limit
+// sell, BACKSTOP_GAP below the server's stop): if the server is down when
+// the price falls, CoinDCX sells anyway. The server's own stop stays the one
+// that normally acts; the backup follows it up as it trails, and is
+// cancelled before any exit (it holds the coins). If CoinDCX refuses stop
+// orders, the owner is told and the server watches the stop alone, as before.
 
 type Side = "buy" | "sell";
 
 export type LivePositionStatus = "OPEN" | "EXIT_PENDING" | "CLOSED" | "EXIT_FAILED";
+
+/**
+ * The backup stop at CoinDCX: PLACING until CoinDCX confirms it (looked up if
+ * the answer is lost), OPEN while it rests there, CANCELLING until a cancel
+ * is confirmed, CANCELLED (replaced, or cleared for an exit), FILLED when it
+ * sold the position, REFUSED when CoinDCX wouldn't take it.
+ */
+export type ExchangeStopStatus = "PLACING" | "OPEN" | "CANCELLING" | "CANCELLED" | "FILLED" | "REFUSED";
+
+export interface ExchangeStop {
+  clientOrderId: string;
+  orderId?: string;
+  /** The price that triggers it, and the lowest it sells at once triggered. */
+  stopPrice: number;
+  limitPrice: number;
+  status: ExchangeStopStatus;
+  /** Which of this position's stop orders it is (each move places a new one). */
+  seq: number;
+  placedAt: string;
+  /** When CoinDCX was last asked how it stands (ms). */
+  checkedAt?: number;
+  lastError?: string;
+}
 
 export interface LivePositionRecord {
   positionId: string;
@@ -38,6 +69,8 @@ export interface LivePositionRecord {
   nextRetryAt?: number;
   lastError?: string;
   closedAt?: string;
+  /** The backup stop resting at CoinDCX, once placed. */
+  exchangeStop?: ExchangeStop;
 }
 
 const MAX_EXIT_ATTEMPTS = 10;
@@ -99,6 +132,11 @@ export function clientOrderId(kind: "open" | "exit", positionId: string): string
   return `nx_${kind}_${positionId.replace(/[^A-Za-z0-9]/g, "")}`.slice(0, 36);
 }
 
+/** A position's `seq`th backup stop order. */
+export function stopClientOrderId(positionId: string, seq: number): string {
+  return `nx_s${seq}_${positionId.replace(/[^A-Za-z0-9]/g, "")}`.slice(0, 36);
+}
+
 export async function placeMarketOrder(market: string, side: Side, quantity: number, clientOrderIdValue: string) {
   const result = await signedPost("/exchange/v1/orders/create", {
     side,
@@ -109,6 +147,54 @@ export async function placeMarketOrder(market: string, side: Side, quantity: num
   });
   const orderId = result.data?.orders?.[0]?.id || result.data?.id;
   return { ...result, orderId: orderId ? String(orderId) : undefined };
+}
+
+/** A stop-limit order: rests at CoinDCX until the price reaches `stopPrice`, then sells at `limitPrice` or better. */
+export async function placeStopLimitOrder(market: string, side: Side, quantity: number, stopPrice: number, limitPrice: number, clientOrderIdValue: string) {
+  const result = await signedPost("/exchange/v1/orders/create", {
+    side,
+    order_type: "stop_limit",
+    market,
+    total_quantity: quantity,
+    stop_price: stopPrice,
+    price_per_unit: limitPrice,
+    client_order_id: clientOrderIdValue,
+  });
+  const orderId = result.data?.orders?.[0]?.id || result.data?.id;
+  return { ...result, orderId: orderId ? String(orderId) : undefined };
+}
+
+/** An order, by CoinDCX's id when known, else by our client order id. */
+type OrderRef = { orderId?: string; clientOrderId: string };
+const refBody = (ref: OrderRef) => (ref.orderId ? { id: ref.orderId } : { client_order_id: ref.clientOrderId });
+
+export async function cancelOrder(ref: OrderRef) {
+  return signedPost("/exchange/v1/orders/cancel", refBody(ref));
+}
+
+/** CoinDCX's states for an order that no longer rests there. */
+const DONE = new Set(["filled", "cancelled", "partially_cancelled", "rejected"]);
+
+/**
+ * How an order stands at CoinDCX: "found" with its status, how much of it
+ * filled and at what average price; "not_found" when CoinDCX answered and
+ * has none; "unknown" when it couldn't be asked (network, 5xx).
+ */
+export async function orderStatus(ref: OrderRef): Promise<{ state: "found" | "not_found" | "unknown"; status?: string; orderId?: string; filled?: number; avgPrice?: number }> {
+  try {
+    const result = await signedPost("/exchange/v1/orders/status", refBody(ref));
+    if (result.ok && result.data?.id) {
+      const total = Number(result.data.total_quantity);
+      const remaining = Number(result.data.remaining_quantity);
+      const filled = Number.isFinite(total) && Number.isFinite(remaining) ? Math.max(0, total - remaining) : undefined;
+      const avg = Number(result.data.avg_price) || Number(result.data.price_per_unit);
+      return { state: "found", status: String(result.data.status || "").toLowerCase(), orderId: String(result.data.id), filled, avgPrice: avg > 0 ? avg : undefined };
+    }
+    if (result.status >= 400 && result.status < 500) return { state: "not_found" };
+    return { state: "unknown" };
+  } catch {
+    return { state: "unknown" };
+  }
 }
 
 // "found" = CoinDCX has an order with this client_order_id; "not_found" =
@@ -203,6 +289,27 @@ async function attemptExit(rec: LivePositionRecord): Promise<void> {
   const exitSide: Side = rec.entrySide === "buy" ? "sell" : "buy";
   rec.exitClientOrderId = rec.exitClientOrderId || clientOrderId("exit", rec.positionId);
 
+  // The backup stop holds the coins: cancel it first, and see whether it sold any.
+  const stop = rec.exchangeStop;
+  if (!rec.exitSentAt && stop && (stop.status === "OPEN" || stop.status === "PLACING" || stop.status === "CANCELLING")) {
+    stop.status = "CANCELLING";
+    save();
+    await cancelOrder(stop).catch(() => undefined);
+    const st = await orderStatus(stop);
+    if (st.state === "unknown" || (st.state === "found" && !DONE.has(st.status!))) {
+      rec.exitAttempts += 1;
+      return scheduleRetry(rec, "Couldn't confirm the backup stop at CoinDCX was cancelled; trying again");
+    }
+    if (st.state === "found" && st.status === "filled") {
+      stop.status = "FILLED";
+      return markClosed(rec, st.orderId);
+    }
+    // Part sold before the cancel: only the rest is left to sell.
+    if ((st.filled ?? 0) > 0) rec.quantity = Number((rec.quantity - st.filled!).toFixed(8));
+    stop.status = "CANCELLED";
+    save();
+  }
+
   // If an earlier send may have reached the exchange (even one interrupted by
   // a crash), check before sending again.
   if (rec.exitSentAt) {
@@ -243,6 +350,159 @@ export function requestLiveExit(positionId: string, reason: string): Promise<Liv
     return rec;
   });
 }
+
+// ---------- the backup stop at CoinDCX ----------
+
+/** The backup stop sits this far below the server's stop: the server's normally acts first; CoinDCX's only if it doesn't. */
+export const BACKSTOP_GAP = 0.005;
+/** Once triggered it sells down to this far below its trigger, so a fast fall still fills. */
+export const STOP_LIMIT_SLACK = 0.01;
+/** It's moved up only once the server's stop has risen this much (each move is a cancel and a new order). */
+export const STOP_MOVE_MIN = 0.005;
+/** How often the backup stops are checked and moved. */
+export const STOP_RECONCILE_MS = 15_000;
+/** How often CoinDCX is asked whether a resting backup stop has sold. */
+export const STOP_STATUS_EVERY_MS = 60_000;
+/** After CoinDCX refuses one, it's tried again this much later. */
+export const STOP_REFUSED_RETRY_MS = 6 * 60 * 60 * 1000;
+
+/** The server's stop for a live position (the guardian's), or undefined while it doesn't know the position. */
+let stopSource: (positionId: string) => number | undefined = () => undefined;
+export function setStopSource(fn: (positionId: string) => number | undefined) {
+  stopSource = fn;
+}
+
+export interface ExchangeStopListener {
+  /** The backup stop sold the position at CoinDCX: close it in the guardian at that price (no exit is sent). */
+  closed: (rec: LivePositionRecord, price: number) => void;
+  /** CoinDCX refused the backup stop: tell the owner the server watches the stop alone. */
+  refused: (rec: LivePositionRecord) => void;
+}
+let stopListener: ExchangeStopListener = { closed: () => {}, refused: () => {} };
+export function setExchangeStopListener(listener: ExchangeStopListener) {
+  stopListener = listener;
+}
+
+const roundDown = (x: number, digits: number) => Math.floor(x * 10 ** digits + 1e-9) / 10 ** digits;
+
+/** The backup stop's trigger and limit for a server stop, to the market's price precision (else 5 significant figures). */
+export async function backstopPrices(market: string, serverStop: number): Promise<{ stopPrice: number; limitPrice: number } | null> {
+  if (!(serverStop > 0)) return null;
+  const rule = await getMarketRule(market).catch(() => undefined);
+  const digits = rule?.pricePrecision ?? Math.max(2, 4 - Math.floor(Math.log10(serverStop)));
+  const stopPrice = roundDown(serverStop * (1 - BACKSTOP_GAP), digits);
+  const limitPrice = roundDown(stopPrice * (1 - STOP_LIMIT_SLACK), digits);
+  return stopPrice > 0 && limitPrice > 0 ? { stopPrice, limitPrice } : null;
+}
+
+/** The backup stop sold the position at CoinDCX: closed, and the guardian told. */
+function closedByStop(rec: LivePositionRecord, st: { orderId?: string; avgPrice?: number }) {
+  const stop = rec.exchangeStop!;
+  stop.status = "FILLED";
+  rec.exitReason = "STOP_LOSS";
+  markClosed(rec, st.orderId ?? stop.orderId);
+  console.warn(`[LiveExecution] The backup stop at CoinDCX sold ${rec.market} for ${rec.positionId}.`);
+  stopListener.closed(rec, st.avgPrice ?? stop.limitPrice);
+}
+
+/** Learns how the backup stop stands at CoinDCX; true if it sold (the position is closed). */
+async function refreshStop(rec: LivePositionRecord, now: number): Promise<boolean> {
+  const stop = rec.exchangeStop!;
+  const st = await orderStatus(stop);
+  stop.checkedAt = now;
+  if (st.state === "unknown") return false;
+  if (st.state === "not_found") {
+    // Never reached CoinDCX, or gone (cancelled there): placed again below.
+    stop.status = "CANCELLED";
+    return false;
+  }
+  stop.orderId ??= st.orderId;
+  if (st.status === "filled") {
+    closedByStop(rec, st);
+    return true;
+  }
+  if (DONE.has(st.status!)) {
+    stop.status = "CANCELLED";
+    // It sold part before it was cancelled: the stop was reached, so the rest is sold too.
+    if ((st.filled ?? 0) > 0) {
+      rec.quantity = Number((rec.quantity - st.filled!).toFixed(8));
+      rec.exitReason = "STOP_LOSS";
+      rec.status = "EXIT_PENDING";
+      save();
+      await attemptExit(rec);
+      stopListener.closed(rec, st.avgPrice ?? stop.limitPrice);
+      return true;
+    }
+    return false;
+  }
+  // Still resting there (or selling): a cancel asked for earlier is asked again.
+  if (stop.status === "CANCELLING") await cancelOrder(stop).catch(() => undefined);
+  else stop.status = "OPEN";
+  return false;
+}
+
+/** Places, checks or moves one live position's backup stop. */
+async function reconcileStop(rec: LivePositionRecord, now: number): Promise<void> {
+  if (rec.status !== "OPEN" || rec.entrySide !== "buy") return;
+  const stop = rec.exchangeStop;
+  if (stop && (stop.status === "PLACING" || stop.status === "CANCELLING" || (stop.status === "OPEN" && now - (stop.checkedAt ?? 0) >= STOP_STATUS_EVERY_MS))) {
+    const sold = await refreshStop(rec, now);
+    save();
+    if (sold || stop.status === "PLACING" || stop.status === "CANCELLING") return;
+  }
+  const prices = await backstopPrices(rec.market, stopSource(rec.positionId) ?? NaN);
+  if (!prices) return;
+  if (stop?.status === "REFUSED" && now - Date.parse(stop.placedAt) < STOP_REFUSED_RETRY_MS) return;
+  if (stop?.status === "OPEN") {
+    if (prices.stopPrice < stop.stopPrice * (1 + STOP_MOVE_MIN)) return;
+    // Moved up: the old one is cancelled (confirmed) before the new one goes in.
+    stop.status = "CANCELLING";
+    save();
+    await cancelOrder(stop).catch(() => undefined);
+    if ((await refreshStop(rec, now)) || (stop.status as ExchangeStopStatus) !== "CANCELLED") {
+      save();
+      return;
+    }
+  }
+  const seq = (stop?.seq ?? 0) + 1;
+  const next: ExchangeStop = { clientOrderId: stopClientOrderId(rec.positionId, seq), ...prices, status: "PLACING", seq, placedAt: new Date(now).toISOString() };
+  rec.exchangeStop = next;
+  save();
+  try {
+    const result = await placeStopLimitOrder(rec.market, "sell", rec.quantity, next.stopPrice, next.limitPrice, next.clientOrderId);
+    if (result.ok) {
+      next.status = "OPEN";
+      next.orderId = result.orderId;
+      next.checkedAt = now;
+      console.log(`[LiveExecution] Backup stop for ${rec.positionId} at CoinDCX: sell ${rec.quantity} ${rec.market} below ${next.stopPrice}.`);
+    } else if (result.status >= 400 && result.status < 500) {
+      next.status = "REFUSED";
+      next.lastError = result.data?.message || `CoinDCX refused the stop order (${result.status})`;
+      console.warn(`[LiveExecution] CoinDCX refused the backup stop for ${rec.positionId}: ${next.lastError}. The server watches its stop alone.`);
+      // Told once a trade, not at every retry.
+      if (stop?.status !== "REFUSED") stopListener.refused(rec);
+    } else {
+      // Unclear whether it reached CoinDCX: looked up on the next check.
+      next.lastError = result.data?.message || `CoinDCX answered ${result.status}`;
+    }
+  } catch (err: any) {
+    next.lastError = err?.message || "Network error placing the backup stop";
+  }
+  save();
+  onExitUpdate(rec);
+}
+
+/** Every open live long's backup stop: placed once the guardian knows its stop, checked, moved up as it trails. */
+export async function reconcileExchangeStops(now: number = Date.now()): Promise<void> {
+  for (const rec of Object.values(registry)) {
+    if (rec.status !== "OPEN" || rec.entrySide !== "buy") continue;
+    await withLiveOrderLock(() => reconcileStop(rec, now));
+  }
+}
+
+setInterval(() => {
+  reconcileExchangeStops().catch((err) => console.error("[LiveExecution] Backup-stop loop error:", err));
+}, STOP_RECONCILE_MS).unref();
 
 // Retry loop for exits that failed or couldn't be confirmed.
 async function processPendingExits() {
