@@ -491,7 +491,8 @@ const EDGE_MARKET = { coins: "crypto", stocks: "nse", us: "us" } as const;
 export function realByTrader(trades: HistoricalTrade[], since = 0): Map<string, RealRecord> {
   const sums = new Map<string, { n: number; r: number }>();
   for (const t of trades) {
-    if (!((t.riskAtOpen ?? 0) > 0) || (t.closedAtMs ?? 0) < since) continue;
+    // Daily-candle trades aren't the 5-minute traders' record.
+    if (!((t.riskAtOpen ?? 0) > 0) || (t.closedAtMs ?? 0) < since || t.timeframe === "1d") continue;
     const key = `${EDGE_MARKET[marketOf(t.symbol)]}:${t.setupName}`;
     const acc = sums.get(key) ?? { n: 0, r: 0 };
     acc.n++;

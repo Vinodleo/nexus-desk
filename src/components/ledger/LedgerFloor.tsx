@@ -189,6 +189,7 @@ const LiveCoverage: React.FC<{ scanLocation?: string }> = ({ scanLocation }) => 
 };
 
 const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const dayMonth = (ms: number) => new Date(ms).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 /** "2:15 PM", or "24 Sep, 2:15 PM" for an earlier day. */
 const clockText = (ms: number, now = Date.now()) =>
   new Date(ms).toDateString() === new Date(now).toDateString()
@@ -518,8 +519,12 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             <span className="text-xs text-muted">
               {p.direction === "LONG" ? "Long" : "Short"} · {p.quantity} · {formatMoney(moneyIn(p), { decimals: 0 })} in
             </span>
-            {p.openedByServer && (
-              <div className="text-xs text-accent">Opened by the server at {clock(Date.parse(p.openTime))}</div>
+            {p.timeframe === "1d" ? (
+              <div className="text-xs text-accent">
+                Daily trade · opened {dayMonth(Date.parse(p.openTime))} · closes by {dayMonth(Date.parse(p.openTime) + p.expectedHoldingTimeMinutes * 60_000)}
+              </div>
+            ) : (
+              p.openedByServer && <div className="text-xs text-accent">Opened by the server at {clock(Date.parse(p.openTime))}</div>
             )}
           </div>
           <Flash value={p.currentPrice} className={`font-display text-xl tabular-nums whitespace-nowrap px-1 -mx-1 ${tone}`}>

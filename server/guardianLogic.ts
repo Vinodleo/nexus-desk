@@ -32,6 +32,8 @@ export interface GuardedPosition {
   bankedQuantity?: number;
   bankedPrice?: number;
   isLiveOrder?: boolean;
+  /** "1d": a daily-candle trade, closed at its time limit exactly. */
+  timeframe?: string;
 }
 
 // Returns the exit reason if this tick closes the position, else null.

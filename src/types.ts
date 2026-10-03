@@ -322,6 +322,8 @@ export interface Position {
   openedByServer?: boolean;
   /** The price the signal came from (its candle's close): entryPrice against it is the entry slippage. */
   signalPrice?: number;
+  /** "1d": a coin trade on daily candles, held up to 30 days (server/scanner/dailyCoins.ts). */
+  timeframe?: "1d";
 }
 
 export interface HistoricalTrade {
@@ -347,6 +349,8 @@ export interface HistoricalTrade {
   riskAtOpen?: number;
   /** The price the signal came from; entryPrice against it is what the entry cost (entrySlip). */
   signalPrice?: number;
+  /** "1d": a coin trade on daily candles. */
+  timeframe?: "1d";
   isWin: boolean;
   exitReason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "MANUAL" | "EXPIRY_TIME";
   openedAt: string;

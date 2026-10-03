@@ -7,7 +7,9 @@
 //   real exchange order).
 // - The time limit cuts trades that haven't worked, not winners: past its
 //   limit a position whose stop already locks in profit keeps running on that
-//   stop, up to HOLD_EXTENSION_MULTIPLE times the limit.
+//   stop, up to HOLD_EXTENSION_MULTIPLE times the limit. Daily-candle trades
+//   close at their limit exactly, as the two-year replay they're judged on
+//   closed them.
 
 import { isUsSymbol, usSquareOffDue, US_BREAKEVEN_BUFFER } from "./usMarket";
 import { floorToStep, type MarketRule } from "./marketRules";
@@ -45,6 +47,8 @@ export interface ExitState {
   bankedQuantity?: number;
   bankedPrice?: number;
   isLiveOrder?: boolean;
+  /** "1d": opened on daily candles (shared/coinHolds DAILY_HOLD_MINUTES). */
+  timeframe?: string;
 }
 
 /** Rupees a position had at stake when it opened: 1R. Undefined without its first stop. */
@@ -79,7 +83,7 @@ export function holdingDecision(p: ExitState, nowMs: number = Date.now()): "hold
   const elapsed = (nowMs - openedMs) / 60000;
   const limit = p.expectedHoldingTimeMinutes || DEFAULT_HOLD_MINUTES;
   if (elapsed < limit) return "hold";
-  if (elapsed >= limit * HOLD_EXTENSION_MULTIPLE) return "expire";
+  if (p.timeframe === "1d" || elapsed >= limit * HOLD_EXTENSION_MULTIPLE) return "expire";
   return stopLocksProfit(p) ? "hold" : "expire";
 }
 

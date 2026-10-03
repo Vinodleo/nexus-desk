@@ -28,6 +28,8 @@ export const COIN_HOLD_MINUTES = 240;
 export const INTRADAY_HOLD_MINUTES = 30;
 /** Swing trades: 3 days. */
 export const SWING_HOLD_MINUTES = 4320;
+/** Daily-candle coin trades (server/scanner/dailyCoins.ts): 30 days, as the two-year replay held them. */
+export const DAILY_HOLD_MINUTES = 30 * 24 * 60;
 /** The least a coin trade's stop sits from entry: about twice the typical spread. */
 export const COIN_MIN_STOP_PCT = 0.012;
 /** An Indian stock trade's time limit: 3 hours (it's closed at 3:20 whatever). */
@@ -46,7 +48,8 @@ const isNseStock = (symbol: string | undefined): boolean => Boolean(symbol) && m
 export const plansHourly = (symbol: string | undefined): boolean => isCoin(symbol) || isNseStock(symbol);
 
 /** How long a trade may run before the time limit applies. */
-export function holdMinutesFor(setup: { symbol?: string; horizon?: "intraday" | "swing" }): number {
+export function holdMinutesFor(setup: { symbol?: string; horizon?: "intraday" | "swing"; timeframe?: string }): number {
+  if (setup.timeframe === "1d") return DAILY_HOLD_MINUTES;
   if (setup.horizon === "swing") return SWING_HOLD_MINUTES;
   return isCoin(setup.symbol) ? COIN_HOLD_MINUTES : isNseStock(setup.symbol) ? NSE_HOLD_MINUTES : INTRADAY_HOLD_MINUTES;
 }
@@ -134,11 +137,11 @@ export function atrForExits(setup: { planAtr?: number; entryPrice: number }, bar
 }
 
 /** Whether a position trails as a runner: trend, breakout and swing trades, and anything held over an hour (every coin trade). */
-export function trailsAsRunner(setup: { family?: string; horizon?: string; symbol?: string }): boolean {
+export function trailsAsRunner(setup: { family?: string; horizon?: string; symbol?: string; timeframe?: string }): boolean {
   return (
     setup.family === "trend_following" ||
     setup.family === "breakout_confirmation" ||
     setup.horizon === "swing" ||
-    holdMinutesFor(setup as { symbol?: string; horizon?: "intraday" | "swing" }) > 60
+    holdMinutesFor(setup as { symbol?: string; horizon?: "intraday" | "swing"; timeframe?: string }) > 60
   );
 }

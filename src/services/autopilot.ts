@@ -237,6 +237,8 @@ export function positionFromProposal(
     horizon: setup.horizon,
     trailMode: runner ? "TREND_RUNNER" : "SCALP_TIGHT",
     trailProfile: opts.trailProfile,
+    // A daily-candle trade: held up to 30 days (holdMinutesFor), closed at that limit exactly.
+    ...(setup.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
   };
 }
 
