@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { promisify } from "util";
-import { gzip } from "zlib";
+import { gunzip, gzip } from "zlib";
 import {
   addToRecords,
   pastMove,
@@ -18,6 +18,7 @@ import type { TraderRecord } from "../../src/services/exitExpectancy";
 import { TRADER_PERSONAS } from "../../src/services/personaEngine";
 import { TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
 import { roundTripFeeRate } from "../../src/shared/tradeCosts";
+import { addClassicTrades, breakoutTrades, btcUptrend, maTrendTrades, momentumTrades, type ClassicRecords } from "../../src/services/classicStrategies";
 import { fetchCoinDailySince, type HistoryFetch } from "./historyCandles";
 import { backgroundWorkBusy, CPU_SHARE, historyRunning, historySpread, setupsFileName, waitForOtherWork } from "./historyJob";
 import { scannerHeartbeat, typicalSpread } from "../scanner/scannerService";
@@ -41,6 +42,12 @@ import { scannerHeartbeat, typicalSpread } from "../scanner/scannerService";
 
 /** Bump when the replay changes enough that old results no longer compare. */
 export const DAILY_LONG_VERSION = 2;
+/**
+ * Bump when only the classic strategies change (src/services/
+ * classicStrategies.ts): they're replayed again from the kept daily candles,
+ * leaving the traders' results (and the daily trades they decide) as they are.
+ */
+export const CLASSIC_VERSION = 1;
 /** From Binance's first candles (August 2017). */
 export const DAILY_LONG_FROM_MS = Date.UTC(2017, 7, 1);
 const RERUN_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
@@ -108,6 +115,9 @@ export interface DailyLongRun {
   records: HistoryRecords;
   /** The last finished run's records, kept while this one replays (the daily trades are judged on them). */
   lastRecords?: HistoryRecords;
+  /** The classic strategies' results on the same coins and years (CLASSIC_VERSION's). */
+  classic?: ClassicRecords;
+  classicVersion?: number;
 }
 
 export interface DailyLongDeps {
@@ -137,6 +147,9 @@ const file = () => path.join(dataDir(), "daily_long.json");
  */
 export const dailySetupsDir = () => path.join(dataDir(), "daily_long_setups");
 const gzipAsync = promisify(gzip);
+const gunzipAsync = promisify(gunzip);
+/** Each coin's daily candles, kept for the classic strategies (a compressed CSV per coin: "t,o,h,l,c,v"). */
+export const dailyCandlesDir = () => path.join(dataDir(), "daily_long_candles");
 /** Bitcoin's move over this many days is each setup's market reading. */
 const MARKET_MOVE_DAYS = 30;
 const BTC = "BTC/INR";
@@ -196,6 +209,7 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
     const lastRecords = dailyLongRecords() ?? undefined;
     fs.rmSync(dailySetupsDir(), { recursive: true, force: true });
+    fs.rmSync(dailyCandlesDir(), { recursive: true, force: true });
     run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {}, ...(lastRecords ? { lastRecords } : {}) };
     save();
   }
@@ -228,6 +242,7 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
       return true;
     }
     const series: CandleSeries = fetched.series;
+    await saveCandles(symbol, series);
     const n = series.t.length;
     const market: DailyLongMarket = { status: "done", candles: n, firstMs: series.t[0], lastMs: series.t[n - 1] };
     if (n < TIMEFRAME_RULES["1d"].warmupBars + 20) {
@@ -263,19 +278,97 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
     return true;
   };
 
+  /** Whether this run replays any coin (one that only redoes the classic strategies keeps its finish time). */
+  let replayedAny = false;
   for (const symbol of symbols) {
     if (stopped()) return;
-    if (!r.markets[symbol] && !(await replayMarket(symbol))) return;
+    if (r.markets[symbol]) continue;
+    if (!(await replayMarket(symbol))) return;
+    replayedAny = true;
   }
   // A market that failed (the source busy, say) gets one more try.
   for (const symbol of symbols.filter((s) => r.markets[s]?.status === "failed")) {
     if (stopped()) return;
     delete r.markets[symbol];
     if (!(await replayMarket(symbol))) return;
+    replayedAny = true;
   }
-  r.finishedAt = deps.now();
+
+  // The classic strategies, on the same coins' kept candles (fetched once more where they weren't kept).
+  if (replayedAny || r.classicVersion !== CLASSIC_VERSION) {
+    current = null;
+    const coins: Record<string, CandleSeries> = {};
+    for (const [symbol, m] of Object.entries(r.markets)) {
+      if (m.status === "failed") continue;
+      let series = await readCandles(symbol);
+      if (!series) {
+        const got = await deps.download(symbol, r.fromMs, r.toMs);
+        if (stopped()) return;
+        if ("error" in got) continue;
+        series = got.series;
+        await saveCandles(symbol, series);
+      }
+      coins[symbol] = series;
+    }
+    const classic: ClassicRecords = {};
+    const btcCandles = coins[BTC];
+    const btcUp = btcCandles ? btcUptrend(btcCandles) : () => undefined;
+    const costFor = (symbol: string) => roundTripFeeRate(symbol) + historySpread(symbol, deps.spread(symbol));
+    for (const [symbol, series] of Object.entries(coins)) {
+      const started = deps.now();
+      const eligible = (ms: number) => inCohort(symbol, ms);
+      addClassicTrades(classic, breakoutTrades(symbol, series, costFor(symbol), eligible));
+      addClassicTrades(classic, maTrendTrades(symbol, series, btcUp, costFor(symbol), eligible));
+      await rest(deps.now() - started);
+      if (stopped()) return;
+    }
+    const started = deps.now();
+    addClassicTrades(classic, momentumTrades(coins, btcUp, costFor, inCohort));
+    await rest(deps.now() - started);
+    if (stopped()) return;
+    r.classic = classic;
+    r.classicVersion = CLASSIC_VERSION;
+  }
+  if (replayedAny || r.finishedAt === null) r.finishedAt = deps.now();
   save();
-  console.log(`[DailyLong] Replayed ${Object.values(r.markets).filter((m) => m.status === "done").length} of ${symbols.length} coins on daily candles since 2017.`);
+  console.log(`[DailyLong] Replayed ${Object.values(r.markets).filter((m) => m.status === "done").length} of ${symbols.length} coins on daily candles since 2017, and the classic strategies.`);
+}
+
+/** Writes a coin's daily candles (compressed CSV). */
+async function saveCandles(symbol: string, s: CandleSeries): Promise<void> {
+  try {
+    const lines = s.t.map((t, k) => `${t},${s.o[k]},${s.h[k]},${s.l[k]},${s.c[k]},${s.v[k]}`);
+    const data = await gzipAsync(Buffer.from(`t,o,h,l,c,v\n${lines.join("\n")}\n`));
+    fs.mkdirSync(dailyCandlesDir(), { recursive: true });
+    const target = path.join(dailyCandlesDir(), setupsFileName(symbol));
+    fs.writeFileSync(`${target}.tmp`, data);
+    fs.renameSync(`${target}.tmp`, target);
+  } catch (err) {
+    console.warn(`[DailyLong] Couldn't save ${symbol}'s candles:`, err);
+  }
+}
+
+/** A coin's kept daily candles, or null without them. */
+async function readCandles(symbol: string): Promise<CandleSeries | null> {
+  const target = path.join(dailyCandlesDir(), setupsFileName(symbol));
+  if (!fs.existsSync(target)) return null;
+  try {
+    const out: CandleSeries = { t: [], o: [], h: [], l: [], c: [], v: [] };
+    for (const line of (await gunzipAsync(fs.readFileSync(target))).toString().split("\n").slice(1)) {
+      const [t, o, h, l, c, v] = line.split(",").map(Number);
+      if (!Number.isFinite(t) || !(c > 0)) continue;
+      out.t.push(t);
+      out.o.push(o);
+      out.h.push(h);
+      out.l.push(l);
+      out.c.push(c);
+      out.v.push(v);
+    }
+    return out;
+  } catch (err) {
+    console.warn(`[DailyLong] Couldn't read ${symbol}'s candles:`, err);
+    return null;
+  }
 }
 
 /** Writes a coin's setups (compressed CSV); none when it had none. */
@@ -315,7 +408,7 @@ export function startDailyLongJob(): void {
   waitForOtherWork(() => active !== null);
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);
-    const due = dailyLongDue(run, Date.now()) || (run !== null && run.finishedAt === null);
+    const due = dailyLongDue(run, Date.now()) || (run !== null && (run.finishedAt === null || run.classicVersion !== CLASSIC_VERSION));
     if (!active && !historyRunning() && !backgroundWorkBusy() && due) void startDailyLong(false);
   };
   timer = setTimeout(check, START_DELAY_MS);
@@ -344,6 +437,8 @@ export function dailyLongView() {
         }
       : null,
     records: run?.records ?? {},
+    /** The classic strategies' results on the same coins and years, by quarter (null until they've run). */
+    classic: run?.classic ?? null,
     /** Each coin's own result in its list years. */
     byMarket: Object.fromEntries(Object.entries(markets).flatMap(([symbol, m]) => (m.status === "done" && m.totals ? [[symbol, m.totals]] : []))) as Record<
       string,

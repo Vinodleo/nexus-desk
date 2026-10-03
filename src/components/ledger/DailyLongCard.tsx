@@ -3,6 +3,7 @@ import { apiFetch } from "../../services/apiClient";
 import { profileTotals, recordStats, sumRecords, type HistoryRecords } from "../../services/historyReplay";
 import type { TraderRecord } from "../../services/exitExpectancy";
 import { DEFAULT_TRAIL_PROFILE, TRAIL_PROFILES, type TrailProfileId } from "../../shared/trailingStop";
+import { CLASSIC_IDS, CLASSIC_STRATEGIES, type ClassicId, type ClassicRecords } from "../../services/classicStrategies";
 import { Card } from "./ui";
 import { pnlTone } from "./format";
 import { rSigned } from "./LedgerBreakdown";
@@ -26,9 +27,36 @@ export interface DailyLongView {
     problems: { symbol: string; note: string }[];
   } | null;
   records: HistoryRecords;
+  /** The classic strategies on the same coins and years (absent until they've run, or from older servers). */
+  classic?: ClassicRecords | null;
   byMarket: Record<string, Partial<Record<TrailProfileId, TraderRecord>>>;
   cohorts: Record<string, string[]>;
 }
+
+/** The classic strategies' records, summed per year (from the quarters), each strategy's. */
+export function classicByYear(classic: ClassicRecords): Map<string, Partial<Record<ClassicId, TraderRecord>>> {
+  const out = new Map<string, Partial<Record<ClassicId, TraderRecord>>>();
+  for (const [quarter, byStrategy] of Object.entries(classic)) {
+    const year = quarter.slice(0, 4);
+    const row = out.get(year) ?? {};
+    for (const id of CLASSIC_IDS) {
+      const rec = byStrategy[id];
+      if (rec) row[id] = sumRecords([row[id], rec]);
+    }
+    out.set(year, row);
+  }
+  return out;
+}
+
+/** Short column names for the comparison table. */
+const COLUMN: Record<"traders" | ClassicId, string> = { traders: "Traders", breakout: "Breakout", maTrend: "50/200", momentum: "Top 3" };
+
+/** An average in R as a table cell: "+0.12", "—" without trades. */
+const Cell: React.FC<{ rec: TraderRecord | undefined; strong?: boolean }> = ({ rec, strong }) => {
+  if (!rec || rec.trades === 0) return <span className="text-right text-muted">—</span>;
+  const avg = rec.totalR / rec.trades;
+  return <span className={`text-right ${strong ? "font-semibold " : ""}${pnlTone(avg)}`}>{rSigned(avg).replace("R", "")}</span>;
+};
 
 /** A reply this card can show (an older server has no such route). */
 const isView = (body: any): body is DailyLongView =>
@@ -165,6 +193,10 @@ export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ tra
         </>
       )}
 
+      {view.classic && Object.keys(view.classic).length > 0 && (
+        <ClassicTable classic={view.classic} years={years} />
+      )}
+
       {exits.length > 0 && (
         <div className="mt-2 p-2.5 rounded-xl bg-inset flex flex-col gap-1.5" data-testid="daily-long-exits">
           <div className="text-[11px] font-semibold text-muted">Every trader, by trailing stop (the same setups)</div>
@@ -214,5 +246,63 @@ export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ tra
         </div>
       )}
     </Card>
+  );
+};
+
+/**
+ * The classic strategies next to your traders, year by year (average R a
+ * trade, after costs), then each strategy's total and rule.
+ */
+const ClassicTable: React.FC<{ classic: ClassicRecords; years: { year: string; rec: TraderRecord }[] }> = ({ classic, years }) => {
+  const byYear = classicByYear(classic);
+  const allYears = [...new Set([...years.map((y) => y.year), ...byYear.keys()])].sort();
+  const tradersByYear = new Map(years.map((y) => [y.year, y.rec]));
+  const totals = Object.fromEntries(CLASSIC_IDS.map((id) => [id, sumRecords(allYears.map((y) => byYear.get(y)?.[id]))])) as Record<ClassicId, TraderRecord>;
+  const columns = ["traders", ...CLASSIC_IDS] as const;
+  const grid = { gridTemplateColumns: "3rem repeat(4, minmax(0, 1fr))" };
+  return (
+    <div className="mt-2 flex flex-col gap-1.5" data-testid="daily-long-classic">
+      <div className="text-[11px] font-semibold text-muted">Classic strategies on the same coins and years (average R a trade)</div>
+      <div className="grid gap-x-2 gap-y-1 text-xs tabular-nums" style={grid}>
+        <span />
+        {columns.map((c) => (
+          <span key={c} className="text-right text-[11px] text-muted truncate">
+            {COLUMN[c]}
+          </span>
+        ))}
+        {allYears.map((y) => (
+          <React.Fragment key={y}>
+            <span>{y}</span>
+            <Cell rec={tradersByYear.get(y)} />
+            {CLASSIC_IDS.map((id) => (
+              <Cell key={id} rec={byYear.get(y)?.[id]} />
+            ))}
+          </React.Fragment>
+        ))}
+        <span className="font-semibold border-t border-line pt-1">All</span>
+        <span className="border-t border-line pt-1 text-right">
+          <Cell rec={sumRecords(years.map((y) => y.rec))} strong />
+        </span>
+        {CLASSIC_IDS.map((id) => (
+          <span key={id} className="border-t border-line pt-1 text-right">
+            <Cell rec={totals[id]} strong />
+          </span>
+        ))}
+      </div>
+      <ul className="m-0 p-0 list-none flex flex-col gap-1.5 mt-1" data-testid="daily-long-classic-rules">
+        {CLASSIC_IDS.map((id) => (
+          <li key={id} className="text-xs">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2 tabular-nums">
+              <span className="font-semibold">{CLASSIC_STRATEGIES[id].name}</span>
+              <span className="text-muted ml-auto">
+                {totals[id].trades} trades · {recordStats(totals[id]).winPct}% won ·{" "}
+                <span className={`font-semibold ${pnlTone(recordStats(totals[id]).avgR)}`}>{rSigned(recordStats(totals[id]).avgR)}</span>
+              </span>
+            </div>
+            <div className="text-[11px] text-muted leading-relaxed">{CLASSIC_STRATEGIES[id].rule}</div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 };
