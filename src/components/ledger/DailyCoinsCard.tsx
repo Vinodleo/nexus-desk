@@ -33,7 +33,7 @@ export interface DailyCoinsView {
 /** A reply this card can show (an older server has no such route). */
 export const isDailyCoinsView = (body: any): body is DailyCoinsView => !!body && Array.isArray(body.traders) && typeof body.nextAt === "number";
 
-const when = (ms: number) =>
+export const when = (ms: number) =>
   new Date(ms).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
 /** Each outcome's word, sign and colour: the sign says it as well as the colour. */
@@ -44,16 +44,30 @@ const OUTCOME = {
   paused: { label: "paused", icon: "‖", tone: "text-muted" },
 } as const;
 
-/** The autopilot's reason when the coin limit was full. */
-const NO_FREE_SLOT = /open coin trades? at once/;
-const coin = (symbol: string) => symbol.replace(/\/INR$/, "");
+/** The autopilot's reason when a market's limit was full ("would exceed 2 open coin trades at once"). */
+const NO_FREE_SLOT = /open (coin|US stock) trades? at once/;
+/** A coin or US stock without its suffix ("SOL", "AAPL"). */
+export const shortName = (symbol: string) => symbol.replace(/\/INR$|\.US$/, "");
 
-/** Coin trades open now against the limit, and which of the day's setups waited for a slot. */
-const CoinSlots: React.FC<{ used: number; max: number; waited: string[] }> = ({ used, max, waited }) => {
+type Pick = NonNullable<DailyCoinsView["run"]>["picks"][number];
+
+/** The day's setups that waited for a free slot. */
+export const waitedForSlot = (picks: Pick[]): string[] =>
+  [...new Set(picks.filter((p) => p.outcome === "waiting" && NO_FREE_SLOT.test(p.reason ?? "")).map((p) => p.symbol))];
+
+/** A market's trades open now against its limit, and which of the day's setups waited for a slot. */
+export const SlotsMeter: React.FC<{ used: number; max: number; waited: string[]; label: string; setting: string; testId: string }> = ({
+  used,
+  max,
+  waited,
+  label,
+  setting,
+  testId,
+}) => {
   const segments = Math.min(max, 12);
   const width = segments <= 4 ? "w-6" : segments <= 8 ? "w-3.5" : "w-2";
   return (
-    <div className="p-2.5 rounded-xl bg-inset flex items-center gap-3" data-testid="daily-slots">
+    <div className="p-2.5 rounded-xl bg-inset flex items-center gap-3" data-testid={testId}>
       <div className="flex gap-1 shrink-0" aria-hidden="true">
         {Array.from({ length: segments }, (_, k) => (
           <span key={k} className={`${width} h-2.5 rounded-full ${k < used ? "bg-accent" : "bg-surface border border-line"}`} />
@@ -61,17 +75,47 @@ const CoinSlots: React.FC<{ used: number; max: number; waited: string[] }> = ({ 
       </div>
       <div className="text-xs leading-snug min-w-0">
         <span className="font-semibold tabular-nums">
-          Coin slots: {Math.min(used, max)} of {max} in use
+          {label} slots: {Math.min(used, max)} of {max} in use
         </span>
         {waited.length > 0 && (
           <span className="block text-muted">
-            {waited.map(coin).join(", ")} waited for a free slot. To take more, raise Settings → Coins: trades at once.
+            {waited.map(shortName).join(", ")} waited for a free slot. To take more, raise Settings → {setting}: trades at once.
           </span>
         )}
       </div>
     </div>
   );
 };
+
+/** What a check found and did, each pick with its sign and why, then what couldn't be read. */
+export const CheckPicks: React.FC<{ run: NonNullable<DailyCoinsView["run"]>; testId: string; empty: string }> = ({ run, testId, empty }) => (
+  <div className="flex flex-col gap-1" data-testid={testId}>
+    {run.note && <div className="text-xs text-warn">{run.note}</div>}
+    {run.picks.length === 0 ? (
+      <div className="text-xs text-muted">{empty}</div>
+    ) : (
+      <ul className="m-0 p-0 list-none flex flex-col">
+        {run.picks.map((p, k) => (
+          <li key={`${p.symbol}-${p.trader}`} className="flex items-start gap-2.5 py-1.5 text-xs nx-row-in" style={{ animationDelay: `${Math.min(k, 8) * 40}ms` }}>
+            <span aria-hidden="true" className={`w-5 h-5 shrink-0 rounded-full bg-inset grid place-items-center font-bold ${OUTCOME[p.outcome].tone}`}>
+              {OUTCOME[p.outcome].icon}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-baseline justify-between gap-2">
+                <span className="min-w-0">
+                  <span className="font-semibold">{shortName(p.symbol)}</span> <span className="text-muted">{p.trader}</span>
+                </span>
+                <span className={`shrink-0 font-semibold ${OUTCOME[p.outcome].tone}`}>{OUTCOME[p.outcome].label}</span>
+              </span>
+              {p.reason && <span className="block text-muted">{p.reason}</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+    )}
+    {run.failed.length > 0 && <div className="text-[11px] text-muted">Couldn't read: {run.failed.map(shortName).join(", ")}.</div>}
+  </div>
+);
 
 export const DailyCoinsCard: React.FC = () => {
   const view = useLabFeed("/api/daily-coins", isDailyCoinsView);
@@ -81,7 +125,7 @@ export const DailyCoinsCard: React.FC = () => {
   const on = view.traders.filter((t) => t.on);
   const paused = view.traders.filter((t) => !t.on);
   const span = view.recordSpan ?? "over two years";
-  const waited = [...new Set((run?.picks ?? []).filter((p) => p.outcome === "waiting" && NO_FREE_SLOT.test(p.reason ?? "")).map((p) => p.symbol))];
+  const waited = waitedForSlot(run?.picks ?? []);
   const all = view.traders.length + (view.breakout ? 1 : 0);
   const trading = on.length + (view.breakout?.on ? 1 : 0);
 
@@ -94,36 +138,9 @@ export const DailyCoinsCard: React.FC = () => {
         </div>
       </div>
 
-      {view.coinSlots && <CoinSlots used={view.coinSlots.used} max={view.coinSlots.max} waited={waited} />}
+      {view.coinSlots && <SlotsMeter used={view.coinSlots.used} max={view.coinSlots.max} waited={waited} label="Coin" setting="Coins" testId="daily-slots" />}
 
-      {run && (
-        <div className="flex flex-col gap-1" data-testid="daily-picks">
-          {run.note && <div className="text-xs text-warn">{run.note}</div>}
-          {run.picks.length === 0 ? (
-            <div className="text-xs text-muted">No setups that day.</div>
-          ) : (
-            <ul className="m-0 p-0 list-none flex flex-col">
-              {run.picks.map((p, k) => (
-                <li key={`${p.symbol}-${p.trader}`} className="flex items-start gap-2.5 py-1.5 text-xs nx-row-in" style={{ animationDelay: `${Math.min(k, 8) * 40}ms` }}>
-                  <span aria-hidden="true" className={`w-5 h-5 shrink-0 rounded-full bg-inset grid place-items-center font-bold ${OUTCOME[p.outcome].tone}`}>
-                    {OUTCOME[p.outcome].icon}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="min-w-0">
-                        <span className="font-semibold">{coin(p.symbol)}</span> <span className="text-muted">{p.trader}</span>
-                      </span>
-                      <span className={`shrink-0 font-semibold ${OUTCOME[p.outcome].tone}`}>{OUTCOME[p.outcome].label}</span>
-                    </span>
-                    {p.reason && <span className="block text-muted">{p.reason}</span>}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {run.failed.length > 0 && <div className="text-[11px] text-muted">Couldn't read: {run.failed.map(coin).join(", ")}.</div>}
-        </div>
-      )}
+      {run && <CheckPicks run={run} testId="daily-picks" empty="No setups that day." />}
 
       {all > 0 && (
         <Fold title={`Which traders trade (${trading} of ${all})`}>

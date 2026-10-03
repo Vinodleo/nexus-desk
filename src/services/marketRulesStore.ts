@@ -1,11 +1,14 @@
 import { apiFetch } from "./apiClient";
 import { estimatedRule, type MarketRule } from "../shared/marketRules";
 import { getSymbolConfig } from "./marketDataService";
+import { isUsSymbol } from "../shared/usMarket";
 
 // CoinDCX's order rules, loaded once from the server at startup. Until they
 // arrive (or if CoinDCX can't be reached) sizing uses a cautious estimate.
 
 const rules = new Map<string, MarketRule>();
+/** The smallest US quantity step: a ten-thousandth of a share. */
+export const US_FRACTION = 0.0001;
 
 export async function loadMarketRules(): Promise<number> {
   try {
@@ -32,6 +35,19 @@ export function setMarketRules(list: MarketRule[]): void {
 export function ruleFor(symbol: string, price: number): MarketRule {
   const real = rules.get(symbol);
   if (real) return real;
+  // US stocks trade in fractions of a share (Alpaca allows it): a big stock fits a small amount per trade.
+  if (isUsSymbol(symbol)) {
+    return {
+      market: symbol,
+      symbol,
+      minQuantity: US_FRACTION,
+      maxQuantity: Number.MAX_SAFE_INTEGER,
+      quantityStep: US_FRACTION,
+      minNotional: 0,
+      quantityPrecision: 4,
+      pricePrecision: 2,
+    };
+  }
   if (getSymbolConfig(symbol).assetClass === "equity") {
     return {
       market: symbol,

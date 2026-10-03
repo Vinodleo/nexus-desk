@@ -374,6 +374,11 @@ export function stocksLongView() {
   };
 }
 
+/** A market's classic results by quarter (the last finished run's while it reruns), or null before any: US breakout trades are judged on them. */
+export function stocksLongClassic(market: StockMarket): ClassicRecords | null {
+  return run?.classic[market] ?? null;
+}
+
 /** Test hooks. */
 export function _resetStocksLong(): void {
   generation++;

@@ -11,6 +11,7 @@ import { isDailyCoinsView, type DailyCoinsView } from "./DailyCoinsCard";
 import { classicByYear, isDailyLongView, recordsByYear } from "./DailyLongCard";
 import { isHistoryView } from "./HistoryCard";
 import { isMlTestView } from "./MlTestCard";
+import { isUsBreakoutView } from "./UsBreakoutCard";
 
 // The Lab's answers first: what's trading now and why (the Today tab), and
 // every coin strategy's record side by side, overall and year by year (the
@@ -67,6 +68,7 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
   const dc = useLabFeed("/api/daily-coins", isDailyCoinsView);
   const edge = useLabFeed("/api/scanner/exit-edge", isEdgeView);
   const ml = useLabFeed("/api/ml-test", isMlTestView);
+  const us = useLabFeed("/api/us-breakout", isUsBreakoutView);
   const rows: React.ReactNode[] = [];
 
   if (dc && dc.traders.length > 0) {
@@ -86,10 +88,22 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
     rows.push(
       <SummaryRow
         key="breakout"
-        name={dc.breakout.trader}
+        name={`Coin ${dc.breakout.trader.charAt(0).toLowerCase()}${dc.breakout.trader.slice(1)}`}
         status={dc.breakout.on ? "trading" : "paused"}
         label={dc.breakout.on ? "Trading" : "Paused"}
         detail={`${rSigned(dc.breakout.avgR)} a trade since 2018 · ${dc.breakout.trades} trades`}
+        onOpen={onOpen && (() => onOpen("records"))}
+      />
+    );
+  }
+  if (us?.gate) {
+    rows.push(
+      <SummaryRow
+        key="us-breakout"
+        name="US breakout 55/20"
+        status={us.gate.on ? "trading" : "paused"}
+        label={us.gate.on ? "Trading" : "Paused"}
+        detail={`${rSigned(us.gate.avgR)} a trade since 2016 · ${us.gate.trades} trades`}
         onOpen={onOpen && (() => onOpen("records"))}
       />
     );
