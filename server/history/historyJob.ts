@@ -491,10 +491,19 @@ export function startHistoryRun(fresh: boolean, deps: HistoryDeps = realDeps): P
   return job;
 }
 
-/** Other background work that a scheduled replay waits for (the machine-learning test): both at once would double the load. */
-let otherWorkBusy: () => boolean = () => false;
+/**
+ * Other background work that a scheduled replay waits for (the
+ * machine-learning test, the long daily replay): two at once would double
+ * the load. Each registers whether it's running.
+ */
+const otherWork: (() => boolean)[] = [];
 export function waitForOtherWork(busy: () => boolean): void {
-  otherWorkBusy = busy;
+  otherWork.push(busy);
+}
+const otherWorkBusy = () => otherWork.some((busy) => busy());
+/** Background work besides this replay is running (one checking for itself isn't, until it starts). */
+export function backgroundWorkBusy(): boolean {
+  return otherWorkBusy();
 }
 
 /** Loads kept results and checks a while after start, then every few hours, whether a run is due. */

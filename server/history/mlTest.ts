@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { promisify } from "util";
 import { gunzip } from "zlib";
-import { CPU_SHARE, historyRunInfo, historyRunning, setupsDir, setupsFileName, waitForOtherWork } from "./historyJob";
+import { backgroundWorkBusy, CPU_SHARE, historyRunInfo, historyRunning, setupsDir, setupsFileName, waitForOtherWork } from "./historyJob";
 import { scannerHeartbeat } from "../scanner/scannerService";
 import { scanningDesks } from "../scanner/deskState";
 import {
@@ -268,7 +268,7 @@ export function startMlTestJob(): void {
   waitForOtherWork(() => active !== null);
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);
-    if (!active && !historyRunning() && mlTestDue()) void startMlTest();
+    if (!active && !historyRunning() && !backgroundWorkBusy() && mlTestDue()) void startMlTest();
   };
   timer = setTimeout(check, CHECK_EVERY_MS);
 }

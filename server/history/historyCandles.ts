@@ -1,3 +1,4 @@
+import { inflateRawSync } from "zlib";
 import { fetchWithTimeout } from "../http";
 import { fetchStockCandles } from "../angelOne";
 import { fetchUsCandles } from "../alpaca";
@@ -72,20 +73,132 @@ export async function fetchCoinDaily(symbol: string, days: number, now: number):
 
 /** A coin's 5-minute candles from Binance (COINUSDT), from `fromMs` to `toMs`. */
 export async function fetchCoinHistory(symbol: string, fromMs: number, toMs: number, pause: Pause = sleep): Promise<HistoryFetch> {
-  const pair = binancePair(symbol);
+  const got = await binanceCandles(binancePair(symbol), "5m", fromMs, toMs, pause);
+  return "error" in got ? { error: got.error } : got;
+}
+
+/** A pair's candles from Binance's API, page by page, from `fromMs` to `toMs` (closed by then). */
+async function binanceCandles(
+  pair: string,
+  interval: "5m" | "1d",
+  fromMs: number,
+  toMs: number,
+  pause: Pause
+): Promise<{ series: CandleSeries } | { error: string; unknownPair?: boolean }> {
+  const intervalMs = interval === "5m" ? SIGNAL_INTERVAL_MS : DAY_MS;
   const series = emptySeries();
   for (let start = fromMs; start < toMs; ) {
-    const page = await binancePage(pair, start, toMs);
-    if ("error" in page) return { error: page.error };
-    const bars = toClosedBars(page.rows, SIGNAL_INTERVAL_MS, toMs);
-    appendBars(series, bars);
+    const page = await binancePage(pair, start, toMs, interval);
+    if ("error" in page) return page;
+    appendBars(series, toClosedBars(page.rows, intervalMs, toMs));
     // Binance starts at the first candle it has from `start` (a coin listed later starts at its listing).
     const last = series.t[series.t.length - 1];
-    if (page.rows.length < BINANCE_LIMIT || last === undefined || last + SIGNAL_INTERVAL_MS <= start) break;
-    start = last + SIGNAL_INTERVAL_MS;
+    if (page.rows.length < BINANCE_LIMIT || last === undefined || last + intervalMs <= start) break;
+    start = last + intervalMs;
     await pause(PAUSE_MS.binance);
   }
   return { series };
+}
+
+// ---------- daily candles over every year Binance has ----------
+// The long daily replay (history/dailyLong.ts) reads coins back to 2017,
+// including coins Binance has since delisted (their candles are only in its
+// download archive, a zip file a month) and coins that traded under another
+// pair name for a while.
+
+/** Where a coin traded under other pairs, oldest first (each read up to `untilMs`); otherwise COINUSDT throughout. */
+export const DAILY_PAIRS: Record<string, { pair: string; untilMs?: number }[]> = {
+  // Bitcoin Cash was BCC, then BCHABC after the 2018 split.
+  BCH: [{ pair: "BCCUSDT" }, { pair: "BCHABCUSDT" }, { pair: "BCHUSDT" }],
+  BSV: [{ pair: "BCHSVUSDT" }],
+  // Polygon swapped MATIC for POL one for one (September 2024).
+  MATIC: [{ pair: "MATICUSDT" }, { pair: "POLUSDT" }],
+  NANO: [{ pair: "NANOUSDT" }, { pair: "XNOUSDT" }],
+  // Terra's LUNA until its collapse in May 2022 (the name went to a new coin later).
+  LUNA: [{ pair: "LUNAUSDT", untilMs: Date.UTC(2022, 5, 1) }],
+};
+
+const ARCHIVE_URL = "https://data.binance.vision/data/spot/monthly/klines";
+
+/** The first file in a zip archive, or null if it can't be read. */
+export function unzipFirst(zip: Buffer): Buffer | null {
+  try {
+    // The end-of-directory record points at the directory, whose first entry gives the file's size and where it starts.
+    const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    if (end < 0 || end + 22 > zip.length) return null;
+    const dir = zip.readUInt32LE(end + 16);
+    if (zip.readUInt32LE(dir) !== 0x02014b50) return null;
+    const method = zip.readUInt16LE(dir + 10);
+    const size = zip.readUInt32LE(dir + 20);
+    const local = zip.readUInt32LE(dir + 42);
+    if (zip.readUInt32LE(local) !== 0x04034b50) return null;
+    const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+    const data = zip.subarray(start, start + size);
+    return method === 0 ? Buffer.from(data) : method === 8 ? inflateRawSync(data) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Kline rows from an archive's CSV: times in ms (the files switched to microseconds in 2025). */
+function archiveRows(csv: string): unknown[] {
+  return csv
+    .split("\n")
+    .map((line) => line.trim().split(","))
+    .filter((f) => f.length >= 6 && /^\d+$/.test(f[0]))
+    .map(([t, o, h, l, c, v]) => [Number(t) > 1e14 ? Math.floor(Number(t) / 1000) : Number(t), o, h, l, c, v]);
+}
+
+/** A pair's daily candles from Binance's monthly archive files, from `fromMs` to `toMs`. */
+async function archiveDaily(pair: string, fromMs: number, toMs: number, pause: Pause): Promise<HistoryFetch> {
+  const series = emptySeries();
+  const first = new Date(fromMs);
+  let found = false;
+  for (let y = first.getUTCFullYear(), m = first.getUTCMonth(); Date.UTC(y, m, 1) < toMs; m === 11 ? ((y += 1), (m = 0)) : (m += 1)) {
+    const month = `${y}-${String(m + 1).padStart(2, "0")}`;
+    let res: Response;
+    try {
+      res = await fetchWithTimeout(`${ARCHIVE_URL}/${pair}/1d/${pair}-1d-${month}.zip`);
+    } catch (err: any) {
+      return { error: `Binance archive: ${err?.message || "no reply"}` };
+    }
+    await pause(PAUSE_MS.binance);
+    // No file: the pair didn't trade that month.
+    if (res.status === 404) continue;
+    if (!res.ok) return { error: `Binance archive: HTTP ${res.status} for ${pair} ${month}` };
+    const csv = unzipFirst(Buffer.from(await res.arrayBuffer()));
+    if (!csv) return { error: `Binance archive: couldn't read ${pair} ${month}` };
+    const last = series.t[series.t.length - 1] ?? -Infinity;
+    appendBars(series, toClosedBars(archiveRows(csv.toString()), DAY_MS, toMs).filter((b) => (b.timestampMs as number) >= fromMs && (b.timestampMs as number) > last));
+    found = true;
+  }
+  return found ? { series } : { error: `${pair} isn't on Binance` };
+}
+
+/**
+ * A coin's daily candles from `fromMs` to `toMs` (UTC days, closed by then):
+ * from Binance's API, or its archive for a pair it no longer lists, across
+ * the pairs the coin traded under (DAILY_PAIRS).
+ */
+export async function fetchCoinDailySince(symbol: string, fromMs: number, toMs: number, pause: Pause = sleep): Promise<HistoryFetch> {
+  const base = symbol.split("/")[0].toUpperCase();
+  const series = emptySeries();
+  const errors: string[] = [];
+  for (const { pair, untilMs } of DAILY_PAIRS[base] ?? [{ pair: binancePair(symbol) }]) {
+    const last = series.t[series.t.length - 1];
+    const from = last === undefined ? fromMs : last + DAY_MS;
+    const to = Math.min(toMs, untilMs ?? Infinity);
+    if (from >= to) continue;
+    const api = await binanceCandles(pair, "1d", from, to, pause);
+    // A pair Binance no longer lists: its archive.
+    const got: HistoryFetch = "error" in api ? (api.unknownPair ? await archiveDaily(pair, from, to, pause) : { error: api.error }) : api;
+    if ("error" in got) {
+      errors.push(got.error);
+      continue;
+    }
+    appendBars(series, got.series.t.map((t, k) => ({ time: "", timestampMs: t, open: got.series.o[k], high: got.series.h[k], low: got.series.l[k], close: got.series.c[k], volume: got.series.v[k] })));
+  }
+  return series.t.length > 0 ? { series } : { error: errors[0] ?? `${binancePair(symbol)} isn't on Binance` };
 }
 
 /** A US stock's 5-minute regular-session candles from Alpaca (in rupees at today's rate; the replay counts in R). */
