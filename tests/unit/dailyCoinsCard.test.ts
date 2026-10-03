@@ -70,6 +70,44 @@ describe("Daily coin trades", () => {
     expect((await screen.findByTestId("daily-picks")).textContent).toBe("Autopilot is off, so no daily trades were opened.No setups that day.");
   });
 
+  it("shows breakout 55/20's sales and its record since 2018 next to the traders", async () => {
+    vi.mocked(apiFetch).mockResolvedValue(
+      reply({
+        success: true,
+        run: {
+          at: 1,
+          day: "2026-10-03",
+          coins: 34,
+          failed: [],
+          picks: [
+            { symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "opened" },
+            { symbol: "XRP/INR", trader: "Breakout 55/20", outcome: "sold", reason: "closed below its 20-day low" },
+          ],
+        },
+        traders,
+        recordSpan: "since 2017",
+        breakout: { trader: "Breakout 55/20", trades: 476, avgR: 0.98, on: true },
+        nextAt: 2,
+      })
+    );
+    render(createElement(DailyCoinsCard));
+    const picks = within(await screen.findByTestId("daily-picks")).getAllByRole("listitem").map((li) => li.textContent);
+    expect(picks).toEqual(["SOL Breakout 55/20opened", "XRP Breakout 55/20soldclosed below its 20-day low"]);
+    expect(screen.getByTestId("daily-breakout").textContent).toBe("Breakout record since 2018Breakout 55/20476 trades · +0.98R");
+    expect(screen.getByText(/it buys a close above the 55-day high and sells a\s+close below the 20-day low/)).toBeTruthy();
+    cleanup();
+
+    // Paused; and before it has run (or an older server), no line.
+    vi.mocked(apiFetch).mockResolvedValue(reply({ success: true, run: null, traders, breakout: { trader: "Breakout 55/20", trades: 476, avgR: -0.02, on: false }, nextAt: 2 }));
+    render(createElement(DailyCoinsCard));
+    expect((await screen.findByTestId("daily-breakout")).textContent).toBe("Breakout record since 2018Breakout 55/20 · paused476 trades · −0.02R");
+    cleanup();
+    vi.mocked(apiFetch).mockResolvedValue(reply({ success: true, run: null, traders, breakout: null, nextAt: 2 }));
+    render(createElement(DailyCoinsCard));
+    await screen.findByTestId("daily-status");
+    expect(screen.queryByTestId("daily-breakout")).toBeNull();
+  });
+
   it("shows nothing for an older server", async () => {
     vi.mocked(apiFetch).mockResolvedValue(new Response("Not found", { status: 404 }));
     const { container } = render(createElement(DailyCoinsCard));

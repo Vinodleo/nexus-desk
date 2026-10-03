@@ -7,7 +7,8 @@ import { rSigned } from "./LedgerBreakdown";
 // Coin trades on daily candles (server/scanner/dailyCoins.ts): the server's
 // check once a day, what it found and did, and which traders trade (their
 // daily record decides: since 2017 once that replay has finished, else over
-// the last two years). Paper only.
+// the last two years), with breakout 55/20 alongside (its record since 2018
+// decides). Paper only.
 
 export interface DailyCoinsView {
   run: {
@@ -15,12 +16,14 @@ export interface DailyCoinsView {
     day: string;
     coins: number;
     failed: string[];
-    picks: { symbol: string; trader: string; outcome: "opened" | "waiting" | "paused"; reason?: string }[];
+    picks: { symbol: string; trader: string; outcome: "opened" | "sold" | "waiting" | "paused"; reason?: string }[];
     note?: string;
   } | null;
   traders: { trader: string; trades: number; avgR: number; on: boolean }[];
   /** The years the traders' records cover, in words ("since 2017"); absent from older servers (two years). */
   recordSpan?: string | null;
+  /** Breakout 55/20's record since 2018 and whether it trades; null before it has run, absent from older servers. */
+  breakout?: { trader: string; trades: number; avgR: number; on: boolean } | null;
   nextAt: number;
 }
 
@@ -30,7 +33,7 @@ const isView = (body: any): body is DailyCoinsView => !!body && Array.isArray(bo
 const when = (ms: number) =>
   new Date(ms).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
-const OUTCOME_LABEL = { opened: "opened", waiting: "not opened", paused: "paused" } as const;
+const OUTCOME_LABEL = { opened: "opened", sold: "sold", waiting: "not opened", paused: "paused" } as const;
 
 export const DailyCoinsCard: React.FC = () => {
   const [view, setView] = useState<DailyCoinsView | null>(null);
@@ -58,7 +61,8 @@ export const DailyCoinsCard: React.FC = () => {
       <div className="text-xs text-muted leading-relaxed">
         Once a day, just after the daily candle closes (5:30 am), the server checks coins on daily candles and opens paper trades
         within your coin limits. Only traders whose daily record {span} is positive over 10+ setups trade. Trades are held up to 30
-        days.
+        days. Breakout 55/20 trades alongside them on this year's biggest coins: it buys a close above the 55-day high and sells a
+        close below the 20-day low, with no target and no trailing stop.
       </div>
 
       <div className="text-xs tabular-nums mt-1" data-testid="daily-status">
@@ -84,7 +88,7 @@ export const DailyCoinsCard: React.FC = () => {
                     <span className="min-w-0">
                       <span className="font-semibold">{p.symbol.replace(/\/INR$/, "")}</span> <span className="text-muted">{p.trader}</span>
                     </span>
-                    <span className={`shrink-0 font-semibold ${p.outcome === "opened" ? "text-accent" : "text-muted"}`}>{OUTCOME_LABEL[p.outcome]}</span>
+                    <span className={`shrink-0 font-semibold ${p.outcome === "opened" || p.outcome === "sold" ? "text-accent" : "text-muted"}`}>{OUTCOME_LABEL[p.outcome]}</span>
                   </div>
                   {p.reason && <div className="text-muted">{p.reason}</div>}
                 </li>
@@ -111,6 +115,21 @@ export const DailyCoinsCard: React.FC = () => {
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {view.breakout && (
+        <div className="mt-1 p-2.5 rounded-xl bg-inset flex flex-col gap-1.5" data-testid="daily-breakout">
+          <div className="text-[11px] font-semibold text-muted">Breakout record since 2018</div>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
+            <span className={view.breakout.on ? "" : "text-muted"}>
+              {view.breakout.trader}
+              {view.breakout.on ? "" : " · paused"}
+            </span>
+            <span className="text-muted ml-auto">
+              {view.breakout.trades} trades · <span className={`font-semibold ${pnlTone(view.breakout.avgR)}`}>{rSigned(view.breakout.avgR)}</span>
+            </span>
+          </div>
         </div>
       )}
     </Card>

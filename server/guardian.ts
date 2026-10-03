@@ -55,6 +55,8 @@ export interface DaemonPosition {
   clientSeen?: boolean;
   /** "1d": a coin trade on daily candles, held up to 30 days (scanner/dailyCoins.ts). */
   timeframe?: "1d";
+  /** "breakout": the breakout 55/20 strategy's (scanner/dailyCoins.ts sells it on a close below the 20-day low). */
+  strategy?: "breakout";
 }
 
 export interface DaemonClosedTrade {
@@ -88,6 +90,7 @@ export interface DaemonClosedTrade {
   lowestPrice?: number;
   signalPrice?: number;
   timeframe?: "1d";
+  strategy?: "breakout";
 }
 
 interface DaemonPersistedState {
@@ -271,8 +274,9 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
       ...mergeSyncedGuardState(p.direction, p.entryPrice, existing, p),
       openedByServer: existing?.openedByServer,
       clientSeen: existing?.openedByServer ? true : undefined,
-      // Set by the server when it opened a daily trade: an app that doesn't know the field keeps it.
+      // Set by the server when it opened a daily trade: an app that doesn't know the fields keeps them.
       ...(existing?.timeframe ? { timeframe: existing.timeframe } : {}),
+      ...(existing?.strategy ? { strategy: existing.strategy } : {}),
     });
   }
 
@@ -374,6 +378,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     lowestPrice: Math.min(pos.lowestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
     ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
     ...(pos.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
+    ...(pos.strategy === "breakout" ? { strategy: "breakout" as const } : {}),
   };
 
   daemonClosedTrades.unshift(closedRecord);
@@ -397,6 +402,19 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
   // Tell the owner's connected clients immediately, and pop up on their phones.
   broadcastToUser(pos.userId, { type: "DAEMON_POSITION_CLOSED", data: closedRecord });
   void notifyUser(pos.userId, tradeClosedMessage(closedRecord));
+}
+
+/**
+ * Closes a guarded position at `price` now (a paper one; a live one gets its
+ * exchange exit too), as when its stop is hit: the breakout strategy's sale
+ * on a close below the 20-day low. False if it's no longer held.
+ */
+export function closeServerPosition(id: string, price: number, reason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME"): boolean {
+  const pos = daemonPositions.get(id);
+  if (!pos || !(price > 0)) return false;
+  pos.currentPrice = price;
+  executeDaemonExit(pos, price, reason);
+  return true;
 }
 
 /** This user's trades the guardian closed (newest first). */

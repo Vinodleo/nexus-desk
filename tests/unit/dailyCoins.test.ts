@@ -7,7 +7,7 @@ import { appendBars, emptySeries, latestSlowSetups, SPACING_LOOKBACK_BARS, TIMEF
 import { panelSetupsOnHistory } from "../../src/services/labSimulation";
 import { decorateBarsWithIndicators } from "../../src/services/marketDataService";
 import { holdingDecision } from "../../src/shared/exitRules";
-import { DAILY_HOLD_MINUTES } from "../../src/shared/coinHolds";
+import { BREAKOUT_HOLD_MINUTES, DAILY_HOLD_MINUTES, holdMinutesFor } from "../../src/shared/coinHolds";
 import { positionFromProposal } from "../../src/services/autopilot";
 import { seeded } from "../../src/services/setupModel";
 import { tradeOpenedMessage } from "../../src/shared/tradeMessages";
@@ -235,6 +235,154 @@ describe("the daily scan", () => {
     ]);
     expect(dailyTraderGates(records, "patient")).toEqual([{ trader: "Priya Momentum Scalp", trades: 30, avgR: expect.closeTo(0.1, 9), on: true }]);
     expect(dailyTraderGates(null, "tight")).toEqual([]);
+  });
+});
+
+describe("breakout 55/20 paper trades", () => {
+  const day1 = Date.parse("2026-10-03T00:15:00Z");
+  const day2 = day1 + DAY;
+  const desk = {
+    equity: 100000, riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 1 }, dailyRealizedPnl: 0, pnlDay: "",
+    autopilot: true, tradingMode: "PAPER" as const, trailProfile: "tight", killSwitch: false, scanning: true,
+    failureState: {
+      simulateAgentTimeout: false, simulateStaleMarketData: false, simulateDailyLossBreach: false,
+      simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false, globalKillSwitchActive: false,
+    },
+    quarantines: {}, promotedModel: null, updatedAt: day2,
+  };
+  type Row = [number, number, number, number];
+  /** Daily candles [open, high, low, close], the last one starting the day before `now`. */
+  const candles = (rows: Row[], now: number) => {
+    const last = Math.floor(now / DAY) * DAY - DAY;
+    const s = emptySeries();
+    appendBars(s, rows.map(([open, high, low, close], k) => ({ time: "", timestampMs: last - (rows.length - 1 - k) * DAY, open, high, low, close, volume: 1 })));
+    return s;
+  };
+  // 80 quiet days, then a close above the 55-day high (ATR 2.2 by then: a stop 4.4 below 105).
+  const quiet: Row[] = Array.from({ length: 80 }, () => [100, 101, 99, 100]);
+  const breakout: Row[] = [...quiet, [100, 106, 100, 105]];
+  const rec = (trades: number, totalR: number) => ({ trades, totalR, wins: Math.round(trades / 4), winR: Math.max(totalR, 0) + trades / 4, lossR: Math.min(totalR, 0) - trades / 4 });
+  // Its record since 2018: +0.98R over 476 trades.
+  const record = { "2020-Q4": { breakout: rec(300, 400) }, "2022-Q2": { breakout: rec(176, 66.48), maTrend: rec(5, -50) } };
+
+  async function fresh() {
+    const daily = await import("../../server/scanner/dailyCoins");
+    daily._resetDailyCoins();
+    (await import("../../server/guardian"))._resetGuardian();
+    (await import("../../server/scanner/autopilot"))._resetServerAutopilot();
+    return daily;
+  }
+  async function deps(now: number, rows: Row[], over: Record<string, unknown> = {}) {
+    const { runServerAutopilot } = await import("../../server/scanner/autopilot");
+    return {
+      now: () => now,
+      sleep: async () => {},
+      coins: async () => ["SOL/INR"],
+      daily: async () => ({ series: candles(rows, now) }),
+      quote: async () => ({ bid: 9990, ask: 10000 }),
+      spread: () => 0.001,
+      records: () => null,
+      desks: () => [["u", desk]] as [string, typeof desk][],
+      dailyPnl: () => 0,
+      open: vi.fn(runServerAutopilot),
+      classic: () => record,
+      ...over,
+    };
+  }
+
+  beforeEach(async () => {
+    await fresh();
+  });
+
+  it("buys a close above the 55-day high on this year's biggest coins: a stop 2 ATR below, no target, no trailing, nothing banked", async () => {
+    const daily = await fresh();
+    const { daemonPositions } = await import("../../server/guardian");
+    await daily.runDailyCoins(await deps(day1, breakout));
+    const [p, ...others] = [...daemonPositions.values()];
+    expect(others).toEqual([]);
+    expect(p).toMatchObject({
+      symbol: "SOL/INR",
+      setupName: "Breakout 55/20",
+      strategy: "breakout",
+      timeframe: "1d",
+      trailProfile: "fixed",
+      expectedHoldingTimeMinutes: BREAKOUT_HOLD_MINUTES,
+      entryPrice: 10000,
+      openedByServer: true,
+    });
+    expect(p.partialQuantity).toBeUndefined();
+    // The stop the same share below as on Binance's chart: 4.4 below 105.
+    expect(p.stopLoss / p.entryPrice).toBeCloseTo(100.6 / 105, 4);
+    expect(p.takeProfit).toBeGreaterThan(p.entryPrice * 100);
+    // Sized to the coin limits like any coin trade: ₹50 lost at the stop.
+    expect((p.entryPrice - p.stopLoss) * p.quantity).toBeLessThanOrEqual(50.01);
+    expect(daily._dailyCoinsState().runs.u.picks).toEqual([{ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "opened" }]);
+    expect(tradeOpenedMessage(p, "server")).toMatchObject({ title: "Bought SOL/INR (breakout, paper)", body: expect.stringContaining("no target") });
+
+    // The guardian keeps its first stop: at +3R nothing trails and nothing is banked.
+    const { evaluateDaemonPositions } = await import("../../server/guardian");
+    const stop = p.stopLoss;
+    evaluateDaemonPositions("SOL/INR", p.entryPrice + 3 * (p.entryPrice - stop));
+    expect(daemonPositions.get(p.id)!.stopLoss).toBe(stop);
+    expect(daemonPositions.get(p.id)!.bankedQuantity).toBeUndefined();
+    // A year to run, where a daily trader's has 30 days.
+    expect(holdMinutesFor({ symbol: "SOL/INR", timeframe: "1d", strategy: "breakout" })).toBe(365 * 24 * 60);
+    expect(holdingDecision(p, day1 + 31 * DAY)).toBe("hold");
+  });
+
+  it("buys only this year's biggest coins, and only while its record since 2018 is positive", async () => {
+    let daily = await fresh();
+    const { daemonPositions } = await import("../../server/guardian");
+    // ARB isn't on the list.
+    await daily.runDailyCoins(await deps(day1, breakout, { coins: async () => ["ARB/INR"] }));
+    expect(daemonPositions.size).toBe(0);
+    expect(daily._dailyCoinsState().runs.u.picks).toEqual([]);
+
+    for (const [classic, reason] of [
+      [() => null, "no record since 2018"],
+      [() => ({ "2022-Q2": { breakout: rec(476, -10) } }), "record since 2018 −0.02R (needs +0.05R)"],
+      [() => ({ "2022-Q2": { breakout: rec(9, 9) } }), "only 9 replayed setups (needs 10)"],
+    ] as const) {
+      daily = await fresh();
+      await daily.runDailyCoins(await deps(day1, breakout, { classic }));
+      expect(daemonPositions.size).toBe(0);
+      expect(daily._dailyCoinsState().runs.u.picks).toEqual([{ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "paused", reason }]);
+    }
+    expect(daily.breakoutGate(record)).toEqual({ trader: "Breakout 55/20", trades: 476, avgR: expect.closeTo(0.98, 9), on: true });
+  });
+
+  it("sells on a close below the 20-day low at CoinDCX's bid, even with autopilot off, and holds on otherwise", async () => {
+    const { daemonPositions, closedTradesFor } = await import("../../server/guardian");
+    // A new high while holding: no second trade; a close above the 20-day low: held.
+    for (const next of [[105, 108, 105, 107], [105, 106, 101, 102]] as Row[]) {
+      const daily = await fresh();
+      await daily.runDailyCoins(await deps(day1, breakout));
+      const d2 = await deps(day2, [...breakout, next]);
+      await daily.runDailyCoins(d2);
+      expect(daemonPositions.size).toBe(1);
+      expect(daily._dailyCoinsState().runs.u.picks).toEqual([]);
+      expect(d2.open).not.toHaveBeenCalled();
+    }
+
+    // A close at 98, below the 20-day low of 99: sold, whatever the desk.
+    for (const over of [{}, { desks: () => [["u", { ...desk, autopilot: false }]] }, { desks: () => [] }]) {
+      const daily = await fresh();
+      await daily.runDailyCoins(await deps(day1, breakout));
+      const [held] = [...daemonPositions.values()];
+      await daily.runDailyCoins(await deps(day2, [...breakout, [101, 101, 97, 98]], over));
+      expect(daemonPositions.size).toBe(0);
+      const [closed] = closedTradesFor("u");
+      expect(closed.id).toContain(held.id);
+      expect(closed).toMatchObject({ exitPrice: 9990, exitReason: "TRAILING_STOP", strategy: "breakout", timeframe: "1d" });
+      expect(daily._dailyCoinsState().runs.u.picks[0]).toEqual({ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "sold", reason: "closed below its 20-day low" });
+    }
+
+    // No price to sell at: it waits, under its stop.
+    const daily = await fresh();
+    await daily.runDailyCoins(await deps(day1, breakout));
+    await daily.runDailyCoins(await deps(day2, [...breakout, [101, 101, 97, 98]], { quote: async () => null }));
+    expect(daemonPositions.size).toBe(1);
+    expect(daily._dailyCoinsState().runs.u.picks[0]).toMatchObject({ outcome: "waiting", reason: expect.stringContaining("its stop still guards it") });
   });
 });
 

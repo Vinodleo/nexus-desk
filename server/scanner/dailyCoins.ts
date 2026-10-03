@@ -1,8 +1,9 @@
 import fs from "fs";
 import path from "path";
-import type { TradeProposal } from "../../src/types";
+import type { StrategySetup, TradeProposal } from "../../src/types";
 import type { RiskPolicyConfig } from "../../src/services/riskEngine";
-import { FIXED_COINS, latestSlowSetups, sumRecords, type HistoryRecords } from "../../src/services/historyReplay";
+import { FIXED_COINS, latestSlowSetups, sumRecords, type CandleSeries, type HistoryRecords } from "../../src/services/historyReplay";
+import { breakoutEntryAt, breakoutExitAt, CLASSIC_STRATEGIES, type ClassicRecords } from "../../src/services/classicStrategies";
 import { MIN_EDGE_R, MIN_TRADER_TRADES } from "../../src/services/calibration";
 import { roundPrice } from "../../src/services/strategyEngine";
 import { ruleFor } from "../../src/services/marketRulesStore";
@@ -15,7 +16,8 @@ import { getMarketRules } from "../marketRules";
 import { fetchOrderBook } from "../coindcxMarketData";
 import { fetchCoinDaily, type HistoryFetch } from "../history/historyCandles";
 import { historyRunInfo } from "../history/historyJob";
-import { dailyLongRecords } from "../history/dailyLong";
+import { cohortFor, dailyLongRecords, dailyLongRunInfo, inCohort } from "../history/dailyLong";
+import { closeServerPosition, daemonPositions, type DaemonPosition } from "../guardian";
 import { getDeskState, scanningDesks, type DeskState } from "./deskState";
 import { runServerAutopilot, serverAutopilotOn, type ServerAutopilotHooks } from "./autopilot";
 import { riskPolicyFor, serverDailyPnl, typicalSpread } from "./scannerService";
@@ -59,7 +61,8 @@ const file = () => path.join(process.env.NEXUS_DATA_DIR || path.join(process.cwd
 export interface DailyPick {
   symbol: string;
   trader: string;
-  outcome: "opened" | "waiting" | "paused";
+  /** "sold": a breakout trade sold on a close below its 20-day low. */
+  outcome: "opened" | "sold" | "waiting" | "paused";
   reason?: string;
 }
 
@@ -109,14 +112,21 @@ export interface DailyCoinsDeps {
   dailyPnl: (uid: string, desk: DeskState, now: number) => number;
   /** Opens what the autopilot accepts and marks every proposal (runServerAutopilot). */
   open: typeof runServerAutopilot;
+  /** The classic strategies' records since 2018 (breakout's decides whether it trades), or null before they've run. */
+  classic?: () => ClassicRecords | null;
+  /** Open positions (breakout ones are sold on a close below their 20-day low), and closing one at a price. */
+  positions?: () => DaemonPosition[];
+  close?: (id: string, price: number) => boolean;
 }
 
 const realDeps: DailyCoinsDeps = {
   now: () => Date.now(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  // Today's most active coins, the coin check's fixed list, and this year's biggest (breakout trades them).
   coins: async () => {
     const [universe, rules] = await Promise.all([getCoinUniverse(), getMarketRules()]);
-    const list = [...new Set([...universe.coins.map((c) => c.symbol), ...FIXED_COINS])];
+    const yearList = cohortFor(new Date().getUTCFullYear()).map((c) => `${c}/INR`);
+    const list = [...new Set([...universe.coins.map((c) => c.symbol), ...FIXED_COINS, ...yearList])];
     return rules.size > 0 ? list.filter((s) => rules.has(s.replace("/", ""))) : list;
   },
   daily: (symbol, closedBy) => fetchCoinDaily(symbol, DAILY_CANDLES, closedBy),
@@ -136,6 +146,9 @@ const realDeps: DailyCoinsDeps = {
   desks: scanningDesks,
   dailyPnl: serverDailyPnl,
   open: runServerAutopilot,
+  classic: () => dailyLongRunInfo()?.classic ?? null,
+  positions: () => [...daemonPositions.values()],
+  close: (id, price) => closeServerPosition(id, price, "TRAILING_STOP"),
 };
 
 /** Never a live order, and no Gemini review: see above. */
@@ -145,7 +158,51 @@ const PAPER_HOOKS: ServerAutopilotHooks = {
 };
 
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, waiting: 1, paused: 2 };
+const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, sold: 1, waiting: 2, paused: 3 };
+
+// ---------- breakout 55/20 (step 2 of trading slower) ----------
+// The classic strategy that did best on the coins since 2018
+// (src/services/classicStrategies.ts): a close above the last 55 days' high
+// buys, with a stop 2 ATR below; a close below the last 20 days' low sells.
+// No target, no trailing stop, nothing banked early, as replayed. It trades
+// this year's biggest coins (the replay's list), and only while its record
+// since 2018 averages MIN_EDGE_R+ over MIN_TRADER_TRADES+ trades.
+
+export const BREAKOUT_NAME = CLASSIC_STRATEGIES.breakout.name;
+/** A breakout trade has no target: this far above, so the guardian's target never closes it. */
+const NO_TARGET = 1000;
+
+/** Breakout's record since 2018, as a gate (whether it trades), or undefined before the classic strategies have run. */
+export function breakoutGate(classic: ClassicRecords | null): TraderGate | undefined {
+  if (!classic) return undefined;
+  const sum = sumRecords(Object.values(classic).map((byStrategy) => byStrategy.breakout));
+  const avgR = sum.trades > 0 ? sum.totalR / sum.trades : 0;
+  return { trader: BREAKOUT_NAME, trades: sum.trades, avgR, on: sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R };
+}
+
+/** The setup a breakout at day `i`'s close makes, in the candles' prices: entry at the close, stop 2 ATR below, no target. */
+export function breakoutSetup(symbol: string, s: CandleSeries, i: number): StrategySetup | null {
+  const e = breakoutEntryAt(s, i);
+  if (!e) return null;
+  return {
+    id: `breakout-${symbol}-${s.t[i]}`,
+    name: BREAKOUT_NAME,
+    family: "breakout_confirmation",
+    direction: "LONG",
+    symbol,
+    timeframe: "1d",
+    strategy: "breakout",
+    entryPrice: e.entry,
+    stopLoss: e.entry - e.risk,
+    takeProfit: e.entry * NO_TARGET,
+    riskRewardRatio: (e.entry * (NO_TARGET - 1)) / e.risk,
+    baseProbability: 0.25,
+    qualifies: true,
+    horizon: "intraday",
+    planAtr: e.atr,
+    features: { emaAlignment: true, volumeSurgeRatio: 1, vwapDistancePercent: 0, adx: 0, rsi: 50, atr: e.atr },
+  };
+}
 
 /** The records daily traders are judged on, and the years they cover, in words ("since 2017"). */
 export interface DailyRecords {
@@ -301,15 +358,18 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
   const since = now - dayStart;
   if (running || state.lastDay === day || since < DAILY_SCAN_AFTER_MS || since > DAILY_SCAN_UNTIL_MS) return;
   const desks = deps.desks(now);
-  if (desks.length === 0) return;
+  const breakoutsHeld = (deps.positions ?? realDeps.positions!)().filter((p) => p.strategy === "breakout");
+  if (desks.length === 0 && breakoutsHeld.length === 0) return;
   running = true;
   // Marked first: a restart mid-scan doesn't open the day's trades twice.
   state.lastDay = day;
   save();
   try {
-    const coins = await deps.coins();
+    // The coins held in breakout trades too, to judge their exits.
+    const coins = [...new Set([...(await deps.coins()), ...breakoutsHeld.map((p) => p.symbol)])];
     const failed: string[] = [];
     const found: { symbol: string; regime: TradeProposal["regime"]; setups: TradeProposal["setup"][]; spread: number | undefined }[] = [];
+    const candles = new Map<string, CandleSeries>();
     for (const symbol of coins) {
       const fetched = await deps.daily(symbol, dayStart);
       await deps.sleep(PAUSE_MS);
@@ -318,39 +378,67 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
         failed.push(symbol);
         continue;
       }
+      candles.set(symbol, fetched.series);
       const spread = deps.spread(symbol);
       const at = latestSlowSetups(symbol, fetched.series, "1d", roundTripFeeRate(symbol), Math.min(spread ?? MAX_COIN_SPREAD, MAX_COIN_SPREAD));
-      if (at?.regime && at.setups.length > 0) found.push({ symbol, regime: at.regime, setups: at.setups, spread });
+      const setups = at?.setups ?? [];
+      // Breakout 55/20, on this year's biggest coins.
+      const breakout = inCohort(symbol, now) ? breakoutSetup(symbol, fetched.series, fetched.series.t.length - 1) : null;
+      if (breakout) setups.push(breakout);
+      // A day at a 55-day high is a rising one, whatever the traders read.
+      if (setups.length > 0) found.push({ symbol, regime: at?.regime ?? "trending_bullish", setups, spread });
     }
 
     const quotes = new Map<string, { bid: number; ask: number } | null>();
+    const quoteOf = async (symbol: string) => {
+      if (!quotes.has(symbol)) quotes.set(symbol, await deps.quote(symbol));
+      return quotes.get(symbol) ?? null;
+    };
+
+    // Breakout trades closing below their 20-day low are sold first (whatever the desk: an open trade keeps its exit), freeing their slots.
+    const soldFor = new Map<string, DailyPick[]>();
+    for (const p of breakoutsHeld) {
+      const s = candles.get(p.symbol);
+      if (!s || !breakoutExitAt(s, s.t.length - 1)) continue;
+      const quote = await quoteOf(p.symbol);
+      const sold = !!quote && (deps.close ?? realDeps.close!)(p.id, quote.bid);
+      const pick: DailyPick = sold
+        ? { symbol: p.symbol, trader: BREAKOUT_NAME, outcome: "sold", reason: "closed below its 20-day low" }
+        : { symbol: p.symbol, trader: BREAKOUT_NAME, outcome: "waiting", reason: "closed below its 20-day low, but no CoinDCX price to sell at; its stop still guards it" };
+      soldFor.set(p.userId ?? "", [...(soldFor.get(p.userId ?? "") ?? []), pick]);
+    }
+    const breakout = breakoutGate((deps.classic ?? realDeps.classic!)());
     for (const [uid, desk] of desks) {
       const profile = (desk.trailProfile && desk.trailProfile in TRAIL_PROFILES ? desk.trailProfile : DEFAULT_TRAIL_PROFILE) as TrailProfileId;
       const judged = deps.records();
       const gates = dailyTraderGates(judged?.records ?? null, profile);
-      const gateOf = (trader: string) => gates.find((g) => g.trader === trader);
+      const gateOf = (trader: string) => (trader === BREAKOUT_NAME ? breakout : gates.find((g) => g.trader === trader));
       const policy = dailyPolicy(desk);
       const note = deskNote(uid, desk, policy, deps, now);
-      const picks: DailyPick[] = [];
+      const picks: DailyPick[] = [...(soldFor.get(uid) ?? [])];
       const candidates: { proposal: TradeProposal; avgR: number }[] = [];
+      // One breakout trade at a time per coin, as replayed: a new high while holding one isn't another.
+      const inBreakout = new Set(breakoutsHeld.filter((p) => (p.userId ?? "") === uid).map((p) => p.symbol));
       for (const f of found) {
         for (const setup of f.setups) {
+          if (setup.strategy === "breakout" && inBreakout.has(f.symbol)) continue;
           const gate = gateOf(setup.name);
           if (!gate?.on) {
-            picks.push({ symbol: f.symbol, trader: setup.name, outcome: "paused", reason: pausedReason(gate, judged?.span ?? null) });
+            const reason = setup.strategy === "breakout" ? pausedReason(gate, "since 2018").replace("daily record", "record") : pausedReason(gate, judged?.span ?? null);
+            picks.push({ symbol: f.symbol, trader: setup.name, outcome: "paused", reason });
             continue;
           }
           if (spreadTooWide(f.symbol, f.spread ?? 0)) {
             picks.push({ symbol: f.symbol, trader: setup.name, outcome: "waiting", reason: `its spread (${((f.spread ?? 0) * 100).toFixed(2)}%) is wider than ${(MAX_COIN_SPREAD * 100).toFixed(1)}%` });
             continue;
           }
-          if (!quotes.has(f.symbol)) quotes.set(f.symbol, await deps.quote(f.symbol));
-          const quote = quotes.get(f.symbol);
+          const quote = await quoteOf(f.symbol);
           if (!quote) {
             picks.push({ symbol: f.symbol, trader: setup.name, outcome: "waiting", reason: "no CoinDCX price" });
             continue;
           }
-          candidates.push({ proposal: dailyProposal({ symbol: f.symbol, regime: f.regime, setup }, quote.ask, gate, policy, day, now, judged?.span), avgR: gate.avgR });
+          const span = setup.strategy === "breakout" ? "since 2018" : judged?.span;
+          candidates.push({ proposal: dailyProposal({ symbol: f.symbol, regime: f.regime, setup }, quote.ask, gate, policy, day, now, span), avgR: gate.avgR });
         }
       }
       // The best records first: they get the coin slots.
@@ -377,6 +465,10 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
       const opened = picks.filter((p) => p.outcome === "opened").map((p) => p.symbol);
       console.log(`[DailyCoins] ${day}: ${coins.length} coins, ${picks.length} setups, opened ${opened.join(", ") || "none"} for ${uid}.`);
     }
+    // Sales for a desk that isn't scanning (it still holds its breakout trades).
+    for (const [uid, sold] of soldFor) {
+      if (!desks.some(([d]) => d === uid)) state.runs[uid] = { at: now, day, coins: coins.length, failed, picks: sold };
+    }
     save();
   } catch (err) {
     console.error("[DailyCoins] Scan failed:", err);
@@ -397,6 +489,8 @@ export function dailyCoinsView(uid: string, now: number = Date.now()) {
     traders: dailyTraderGates(judged?.records ?? null, profile),
     /** The years the records cover, in words ("since 2017"), or null without any. */
     recordSpan: judged?.span ?? null,
+    /** Breakout 55/20's record since 2018 and whether it trades (null before the classic strategies have run). */
+    breakout: breakoutGate(realDeps.classic!()) ?? null,
     nextAt: (todayDone ? dayStart + DAY_MS : dayStart) + DAILY_SCAN_AFTER_MS,
   };
 }

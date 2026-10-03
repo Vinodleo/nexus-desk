@@ -107,6 +107,23 @@ function close(strategy: ClassicId, symbol: string, s: CandleSeries, h: Held, j:
 }
 
 /**
+ * Whether the close of day `i` breaks out (above the last 55 days' high),
+ * with its entry and risk (2 ATR); null otherwise. The replay and the paper
+ * trades (server/scanner/dailyCoins.ts) both enter by it.
+ */
+export function breakoutEntryAt(s: CandleSeries, i: number, range: (number | undefined)[] = atr(s)): { entry: number; risk: number; atr: number } | null {
+  const a = range[i];
+  if (i < BREAKOUT_ENTRY_DAYS || a === undefined || !(a > 0)) return null;
+  if (!(s.c[i] > Math.max(...s.h.slice(i - BREAKOUT_ENTRY_DAYS, i)))) return null;
+  return { entry: s.c[i], risk: BREAKOUT_STOP_ATR * a, atr: a };
+}
+
+/** Whether the close of day `i` is below the last 20 days' low: a breakout trade is sold there. */
+export function breakoutExitAt(s: CandleSeries, i: number): boolean {
+  return i >= BREAKOUT_EXIT_DAYS && s.c[i] < Math.min(...s.l.slice(i - BREAKOUT_EXIT_DAYS, i));
+}
+
+/**
  * Breakout 55/20 on one coin's daily candles. `eligible` says whether a
  * trade may open at a close (the coin on that year's list); `cost` is a
  * round trip's fees and spread (share of price).
@@ -121,18 +138,15 @@ export function breakoutTrades(symbol: string, s: CandleSeries, cost: number, el
       if (s.l[i] <= held.stop) {
         trades.push(close("breakout", symbol, s, held, i, stopFill(s, i, held.stop), cost));
         held = null;
-      } else if (s.c[i] < Math.min(...s.l.slice(i - BREAKOUT_EXIT_DAYS, i))) {
+      } else if (breakoutExitAt(s, i)) {
         trades.push(close("breakout", symbol, s, held, i, s.c[i], cost));
         held = null;
       }
       continue;
     }
-    const a = range[i];
-    if (a === undefined || !(a > 0) || !eligible(closeMs(s, i))) continue;
-    if (s.c[i] > Math.max(...s.h.slice(i - BREAKOUT_ENTRY_DAYS, i))) {
-      const risk = BREAKOUT_STOP_ATR * a;
-      held = { i, entry: s.c[i], stop: s.c[i] - risk, risk };
-    }
+    if (!eligible(closeMs(s, i))) continue;
+    const entry = breakoutEntryAt(s, i, range);
+    if (entry) held = { i, entry: entry.entry, stop: entry.entry - entry.risk, risk: entry.risk };
   }
   if (held) trades.push(close("breakout", symbol, s, held, n - 1, s.c[n - 1], cost, true));
   return trades;

@@ -134,6 +134,13 @@ describe("positions the server's autopilot opened", () => {
     await syncAs([]);
   });
 
+  it("stay breakout trades when an app that doesn't know the mark syncs them back", async () => {
+    guardian.openServerPosition("u2", { ...opened, id: "srv-breakout", timeframe: "1d", strategy: "breakout" });
+    await syncAs([{ ...opened, id: "srv-breakout", userId: "u2", openedByServer: true, clientSeen: false }]);
+    expect(guardian.daemonPositions.get("srv-breakout")).toMatchObject({ strategy: "breakout", timeframe: "1d", clientSeen: true });
+    await syncAs([]);
+  });
+
   it("can't be claimed by the app for a position the server didn't open", async () => {
     await syncAs([{ ...opened, id: "fake-1", openedByServer: true, clientSeen: false }]);
     expect(guardian.daemonPositions.get("fake-1")?.openedByServer).toBeUndefined();
