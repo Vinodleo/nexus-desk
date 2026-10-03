@@ -60,18 +60,54 @@ describe("the machine-learning test card", () => {
   it("shows progress while it trains, why it couldn't run, and waits for the replay", async () => {
     vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, running: true, phase: "training", trees: 42, result: null }));
     render(createElement(MlTestCard));
-    expect((await screen.findByTestId("ml-status")).textContent).toBe("Training: 42 trees so far · it rests between steps, so it takes a while");
+    expect((await screen.findByTestId("ml-progress")).textContent).toBe("Training: 42 trees so far · it rests between steps, so it takes a while");
     expect(screen.queryByRole("button")).toBeNull();
     cleanup();
 
     vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, error: "Too few saved setups in one of the periods.", result: null }));
     render(createElement(MlTestCard));
-    expect((await screen.findByTestId("ml-status")).textContent).toBe("Couldn't run: Too few saved setups in one of the periods.");
+    expect((await screen.findByTestId("ml-progress")).textContent).toBe("Couldn't run: Too few saved setups in one of the periods.");
     cleanup();
 
     vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, ready: false, result: null }));
     render(createElement(MlTestCard));
     expect((await screen.findByTestId("ml-status")).textContent).toBe("Waits for the two-year replay to finish.");
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("shows the daily coin test's verdict on the latest year, above the 5-minute one", async () => {
+    const dailyResult = {
+      ...done.result,
+      periods: {
+        trainFrom: Date.parse("2017-08-01T00:00:00Z"),
+        validFrom: Date.parse("2024-10-01T00:00:00Z"),
+        testFrom: Date.parse("2025-10-01T00:00:00Z"),
+        testTo: Date.parse("2026-10-01T00:00:00Z"),
+      },
+      setups: { train: 30_000, trainUsed: 30_000, valid: 4000, test: 4000 },
+      importance: [{ label: "Bitcoin's last 30 days", share: 0.4 }],
+      markets: { crypto: { share: 0.5, everySetup: stats(1100, 23, 0.07, 0.02), picks: stats(560, 28, 0.15, 0.06), passed: true }, nse: null, us: null },
+    };
+    vi.mocked(apiFetch).mockResolvedValue(reply({ ...done, daily: { ready: true, result: dailyResult } }));
+    render(createElement(MlTestCard));
+    const daily = await screen.findByTestId("ml-daily");
+    expect(daily.textContent).toMatch(/^Daily coin trades since 2017/);
+    expect(screen.getByTestId("ml-daily-status").textContent).toBe(
+      "Learned from Aug 2017 – Sept 2024 (30,000 setups), tuned on Oct 2024 – Sept 2025, judged on Oct 2025 – Sept 2026 (4,000 setups)."
+    );
+    expect(screen.getByTestId("ml-daily-markets").textContent).toBe(
+      "CoinsPassesEvery setup: +0.07R over 1,100 tradesIts picks (the best 50%): +0.15R over 560 trades · 28% won · at worst about +0.06R"
+    );
+    expect(screen.getByTestId("ml-daily-importance").textContent).toBe("What it relied on most: Bitcoin's last 30 days 40%.");
+    // The 5-minute verdict below, as before.
+    expect(screen.getByText("5-minute trades over two years")).toBeTruthy();
+    expect(screen.getByTestId("ml-markets").textContent).toContain("CoinsPasses");
+    cleanup();
+
+    // Running the daily test; then waiting for the replay since 2017.
+    vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, running: true, testing: "daily", phase: "training", trees: 7, daily: { ready: false, result: null } }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-progress")).textContent).toBe("Daily coins: Training: 7 trees so far · it rests between steps, so it takes a while");
+    expect(screen.getByTestId("ml-daily-status").textContent).toBe("Waits for the replay since 2017 to finish.");
   });
 });

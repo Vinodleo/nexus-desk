@@ -252,6 +252,28 @@ export function setupCsvRow(d: SetupDetail, profiles: TrailProfileId[]): string 
   ].join(",");
 }
 
+/**
+ * A market's change over its last `candles` closed candles (each
+ * `intervalMs` long) at a time, from its series (%); null without enough of
+ * them or a recent one.
+ */
+export function pastMove(series: CandleSeries, candles: number, intervalMs: number): (ms: number) => number | null {
+  return (ms) => {
+    let lo = 0;
+    let hi = series.t.length - 1;
+    let k = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (series.t[mid] + intervalMs <= ms) {
+        k = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    if (k < candles || ms - (series.t[k] + intervalMs) > intervalMs) return null;
+    return pct(series.c[k], series.c[k - candles]);
+  };
+}
+
 /** A market's change over the last hour (12 closed 5-minute candles) at a time, from its series; null when it has no recent candle. */
 export function lastHourMove(series: CandleSeries): (ms: number) => number | null {
   return (ms) => {
@@ -457,7 +479,13 @@ export function* replayTimeframe(
   tf: Timeframe,
   profiles: TrailProfileId[],
   feeRate: number,
-  spreadPct: number = 0
+  spreadPct: number = 0,
+  opts: {
+    /** Every setup taken into account, with its details and result under each profile (machine learning's rows). */
+    onSetup?: (detail: SetupDetail) => void;
+    /** The market's move at a time (Bitcoin's), for the details. */
+    marketMove?: (ms: number) => number | null;
+  } = {}
 ): Generator<HistoryTrade[]> {
   const rules = TIMEFRAME_RULES[tf];
   const n = series.t.length;
@@ -476,20 +504,28 @@ export function* replayTimeframe(
       higherMs: rules.higherMs,
       anyTime: rules.anyTime,
     });
-    for (const { i, setups } of found) {
+    for (const { i, regime, macro, setups } of found) {
       const entryMs = closeMs(i);
       for (const setup of setups) {
         const risk = Math.abs(setup.entryPrice - setup.stopLoss);
         if (!(risk > 0) || ((feeRate + spreadPct) * setup.entryPrice) / risk > MAX_COST_SHARE_OF_STOP) continue;
+        // With details asked for, every setup is played out, not only those a free trader takes.
+        const detail: SetupDetail | null = opts.onSetup
+          ? { ...setupDetail(symbol, bars, i, setup, regime, macro, entryMs, opts.marketMove), results: {} }
+          : null;
         for (const profile of profiles) {
           const key = `${profile}|${setup.name}`;
-          if (entryMs < (busyUntil.get(key) ?? 0)) continue;
+          const busy = entryMs < (busyUntil.get(key) ?? 0);
+          if (busy && !detail) continue;
           const result = simulateExit(setup, bars, i, profile, spreadPct, held);
           if (!result || result.open) continue;
+          if (detail) detail.results[profile] = { r: result.r, bars: result.exitIndex - i };
+          if (busy) continue;
           const exitMs = closeMs(result.exitIndex);
           busyUntil.set(key, exitMs);
           trades.push({ trader: setup.name, profile, entryMs, exitMs, r: result.r });
         }
+        if (detail) opts.onSetup!(detail);
       }
     }
     yield trades;

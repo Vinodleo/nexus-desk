@@ -5,16 +5,21 @@ import { gunzip } from "zlib";
 import { backgroundWorkBusy, CPU_SHARE, historyRunInfo, historyRunning, setupsDir, setupsFileName, waitForOtherWork } from "./historyJob";
 import { scannerHeartbeat } from "../scanner/scannerService";
 import { scanningDesks } from "../scanner/deskState";
+import { dailyLongRunInfo, dailyLongRunning, dailySetupsDir } from "./dailyLong";
 import {
   addRow,
   binEdges,
+  DAILY_FEATURE_LABELS,
+  DEFAULT_BOOST,
   emptyTable,
+  FEATURE_LABELS,
   featureList,
   importance,
   judge,
   linesOf,
   readSetupLines,
   trainBoosted,
+  type BoostOptions,
   type MarketVerdict,
   type SetupRow,
   type SetupTable,
@@ -25,7 +30,10 @@ import { isNseSymbol } from "../../src/shared/nse";
 import { isUsSymbol } from "../../src/shared/usMarket";
 
 // The machine-learning test, run on the server where the replayed setups are
-// kept (history_setups/, from the two-year replay). It reads them twice:
+// kept: the two-year replay's 5-minute ones (history_setups/), and the daily
+// coin ones since 2017 (daily_long_setups/, history/dailyLong.ts). Each is
+// tested on its own, the daily ones over longer periods (a year to tune, the
+// latest year to judge: daily trades are fewer). It reads them twice:
 // once to count them and set each reading's bins, once to load them, a byte
 // a reading. The oldest months train the model, the 3 months after tune it,
 // and the latest 6 months judge it (src/services/setupModel.ts). Like the
@@ -36,9 +44,6 @@ import { isUsSymbol } from "../../src/shared/usMarket";
 
 /** Bump when the test changes enough that an old verdict no longer stands. */
 export const ML_TEST_VERSION = 1;
-/** The latest months judge; the months before them tune. */
-const TEST_DAYS = 182;
-const VALID_DAYS = 91;
 /**
  * At most this many training setups are loaded (evenly spread), to stay well
  * inside the server's memory (512 MB, shared with everything else): loaded,
@@ -65,7 +70,51 @@ const CYCLE_WAIT_MS = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const gunzipAsync = promisify(gunzip);
 
-const file = () => path.join(process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data"), "ml_test.json");
+const dataDir = () => process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
+
+/** Which saved setups a test learns from: the two-year replay's 5-minute ones, or the daily coin ones since 2017. */
+export type MlSource = "5m" | "daily";
+export const ML_SOURCES: MlSource[] = ["daily", "5m"];
+
+/** A finished replay's saved setups, as a test reads them. */
+interface SourceRun {
+  finishedAt: number | null;
+  fromMs: number;
+  toMs: number;
+  markets: Record<string, { setups?: number }>;
+}
+
+/** How each source is tested: where its setups are, how long its periods are, and how its readings read. */
+const SOURCE: Record<
+  MlSource,
+  { run: () => SourceRun | null; running: () => boolean; dir: () => string; file: string; testDays: number; validDays: number; barMs: number; labels: Record<string, string>; boost: BoostOptions }
+> = {
+  "5m": {
+    run: historyRunInfo,
+    running: historyRunning,
+    dir: setupsDir,
+    file: "ml_test.json",
+    testDays: 182,
+    validDays: 91,
+    barMs: 5 * 60_000,
+    labels: FEATURE_LABELS,
+    boost: DEFAULT_BOOST,
+  },
+  // Daily setups are tens of thousands, not millions: smaller leaves, and a year each to tune and to judge.
+  daily: {
+    run: dailyLongRunInfo,
+    running: dailyLongRunning,
+    dir: dailySetupsDir,
+    file: "ml_test_daily.json",
+    testDays: 365,
+    validDays: 365,
+    barMs: 24 * 60 * 60 * 1000,
+    labels: DAILY_FEATURE_LABELS,
+    boost: { ...DEFAULT_BOOST, minLeaf: 200 },
+  },
+};
+const fileOf = (source: MlSource) => path.join(dataDir(), SOURCE[source].file);
+const hasSetups = (run: SourceRun | null) => !!run?.finishedAt && Object.values(run.markets).some((m) => (m.setups ?? 0) > 0);
 
 export interface MlTestResult {
   version: number;
@@ -104,7 +153,9 @@ const realDeps: MlDeps = {
   memory: () => process.memoryUsage().rss,
 };
 
-let result: MlTestResult | null = null;
+const results: Record<MlSource, MlTestResult | null> = { "5m": null, daily: null };
+/** The test running now. */
+let testing: MlSource | null = null;
 let phase: MlPhase = "idle";
 let trees = 0;
 let lastError: string | null = null;
@@ -112,41 +163,50 @@ let active: Promise<void> | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 export function loadMlTest(): void {
-  try {
-    if (fs.existsSync(file())) result = JSON.parse(fs.readFileSync(file(), "utf8")) as MlTestResult;
-  } catch (err) {
-    console.warn("[MlTest] Couldn't read the saved verdict:", err);
+  for (const source of ML_SOURCES) {
+    try {
+      if (fs.existsSync(fileOf(source))) results[source] = JSON.parse(fs.readFileSync(fileOf(source), "utf8")) as MlTestResult;
+    } catch (err) {
+      console.warn(`[MlTest] Couldn't read the saved ${source} verdict:`, err);
+    }
   }
 }
 
-function saveMlTest(): void {
+function saveMlTest(source: MlSource): void {
   try {
-    fs.mkdirSync(path.dirname(file()), { recursive: true });
-    fs.writeFileSync(`${file()}.tmp`, JSON.stringify(result), "utf8");
-    fs.renameSync(`${file()}.tmp`, file());
+    fs.mkdirSync(dataDir(), { recursive: true });
+    fs.writeFileSync(`${fileOf(source)}.tmp`, JSON.stringify(results[source]), "utf8");
+    fs.renameSync(`${fileOf(source)}.tmp`, fileOf(source));
   } catch (err) {
-    console.warn("[MlTest] Couldn't save the verdict:", err);
+    console.warn(`[MlTest] Couldn't save the ${source} verdict:`, err);
   }
 }
 
 const marketOf = (symbol: string): MarketKind => (isUsSymbol(symbol) ? "us" : isNseSymbol(symbol) ? "nse" : "crypto");
 
-/** Whether a finished replay has setups the current verdict didn't learn from. */
-export function mlTestDue(): boolean {
-  const run = historyRunInfo();
-  if (!run?.finishedAt || !Object.values(run.markets).some((m) => (m.setups ?? 0) > 0)) return false;
-  return !result || result.version !== ML_TEST_VERSION || result.historyFinishedAt !== run.finishedAt;
+/** Whether a source's finished replay has setups its verdict didn't learn from (either source, without one named). */
+export function mlTestDue(source?: MlSource): boolean {
+  if (!source) return ML_SOURCES.some((s) => mlTestDue(s));
+  const run = SOURCE[source].run();
+  if (!hasSetups(run)) return false;
+  const result = results[source];
+  return !result || result.version !== ML_TEST_VERSION || result.historyFinishedAt !== run!.finishedAt;
 }
 
-async function work(deps: MlDeps): Promise<void> {
-  const run = historyRunInfo();
-  if (!run?.finishedAt) throw new Error("The two-year replay hasn't finished yet.");
+/** A source can be tested: its replay has finished with setups saved, and isn't replaying. */
+const testable = (source: MlSource) => hasSetups(SOURCE[source].run()) && !SOURCE[source].running();
+
+async function work(source: MlSource, deps: MlDeps): Promise<void> {
+  const cfg = SOURCE[source];
+  const run = cfg.run();
+  if (!run?.finishedAt) throw new Error(source === "daily" ? "The replay since 2017 hasn't finished yet." : "The two-year replay hasn't finished yet.");
+  const finishedAt = run.finishedAt;
   const profile = deps.profile();
-  const testFrom = run.toMs - TEST_DAYS * DAY_MS;
-  const validFrom = testFrom - VALID_DAYS * DAY_MS;
+  const testFrom = run.toMs - cfg.testDays * DAY_MS;
+  const validFrom = testFrom - cfg.validDays * DAY_MS;
   const markets = Object.entries(run.markets)
     .filter(([, m]) => (m.setups ?? 0) > 0)
-    .map(([symbol], id) => ({ symbol, id, market: marketOf(symbol), path: path.join(setupsDir(), setupsFileName(symbol)) }))
+    .map(([symbol], id) => ({ symbol, id, market: marketOf(symbol), path: path.join(cfg.dir(), setupsFileName(symbol)) }))
     .filter((m) => fs.existsSync(m.path));
   /** Rests after `took` ms of work, so the test averages CPU_SHARE of a core; waits for a scan cycle. */
   const rest = async (took: number) => {
@@ -161,7 +221,7 @@ async function work(deps: MlDeps): Promise<void> {
       const started = deps.now();
       const lines = linesOf(text);
       const header = lines.next().value ?? "";
-      for (const row of readSetupLines(lines, header, m.market, m.id, features, traders, profile)) use(row);
+      for (const row of readSetupLines(lines, header, m.market, m.id, features, traders, profile, cfg.barMs)) use(row);
       await rest(deps.now() - started);
     }
   };
@@ -217,7 +277,7 @@ async function work(deps: MlDeps): Promise<void> {
   // 3. Train, a tree at a time.
   phase = "training";
   trees = 0;
-  const training = trainBoosted(tables.train, tables.valid);
+  const training = trainBoosted(tables.train, tables.valid, cfg.boost);
   let started = deps.now();
   let step = training.next();
   while (!step.done) {
@@ -230,35 +290,47 @@ async function work(deps: MlDeps): Promise<void> {
 
   // 4. Judge on the latest months.
   phase = "judging";
-  result = {
+  const result: MlTestResult = {
     version: ML_TEST_VERSION,
     ranAt: deps.now(),
-    historyFinishedAt: run.finishedAt,
+    historyFinishedAt: finishedAt,
     profile,
     periods: { trainFrom: run.fromMs, validFrom, testFrom, testTo: run.toMs },
     setups: { train: counts.train, trainUsed: tables.train.n, valid: tables.valid.n, test: tables.test.n },
     trees: model.trees.length,
-    importance: importance(model, features).slice(0, 6),
+    importance: importance(model, features, cfg.labels).slice(0, 6),
     markets: judge(model, tables.valid, tables.test),
   };
-  saveMlTest();
-  console.log(`[MlTest] Done: ${model.trees.length} trees; passed in ${Object.entries(result.markets).filter(([, v]) => v?.passed).map(([m]) => m).join(", ") || "no market"}.`);
+  results[source] = result;
+  saveMlTest(source);
+  console.log(`[MlTest] ${source} done: ${model.trees.length} trees; passed in ${Object.entries(result.markets).filter(([, v]) => v?.passed).map(([m]) => m).join(", ") || "no market"}.`);
 }
 
-/** Runs the test now unless it's running or a replay is (it can't start before a replay has finished). */
-export function startMlTest(deps: MlDeps = realDeps): Promise<void> {
+/**
+ * Runs the tests now, one after the other, unless one is running: those
+ * `sources` that can be tested (every one by default; the scheduled check
+ * names those due). A source whose replay is running or unfinished is left.
+ */
+export function startMlTest(deps: MlDeps = realDeps, sources: MlSource[] = ML_SOURCES): Promise<void> {
   if (active) return active;
-  if (historyRunning()) return Promise.resolve();
+  const todo = sources.filter(testable);
+  if (todo.length === 0) return Promise.resolve();
   lastError = null;
-  active = work(deps)
-    .catch((err) => {
-      lastError = err?.message || String(err);
-      console.error("[MlTest] Failed:", err);
-    })
-    .finally(() => {
-      active = null;
-      phase = "idle";
-    });
+  active = (async () => {
+    for (const source of todo) {
+      testing = source;
+      try {
+        await work(source, deps);
+      } catch (err: any) {
+        lastError = err?.message || String(err);
+        console.error(`[MlTest] ${source} failed:`, err);
+      }
+    }
+  })().finally(() => {
+    active = null;
+    testing = null;
+    phase = "idle";
+  });
   return active;
 }
 
@@ -268,28 +340,33 @@ export function startMlTestJob(): void {
   waitForOtherWork(() => active !== null);
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);
-    if (!active && !historyRunning() && !backgroundWorkBusy() && mlTestDue()) void startMlTest();
+    const due = ML_SOURCES.filter((s) => mlTestDue(s));
+    if (!active && !historyRunning() && !backgroundWorkBusy() && due.length > 0) void startMlTest(realDeps, due);
   };
   timer = setTimeout(check, CHECK_EVERY_MS);
 }
 
-/** What the Lab shows. */
+/** What the Lab shows: the 5-minute test as before, and the daily one. */
 export function mlTestView() {
-  const run = historyRunInfo();
   return {
     running: active !== null,
+    /** Which test is running. */
+    testing,
     phase,
     trees,
     error: lastError,
     /** It can run: a replay has finished with setups saved, and none is going. */
-    ready: !!run?.finishedAt && !historyRunning() && Object.values(run.markets).some((m) => (m.setups ?? 0) > 0),
-    result,
+    ready: testable("5m"),
+    result: results["5m"],
+    daily: { ready: testable("daily"), result: results.daily },
   };
 }
 
 /** Test hooks. */
 export function _resetMlTest(): void {
-  result = null;
+  results["5m"] = null;
+  results.daily = null;
+  testing = null;
   phase = "idle";
   trees = 0;
   lastError = null;

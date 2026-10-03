@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { deflateRawSync } from "zlib";
+import { deflateRawSync, gunzipSync } from "zlib";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarketBar } from "../../src/types";
 import { appendBars, emptySeries, sumRecords, type CandleSeries } from "../../src/services/historyReplay";
@@ -258,6 +258,33 @@ describe("the long daily replay", () => {
       { symbol: "BTG/INR", note: "BTGUSDT isn't on Binance" },
     ]);
     expect(view.byMarket).toEqual({ "BTC/INR": btc, "LUNA/INR": luna });
+  });
+
+  it("saves every setup in a coin's list years, with Bitcoin's last 30 days, for the machine-learning test", async () => {
+    const { deps } = fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] });
+    await long.startDailyLong(false, deps);
+    const run = long._dailyLongRun()!;
+    const rows = (symbol: string) => {
+      const [header, ...lines] = gunzipSync(fs.readFileSync(path.join(long.dailySetupsDir(), historyJob.setupsFileName(symbol)))).toString().trim().split("\n");
+      const cols = header.split(",");
+      return lines.map((line) => Object.fromEntries(line.split(",").map((v, k) => [cols[k], v])));
+    };
+    const luna = rows("LUNA/INR");
+    expect(luna.length).toBe(run.markets["LUNA/INR"].setups);
+    expect(luna.length).toBeGreaterThan(run.markets["LUNA/INR"].totals!.tight!.trades);
+    // Only 2022's, LUNA's one year on the list.
+    expect(luna.every((row) => new Date(Number(row.entryMs)).getUTCFullYear() === 2022)).toBe(true);
+    // Each with Bitcoin's move over the 30 days before, and its result under each trailing stop.
+    const btc = series["BTC/INR"];
+    const first = luna[0];
+    const k = btc.t.indexOf(Number(first.entryMs) - DAY);
+    expect(Number(first.market1hPct)).toBeCloseTo(((btc.c[k] - btc.c[k - 30]) / btc.c[k - 30]) * 100, 2);
+    for (const p of ["tight", "balanced", "patient", "fixed"]) expect(first[`r_${p}`]).not.toBe("");
+    expect(rows("BTC/INR").length).toBe(run.markets["BTC/INR"].setups);
+    expect(long.dailyLongView().run!.setups).toBe(luna.length + rows("BTC/INR").length);
+    // A fresh run starts the files again.
+    await long.startDailyLong(true, fakes({ symbols: () => [] }).deps);
+    expect(fs.existsSync(long.dailySetupsDir())).toBe(false);
   });
 
   it("carries on after a restart from the next coin, and waits for a scan cycle to finish", async () => {

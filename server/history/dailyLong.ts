@@ -1,12 +1,25 @@
 import fs from "fs";
 import path from "path";
-import { addToRecords, replayTimeframe, totalsByProfile, type CandleSeries, type HistoryRecords, type HistoryTrade, TIMEFRAME_RULES } from "../../src/services/historyReplay";
+import { promisify } from "util";
+import { gzip } from "zlib";
+import {
+  addToRecords,
+  pastMove,
+  replayTimeframe,
+  setupCsvHeader,
+  setupCsvRow,
+  totalsByProfile,
+  type CandleSeries,
+  type HistoryRecords,
+  type HistoryTrade,
+  TIMEFRAME_RULES,
+} from "../../src/services/historyReplay";
 import type { TraderRecord } from "../../src/services/exitExpectancy";
 import { TRADER_PERSONAS } from "../../src/services/personaEngine";
 import { TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
 import { roundTripFeeRate } from "../../src/shared/tradeCosts";
 import { fetchCoinDailySince, type HistoryFetch } from "./historyCandles";
-import { backgroundWorkBusy, CPU_SHARE, historyRunning, historySpread, waitForOtherWork } from "./historyJob";
+import { backgroundWorkBusy, CPU_SHARE, historyRunning, historySpread, setupsFileName, waitForOtherWork } from "./historyJob";
 import { scannerHeartbeat, typicalSpread } from "../scanner/scannerService";
 
 // Coins on daily candles over every year Binance has, back to 2017. The
@@ -27,7 +40,7 @@ import { scannerHeartbeat, typicalSpread } from "../scanner/scannerService";
 // core, never alongside it or the machine-learning test, and again monthly.
 
 /** Bump when the replay changes enough that old results no longer compare. */
-export const DAILY_LONG_VERSION = 1;
+export const DAILY_LONG_VERSION = 2;
 /** From Binance's first candles (August 2017). */
 export const DAILY_LONG_FROM_MS = Date.UTC(2017, 7, 1);
 const RERUN_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
@@ -79,6 +92,9 @@ export interface DailyLongMarket {
   note?: string;
   /** Its trades in its list years, every trader together, per trailing stop. */
   totals?: Partial<Record<TrailProfileId, TraderRecord>>;
+  /** Setups saved for machine learning (its list years), and its file's size (bytes). */
+  setups?: number;
+  setupBytes?: number;
 }
 
 export interface DailyLongRun {
@@ -112,7 +128,18 @@ const realDeps: DailyLongDeps = {
   scannerBusy: () => scannerHeartbeat().cycleRunning,
 };
 
-const file = () => path.join(process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data"), "daily_long.json");
+const dataDir = () => process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
+const file = () => path.join(dataDir(), "daily_long.json");
+/**
+ * Every setup in a coin's list years, with its readings and its result under
+ * each trailing stop: a compressed CSV per coin (history_setups/ format), for
+ * the machine-learning test on daily trades.
+ */
+export const dailySetupsDir = () => path.join(dataDir(), "daily_long_setups");
+const gzipAsync = promisify(gzip);
+/** Bitcoin's move over this many days is each setup's market reading. */
+const MARKET_MOVE_DAYS = 30;
+const BTC = "BTC/INR";
 const traderIds = () => TRADER_PERSONAS.map((p) => p.id);
 
 let run: DailyLongRun | null = null;
@@ -168,6 +195,7 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
   if (fresh || !run) {
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
     const lastRecords = dailyLongRecords() ?? undefined;
+    fs.rmSync(dailySetupsDir(), { recursive: true, force: true });
     run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {}, ...(lastRecords ? { lastRecords } : {}) };
     save();
   }
@@ -179,9 +207,20 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
     while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
   };
 
+  /** Bitcoin's candles, for every coin's market reading: replayed first, or fetched again after a restart. */
+  let btc: CandleSeries | null = null;
+  const btcSeries = async (): Promise<CandleSeries | null> => {
+    if (!btc) {
+      const got = await deps.download(BTC, r.fromMs, r.toMs);
+      btc = "error" in got ? null : got.series;
+    }
+    return btc;
+  };
+
   const replayMarket = async (symbol: string): Promise<boolean> => {
     current = symbol;
     const fetched = await deps.download(symbol, r.fromMs, r.toMs);
+    if (symbol === BTC && !("error" in fetched)) btc = fetched.series;
     if (stopped()) return false;
     if ("error" in fetched) {
       r.markets[symbol] = { status: "failed", candles: 0, note: fetched.error };
@@ -197,7 +236,15 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
       return true;
     }
     const records: HistoryRecords = {};
-    const replay = replayTimeframe(symbol, series, "1d", PROFILES, roundTripFeeRate(symbol), historySpread(symbol, deps.spread(symbol)));
+    const rows: string[] = [];
+    const market30d = await btcSeries();
+    const replay = replayTimeframe(symbol, series, "1d", PROFILES, roundTripFeeRate(symbol), historySpread(symbol, deps.spread(symbol)), {
+      marketMove: market30d ? pastMove(market30d, MARKET_MOVE_DAYS, DAY_MS) : undefined,
+      // Only setups in a year the coin was on that year's list, like its trades.
+      onSetup: (d) => {
+        if (inCohort(symbol, d.entryMs)) rows.push(setupCsvRow(d, PROFILES));
+      },
+    });
     for (;;) {
       const started = deps.now();
       const step: IteratorResult<HistoryTrade[]> = replay.next();
@@ -208,8 +255,10 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
       await rest(took);
       if (stopped()) return false;
     }
+    const saved = await saveSetups(symbol, rows);
+    if (stopped()) return false;
     mergeRecords(r.records, records);
-    r.markets[symbol] = { ...market, totals: totalsByProfile(records) };
+    r.markets[symbol] = { ...market, totals: totalsByProfile(records), ...saved };
     save();
     return true;
   };
@@ -227,6 +276,22 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
   r.finishedAt = deps.now();
   save();
   console.log(`[DailyLong] Replayed ${Object.values(r.markets).filter((m) => m.status === "done").length} of ${symbols.length} coins on daily candles since 2017.`);
+}
+
+/** Writes a coin's setups (compressed CSV); none when it had none. */
+async function saveSetups(symbol: string, rows: string[]): Promise<{ setups: number; setupBytes: number }> {
+  if (rows.length === 0) return { setups: 0, setupBytes: 0 };
+  try {
+    const data = await gzipAsync(Buffer.from(`${setupCsvHeader(PROFILES)}\n${rows.join("\n")}\n`));
+    fs.mkdirSync(dailySetupsDir(), { recursive: true });
+    const target = path.join(dailySetupsDir(), setupsFileName(symbol));
+    fs.writeFileSync(`${target}.tmp`, data);
+    fs.renameSync(`${target}.tmp`, target);
+    return { setups: rows.length, setupBytes: data.length };
+  } catch (err) {
+    console.warn(`[DailyLong] Couldn't save ${symbol}'s setups:`, err);
+    return { setups: 0, setupBytes: 0 };
+  }
 }
 
 /** Starts a run unless one is going: from the start when `fresh` or due, otherwise carrying on with the kept one. */
@@ -271,6 +336,8 @@ export function dailyLongView() {
           fromMs: run.fromMs,
           toMs: run.toMs,
           done: Object.values(markets).filter((m) => m.status === "done").length,
+          /** Setups saved for the machine-learning test. */
+          setups: Object.values(markets).reduce((n, m) => n + (m.setups ?? 0), 0),
           problems: Object.entries(markets)
             .filter(([, m]) => m.status !== "done")
             .map(([symbol, m]) => ({ symbol, note: m.note ?? m.status })),
@@ -304,6 +371,16 @@ export function _resetDailyLong(): void {
 export function dailyLongRecords(): HistoryRecords | null {
   if (!run) return null;
   return run.finishedAt !== null ? run.records : run.lastRecords ?? null;
+}
+
+/** The kept run (finished or not), for the machine-learning test. */
+export function dailyLongRunInfo(): DailyLongRun | null {
+  return run;
+}
+
+/** A replay since 2017 is under way. */
+export function dailyLongRunning(): boolean {
+  return active !== null;
 }
 
 export function _dailyLongRun(): DailyLongRun | null {

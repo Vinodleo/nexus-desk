@@ -49,6 +49,21 @@ export const FEATURE_LABELS: Record<string, string> = {
   macro: "1-hour trend",
 };
 
+/**
+ * The same readings on daily candles (history/dailyLong.ts): the moves are
+ * over 12 and 48 days, the market's over Bitcoin's last 30 days, the trends
+ * daily and weekly, and the time of day is always the close.
+ */
+export const DAILY_FEATURE_LABELS: Record<string, string> = {
+  ...FEATURE_LABELS,
+  vwapDistPct: "distance from the day's average price",
+  chg1hPct: "last 12 days' move",
+  chg4hPct: "last 48 days' move",
+  market1hPct: "Bitcoin's last 30 days",
+  regime: "daily trend",
+  macro: "weekly trend",
+};
+
 export interface Feature {
   /** Its column, or for a yes/no feature, "group:value" (e.g. "trader:Sofia Range Scalp"). */
   name: string;
@@ -112,7 +127,9 @@ export function* readSetupLines(
   symbolId: number,
   features: Feature[],
   traders: string[],
-  profile: string
+  profile: string,
+  /** How long a candle is: a result's candles held, as time (5 minutes; a day for daily setups). */
+  barMs: number = FIVE_MIN
 ): Generator<SetupRow> {
   const cols = header.split(",");
   const at = (name: string) => cols.indexOf(name);
@@ -150,7 +167,7 @@ export function* readSetupLines(
     row.traderId = traderId < 0 ? 255 : traderId;
     row.entryMs = entryMs;
     row.r = r;
-    row.exitMs = entryMs + Number(v[iBars] || 0) * FIVE_MIN;
+    row.exitMs = entryMs + Number(v[iBars] || 0) * barMs;
     yield row;
   }
 }
@@ -454,10 +471,10 @@ export function judge(model: BoostedModel, valid: SetupTable, test: SetupTable):
 }
 
 /** What the model relied on most, by group, as shares of all its gain. */
-export function importance(model: BoostedModel, features: Feature[]): { label: string; share: number }[] {
+export function importance(model: BoostedModel, features: Feature[], labels: Record<string, string> = FEATURE_LABELS): { label: string; share: number }[] {
   const byLabel = new Map<string, number>();
   model.gain.forEach((g, k) => {
-    const label = FEATURE_LABELS[features[k].group] ?? features[k].group;
+    const label = labels[features[k].group] ?? features[k].group;
     byLabel.set(label, (byLabel.get(label) ?? 0) + g);
   });
   const total = [...byLabel.values()].reduce((a, b) => a + b, 0);

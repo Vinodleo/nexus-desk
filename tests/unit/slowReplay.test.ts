@@ -16,6 +16,7 @@ import { nseDeliveryRoundTripRate, nseRoundTripRate } from "../../src/shared/nse
 import { classifyRegime } from "../../src/services/marketDataService";
 import { volatilityScale } from "../../src/services/labSimulation";
 import { seeded } from "../../src/services/setupModel";
+import { SETUP_READINGS, type SetupDetail } from "../../src/services/historyReplay";
 
 // Slower trades: the traders on hourly and daily candles, held for days.
 
@@ -128,5 +129,33 @@ describe("slower candles", () => {
     appendBars(days, bars);
     const trades = [...replayTimeframe("ETH/INR", days, "1d", ["tight"], 0.001, 0.001)].flat();
     expect(trades.length).toBeGreaterThan(5);
+  });
+
+  it("hands back every setup's details and result under each trailing stop, without changing the trades taken", () => {
+    const random = seeded(4);
+    const days = emptySeries();
+    let p = 100;
+    const bars: MarketBar[] = Array.from({ length: 730 }, (_, k) => {
+      const o = p;
+      p *= 1 + 0.004 + (random() - 0.5) * 0.06;
+      const t = Date.parse("2024-10-01T00:00:00Z") + k * DAY;
+      return { time: "", timestampMs: t, open: o, high: Math.max(o, p) * 1.02, low: Math.min(o, p) * 0.98, close: p, volume: 1000 + random() * 3000 };
+    });
+    appendBars(days, bars);
+    const profiles = ["tight", "fixed"] as const;
+    const plain = [...replayTimeframe("ETH/INR", days, "1d", [...profiles], 0.001, 0.001)].flat();
+    const details: SetupDetail[] = [];
+    const withDetails = [
+      ...replayTimeframe("ETH/INR", days, "1d", [...profiles], 0.001, 0.001, { onSetup: (d) => details.push(d), marketMove: () => 4.2 }),
+    ].flat();
+    expect(withDetails).toEqual(plain);
+    // More setups than trades: those a busy trader passed on are played out too.
+    expect(details.length).toBeGreaterThan(plain.filter((t) => t.profile === "tight").length);
+    const taken = plain.find((t) => t.profile === "tight")!;
+    const same = details.find((d) => d.entryMs === taken.entryMs && d.trader === taken.trader)!;
+    expect(same.results.tight!.r).toBeCloseTo(taken.r, 9);
+    expect(same.results.tight!.bars).toBe(Math.round((taken.exitMs - taken.entryMs) / DAY));
+    expect(same.readings[SETUP_READINGS.indexOf("market1hPct")]).toBe(4.2);
+    expect(same.regime).toBeTruthy();
   });
 });

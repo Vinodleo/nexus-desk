@@ -62,7 +62,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   renamed coins via `DAILY_PAIRS`), to see whether they last through long falls (2018, 2022). Each year trades only its
   20 biggest coins on 1 January (`COIN_COHORTS`, from memory of the rankings; later years use the last list), so today's
   winners aren't replayed in years they were small. Same exits, fees and spreads as the two-year daily replay; results by
-  quarter (`daily_long.json`), shown by year. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
+  quarter (`daily_long.json`), shown by year. Every setup in a coin's list years is saved with its readings (Bitcoin's last
+  30 days as the market's) and results (`daily_long_setups/`, `replayTimeframe`'s `onSetup`), for the machine-learning test. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
   machine-learning test (`waitForOtherWork`, `backgroundWorkBusy`). Its records (the last finished run's while it reruns,
   `dailyLongRecords`) decide which traders take daily paper trades (owner's call, 4 Oct: nine years over two).
 - **Daily coin trades (paper, owner's call, 3 Oct):** `server/scanner/dailyCoins.ts`. Once a day, 10 minutes after the
@@ -75,7 +76,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   (`holdingDecision`), trailed on the daily ATR, labelled "daily", and left out of the 5-minute traders' real record.
   The Lab's "Daily coin trades" card shows each day's check.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
-  on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). A market passes only if
+  on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
+  the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if
   the picks, one at a time, average `MIN_EDGE_R`+ and clearly above zero. It runs after each replay, rests like it,
   sizes what it loads to the server's free memory and stops before 450 MB. Its verdict (`ml_test.json`) decides nothing live.
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
