@@ -117,4 +117,35 @@ describe("the machine-learning test card", () => {
     expect((await screen.findByTestId("ml-progress")).textContent).toBe("Daily coins: Training: 7 trees so far · it rests between steps, so it takes a while");
     expect(screen.getByTestId("ml-daily-status").textContent).toBe("Waits for the replay since 2017 to finish.");
   });
+
+  it("shows the breakout test: every trade against its picks and the ones it would skip, per market, and whether skipping adds profit", async () => {
+    const verdict = (every: number, picks: number, skipped: number, passed: boolean, from: number) => ({
+      fromYear: from, toYear: 2025, every: stats(260, 30, every, every - 0.3), picks: stats(130, 35, picks, picks - 0.4), skipped: stats(130, 25, skipped, skipped - 0.4),
+      importance: [{ label: "volatility (ATR)", share: 0.4 }], passed,
+    });
+    const breakout = { ready: true, result: { ranAt: 0, markets: { coins: verdict(0.98, 1.1, 0.86, false, 2022), us: verdict(0.39, 0.7, -0.6, true, 2020) } } };
+    vi.mocked(apiFetch).mockResolvedValue(reply({ ...done, breakout }));
+    render(createElement(MlTestCard));
+    const coins = await screen.findByTestId("ml-breakout-coins");
+    expect(coins.textContent).toBe(
+      "Coins judged 2022–2025✕Doesn't pass" + "Every trade260 trades+0.98R" + "Its picks130 trades+1.10R" + "Skipped130 trades+0.86R" +
+        "The trades it skips still made +0.86R a trade: skipping them would cost profit."
+    );
+    expect(screen.getByTestId("ml-breakout-us").textContent).toContain("US stocks judged 2020–2025✓Passes");
+    expect(screen.getByTestId("ml-breakout-us").textContent).toContain("The trades it skips clearly lost: skipping them would add profit.");
+    cleanup();
+
+    // Before the replays have saved their breakout trades; then too few years; then running.
+    vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, breakout: { ready: false, result: null } }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-breakout-status")).textContent).toBe("Waits for the replays to save their breakout trades.");
+    cleanup();
+    vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, breakout: { ready: true, result: { ranAt: 0, markets: { coins: null, us: null } } } }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-breakout-status")).textContent).toBe("Too few years of breakout trades to judge yet.");
+    cleanup();
+    vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, running: true, testing: "breakout", phase: "judging", breakout: { ready: true, result: null } }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-progress")).textContent).toBe("Breakout trades: Judging year by year · it rests between steps, so it takes a while");
+  });
 });

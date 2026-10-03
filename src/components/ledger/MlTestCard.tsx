@@ -8,12 +8,15 @@ import { MIN_EDGE_R } from "../../services/calibration";
 import { Card } from "./ui";
 import { pnlTone } from "./format";
 import { MARKET_TAB, MARKET_TITLE, rSigned } from "./LedgerBreakdown";
+import type { BreakoutMlVerdict } from "../../services/breakoutModel";
 
 // The machine-learning test (server/history/mlTest.ts): a model learns from
 // replayed setups' older periods and is judged on the latest, which it never
-// saw. Two tests: the daily coin trades since 2017 (judged on the latest
-// year), and the two-year replay's 5-minute trades (the latest six months).
-// It decides nothing live.
+// saw. Three tests: the daily coin trades since 2017 (judged on the latest
+// year), breakout 55/20's trades on coins and US stocks (judged year by
+// year: whether skipping the least promising half adds profit), and the
+// two-year replay's 5-minute trades (the latest six months). It decides
+// nothing live.
 
 type MlResult = {
   ranAt: number;
@@ -34,10 +37,57 @@ export interface MlTestView {
   /** The 5-minute test's verdict. */
   result: MlResult | null;
   /** Which test is running (absent from older servers). */
-  testing?: "5m" | "daily" | null;
+  testing?: "5m" | "daily" | "breakout" | null;
   /** The daily coin test (absent from older servers). */
   daily?: { ready: boolean; result: MlResult | null };
+  /** The test on breakout trades (absent from older servers). */
+  breakout?: { ready: boolean; result: BreakoutResult | null };
 }
+
+type BreakoutVerdict = Pick<BreakoutMlVerdict, "fromYear" | "toYear" | "every" | "picks" | "skipped" | "importance" | "passed">;
+type BreakoutResult = { ranAt: number; markets: { coins: BreakoutVerdict | null; us: BreakoutVerdict | null } };
+const BREAKOUT_MARKET_TITLE = { coins: "Coins", us: "US stocks" } as const;
+
+/** Each market's breakout verdict: every trade against the model's picks and the trades it would skip. */
+const BreakoutVerdicts: React.FC<{ breakout: NonNullable<MlTestView["breakout"]> }> = ({ breakout }) => {
+  const r = breakout.result;
+  const markets = r ? (["coins", "us"] as const).flatMap((m) => (r.markets[m] ? [{ market: m, v: r.markets[m]! }] : [])) : [];
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="ml-breakout">
+      <div className="text-[11px] font-semibold text-muted">Breakout trades: would skipping its least promising half add profit?</div>
+      {markets.length === 0 ? (
+        <div className="text-xs text-muted" data-testid="ml-breakout-status">
+          {r ? "Too few years of breakout trades to judge yet." : breakout.ready ? "Ready to run." : "Waits for the replays to save their breakout trades."}
+        </div>
+      ) : (
+        markets.map(({ market, v }) => (
+          <div key={market} className="flex flex-col gap-1" data-testid={`ml-breakout-${market}`}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-xs font-semibold">
+                {BREAKOUT_MARKET_TITLE[market]} <span className="font-normal text-muted tabular-nums">judged {v.fromYear}–{v.toYear}</span>
+              </span>
+              <LabChip status={v.passed ? "passes" : "fails"}>{v.passed ? "Passes" : "Doesn't pass"}</LabChip>
+            </div>
+            <CompareBars
+              rows={[
+                { label: "Every trade", sub: `${count(v.every.trades)} trades`, r: v.every.avgR },
+                { label: "Its picks", sub: `${count(v.picks.trades)} trades`, r: v.picks.avgR, strong: true },
+                { label: "Skipped", sub: `${count(v.skipped.trades)} trades`, r: v.skipped.avgR },
+              ]}
+            />
+            <div className="text-[11px] text-muted leading-snug">
+              {v.passed
+                ? "The trades it skips clearly lost: skipping them would add profit."
+                : v.skipped.avgR > 0
+                  ? `The trades it skips still made ${rSigned(v.skipped.avgR)} a trade: skipping them would cost profit.`
+                  : "The trades it skips lost, but not by more than luck could explain."}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+};
 
 const RUNNING_REFRESH_MS = 30_000;
 export const isMlTestView = (body: any): body is MlTestView => !!body && typeof body.running === "boolean" && "result" in body;
@@ -116,6 +166,7 @@ export const MlTestCard: React.FC = () => {
   if (!view) return null;
   const r = view.result;
   const daily = view.daily;
+  const breakout = view.breakout;
   const coins = daily?.result?.markets.crypto ?? null;
   const fiveMinute = r ? MARKETS.flatMap((m) => (r.markets[m] ? [{ market: m, v: r.markets[m]! }] : [])) : [];
   return (
@@ -139,6 +190,7 @@ export const MlTestCard: React.FC = () => {
           />
         </>
       )}
+      {breakout && <BreakoutVerdicts breakout={breakout} />}
       {fiveMinute.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <div className="text-[11px] font-semibold text-muted">5-minute trades over two years, its picks</div>
@@ -157,8 +209,14 @@ export const MlTestCard: React.FC = () => {
       <div className="text-xs tabular-nums empty:hidden" data-testid="ml-progress">
         {view.running ? (
           <span className="text-ink">
-            {view.testing === "daily" ? "Daily coins: " : view.testing === "5m" ? "5-minute trades: " : ""}
-            {view.phase === "training" ? `Training: ${view.trees} trees so far` : view.phase === "judging" ? "Judging on the latest months" : "Reading the saved setups"}
+            {view.testing === "daily" ? "Daily coins: " : view.testing === "5m" ? "5-minute trades: " : view.testing === "breakout" ? "Breakout trades: " : ""}
+            {view.phase === "training"
+              ? `Training: ${view.trees} trees so far`
+              : view.phase === "judging"
+                ? view.testing === "breakout"
+                  ? "Judging year by year"
+                  : "Judging on the latest months"
+                : "Reading the saved setups"}
             {" · it rests between steps, so it takes a while"}
           </span>
         ) : view.error ? (
@@ -193,16 +251,22 @@ export const MlTestCard: React.FC = () => {
           its picks, traded one at a time, average at least {rSigned(MIN_EDGE_R)} after costs, clearly above zero, over {MIN_TEST_TRADES}+
           trades. It decides nothing live.
         </div>
+        <div className="text-xs text-muted leading-relaxed mt-1.5">
+          Breakout trades are fewer (a few hundred per market), so they're judged year by year: for each year from the fifth on, a model learns
+          from the years before but the last, the last sets how choosy it is (the middle of its predictions), and that year's trades are
+          judged, never seen. Breakout wins about one trade in three or four, a few of them big, so a filter helps only if the trades it
+          skips lose money. It passes only if they clearly did, its picks {rSigned(MIN_EDGE_R)}+ ahead of every trade.
+        </div>
       </Fold>
 
-      {!view.running && (view.ready || daily?.ready) && (
+      {!view.running && (view.ready || daily?.ready || breakout?.ready) && (
         <button
           type="button"
           onClick={run}
           disabled={starting}
           className="self-start min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer disabled:opacity-50"
         >
-          {r || daily?.result ? "Run again" : "Run the test"}
+          {r || daily?.result || breakout?.result ? "Run again" : "Run the test"}
         </button>
       )}
     </Card>
