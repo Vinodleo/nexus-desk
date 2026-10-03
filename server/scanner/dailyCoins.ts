@@ -152,7 +152,7 @@ const realDeps: DailyCoinsDeps = {
 };
 
 /** Never a live order, and no Gemini review: see above. */
-const PAPER_HOOKS: ServerAutopilotHooks = {
+export const PAPER_HOOKS: ServerAutopilotHooks = {
   placeLiveEntry: async () => ({ ok: false, status: 400, error: "Daily coin trades are paper only." }),
   reviewTrade: async () => ({ outcome: "unreviewed", reason: "Daily trades aren't reviewed.", off: true }),
 };
@@ -237,7 +237,7 @@ function rText(r: number): string {
 }
 
 /** Why a trader is paused, in a few words. */
-function pausedReason(gate: TraderGate | undefined, span: string | null): string {
+export function pausedReason(gate: TraderGate | undefined, span: string | null): string {
   if (!gate) return span ? `no daily record ${span}` : "no daily record yet";
   if (gate.trades < MIN_TRADER_TRADES) return `only ${gate.trades} replayed setups (needs ${MIN_TRADER_TRADES})`;
   return `daily record ${span} ${rText(gate.avgR)} (needs +${MIN_EDGE_R.toFixed(2)}R)`;
@@ -246,8 +246,8 @@ function pausedReason(gate: TraderGate | undefined, span: string | null): string
 /**
  * The proposal for a daily setup found on Binance's candles, in rupees at
  * CoinDCX's ask (the stop, target and ATR the same share of the price away),
- * sized to the coin limits: the risk per trade at the stop, never more than
- * the amount per trade.
+ * sized to its market's limits (coins; US stocks for US breakout trades): the
+ * risk per trade at the stop, never more than the amount per trade.
  */
 export function dailyProposal(
   found: { symbol: string; regime: TradeProposal["regime"]; setup: TradeProposal["setup"] },
@@ -263,7 +263,8 @@ export function dailyProposal(
   const scale = ask / setup.entryPrice;
   const stopLoss = roundPrice(setup.stopLoss * scale, ask);
   const takeProfit = roundPrice(setup.takeProfit * scale, ask);
-  const limit = (policy.marketLimits ?? cleanMarketLimits(undefined)).coins;
+  // The symbol's own market's limits: coins, or US stocks for US breakout trades.
+  const limit = (policy.marketLimits ?? cleanMarketLimits(undefined))[marketOf(symbol)];
   const risk = Math.abs(ask - stopLoss);
   const riskInr = limit.riskPerTradeInr ?? policy.equity * policy.maxRiskFraction;
   const fit = fitQuantity(Math.min(risk > 0 ? riskInr / risk : 0, limit.amountPerTradeInr / ask), ask, ruleFor(symbol, ask));
@@ -333,13 +334,13 @@ export function dailyProposal(
 }
 
 /** The desk's limits for daily trades: your coin limits, each trader judged alone (no panel vote). */
-function dailyPolicy(desk: DeskState): RiskPolicyConfig {
+export function dailyPolicy(desk: DeskState): RiskPolicyConfig {
   const policy = riskPolicyFor(desk);
   return { ...policy, marketLimits: cleanMarketLimits(desk.riskLimits.marketLimits), autopilotMinConsensus: 0, autopilotMinPersonaVotes: 1 };
 }
 
 /** Why a desk gets no daily trades today, or null. */
-function deskNote(uid: string, desk: DeskState, policy: RiskPolicyConfig, deps: DailyCoinsDeps, now: number): string | null {
+export function deskNote(uid: string, desk: DeskState, policy: RiskPolicyConfig, deps: Pick<DailyCoinsDeps, "dailyPnl">, now: number): string | null {
   if (!serverAutopilotOn(desk)) return "Autopilot is off, so no daily trades were opened.";
   if ((desk.tradingMode ?? "PAPER") !== "PAPER") return "Your desk is in live mode; daily trades are paper only for now.";
   if (deps.dailyPnl(uid, desk, now) <= -policy.hardDailyLossLimit) return "Today's loss limit is reached.";

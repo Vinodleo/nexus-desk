@@ -195,7 +195,8 @@ export function getSymbolConfig(symbolOrCfg: SymbolConfig | string): SymbolConfi
   const known = SUPPORTED_SYMBOLS.find((s) => s.symbol === normalized);
   if (known) return known;
   // US stocks ("AAPL.US"), priced in rupees (see shared/usMarket).
-  if (isUsSymbol(normalized) && US_UNIVERSE[usTicker(normalized)]) {
+  // Any US stock: breakout 55/20 trades the year's biggest, some outside the scanned list ("OTHER" sector).
+  if (isUsSymbol(normalized)) {
     let cfg = dynamicConfigs.get(normalized);
     if (!cfg) {
       cfg = {
@@ -204,7 +205,7 @@ export function getSymbolConfig(symbolOrCfg: SymbolConfig | string): SymbolConfi
         basePrice: 0,
         tickSize: 0.01,
         volatility: 0.25,
-        correlatedGroup: `US_${US_UNIVERSE[usTicker(normalized)]}`,
+        correlatedGroup: `US_${US_UNIVERSE[usTicker(normalized)] ?? "OTHER"}`,
         assetClass: "equity",
       };
       dynamicConfigs.set(normalized, cfg);

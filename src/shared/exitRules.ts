@@ -49,6 +49,8 @@ export interface ExitState {
   isLiveOrder?: boolean;
   /** "1d": opened on daily candles (shared/coinHolds DAILY_HOLD_MINUTES). */
   timeframe?: string;
+  /** "breakout": breakout 55/20's, held for weeks (overnight too) until its own exit. */
+  strategy?: string;
 }
 
 /** Rupees a position had at stake when it opened: 1R. Undefined without its first stop. */
@@ -76,9 +78,11 @@ export function stopLocksProfit(p: Pick<ExitState, "symbol" | "direction" | "ent
  * let one that has keep running, up to the extended limit.
  */
 export function holdingDecision(p: ExitState, nowMs: number = Date.now()): "hold" | "expire" {
-  // Stock positions are intraday: closed at 3:20 IST (US: 3:50 New York) whatever else holds.
-  if (isNseSymbol(p.symbol) && nseSquareOffDue(p.openTime, nowMs)) return "expire";
-  if (isUsSymbol(p.symbol) && usSquareOffDue(p.openTime, nowMs)) return "expire";
+  // Stock positions are intraday: closed at 3:20 IST (US: 3:50 New York) whatever else holds,
+  // except breakout trades, held overnight until their own exit.
+  const intraday = p.strategy !== "breakout";
+  if (intraday && isNseSymbol(p.symbol) && nseSquareOffDue(p.openTime, nowMs)) return "expire";
+  if (intraday && isUsSymbol(p.symbol) && usSquareOffDue(p.openTime, nowMs)) return "expire";
   const openedMs = p.openTime ? new Date(p.openTime).getTime() : nowMs;
   const elapsed = (nowMs - openedMs) / 60000;
   const limit = p.expectedHoldingTimeMinutes || DEFAULT_HOLD_MINUTES;

@@ -29,7 +29,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Colours are tokens in `src/index.css`. Themes are Ivory (default), Graphite (dark) and Blush (pink),
   set per device (`src/services/theme.ts`). Use the tokens, never fixed colours.
   The Lab (`LedgerLab.tsx`) has four tabs, the last one picked remembered per device:
-  - **Today:** what's trading and why (`LabSummary`), then the daily check with its coin slots (`DailyCoinsCard`).
+  - **Today:** what's trading and why (`LabSummary`), the daily coin check with its coin slots (`DailyCoinsCard`), and
+    the US breakout check (`UsBreakoutCard`).
   - **Records:** every coin strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`),
     the classic strategies on stocks (`StocksLongCard`, US and India), then the replays' details.
   - **Tests:** the machine-learning test and the coin check (`CoinCheckCard`).
@@ -104,6 +105,15 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   time, held up to a year (`BREAKOUT_HOLD_MINUTES`). Same coin limits and slots as the daily traders. It trades only
   while its record since 2018 (the long replay's `classic`) averages `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ trades
   (`breakoutGate`). Positions carry `strategy: "breakout"`, labelled "breakout".
+- **US breakout 55/20 trades (paper, owner's call):** `server/scanner/usBreakout.ts`. Each US weekday at 3:45 pm New
+  York (until the 3:50 close of intraday trades), on this year's 20 biggest US stocks (`stockCohortFor("us")`): completed
+  daily candles from Alpaca plus today so far at the snapshot price (`withToday`), in rupees at the day's rate. A price
+  above the 55-day high buys at the ask, the stop 2 ATR below; a held one below its 20-day low sells at the bid (even
+  with autopilot off). Same rules as the coins' breakout (`breakoutSetup`, `dailyProposal` sized to the US limits), one
+  trade per stock, never live. Breakout trades skip the stock markets' end-of-day close (`holdingDecision`): held
+  overnight, up to a year. US stocks trade in fractions of a share (`ruleFor`, `US_FRACTION`); any US stock is known,
+  share classes too ("BRK.B.US"). It trades only while the stocks' replay's US breakout record since 2016 averages
+  `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ trades (`stocksLongClassic`). If Alpaca's prices fail, it tries again each minute until 3:50.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if
@@ -142,7 +152,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Since 2018 breakout 55/20 averaged +0.98R over 476 trades (6 of 9 years positive): it paper-trades alongside the
   daily traders since 4 Oct (owner's call). Moving averages 50/200 (+1.13R, mostly 2020) and momentum (+0.17R) aren't traded.
   Stocks (owner's call): US and Indian stocks stay paused on paper (their traders' records decide); the classic strategies
-  are tested on their daily candles since 2016 in the Lab, and trade only if one clearly beats its costs.
+  are tested on their daily candles since 2016 in the Lab, and trade only if one clearly beats its costs. US since 2016:
+  breakout +0.39R over 554 trades (8 of 11 years up), momentum +0.26R (9 of 11), moving averages +0.32R (5 of 11): US
+  breakout paper-trades (owner's call). India: breakout +0.23R but 5 of 11 years and mostly 2020; not traded.
 - **Going live:** only when the owner asks, after "Traders with your exits" shows traders with positive records.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 

@@ -13,6 +13,7 @@ import { mlTestView, startMlTest } from "../history/mlTest";
 import { dailyCoinsView } from "../scanner/dailyCoins";
 import { dailyLongView } from "../history/dailyLong";
 import { stocksLongView } from "../history/stocksLong";
+import { usBreakoutView } from "../scanner/usBreakout";
 import { PAUSE_AFTER_MS, eventWindowAt } from "../../src/shared/eventCalendar";
 
 // The app's side of the server scanner: it sends its desk settings, and
@@ -101,6 +102,11 @@ router.get("/api/daily-long", (_req: Request, res: Response) => {
 // The classic strategies on US and Indian stocks since 2016 (the Lab): progress, and each market's results.
 router.get("/api/stocks-long", (_req: Request, res: Response) => {
   res.json({ success: true, ...stocksLongView() });
+});
+
+// Breakout 55/20 on US stocks (the Lab): the last daily check, its record, and the US slots.
+router.get("/api/us-breakout", (req: Request, res: Response) => {
+  res.json({ success: true, ...usBreakoutView(uidOf(req)) });
 });
 
 // Coin trades on daily candles (the Lab): the last daily scan, and which traders trade.

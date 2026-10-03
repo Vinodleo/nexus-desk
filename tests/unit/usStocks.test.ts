@@ -83,6 +83,35 @@ describe("the US market", () => {
   });
 });
 
+describe("US breakout trades' rules", () => {
+  it("know a share class ticker, any big US stock, and size in fractions of a share", async () => {
+    const { ruleFor } = await import("../../src/services/marketRulesStore");
+    const { getSymbolConfig } = await import("../../src/services/marketDataService");
+    expect(isUsSymbol("BRK.B.US")).toBe(true);
+    expect(marketOf("BRK.B.US")).toBe("us");
+    // Home Depot isn't on the scanned list, but it's a US stock (never mistaken for Bitcoin).
+    expect(getSymbolConfig("HD.US")).toMatchObject({ symbol: "HD.US", assetClass: "equity", correlatedGroup: "US_OTHER" });
+    expect(getSymbolConfig("AAPL.US").correlatedGroup).toBe("US_TECH");
+    // A ten-thousandth of a share at a time; Indian stocks stay whole.
+    expect(ruleFor("AAPL.US", 20000)).toMatchObject({ quantityStep: 0.0001, minQuantity: 0.0001, quantityPrecision: 4 });
+    expect(ruleFor("RELIANCE", 1400)).toMatchObject({ quantityStep: 1, minQuantity: 1 });
+  });
+
+  it("hold a breakout trade past the 3:50 close and overnight, where an intraday one is closed", () => {
+    const pos = {
+      symbol: "AAPL.US", direction: "LONG" as const, entryPrice: 100, stopLoss: 90, quantity: 0.25,
+      openTime: new Date(now).toISOString(), expectedHoldingTimeMinutes: 365 * 24 * 60,
+    };
+    const at350 = Date.parse("2026-09-24T19:51:00Z");
+    const nextWeek = Date.parse("2026-10-01T15:00:00Z");
+    expect(holdingDecision(pos, at350)).toBe("expire");
+    expect(holdingDecision({ ...pos, strategy: "breakout", timeframe: "1d" }, at350)).toBe("hold");
+    expect(holdingDecision({ ...pos, strategy: "breakout", timeframe: "1d" }, nextWeek)).toBe("hold");
+    // The year's limit still applies.
+    expect(holdingDecision({ ...pos, strategy: "breakout", timeframe: "1d" }, now + 366 * 24 * 3_600_000)).toBe("expire");
+  });
+});
+
 // ---------- Alpaca, stubbed ----------
 
 const calls: string[] = [];

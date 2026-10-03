@@ -27,6 +27,7 @@ import { startMlTestJob } from "./server/history/mlTest";
 import { startDailyCoins } from "./server/scanner/dailyCoins";
 import { startDailyLongJob } from "./server/history/dailyLong";
 import { startStocksLongJob } from "./server/history/stocksLong";
+import { startUsBreakout } from "./server/scanner/usBreakout";
 import { hostStatus, warnIfStateIsTemporary } from "./server/hostStatus";
 import { startStockPrices } from "./server/stockPrices";
 import { startQuotes } from "./server/quotes";
@@ -140,6 +141,7 @@ async function startServer() {
   startDailyLongJob();
   startStocksLongJob();
   startDailyCoins();
+  startUsBreakout();
   startStockPrices();
   startUsPrices();
   startQuotes();

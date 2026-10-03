@@ -22,9 +22,9 @@ export const US_SYMBOLS = Object.keys(US_UNIVERSE).map((t) => `${t}${US_SUFFIX}`
 /** The index funds among them (SPY, QQQ, IWM). */
 export const US_INDEX_FUNDS = US_SYMBOLS.filter((s) => US_UNIVERSE[s.slice(0, -US_SUFFIX.length)] === "INDEX");
 
-/** A US stock symbol like "AAPL.US". */
+/** A US stock symbol like "AAPL.US", or with its share class, "BRK.B.US". */
 export function isUsSymbol(symbol: string | undefined): boolean {
-  return !!symbol && /^[A-Z][A-Z0-9-]{0,9}\.US$/.test(symbol);
+  return !!symbol && /^[A-Z][A-Z0-9.-]{0,9}\.US$/.test(symbol);
 }
 
 /** "AAPL.US" → "AAPL", the ticker Alpaca knows. */
