@@ -15,6 +15,7 @@ import { getMarketRules } from "../marketRules";
 import { fetchOrderBook } from "../coindcxMarketData";
 import { fetchCoinDaily, type HistoryFetch } from "../history/historyCandles";
 import { historyRunInfo } from "../history/historyJob";
+import { dailyLongRecords } from "../history/dailyLong";
 import { getDeskState, scanningDesks, type DeskState } from "./deskState";
 import { runServerAutopilot, serverAutopilotOn, type ServerAutopilotHooks } from "./autopilot";
 import { riskPolicyFor, serverDailyPnl, typicalSpread } from "./scannerService";
@@ -32,11 +33,14 @@ import { riskPolicyFor, serverDailyPnl, typicalSpread } from "./scannerService";
 // holds them as the replay did: trailed on the daily ATR, half banked at
 // +1R, closed at 30 days exactly.
 //
-// Only traders whose two-year daily record with your trailing stop averages
+// Only traders whose daily record with your trailing stop averages
 // MIN_EDGE_R or more over MIN_TRADER_TRADES or more setups trade; the rest
-// stay paused. Each trader trades alone (no panel vote): that's how the
-// replay judged them. Gemini doesn't review these (it reads 5-minute
-// candles), and a desk in live mode gets none.
+// stay paused. The record is the replay since 2017 (history/dailyLong.ts,
+// every year's biggest coins, the 2018 and 2022 falls included) once it has
+// finished, until then the two-year replay's daily trades. Each trader
+// trades alone (no panel vote): that's how the replay judged them. Gemini
+// doesn't review these (it reads 5-minute candles), and a desk in live mode
+// gets none.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Scanned this long after the day's close (Binance publishes it at once; a little margin). */
@@ -72,7 +76,7 @@ export interface DailyRun {
   note?: string;
 }
 
-/** A trader's two-year record on daily coin candles with one trailing stop, and whether it trades. */
+/** A trader's record on daily coin candles with one trailing stop, and whether it trades. */
 export interface TraderGate {
   trader: string;
   trades: number;
@@ -99,8 +103,8 @@ export interface DailyCoinsDeps {
   /** CoinDCX's best bid and ask for a coin, or null. */
   quote: (symbol: string) => Promise<{ bid: number; ask: number } | null>;
   spread: (symbol: string) => number | undefined;
-  /** The two-year replay's daily records, or null before it has any. */
-  records: () => HistoryRecords | null;
+  /** The daily records traders are judged on, or null before there are any. */
+  records: () => DailyRecords | null;
   desks: (now: number) => [string, DeskState][];
   dailyPnl: (uid: string, desk: DeskState, now: number) => number;
   /** Opens what the autopilot accepts and marks every proposal (runServerAutopilot). */
@@ -122,7 +126,13 @@ const realDeps: DailyCoinsDeps = {
     return { bid: result.book.bids[0][0], ask: result.book.asks[0][0] };
   },
   spread: typicalSpread,
-  records: () => historyRunInfo()?.slow?.["1d"] ?? null,
+  // The replay since 2017 once it has finished; until then the two-year one's daily trades.
+  records: () => {
+    const long = dailyLongRecords();
+    if (long) return { records: long, span: "since 2017" };
+    const twoYears = historyRunInfo()?.slow?.["1d"];
+    return twoYears ? { records: twoYears, span: "over two years" } : null;
+  },
   desks: scanningDesks,
   dailyPnl: serverDailyPnl,
   open: runServerAutopilot,
@@ -137,7 +147,13 @@ const PAPER_HOOKS: ServerAutopilotHooks = {
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, waiting: 1, paused: 2 };
 
-/** Each trader's two-year daily coin record with `profile`, best first, and whether it trades. */
+/** The records daily traders are judged on, and the years they cover, in words ("since 2017"). */
+export interface DailyRecords {
+  records: HistoryRecords;
+  span: string;
+}
+
+/** Each trader's daily coin record with `profile`, best first, and whether it trades. */
 export function dailyTraderGates(records: HistoryRecords | null, profile: TrailProfileId): TraderGate[] {
   const byPeriod = records?.[profile] ?? {};
   const byTrader = new Map<string, ReturnType<typeof sumRecords>[]>();
@@ -157,11 +173,17 @@ export function dailyTraderGates(records: HistoryRecords | null, profile: TrailP
     .sort((a, b) => b.avgR - a.avgR);
 }
 
+/** An average in R, with a third decimal when two would round it onto the bar a trader needs. */
+function rText(r: number): string {
+  const digits = Math.abs(Math.abs(r) - MIN_EDGE_R) < 0.005 && Math.abs(r) !== MIN_EDGE_R ? 3 : 2;
+  return `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(digits)}R`;
+}
+
 /** Why a trader is paused, in a few words. */
-function pausedReason(gate: TraderGate | undefined): string {
-  if (!gate) return "no two-year daily record yet";
+function pausedReason(gate: TraderGate | undefined, span: string | null): string {
+  if (!gate) return span ? `no daily record ${span}` : "no daily record yet";
   if (gate.trades < MIN_TRADER_TRADES) return `only ${gate.trades} replayed setups (needs ${MIN_TRADER_TRADES})`;
-  return `two-year daily record ${gate.avgR >= 0 ? "+" : "−"}${Math.abs(gate.avgR).toFixed(2)}R (needs +${MIN_EDGE_R.toFixed(2)}R)`;
+  return `daily record ${span} ${rText(gate.avgR)} (needs +${MIN_EDGE_R.toFixed(2)}R)`;
 }
 
 /**
@@ -176,7 +198,9 @@ export function dailyProposal(
   gate: TraderGate,
   policy: RiskPolicyConfig,
   day: string,
-  now: number
+  now: number,
+  /** The years the trader's record covers, in words. */
+  span: string = "since 2017"
 ): TradeProposal {
   const { symbol, setup } = found;
   const scale = ask / setup.entryPrice;
@@ -209,7 +233,7 @@ export function dailyProposal(
       calibratedWinProbability: winShare,
       historicalSampleCount: gate.trades,
       historicalWinRate: winShare,
-      confidenceRationale: `Two-year daily record with your trailing stop: ${gate.avgR >= 0 ? "+" : "−"}${Math.abs(gate.avgR).toFixed(2)}R over ${gate.trades} setups.`,
+      confidenceRationale: `Daily record ${span} with your trailing stop: ${rText(gate.avgR)} over ${gate.trades} setups.`,
       regimeFit: "acceptable",
     },
     evAssessment: {
@@ -243,7 +267,7 @@ export function dailyProposal(
     },
     status: "PENDING_APPROVAL",
     approvalExpiryMs: 0,
-    supervisorNotes: "Daily candles: the trader's two-year daily record decides.",
+    supervisorNotes: `Daily candles: the trader's daily record ${span} decides.`,
     ensembleAgreement: 1,
     personaVotesCast: 1,
     supportingPersonas: [setup.name],
@@ -302,7 +326,8 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
     const quotes = new Map<string, { bid: number; ask: number } | null>();
     for (const [uid, desk] of desks) {
       const profile = (desk.trailProfile && desk.trailProfile in TRAIL_PROFILES ? desk.trailProfile : DEFAULT_TRAIL_PROFILE) as TrailProfileId;
-      const gates = dailyTraderGates(deps.records(), profile);
+      const judged = deps.records();
+      const gates = dailyTraderGates(judged?.records ?? null, profile);
       const gateOf = (trader: string) => gates.find((g) => g.trader === trader);
       const policy = dailyPolicy(desk);
       const note = deskNote(uid, desk, policy, deps, now);
@@ -312,7 +337,7 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
         for (const setup of f.setups) {
           const gate = gateOf(setup.name);
           if (!gate?.on) {
-            picks.push({ symbol: f.symbol, trader: setup.name, outcome: "paused", reason: pausedReason(gate) });
+            picks.push({ symbol: f.symbol, trader: setup.name, outcome: "paused", reason: pausedReason(gate, judged?.span ?? null) });
             continue;
           }
           if (spreadTooWide(f.symbol, f.spread ?? 0)) {
@@ -325,7 +350,7 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
             picks.push({ symbol: f.symbol, trader: setup.name, outcome: "waiting", reason: "no CoinDCX price" });
             continue;
           }
-          candidates.push({ proposal: dailyProposal({ symbol: f.symbol, regime: f.regime, setup }, quote.ask, gate, policy, day, now), avgR: gate.avgR });
+          candidates.push({ proposal: dailyProposal({ symbol: f.symbol, regime: f.regime, setup }, quote.ask, gate, policy, day, now, judged?.span), avgR: gate.avgR });
         }
       }
       // The best records first: they get the coin slots.
@@ -363,12 +388,15 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
 /** What the Lab shows a user: the last scan, each trader's daily record and whether it trades, and the next scan. */
 export function dailyCoinsView(uid: string, now: number = Date.now()) {
   const desk = getDeskState(uid);
+  const judged = realDeps.records();
   const profile = (desk?.trailProfile && desk.trailProfile in TRAIL_PROFILES ? desk.trailProfile : DEFAULT_TRAIL_PROFILE) as TrailProfileId;
   const dayStart = Math.floor(now / DAY_MS) * DAY_MS;
   const todayDone = state.lastDay === isoDay(dayStart) || now - dayStart > DAILY_SCAN_UNTIL_MS;
   return {
     run: state.runs[uid] ?? null,
-    traders: dailyTraderGates(realDeps.records(), profile),
+    traders: dailyTraderGates(judged?.records ?? null, profile),
+    /** The years the records cover, in words ("since 2017"), or null without any. */
+    recordSpan: judged?.span ?? null,
     nextAt: (todayDone ? dayStart + DAY_MS : dayStart) + DAILY_SCAN_AFTER_MS,
   };
 }

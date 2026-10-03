@@ -137,7 +137,7 @@ describe("the daily scan", () => {
       daily: async (symbol: string) => ({ series: symbol === "SOL/INR" ? withSetups.series : dailySeries(400, yesterday - DAY, 1) }),
       quote: async () => ({ bid: 9990, ask: 10000 }),
       spread: () => 0.001,
-      records: () => ({ tight: { "2026-Q3": { [`crypto:${trader}`]: rec(20, 4), "crypto:Kenji Extreme Reversion": rec(8, 2) } } }),
+      records: () => ({ span: "since 2017", records: { tight: { "2026-Q3": { [`crypto:${trader}`]: rec(20, 4), "crypto:Kenji Extreme Reversion": rec(8, 2) } } } }),
       desks: () => [["u", desk]] as [string, typeof desk][],
       dailyPnl: () => 0,
       open: vi.fn(runServerAutopilot),
@@ -173,7 +173,7 @@ describe("the daily scan", () => {
     expect(run).toMatchObject({ day: "2026-10-03", coins: 2, failed: ["OLD/INR"] });
     expect(run.picks[0]).toEqual({ symbol: "SOL/INR", trader, outcome: "opened" });
     // Other traders at that candle have no daily record: paused.
-    for (const pick of run.picks.slice(1)) expect(pick).toMatchObject({ outcome: "paused", reason: "no two-year daily record yet" });
+    for (const pick of run.picks.slice(1)) expect(pick).toMatchObject({ outcome: "paused", reason: "no daily record since 2017" });
 
     // Once a day: a second check the same day does nothing.
     await daily.runDailyCoins(d);
@@ -195,15 +195,15 @@ describe("the daily scan", () => {
 
   it("leaves paused traders paused, and opens nothing for a desk in live mode or with autopilot off", async () => {
     let daily = await fresh();
-    const paused = await deps({ records: () => ({ tight: { "2026-Q3": { [`crypto:${trader}`]: rec(9, 3) } } }) });
+    const paused = await deps({ records: () => ({ span: "since 2017", records: { tight: { "2026-Q3": { [`crypto:${trader}`]: rec(9, 3) } } } }) });
     await daily.runDailyCoins(paused);
     expect(paused.open).not.toHaveBeenCalled();
     expect(daily._dailyCoinsState().runs.u.picks[0]).toEqual({ symbol: "SOL/INR", trader, outcome: "paused", reason: "only 9 replayed setups (needs 10)" });
 
     daily = await fresh();
-    const losing = await deps({ records: () => ({ tight: { "2026-Q3": { [`crypto:${trader}`]: rec(40, -2) } } }) });
+    const losing = await deps({ records: () => ({ span: "since 2017", records: { tight: { "2026-Q3": { [`crypto:${trader}`]: rec(40, -2) } } } }) });
     await daily.runDailyCoins(losing);
-    expect(daily._dailyCoinsState().runs.u.picks[0].reason).toBe("two-year daily record −0.05R (needs +0.05R)");
+    expect(daily._dailyCoinsState().runs.u.picks[0].reason).toBe("daily record since 2017 −0.05R (needs +0.05R)");
 
     for (const [over, note] of [
       [{ tradingMode: "LIVE_COINDCX" }, "Your desk is in live mode; daily trades are paper only for now."],
@@ -219,7 +219,7 @@ describe("the daily scan", () => {
     }
   });
 
-  it("judges each trader on its two-year daily record with your trailing stop", async () => {
+  it("judges each trader on its daily coin record with your trailing stop", async () => {
     const { dailyTraderGates } = await fresh();
     const records = {
       tight: {
@@ -235,6 +235,59 @@ describe("the daily scan", () => {
     ]);
     expect(dailyTraderGates(records, "patient")).toEqual([{ trader: "Priya Momentum Scalp", trades: 30, avgR: expect.closeTo(0.1, 9), on: true }]);
     expect(dailyTraderGates(null, "tight")).toEqual([]);
+  });
+});
+
+describe("the record daily traders are judged on", () => {
+  const rec = (trades: number, totalR: number) => ({ trades, totalR, wins: Math.round(trades / 2), winR: Math.max(totalR, 0) + trades / 4, lossR: Math.min(totalR, 0) - trades / 4 });
+  const write = (name: string, body: unknown) => fs.writeFileSync(path.join(dataDir, name), JSON.stringify(body));
+  const longRun = (over: Record<string, unknown>) => ({
+    version: 1, startedAt: 0, fromMs: 0, toMs: 0, traders: [], markets: {}, records: {}, finishedAt: 1, ...over,
+  });
+  const nineYears = { tight: { "2022-Q2": { "crypto:Sofia Range Scalp": rec(385, -15.4), "crypto:Chen Conservative Trend": rec(1728, 155.52) } } };
+  const twoYears = { tight: { "2026-Q2": { "crypto:Sofia Range Scalp": rec(145, 31.9) } } };
+
+  it("is the replay since 2017 once it has finished (the last finished one while it runs again), else the two years", async () => {
+    const { dailyCoinsView } = await import("../../server/scanner/dailyCoins");
+    const historyJob = await import("../../server/history/historyJob");
+    const long = await import("../../server/history/dailyLong");
+    const reload = () => {
+      historyJob._resetHistoryJob();
+      historyJob.loadHistory();
+      long._resetDailyLong();
+      long.loadDailyLong();
+    };
+    fs.rmSync(path.join(dataDir, "daily_long.json"), { force: true });
+    fs.rmSync(path.join(dataDir, "history_results.json"), { force: true });
+    reload();
+    expect(dailyCoinsView("u")).toMatchObject({ recordSpan: null, traders: [] });
+
+    // Only the two-year replay so far: Sofia trades on +0.22R.
+    write("history_results.json", { version: 4, startedAt: 0, finishedAt: 1, fromMs: 0, toMs: 0, traders: [], markets: {}, records: {}, slow: { "1d": twoYears } });
+    reload();
+    expect(dailyCoinsView("u")).toMatchObject({ recordSpan: "over two years", traders: [{ trader: "Sofia Range Scalp", trades: 145, on: true }] });
+
+    // The replay since 2017 has finished: Sofia lost over it (−0.04R), so she's paused.
+    write("daily_long.json", longRun({ records: nineYears }));
+    reload();
+    const view = dailyCoinsView("u");
+    expect(view.recordSpan).toBe("since 2017");
+    expect(view.traders).toEqual([
+      { trader: "Chen Conservative Trend", trades: 1728, avgR: expect.closeTo(0.09, 9), on: true },
+      { trader: "Sofia Range Scalp", trades: 385, avgR: expect.closeTo(-0.04, 9), on: false },
+    ]);
+
+    // Replaying again: the last finished records still decide.
+    write("daily_long.json", longRun({ finishedAt: null, records: { tight: { "2018-Q1": { "crypto:Sofia Range Scalp": rec(2, 2) } } }, lastRecords: nineYears }));
+    reload();
+    expect(dailyCoinsView("u").traders).toEqual(view.traders);
+    // Never finished yet: the two years.
+    write("daily_long.json", longRun({ finishedAt: null }));
+    reload();
+    expect(dailyCoinsView("u").recordSpan).toBe("over two years");
+    fs.rmSync(path.join(dataDir, "daily_long.json"), { force: true });
+    fs.rmSync(path.join(dataDir, "history_results.json"), { force: true });
+    reload();
   });
 });
 

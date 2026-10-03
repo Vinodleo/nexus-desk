@@ -117,7 +117,8 @@ export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ tra
       <div className="text-xs text-muted leading-relaxed">
         The traders' daily coin trades over every year Binance has, through the 2018 and 2022 crashes. Each year trades only its 20
         biggest coins on 1 January, picked before that year's results; coins since delisted come from Binance's archive. With your{" "}
-        {TRAIL_PROFILES[profile].label.toLowerCase()} trailing stop, held up to 30 days, after fees and spreads.
+        {TRAIL_PROFILES[profile].label.toLowerCase()} trailing stop, held up to 30 days, after fees and spreads. Each trader's record here
+        decides whether it takes daily paper trades.
       </div>
 
       <div className="text-xs tabular-nums mt-1" data-testid="daily-long-status">

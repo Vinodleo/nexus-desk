@@ -90,6 +90,8 @@ export interface DailyLongRun {
   traders: string[];
   markets: Record<string, DailyLongMarket>;
   records: HistoryRecords;
+  /** The last finished run's records, kept while this one replays (the daily trades are judged on them). */
+  lastRecords?: HistoryRecords;
 }
 
 export interface DailyLongDeps {
@@ -165,7 +167,8 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
   const stopped = () => gen !== generation;
   if (fresh || !run) {
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
-    run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {} };
+    const lastRecords = dailyLongRecords() ?? undefined;
+    run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {}, ...(lastRecords ? { lastRecords } : {}) };
     save();
   }
   const r = run;
@@ -293,6 +296,16 @@ export function _resetDailyLong(): void {
   if (timer) clearTimeout(timer);
   timer = null;
 }
+/**
+ * The finished replay's records (the last finished one's while the next
+ * replays), or null before any has finished: what the daily coin trades
+ * judge each trader on.
+ */
+export function dailyLongRecords(): HistoryRecords | null {
+  if (!run) return null;
+  return run.finishedAt !== null ? run.records : run.lastRecords ?? null;
+}
+
 export function _dailyLongRun(): DailyLongRun | null {
   return run;
 }
