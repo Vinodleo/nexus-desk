@@ -15,6 +15,7 @@ vi.spyOn(console, "log").mockImplementation(() => {});
 vi.spyOn(console, "error").mockImplementation(() => {});
 
 const history = await import("../../server/history/historyJob");
+const long = await import("../../server/history/dailyLong");
 const ml = await import("../../server/history/mlTest");
 
 const PROFILES = ["tight", "balanced", "patient", "fixed"] as const;
@@ -74,6 +75,7 @@ const deps = { now: () => Date.now(), sleep: async () => {}, scannerBusy: () => 
 beforeEach(() => {
   ml._resetMlTest();
   history._resetHistoryJob();
+  long._resetDailyLong();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.mkdirSync(dataDir, { recursive: true });
 });
@@ -144,5 +146,83 @@ describe("the machine-learning test", () => {
     expect(setups.train).toBeGreaterThan(15_000);
     expect(setups.trainUsed).toBe(Math.ceil(setups.train / Math.ceil(setups.train / 5000)));
     expect(setups.valid + setups.test + setups.train).toBe(24_000);
+  });
+});
+
+describe("the machine-learning test on daily coin trades", () => {
+  const MARKET = SETUP_READINGS.indexOf("market1hPct");
+  const longTo = Date.parse("2026-10-01T00:00:00Z");
+  const longFrom = Date.parse("2017-08-01T00:00:00Z");
+
+  /** A coin's daily setups since 2017, two traders, one every 12 hours each, held 2 days: those after Bitcoin rose average +0.5R, the rest −0.3R. */
+  function writeDaily(symbol: string, seed: number): number {
+    const random = seeded(seed);
+    const rows: SetupDetail[] = [];
+    for (let t = longFrom; t < longTo; t += DAY / 2) {
+      for (const trader of ["Chen Conservative Trend", "Marcus Swing Trend"]) {
+        const readings = SETUP_READINGS.map(() => random() * 100 - 50);
+        const mean = readings[MARKET] > 0 ? 0.5 : -0.3;
+        rows.push({ entryMs: t, trader, direction: "LONG", regime: "trending_bullish", macro: "neutral", minute: 0, weekday: 3, readings, results: { tight: { r: mean + (random() - 0.5) * 2, bars: 2 } } });
+      }
+    }
+    const csv = `${setupCsvHeader([...PROFILES])}\n${rows.map((d) => setupCsvRow(d, [...PROFILES])).join("\n")}\n`;
+    fs.mkdirSync(long.dailySetupsDir(), { recursive: true });
+    fs.writeFileSync(path.join(long.dailySetupsDir(), history.setupsFileName(symbol)), gzipSync(csv));
+    return rows.length;
+  }
+
+  /** A finished replay since 2017, as kept on the volume, with these coins' setups saved. */
+  function finishedLong(markets: Record<string, number>) {
+    const run = {
+      version: long.DAILY_LONG_VERSION,
+      startedAt: longTo,
+      finishedAt: longTo + 3_600_000,
+      fromMs: longFrom,
+      toMs: longTo,
+      traders: [],
+      markets: Object.fromEntries(Object.entries(markets).map(([s, n]) => [s, { status: "done", candles: 3000, setups: n, setupBytes: 1 }])),
+      records: {},
+    };
+    fs.writeFileSync(path.join(dataDir, "daily_long.json"), JSON.stringify(run));
+    long._resetDailyLong();
+    long.loadDailyLong();
+  }
+
+  it("learns from the older years, tunes on the year after and is judged on the latest year, a trade a pair at a time over days", async () => {
+    finishedLong({ "BTC/INR": writeDaily("BTC/INR", 1), "ETH/INR": writeDaily("ETH/INR", 2) });
+    expect(ml.mlTestDue("daily")).toBe(true);
+    expect(ml.mlTestDue("5m")).toBe(false);
+    expect(ml.mlTestView().daily.ready).toBe(true);
+    // Only the daily test can run (no two-year replay here).
+    await ml.startMlTest(deps);
+    const view = ml.mlTestView();
+    expect(view.error).toBeNull();
+    expect(view.result).toBeNull();
+    const result = view.daily.result!;
+    expect(result.periods).toEqual({ trainFrom: longFrom, validFrom: longTo - 730 * DAY, testFrom: longTo - 365 * DAY, testTo: longTo });
+    // Held 2 days, one at a time per coin and trader: a trade every 2 days, 4 pairs, over the latest year.
+    expect(result.markets.crypto!.everySetup.trades).toBeGreaterThan(700);
+    expect(result.markets.crypto!.everySetup.trades).toBeLessThan(740);
+    expect(result.markets.crypto!.passed).toBe(true);
+    expect(result.markets.crypto!.picks.avgR).toBeGreaterThan(result.markets.crypto!.everySetup.avgR);
+    expect(result.markets.us).toBeNull();
+    expect(result.importance[0].label).toBe("Bitcoin's last 30 days");
+    // Kept on its own, and not due again until the replay finishes again.
+    expect(fs.existsSync(path.join(dataDir, "ml_test_daily.json"))).toBe(true);
+    expect(fs.existsSync(path.join(dataDir, "ml_test.json"))).toBe(false);
+    expect(ml.mlTestDue("daily")).toBe(false);
+    ml._resetMlTest();
+    ml.loadMlTest();
+    expect(ml.mlTestView().daily.result).toEqual(result);
+  });
+
+  it("runs both tests one after the other when both replays have finished", async () => {
+    finishedLong({ "BTC/INR": writeDaily("BTC/INR", 1) });
+    finishedReplay({ "BTC/INR": writeSetups("BTC/INR", 12_000, true, 1), "SPY.US": writeSetups("SPY.US", 12_000, false, 3) });
+    expect(ml.mlTestDue()).toBe(true);
+    await ml.startMlTest(deps);
+    expect(ml.mlTestView().result).not.toBeNull();
+    expect(ml.mlTestView().daily.result).not.toBeNull();
+    expect(ml.mlTestDue()).toBe(false);
   });
 });
