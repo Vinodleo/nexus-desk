@@ -27,6 +27,7 @@ import { THEMES, type ThemeId } from "../../services/theme";
 import { reviewerSummary } from "../../services/reviewerSummary";
 import { nseTakesEntries } from "../../shared/nse";
 import { usTakesEntries } from "../../shared/usMarket";
+import { coinProblemLine } from "../../shared/coinDcxCheck";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -61,7 +62,6 @@ export interface SettingsSheetProps {
   onThemeChange?: (id: ThemeId, from?: { x: number; y: number }) => void;
 }
 
-/** "45 sec", "12 min", "3 h", "2 days". */
 /** The Backups row: whether daily off-site backups are on, the last one, and a failure. */
 export function backupSummary(status: ServerStatus | null, now: number = Date.now()): { sub: string; badge: string; tone: string } {
   const b = status?.backup;
@@ -82,6 +82,21 @@ export function backupSummary(status: ServerStatus | null, now: number = Date.no
   return { sub: `Last ${formatSpan(now - b.lastAt)} ago, ${b.files} files · each kept ${b.keepDays} days`, badge: "On", tone: "text-gain" };
 }
 
+/** The CoinDCX check row: whether the coins held there match the live trades. */
+export function coinDcxCheckSummary(status: ServerStatus | null, now: number = Date.now()): { sub: string; badge: string; tone: string } {
+  const c = status?.coinDcxCheck;
+  if (!status || !c) return { sub: "Daily: the coins at CoinDCX match the live trades", badge: "—", tone: "text-muted" };
+  if (!c.configured) return { sub: "No CoinDCX keys on the server: needed only for live trading", badge: "Off", tone: "text-muted" };
+  if (c.problems.length > 0) return { sub: c.problems.map(coinProblemLine).join(" · "), badge: "Mismatch", tone: "text-loss" };
+  if (c.lastError && (!c.lastAt || (c.lastErrorAt ?? 0) > c.lastAt))
+    return { sub: `Last check failed: ${c.lastError}. It tries again within the hour.`, badge: "Failing", tone: c.liveTrades > 0 ? "text-loss" : "text-warn" };
+  if (!c.lastAt) return { sub: "Keys set; the first check runs a few minutes after the server starts", badge: "On", tone: "text-gain" };
+  const what = c.trades === 0 ? "no live trades; the keys work" : `${c.trades} live trade${c.trades === 1 ? "" : "s"} (${c.coins.join(", ")}), coins match`;
+  const extra = c.extras.length > 0 ? ` · also held outside the app: ${c.extras.map((e) => e.coin).join(", ")}` : "";
+  return { sub: `Checked ${formatSpan(now - c.lastAt)} ago: ${what}${extra}`, badge: "OK", tone: "text-gain" };
+}
+
+/** "45 sec", "12 min", "3 h", "2 days". */
 export function formatSpan(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000));
   if (sec < 60) return `${sec} sec`;
@@ -650,6 +665,12 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
           <Row label="Backups" sub={backupSummary(props.serverStatus ?? null).sub}>
             {(() => {
               const { badge, tone } = backupSummary(props.serverStatus ?? null);
+              return <span className={tone}>{badge}</span>;
+            })()}
+          </Row>
+          <Row label="CoinDCX check" sub={coinDcxCheckSummary(props.serverStatus ?? null).sub}>
+            {(() => {
+              const { badge, tone } = coinDcxCheckSummary(props.serverStatus ?? null);
               return <span className={tone}>{badge}</span>;
             })()}
           </Row>

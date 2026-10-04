@@ -37,6 +37,7 @@ import { reviewerStatus } from "./server/tradeReviewer";
 import { fxStatus } from "./server/fx";
 import { startUsPrices } from "./server/usPrices";
 import { backupStatus, restoreIfAsked, startBackups } from "./server/backup";
+import { coinDcxCheckStatus, startCoinDcxCheck } from "./server/coinDcxCheck";
 import { notifyEveryone } from "./server/push";
 
 // Entry point: builds the Express app, mounts the route modules behind
@@ -79,7 +80,7 @@ app.use(pushRouter);
 
 // Where the server runs and whether its saved state survives restarts.
 app.get("/api/server/status", (_req: Request, res: Response) => {
-  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus(), alpaca: alpacaStatus(), fx: fxStatus(), reviewer: reviewerStatus(), backup: backupStatus() });
+  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus(), alpaca: alpacaStatus(), fx: fxStatus(), reviewer: reviewerStatus(), backup: backupStatus(), coinDcxCheck: coinDcxCheckStatus() });
 });
 
 // Unknown API paths get a JSON 404 instead of falling through to the SPA's
@@ -148,6 +149,7 @@ async function startServer() {
   startHistoryJob();
   startMlTestJob();
   startBackups((title, body) => void notifyEveryone({ title, body, tag: "backup-failed", url: "/" }));
+  startCoinDcxCheck((title, body, tag) => void notifyEveryone({ title, body, tag, url: "/" }));
   startDailyLongJob();
   startStocksLongJob();
   startDailyCoins();
