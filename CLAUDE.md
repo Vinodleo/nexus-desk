@@ -66,6 +66,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     once a day, once seen on two checks 5 minutes apart; coins beyond the live trades are only listed. Trades opened
     in the last 5 minutes and ones being closed aren't compared. Settings → Server → CoinDCX check.
   - Web Push sends the trade pop-ups.
+  - The weekly summary (`server/weeklySummary.ts`): a pop-up each Sunday at 10 am India time per desk, from the trades
+    the server closed: the week's closed, won, still open and what they made, and each slower strategy's paper trades
+    so far against its replay (`paperScore`, a strategy clearly behind named first). Sent late after a restart until
+    Tuesday; nothing on an empty week; "on paper" dropped once a trade is live.
   - Daily backups (`server/backup.ts`): every top-level file in the data folder (not the rebuildable folders, not
     `angel_tokens.json`) as one gzipped JSON a day to an S3 bucket (Fly's Tigris, set up by `fly storage create`, which
     sets the `AWS_*`/`BUCKET_NAME` secrets itself; `server/s3.ts` signs requests with SigV4, no SDK), 30 days kept,

@@ -38,7 +38,8 @@ import { fxStatus } from "./server/fx";
 import { startUsPrices } from "./server/usPrices";
 import { backupStatus, restoreIfAsked, startBackups } from "./server/backup";
 import { coinDcxCheckStatus, startCoinDcxCheck } from "./server/coinDcxCheck";
-import { notifyEveryone } from "./server/push";
+import { notifyEveryone, notifyUser } from "./server/push";
+import { startWeeklySummary } from "./server/weeklySummary";
 
 // Entry point: builds the Express app, mounts the route modules behind
 // Firebase auth, and starts the WebSocket fan-out, the CoinDCX price relay and
@@ -150,6 +151,7 @@ async function startServer() {
   startMlTestJob();
   startBackups((title, body) => void notifyEveryone({ title, body, tag: "backup-failed", url: "/" }));
   startCoinDcxCheck((title, body, tag) => void notifyEveryone({ title, body, tag, url: "/" }));
+  startWeeklySummary((uid, message) => void notifyUser(uid, message));
   startDailyLongJob();
   startStocksLongJob();
   startDailyCoins();
