@@ -44,6 +44,13 @@ early Oct).
       whole quantity would be refused) or a failed exit's coins are **still held**. A
       mismatch is told only once seen twice, 5 minutes apart. Coins held beyond the
       live trades (your own) are only listed. Settings → Server → CoinDCX check.
+- [ ] **Count the coins in a live desk's money** (found Oct 2026): in live mode the desk's
+      money is only the rupee cash at CoinDCX (`effectiveEquity` in `src/App.tsx`), not the
+      coins bought with it, so after each buy it looks smaller by what was bought. Coin
+      breakout's size comes from the coin amount and risk per trade, so it isn't affected;
+      the money shown is, and so is anything sized from it (the 5-minute traders' risk is
+      capped at 0.3% of it). Count each coin held at today's price. (Fixed meanwhile: the
+      rupee total now includes money held by open orders, as CoinDCX's docs define it.)
 - [x] **Verify CoinDCX's API** (Oct 2026, from its docs, docs.coindcx.com):
       `orders/status` and `orders/cancel` take `client_order_id` (or `id`); the status
       reply's `total_quantity`, `remaining_quantity`, `avg_price` and statuses (`init`,
