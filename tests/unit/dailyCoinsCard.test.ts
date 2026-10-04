@@ -57,9 +57,31 @@ describe("Daily coin trades", () => {
     expect(screen.getByTestId("daily-breakout-slots").textContent).toBe("Breakout slots: 1 of 3 in use");
     const record = screen.getByTestId("daily-traders").textContent;
     expect(record).toMatch(/^Daily record since 2017 with your trailing stop/);
-    expect(screen.getByText(/Only traders whose daily record since 2017 is positive/)).toBeTruthy();
+    expect(screen.getByText(/The daily traders trade alongside it when their daily record since 2017 is positive over 10\+ setups/)).toBeTruthy();
     expect(record).toContain("Sofia Range Scalp145 setups · +0.22R");
     expect(record).toContain("Kenji Extreme Reversion · paused8 setups · +0.28R");
+  });
+
+  it("says the daily traders are switched off (your call), keeping their records to watch", async () => {
+    vi.mocked(apiFetch).mockResolvedValue(
+      reply({
+        success: true,
+        run: null,
+        traders: traders.map((t) => ({ ...t, on: false })),
+        recordSpan: "since 2017",
+        dailyTradersOff: true,
+        breakout: { trader: "Breakout 55/20", trades: 476, avgR: 0.87, on: true },
+        nextAt: Date.parse("2026-10-06T00:10:00Z"),
+      })
+    );
+    render(createElement(DailyCoinsCard));
+    await screen.findByTestId("daily-status");
+    // Breakout alone trades.
+    expect(screen.getByText("Which traders trade (1 of 3)", { exact: false, selector: "summary" })).toBeTruthy();
+    expect(screen.getByTestId("daily-traders-off").textContent).toMatch(/^Switched off \(your call, 5 Oct\): after CoinDCX's real fee they lose together/);
+    const record = screen.getByTestId("daily-traders").textContent;
+    expect(record).toContain("Sofia Range Scalp · off145 setups · +0.22R");
+    expect(screen.getByText(/The daily traders are switched off: their setups are shown but open nothing\./)).toBeTruthy();
   });
 
   it("says when the first check is before there's been one, and why nothing opened for a desk", async () => {

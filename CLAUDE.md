@@ -129,7 +129,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   fees and a spread; for India, delivery charges (`stockCost`). Results by quarter per market (`stocks_long.json`), kept
   on show while it reruns. Monthly, at `CPU_SHARE`, never alongside the other background work; Indian downloads wait for
   NSE to close. It decides nothing: stocks paper-trade a strategy only if it clearly beats its costs and the owner says so.
-- **Daily coin trades (paper, owner's call, 3 Oct):** `server/scanner/dailyCoins.ts`. Once a day, 10 minutes after the
+- **Daily coin trades (paper, owner's call, 3 Oct; switched off 5 Oct):** `server/scanner/dailyCoins.ts`. **The daily
+  traders are switched off** (owner's call, 5 Oct, `dailyTradersSwitchedOff`): with CoinDCX's real fee they lost together
+  since 2018 (−0.05R, 1 of 9 years up), and the one still clearing the bar alone is likely the best of seven by luck. Their
+  setups are still found and shown, paused with the reason (`DAILY_TRADERS_OFF_NOTE`); their records still replay; trades
+  they had open run to their exits. The daily check trades breakout 55/20 alone. What follows is how they'd trade. Once a day, 10 minutes after the
   00:00 UTC daily close (until 6 hours after), the server reads each coin's daily candles from Binance (today's coins plus
   `FIXED_COINS`, those CoinDCX lists) and takes the setups the two-year replay would take there (`latestSlowSetups`).
   They open through the server autopilot within the coin limits, priced at CoinDCX's ask with the stop and target scaled
@@ -213,6 +217,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   the classic strategies in the Lab, next to the traders, year by year; paper only if they clearly beat them.
   Since 2018 breakout 55/20 averaged +0.98R over 476 trades (6 of 9 years positive): it paper-trades alongside the
   daily traders since 4 Oct (owner's call). Moving averages 50/200 (+1.13R, mostly 2020) and momentum (+0.17R) aren't traded.
+  With CoinDCX's real fee (rerun 5 Oct): breakout +0.87R (6 of 9 years), moving averages +1.07R, momentum +0.11R, the daily
+  traders together −0.05R (1 of 9 years): coins trade breakout alone, the daily traders switched off (owner's call, 5 Oct).
   Stocks (owner's call): US and Indian stocks stay paused on paper (their traders' records decide); the classic strategies
   are tested on their daily candles since 2016 in the Lab, and trade only if one clearly beats its costs. US since 2016:
   breakout +0.39R over 554 trades (8 of 11 years up), momentum +0.26R (9 of 11), moving averages +0.32R (5 of 11): US

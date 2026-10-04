@@ -238,7 +238,23 @@ export interface DailyRecords {
   span: string;
 }
 
-/** Each trader's daily coin record with `profile`, best first, and whether it trades. */
+/**
+ * The daily coin traders are switched off (owner's call, 5 Oct 2026): with
+ * CoinDCX's real fee they lost together since 2018 (−0.05R a trade, 1 of 9
+ * years up), and the one still clearing the bar on its own record is most
+ * likely the best of seven by luck. Their records are still replayed and
+ * shown; they open nothing, and the daily check trades breakout 55/20 alone.
+ * Trades they had open run to their exits as usual.
+ */
+let dailyTradersOff = true;
+export const dailyTradersSwitchedOff = () => dailyTradersOff;
+/** Test hook: the daily traders on again, for the tests of their path (kept for if the owner ever switches them back on). */
+export function _setDailyTradersOff(off: boolean): void {
+  dailyTradersOff = off;
+}
+export const DAILY_TRADERS_OFF_NOTE = "the daily traders are switched off: after CoinDCX's fee they lose together";
+
+/** Each trader's daily coin record with `profile`, best first, and whether it trades (none while they're switched off). */
 export function dailyTraderGates(records: HistoryRecords | null, profile: TrailProfileId): TraderGate[] {
   const byPeriod = records?.[profile] ?? {};
   const byTrader = new Map<string, ReturnType<typeof sumRecords>[]>();
@@ -253,7 +269,8 @@ export function dailyTraderGates(records: HistoryRecords | null, profile: TrailP
     .map(([trader, recs]) => {
       const sum = sumRecords(recs);
       const avgR = sum.trades > 0 ? sum.totalR / sum.trades : 0;
-      return { trader, trades: sum.trades, avgR, on: sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R, wins: sum.wins, winR: sum.winR, lossR: sum.lossR };
+      const clears = sum.trades >= MIN_TRADER_TRADES && avgR >= MIN_EDGE_R;
+      return { trader, trades: sum.trades, avgR, on: clears && !dailyTradersOff, wins: sum.wins, winR: sum.winR, lossR: sum.lossR };
     })
     .sort((a, b) => b.avgR - a.avgR);
 }
@@ -457,7 +474,12 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
           if (setup.strategy === "breakout" && inBreakout.has(f.symbol)) continue;
           const gate = gateOf(setup.name);
           if (!gate?.on) {
-            const reason = setup.strategy === "breakout" ? pausedReason(gate, "since 2018").replace("daily record", "record") : pausedReason(gate, judged?.span ?? null);
+            const reason =
+              setup.strategy === "breakout"
+                ? pausedReason(gate, "since 2018").replace("daily record", "record")
+                : dailyTradersOff
+                  ? DAILY_TRADERS_OFF_NOTE
+                  : pausedReason(gate, judged?.span ?? null);
             picks.push({ symbol: f.symbol, trader: setup.name, outcome: "paused", reason });
             continue;
           }
@@ -542,6 +564,8 @@ export function dailyCoinsView(uid: string, now: number = Date.now()) {
   return {
     run: state.runs[uid] ?? null,
     traders: dailyTraderGates(judged?.records ?? null, profile),
+    /** The daily traders are switched off (owner's call): none trades, whatever its record. */
+    dailyTradersOff,
     /** The years the records cover, in words ("since 2017"), or null without any. */
     recordSpan: judged?.span ?? null,
     /** Breakout 55/20's record since 2018 and whether it trades (null before the classic strategies have run). */
