@@ -44,6 +44,20 @@ early Oct).
       whole quantity would be refused) or a failed exit's coins are **still held**. A
       mismatch is told only once seen twice, 5 minutes apart. Coins held beyond the
       live trades (your own) are only listed. Settings → Server → CoinDCX check.
+- [ ] **A watchdog server for live trades' stops** (before raising the size; owner's call,
+      Oct 2026). CoinDCX's INR markets take no stop orders, so if the server is down when a
+      coin falls through a live trade's stop, nothing sells until it's back. The watchdog is a
+      second, tiny Fly app in another region (about $2 a month, ~₹170): every minute it copies
+      the open live trades and their stops from the main server and checks it's alive; if the
+      main server has been silent for ~3 minutes, it watches CoinDCX's prices itself and sells
+      at a stop, with a pop-up. It sends the same first exit `client_order_id` the main
+      server would, so CoinDCX refuses whichever comes second: never two sales. When the main
+      server is back it finds the sale at CoinDCX and closes the trade. Not a full second
+      server (two copies of the state, and both could trade). Setup by the owner: one
+      `fly launch`/`fly deploy` and its own `fly secrets set` of the CoinDCX keys; if the key
+      is locked to an IP, add the watchdog's. (Free alternative, more setup: Google Cloud's
+      always-free e2-micro, which also survives a whole-Fly outage.) Until then: the uptime
+      alert, and a CoinDCX price alert at each live trade's stop (step 4).
 - [ ] **Count the coins in a live desk's money** (found Oct 2026): in live mode the desk's
       money is only the rupee cash at CoinDCX (`effectiveEquity` in `src/App.tsx`), not the
       coins bought with it, so after each buy it looks smaller by what was bought. Coin
@@ -120,6 +134,8 @@ went through and sold in full; fees in rupees, 0.59% a side; ₹4.53 in all, of 
   - [ ] The buy filled near the expected price.
   - [ ] Settings → Server → CoinDCX check says **OK** within the hour (the fee comes out
         of rupees, so the full quantity is held: the test order showed it).
+  - [ ] In the CoinDCX app, a price alert at the trade's stop: if the server is down when
+        the price gets there, CoinDCX tells you, and you sell by hand (until the watchdog).
   - [ ] (Only if CoinDCX ever offers stop orders on INR markets: the backup stop shows
         in CoinDCX → open orders, and moves up as the stop trails.)
   - [ ] Closing from the app cancels the backup stop, then sells; the Book shows the

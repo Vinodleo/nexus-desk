@@ -408,9 +408,17 @@ describe("the records the daily trades are judged on", () => {
     expect(long._dailyLongRun()!.finishedAt).not.toBeNull();
     expect(long.dailyLongRecords()).toEqual(long._dailyLongRun()!.records);
 
-    // A run of an older version (other costs: CoinDCX's real fee came in with 3) isn't carried:
-    // while the new one replays there are no records, so no trader trades on the old ones.
+    // A run of an older version (other costs: CoinDCX's real fee came in with 3) judges no one,
+    // even before its replay can start (other background work first): on show, marked so.
     long._dailyLongRun()!.version = long.DAILY_LONG_VERSION - 1;
+    expect(long._dailyLongRun()!.classic).toBeTruthy();
+    expect(long.dailyLongRecords()).toBeNull();
+    expect(long.dailyLongClassic()).toBeNull();
+    expect(long.dailyLongView()).toMatchObject({ stale: true });
+    // Due but waiting for that work, it looks again in 15 minutes, not 6 hours.
+    expect(long.nextDailyLongCheckMs(true)).toBe(15 * 60 * 1000);
+    expect(long.nextDailyLongCheckMs(false)).toBe(6 * 60 * 60 * 1000);
+    // Nor is it carried into the new replay: while that runs there are no records.
     let releaseNew!: () => void;
     const heldNew = new Promise<void>((resolve) => (releaseNew = resolve));
     const newVersion = long.startDailyLong(
@@ -426,6 +434,7 @@ describe("the records the daily trades are judged on", () => {
     releaseNew();
     await newVersion;
     expect(long.dailyLongRecords()).toEqual(long._dailyLongRun()!.records);
+    expect(long.dailyLongView().stale).toBe(false);
   });
 });
 

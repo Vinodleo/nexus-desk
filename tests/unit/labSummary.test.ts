@@ -130,6 +130,30 @@ describe("Coin strategies, side by side", () => {
     ]);
   });
 
+  it("says when the coin records are from the old fee, with breakout and the daily traders paused until they replay", async () => {
+    const waiting: Record<string, unknown> = {
+      ...routes,
+      "/api/daily-coins": { ...(routes["/api/daily-coins"] as object), traders: [], breakout: null, recordSpan: null },
+      "/api/daily-long": { ...(routes["/api/daily-long"] as object), stale: true },
+    };
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => new Response(JSON.stringify(waiting[path] ?? null), { status: waiting[path] ? 200 : 404 }));
+    render(createElement(StrategyRanking, { trailProfile: "tight" }));
+    const list = await screen.findByTestId("lab-ranking");
+    await within(list).findByText("5-minute traders, all together");
+    expect(screen.getByTestId("lab-ranking-stale").textContent).toBe(
+      "Since 2018: From the old 0.05% coin fee: it replays with CoinDCX's real 0.59% once the other background work is done. Nothing trades on these meanwhile."
+    );
+    const rows = within(list).getAllByRole("listitem").map((li) => li.textContent);
+    expect(rows).toContain("Breakout 55/20+0.10Rsince 2018 · 10 trades · 30% won‖Paused");
+    expect(rows).toContain("Daily traders, all together−0.15Rsince 2018 · 20 setups · 25% won‖Paused");
+    cleanup();
+    render(createElement(LabSummary));
+    const summary = await screen.findByTestId("lab-summary");
+    await screen.findByText("Machine-learning filter");
+    expect(summary.textContent).toContain("Coin breakout and daily traders‖Pausedwaiting for the replay since 2017 to finish: its records decide");
+    expect(summary.textContent).not.toContain("Coin breakout 55/20");
+  });
+
   it("draws breakout's and the daily traders' years, and gives a year's numbers on a tap", async () => {
     render(createElement(YearByYear, { trailProfile: "tight" }));
     const breakout = await screen.findByTestId("years-breakout");
