@@ -58,10 +58,18 @@ early Oct).
       `rejected` done) are as the code reads them; signing (HMAC-SHA256 of the compact
       JSON body, `X-AUTH-APIKEY`, `X-AUTH-SIGNATURE`) matches. A reused
       `client_order_id` is refused, so each exit send now has its own. INR markets take
-      no `stop_limit` (above). **Still open:** whether buying fees come out of the coins
-      received (then the coins held are a little under the quantity bought, and selling
-      it all would be refused): check on the first watched trade (the CoinDCX check
-      says so within the hour).
+      no `stop_limit` (above). Fees: answered by the test order (4 Oct 2026, below).
+- [x] **CoinDCX's real fees in the replays and paper trades** (Oct 2026): the test order's
+      screens showed **0.5% of each order plus 18% GST on it, 0.59% a side, taken in
+      rupees** (the full quantity bought arrives, and sells in full), and **1% TDS
+      withheld from each sale**. The app had assumed 0.05% a side (CoinDCX's futures
+      schedule): every coin replay and paper trade was too optimistic. Now 0.59% a side
+      everywhere (`COIN_FEE_PER_SIDE`, `shared/tradeMath.ts`); TDS isn't counted as a cost
+      (it's income tax paid in advance, reclaimed when filing), but it holds back 1% of
+      each sale until then. 5-minute coin trades now can't pass the costs check at all
+      (their stops are too close for a 1.18% round trip). The replays since 2017 and the
+      slower two-year ones rerun with the real fee; coin breakout and the daily traders
+      pause until they finish, then trade only if their new records clear the bar.
 
 ## 3. One-time setup (the owner, from Google Cloud Shell; never secrets in chat)
 
@@ -87,7 +95,9 @@ Settings → Connections → **Test live order** buys ₹200 of a coin at CoinDC
 when you tap **Sell it**, sells it, through the same checks and exit every live trade
 takes (`server/liveTest.ts`). The desk stays on **Paper**, so nothing else trades live.
 It answers the fee question (does CoinDCX take the buying fee in coins?) and shows the
-fill prices and what the round trip cost.
+fill prices and what the round trip cost. **Done 4 Oct 2026** (₹170 of BTC): the order
+went through and sold in full; fees in rupees, 0.59% a side; ₹4.53 in all, of which
+₹1.69 TDS (reclaimable). Run it again any time with the same steps.
 
 - [ ] About **₹300** at CoinDCX (₹200, its fee, and room). With less it refuses before
       sending anything.
@@ -108,10 +118,8 @@ fill prices and what the round trip cost.
 - [ ] The owner sets `LIVE_TRADING_ENABLED=true`, switches the desk to Live in Settings.
 - [ ] On the first trade, check:
   - [ ] The buy filled near the expected price.
-  - [ ] CoinDCX's coin balance after the buy: is it the full quantity bought, or a
-        little less (the fee taken in coins)? Closing must sell exactly what's held.
-        Settings → Server → CoinDCX check says **OK** within the hour, or pops up
-        "a little short" (then exits need to sell only what's held: tell Claude).
+  - [ ] Settings → Server → CoinDCX check says **OK** within the hour (the fee comes out
+        of rupees, so the full quantity is held: the test order showed it).
   - [ ] (Only if CoinDCX ever offers stop orders on INR markets: the backup stop shows
         in CoinDCX → open orders, and moves up as the stop trails.)
   - [ ] Closing from the app cancels the backup stop, then sells; the Book shows the
@@ -131,4 +139,5 @@ fill prices and what the round trip cost.
   pop-up comes, or the uptime alert fires while trades are open.
 - Losing streaks are normal for breakout (it wins 1 in 3 or 4): don't stop on a streak
   alone, stop on the scorecard.
-- Tax: crypto gains 30% plus 1% TDS; keep CoinDCX's tax reports.
+- Tax: crypto gains 30%; 1% TDS is withheld from every sale and reclaimed (or set
+  against the tax) when filing. Keep CoinDCX's tax reports.

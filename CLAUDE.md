@@ -69,7 +69,12 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     shown in Settings → Server → Backups, a pop-up once a day if failing. `RESTORE_BACKUP=YYYY-MM-DD` restores a day at
     start-up (once, `.restored` marker; replaced files kept in `before-restore-…`) and restarts (docs/hosting.md).
 - **Shared rules:** `src/shared/` and `src/services/`, used by both the app and the server.
-  - Exit rules, trailing stops and trade maths.
+  - Exit rules, trailing stops and trade maths. Coin fees are CoinDCX's INR spot ones, from the test order's
+    screens (4 Oct): 0.5% of each order plus 18% GST, 0.59% a side in rupees (`COIN_FEE_PER_SIDE`,
+    `COIN_ROUND_TRIP_FEE` 1.18%), so 5-minute coin setups never pass the costs check. 1% TDS on each sale isn't a
+    cost (reclaimed when filing). Tests that follow 5-minute coin setups through later steps charge a cheaper 0.1%
+    (`_setCoinRoundTripFee`). Kept trader records and the long replays measured under other coin costs aren't used
+    (`COIN_COSTS_VERSION`, `DAILY_LONG_VERSION` 3, `SLOW_VERSION` 5).
   - Market sessions: `nse.ts`, `usMarket.ts`.
   - Per-market limits: `marketLimits.ts`, the amount per trade, risk per trade and trades at once for each market,
     and at most 2 open trades in one stock sector (`sectorOf`). Breakout 55/20 has slots of its own in coins and US
@@ -193,7 +198,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   opening volume) and Ravi Late-Day Momentum (SPY, QQQ, IWM). They trade only once their records are positive over 10+ setups.
   Check "Traders with your exits" after a week or two; if either stays negative, remove it.
 - **Trading slower (owner's call, 2 Oct):** two years of replays and the machine-learning test showed every 5-minute
-  trader losing about its costs. Step 1: the same traders on 1-hour and 1-day candles (the Lab's timeframe switch).
+  trader losing about its costs. (The coin figures below were measured at 0.05% a side; CoinDCX's real 0.59% came in
+  on 4 Oct, and the replays rerun with it: their new records decide.) Step 1: the same traders on 1-hour and 1-day candles (the Lab's timeframe switch).
   Step 2: strategies with long records (trend following, momentum), tested on the kept hourly candles. Paper first.
   Done so far: coins on daily candles passed the coin check (+0.12R a trade on the fixed list) and paper-trade daily
   since 3 Oct. US daily was only slightly positive and India lost at every speed: not traded slower. Since 2017 the

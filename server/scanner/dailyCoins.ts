@@ -15,7 +15,7 @@ import { getCoinUniverse } from "../coinUniverse";
 import { getMarketRules } from "../marketRules";
 import { fetchOrderBook } from "../coindcxMarketData";
 import { fetchCoinDaily, type HistoryFetch } from "../history/historyCandles";
-import { historyRunInfo } from "../history/historyJob";
+import { historyRunInfo, SLOW_VERSION } from "../history/historyJob";
 import { cohortFor, dailyLongRecords, dailyLongRunInfo, inCohort } from "../history/dailyLong";
 import { closeServerPosition, daemonPositions, type DaemonPosition } from "../guardian";
 import { getDeskState, scanningDesks, type DeskState } from "./deskState";
@@ -145,11 +145,11 @@ const realDeps: DailyCoinsDeps = {
     return { bid: result.book.bids[0][0], ask: result.book.asks[0][0] };
   },
   spread: typicalSpread,
-  // The replay since 2017 once it has finished; until then the two-year one's daily trades.
+  // The replay since 2017 once it has finished; until then the two-year one's daily trades, once complete.
   records: () => {
     const long = dailyLongRecords();
     if (long) return { records: long, span: "since 2017" };
-    const twoYears = historyRunInfo()?.slow?.["1d"];
+    const twoYears = slowRecordsComplete(historyRunInfo());
     return twoYears ? { records: twoYears, span: "over two years" } : null;
   },
   desks: scanningDesks,
@@ -160,6 +160,18 @@ const realDeps: DailyCoinsDeps = {
   close: (id, price) => closeServerPosition(id, price, "TRAILING_STOP"),
   liveEntry: placeLiveEntry,
 };
+
+/**
+ * The two-year replay's daily trades, only once it has finished and every
+ * market has them from the current slower replay: while it replays, or redoes
+ * them (a new SLOW_VERSION, as when the coin fee changed), part of the
+ * markets would judge the traders, so none do.
+ */
+export function slowRecordsComplete(run: ReturnType<typeof historyRunInfo>): HistoryRecords | null {
+  if (!run?.slow?.["1d"] || run.slowVersion !== SLOW_VERSION || run.finishedAt === null) return null;
+  if (Object.values(run.markets).some((m) => m.status === "done" && m.slowIncluded === false)) return null;
+  return run.slow["1d"];
+}
 
 /** Never a live order, and no Gemini review: see above. */
 export const PAPER_HOOKS: ServerAutopilotHooks = {

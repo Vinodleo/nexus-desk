@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PRIOR_SETUPS, scoreWithConditions, trainConditionModel, type ConditionModel } from "../../src/services/conditionModel";
 import { shadowFromSetup, type ShadowSignal } from "../../src/services/shadowTracker";
 import { _resetScannedCandles, scanAllMarkets } from "../../src/services/marketScannerService";
 import type { MarketBar } from "../../src/types";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 // The scoring table: what setups like this one scored, by trader in each
 // market and the conditions they appeared in, each condition's effect pulled

@@ -407,6 +407,25 @@ describe("the records the daily trades are judged on", () => {
     await again;
     expect(long._dailyLongRun()!.finishedAt).not.toBeNull();
     expect(long.dailyLongRecords()).toEqual(long._dailyLongRun()!.records);
+
+    // A run of an older version (other costs: CoinDCX's real fee came in with 3) isn't carried:
+    // while the new one replays there are no records, so no trader trades on the old ones.
+    long._dailyLongRun()!.version = long.DAILY_LONG_VERSION - 1;
+    let releaseNew!: () => void;
+    const heldNew = new Promise<void>((resolve) => (releaseNew = resolve));
+    const newVersion = long.startDailyLong(
+      true,
+      deps(async () => {
+        await heldNew;
+        return { series: luna };
+      })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(long._dailyLongRun()!.version).toBe(long.DAILY_LONG_VERSION);
+    expect(long.dailyLongRecords()).toBeNull();
+    releaseNew();
+    await newVersion;
+    expect(long.dailyLongRecords()).toEqual(long._dailyLongRun()!.records);
   });
 });
 

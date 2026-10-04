@@ -62,7 +62,7 @@ describe("Angel One intraday costs", () => {
     expect(stock.grossPnl).toBe(200);
     expect(stock.feesPaid).toBeCloseTo(nseTradeCosts([{ side: "BUY", value: 10000 }, { side: "SELL", value: 10200 }]), 2);
     const coin = computeClosedTradePnl("LONG", 100, 102, 100, "TAKE_PROFIT");
-    expect(coin.feesPaid).toBeCloseTo(10000 * 0.0005 + 10200 * 0.0002, 2);
+    expect(coin.feesPaid).toBeCloseTo((10000 + 10200) * 0.0059, 2);
     // A banked half is its own order.
     const banked = computeClosedTradePnl("LONG", 100, 103, 100, "TRAILING_STOP", { quantity: 50, price: 101 }, "SBIN");
     expect(banked.feesPaid).toBeCloseTo(

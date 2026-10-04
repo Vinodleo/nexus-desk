@@ -5,6 +5,13 @@ import os from "os";
 import fs from "fs";
 import path from "path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 // The server scans the way the app does, from CoinDCX's candles, for every
 // user whose app has sent its desk settings, and keeps the results.

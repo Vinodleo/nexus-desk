@@ -42,8 +42,8 @@ import { scannerHeartbeat, typicalSpread } from "../scanner/scannerService";
 // It runs in the background like the two-year replay, at CPU_SHARE of a
 // core, never alongside it or the machine-learning test, and again monthly.
 
-/** Bump when the replay changes enough that old results no longer compare. */
-export const DAILY_LONG_VERSION = 2;
+/** Bump when the replay changes enough that old results no longer compare (3: CoinDCX's real fee, 0.59% a side). */
+export const DAILY_LONG_VERSION = 3;
 /**
  * Bump when only the classic strategies change (src/services/
  * classicStrategies.ts): they're replayed again from the kept daily candles,
@@ -213,7 +213,9 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
   const stopped = () => gen !== generation;
   if (fresh || !run) {
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
-    const lastRecords = dailyLongRecords() ?? undefined;
+    // A run of another version was replayed under other rules or costs (Oct 2026: CoinDCX's real fee),
+    // so its records aren't carried: nothing trades on them while this one replays.
+    const lastRecords = run?.version === DAILY_LONG_VERSION ? dailyLongRecords() ?? undefined : undefined;
     fs.rmSync(dailySetupsDir(), { recursive: true, force: true });
     fs.rmSync(dailyCandlesDir(), { recursive: true, force: true });
     run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {}, ...(lastRecords ? { lastRecords } : {}) };

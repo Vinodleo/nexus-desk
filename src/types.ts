@@ -350,7 +350,7 @@ export interface HistoricalTrade {
   quantity: number;
   moneyPlaced: number; // Amount of money placed/allocated in the trade (₹)
   grossPnl?: number; // Gross P&L before exchange fees
-  feesPaid?: number; // CoinDCX Futures fees (0.02% maker / 0.05% taker both open and close)
+  feesPaid?: number; // fees in and out (coins: CoinDCX's 0.5% and GST a side, shared/tradeMath)
   realizedPnl: number; // Net profit earned (positive) or money lost (negative) after fees
   realizedPnlPercent: number;
   /** Where the stop was when the trade closed, and the price the (rest of the) position actually sold at: a fast move can go past the stop between price checks. */

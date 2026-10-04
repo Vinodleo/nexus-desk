@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetScannedCandles, scanAllMarkets } from "../../src/services/marketScannerService";
 import {
   EXPECTANCY_TTL_MS,
@@ -16,6 +16,7 @@ import {
 import { breakdown, payoffSummary } from "../../src/components/ledger/LedgerBreakdown";
 import { riskAtOpen } from "../../src/shared/exitRules";
 import type { HistoricalTrade, MarketBar } from "../../src/types";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
 
 // The loss fixes: trades judged by what the live exits actually earn, coin
 // longs held back while Bitcoin falls, and the Book's breakdown.
@@ -42,6 +43,12 @@ const baseOptions = {
 };
 
 const trend = () => candles(150, (i) => 10000 + i * 8);
+
+// These follow 5-minute coin setups through the scanner's later steps, so
+// they charge the 0.1% round trip of a cheaper venue: CoinDCX's real 1.18%
+// stops every one of them at the costs check (shown at the end).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 describe("measuring traders with the live exits", () => {
   beforeEach(() => _clearExpectancyCache());
@@ -216,5 +223,22 @@ describe("the Book's breakdown", () => {
   it("records 1R when a trade closes", () => {
     expect(riskAtOpen({ entryPrice: 100, initialStopLoss: 98.5, quantity: 4 })).toBe(6);
     expect(riskAtOpen({ entryPrice: 100, quantity: 4 })).toBeUndefined();
+  });
+});
+
+describe("CoinDCX's real fee", () => {
+  beforeAll(() => _setCoinRoundTripFee());
+  afterAll(() => _setCoinRoundTripFee(0.001));
+  beforeEach(() => {
+    _resetScannedCandles();
+    _clearExpectancyCache();
+  });
+
+  it("stops a 5-minute coin setup at the costs check: 1.18% a round trip eats a stop of a percent or two", async () => {
+    const calm = await scanAllMarkets({ ...baseOptions, symbols: ["SOL/INR"], barsMap: { "SOL/INR": trend() }, marketTrend: { regime: "neutral", change1hPct: -0.3 } });
+    expect(calm.outcomes).toEqual([{ symbol: "SOL/INR", proposed: false, reason: "wide_spread" }]);
+    // Nor are they counted in the traders' records: none would be taken.
+    const table = measureExpectancy([{ symbol: "SOL/INR", bars: candles(300, (i) => 10000 + i * 8) }], "tight");
+    expect(Object.values(table.byKey).reduce((n, r) => n + r.trades, 0)).toBe(0);
   });
 });

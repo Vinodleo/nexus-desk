@@ -1,10 +1,17 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarketBar } from "../../src/types";
 import { appendBars, emptySeries, type CandleSeries } from "../../src/services/historyReplay";
 import type { HistoryFetch } from "../../server/history/historyCandles";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 // The background job that replays two years of every market: it saves
 // each market as it finishes, carries on after a restart, retries failures,

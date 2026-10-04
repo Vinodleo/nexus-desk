@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { MarketBar } from "../../src/types";
 import {
   CHUNK_BARS,
@@ -23,6 +23,13 @@ import {
 import { panelSetupsOnHistory } from "../../src/services/labSimulation";
 import { decorateBarsWithIndicators } from "../../src/services/marketDataService";
 import { TRADER_PERSONAS } from "../../src/services/personaEngine";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 // The traders over years of history, replayed a chunk at a time.
 

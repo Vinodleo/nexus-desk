@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render } from "@testing-library/react";
 import { createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetScannedCandles, scanAllMarkets } from "../../src/services/marketScannerService";
 import { runPersonaPanel } from "../../src/services/personaEngine";
 import { computeMetaLabelScore } from "../../src/services/metaLabeling";
@@ -9,6 +9,13 @@ import { decorateBarsWithIndicators } from "../../src/services/marketDataService
 import { PAUSE_AFTER_MS, PAUSE_BEFORE_MS, eventWindowAt, parseCalendar } from "../../src/shared/eventCalendar";
 import { NewsPause } from "../../src/components/ledger/LedgerFloor";
 import type { MarketBar } from "../../src/types";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 vi.spyOn(console, "warn").mockImplementation(() => {});
 afterEach(cleanup);

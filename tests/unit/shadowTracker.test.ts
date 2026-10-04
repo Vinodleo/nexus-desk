@@ -27,7 +27,7 @@ describe("resolveShadow", () => {
     expect(resolveShadow(signal(), [bar(0, 989, 1005)]).status).toBe("stop");
     const both = resolveShadow(signal(), [bar(0, 985, 1025)]);
     expect(both.status).toBe("stop");
-    expect(both.r).toBeCloseTo((-10 - 1) / 10);
+    expect(both.r).toBeCloseTo((-10 - 1000 * ROUND_TRIP_FEE) / 10);
   });
 
   it("closes an intraday signal at the 30-minute limit", () => {
@@ -35,7 +35,7 @@ describe("resolveShadow", () => {
     const s = resolveShadow(signal(), bars);
     expect(s.status).toBe("expired");
     expect(s.exitPrice).toBe(1004);
-    expect(s.r).toBeCloseTo((4 - 1) / 10);
+    expect(s.r).toBeCloseTo((4 - 1000 * ROUND_TRIP_FEE) / 10);
   });
 
   it("stays open while it's still running", () => {

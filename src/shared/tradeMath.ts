@@ -1,17 +1,27 @@
 // Closed-trade P&L, shared by the browser book and the server guardian so the
 // two can't drift apart.
 //
-// CoinDCX INR-margin fee schedule: 0.02% maker / 0.05% taker, charged on both
-// the entry notional and the exit notional. Entries are market (taker); a
-// take-profit exit is treated as a resting limit (maker), every other exit as
-// taker. Indian stocks (NSE symbols) are charged Angel One's intraday
-// costs instead (shared/nse): brokerage per order, STT, stamp duty, GST.
+// CoinDCX INR spot fees, as its order screens show them (the live test order,
+// Oct 2026): 0.5% of each order's value plus 18% GST on that fee, so 0.59%
+// a side, in rupees, on the entry notional and the exit notional. (The
+// 0.02% / 0.05% schedule used before was CoinDCX's futures one.) No lower
+// rate for resting limit orders is known, so a take-profit pays the same. A
+// sale also has 1% TDS withheld (India's tax on crypto transfers): income tax
+// paid in advance, reclaimed when filing, so it isn't counted as a trading
+// cost. Indian stocks (NSE symbols) are charged Angel One's intraday costs
+// instead (shared/nse): brokerage per order, STT, stamp duty, GST.
 
 import { isUsSymbol, US_FEE_RATE_PER_SIDE } from "./usMarket";
-import { isNseSymbol, nseTradeCosts } from "./nse";
+import { GST_RATE, isNseSymbol, nseTradeCosts } from "./nse";
 
-export const TAKER_FEE_RATE = 0.0005;
-export const MAKER_FEE_RATE = 0.0002;
+/** CoinDCX's fee on an INR spot order, before GST. */
+export const COINDCX_FEE = 0.005;
+/** What a coin order costs a side: the fee and its GST (0.59%). */
+export const COIN_FEE_PER_SIDE = Number((COINDCX_FEE * (1 + GST_RATE)).toFixed(6));
+export const TAKER_FEE_RATE = COIN_FEE_PER_SIDE;
+export const MAKER_FEE_RATE = COIN_FEE_PER_SIDE;
+/** India's tax withheld on each crypto sale (reclaimed when filing; not a trading cost). */
+export const COIN_SALE_TDS = 0.01;
 
 export type ExitReason = "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME" | "MANUAL";
 
