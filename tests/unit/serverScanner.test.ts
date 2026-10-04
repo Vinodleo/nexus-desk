@@ -95,6 +95,10 @@ afterAll(() => {
   vi.unstubAllEnvs();
 });
 
+// ...and with coins scanned on 5-minute candles, as before CoinDCX's real fee: switched off since (the last test here).
+beforeAll(async () => (await import("../../server/scanner/scannerService"))._setFiveMinuteCoins(true));
+afterAll(async () => (await import("../../server/scanner/scannerService"))._setFiveMinuteCoins(false));
+
 beforeEach(async () => {
   (await import("../../server/scanner/scannerService"))._resetServerScanner();
   (await import("../../server/scanner/deskState"))._resetDeskStates();
@@ -351,5 +355,33 @@ describe("server autopilot", () => {
     const later = Date.parse(closed[0].closedAt);
     expect(serverDailyPnl("owner", { ...d, updatedAt: later - 1 }, later)).toBeCloseTo(-100 + closed[0].realizedPnl, 2);
     expect(serverDailyPnl("owner", { ...d, updatedAt: later }, later)).toBe(-100);
+  });
+});
+
+describe("5-minute coin scanning, switched off (owner's call, 5 Oct 2026)", () => {
+  it("scans no coins, yet keeps scanning so the app doesn't start scanning them itself", async () => {
+    const scanner = await import("../../server/scanner/scannerService");
+    scanner._setFiveMinuteCoins(false);
+    try {
+      expect((await post("/api/desk/state", desk)).status).toBe(200);
+      await scanner.runScanCycle(now);
+      const [report] = scanner.reportsSince("owner", 0);
+      expect(report.outcomes).toEqual([]);
+      expect(report.newProposals).toEqual([]);
+      expect(scanner.scannerStatus("owner", now)).toMatchObject({ running: true, lastScanAt: now, coins: 0 });
+      expect(scanner.scannerStatus("owner", now).recentScans).toEqual([{ at: now, checked: 0, proposed: 0 }]);
+    } finally {
+      scanner._setFiveMinuteCoins(true);
+    }
+  });
+
+  it("is off unless switched on", async () => {
+    const scanner = await import("../../server/scanner/scannerService");
+    scanner._setFiveMinuteCoins(false);
+    // What the server starts with: a fresh copy of the module.
+    vi.resetModules();
+    const fresh = await import("../../server/scanner/scannerService");
+    expect(fresh.fiveMinuteCoinsScanned()).toBe(false);
+    scanner._setFiveMinuteCoins(true);
   });
 });

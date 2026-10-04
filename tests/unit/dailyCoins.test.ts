@@ -137,6 +137,7 @@ describe("the daily scan", () => {
       daily: async (symbol: string) => ({ series: symbol === "SOL/INR" ? withSetups.series : dailySeries(400, yesterday - DAY, 1) }),
       quote: async () => ({ bid: 9990, ask: 10000 }),
       spread: () => 0.001,
+      recordSpread: vi.fn(),
       records: () => ({ span: "since 2017", records: { tight: { "2026-Q3": { [`crypto:${trader}`]: rec(20, 4), "crypto:Kenji Extreme Reversion": rec(8, 2) } } } }),
       desks: () => [["u", desk]] as [string, typeof desk][],
       dailyPnl: () => 0,
@@ -200,6 +201,8 @@ describe("the daily scan", () => {
     const policy = vi.mocked(d.open).mock.calls[0][3];
     expect(policy).toMatchObject({ autopilotMinConsensus: 0, autopilotMinPersonaVotes: 1 });
 
+    // The quote it priced at keeps the coin's typical spread current (coins aren't scanned on 5-minute candles).
+    expect(d.recordSpread).toHaveBeenCalledWith("SOL/INR", 10 / 9995);
     const run = daily._dailyCoinsState().runs.u;
     expect(run).toMatchObject({ day: "2026-10-03", coins: 2, failed: ["OLD/INR"] });
     expect(run.picks[0]).toEqual({ symbol: "SOL/INR", trader, outcome: "opened" });

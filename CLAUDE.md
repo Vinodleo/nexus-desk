@@ -42,7 +42,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume
   (`NEXUS_DATA_DIR`), so it keeps working with the app closed.
-  - The scanner runs after every 5-minute candle close (`server/scanner/`).
+  - The scanner runs after every 5-minute candle close (`server/scanner/`), on Indian and US stocks in their hours.
+    Coins aren't scanned on 5-minute candles (owner's call, 5 Oct: with CoinDCX's real fee none pass the costs check;
+    `fiveMinuteCoinsScanned`, `_setFiveMinuteCoins` for the tests of that path): coins trade on the daily check, which
+    keeps their typical spreads current from the quotes it reads (`recordSpread`). It still scans when no market is
+    open, so the app (which scans by itself only while the server doesn't) stays out of it.
   - The server autopilot is in `server/scanner/autopilot.ts`.
   - The guardian (`server/guardian.ts`) manages stops and exits 24/7.
   - Live coin trades (`server/liveExecution.ts`): the server sends every exit itself (idempotent, retried). Each live
@@ -66,6 +70,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     once a day, once seen on two checks 5 minutes apart; coins beyond the live trades are only listed. Trades opened
     in the last 5 minutes and ones being closed aren't compared. Settings → Server → CoinDCX check.
   - Web Push sends the trade pop-ups.
+  - The weekly summary (`server/weeklySummary.ts`): a pop-up each Sunday at 10 am India time per desk, from the trades
+    the server closed: the week's closed, won, still open and what they made, and each slower strategy's paper trades
+    so far against its replay (`paperScore`, a strategy clearly behind named first). Sent late after a restart until
+    Tuesday; nothing on an empty week; "on paper" dropped once a trade is live.
   - Daily backups (`server/backup.ts`): every top-level file in the data folder (not the rebuildable folders, not
     `angel_tokens.json`) as one gzipped JSON a day to an S3 bucket (Fly's Tigris, set up by `fly storage create`, which
     sets the `AWS_*`/`BUCKET_NAME` secrets itself; `server/s3.ts` signs requests with SigV4, no SDK), 30 days kept,
