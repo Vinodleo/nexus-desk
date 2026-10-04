@@ -21,7 +21,7 @@ import { closeServerPosition, daemonPositions, type DaemonPosition } from "../gu
 import { getDeskState, scanningDesks, type DeskState } from "./deskState";
 import { runServerAutopilot, serverAutopilotOn, type ServerAutopilotHooks } from "./autopilot";
 import { placeLiveEntry } from "../liveEntry";
-import { riskPolicyFor, serverDailyPnl, typicalSpread } from "./scannerService";
+import { recordSpread, riskPolicyFor, serverDailyPnl, typicalSpread } from "./scannerService";
 
 // Coin trades on daily candles, paper only. Two years of replays found the
 // traders losing their costs on 5-minute candles but making money on coins
@@ -113,6 +113,8 @@ export interface DailyCoinsDeps {
   /** CoinDCX's best bid and ask for a coin, or null. */
   quote: (symbol: string) => Promise<{ bid: number; ask: number } | null>;
   spread: (symbol: string) => number | undefined;
+  /** Keeps a coin's typical spread current from the quotes read here (coins aren't scanned on 5-minute candles any more). */
+  recordSpread?: (symbol: string, spread: number) => void;
   /** The daily records traders are judged on, or null before there are any. */
   records: () => DailyRecords | null;
   desks: (now: number) => [string, DeskState][];
@@ -145,6 +147,7 @@ const realDeps: DailyCoinsDeps = {
     return { bid: result.book.bids[0][0], ask: result.book.asks[0][0] };
   },
   spread: typicalSpread,
+  recordSpread,
   // The replay since 2017 once it has finished; until then the two-year one's daily trades, once complete.
   records: () => {
     const long = dailyLongRecords();
@@ -438,7 +441,11 @@ export async function runDailyCoins(deps: DailyCoinsDeps = realDeps): Promise<vo
 
     const quotes = new Map<string, { bid: number; ask: number } | null>();
     const quoteOf = async (symbol: string) => {
-      if (!quotes.has(symbol)) quotes.set(symbol, await deps.quote(symbol));
+      if (!quotes.has(symbol)) {
+        const quote = await deps.quote(symbol);
+        quotes.set(symbol, quote);
+        if (quote && quote.bid > 0 && quote.ask >= quote.bid) (deps.recordSpread ?? realDeps.recordSpread)?.(symbol, (quote.ask - quote.bid) / ((quote.ask + quote.bid) / 2));
+      }
       return quotes.get(symbol) ?? null;
     };
 

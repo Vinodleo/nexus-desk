@@ -203,6 +203,21 @@ async function getOrderBook(symbol: string, notional: number) {
   return orderBook;
 }
 
+/**
+ * Coins aren't scanned on 5-minute candles (owner's call, 5 Oct 2026): with
+ * CoinDCX's real fee (1.18% a round trip) no 5-minute coin setup passes the
+ * costs check, so scanning and measuring them only spent the server's CPU.
+ * Coins trade on the daily check (breakout 55/20, dailyCoins.ts); stocks are
+ * still scanned. The coin list is still read, for the Lab's coin activity.
+ */
+let fiveMinuteCoins = false;
+/** Test hook: coins scanned on 5-minute candles again, for the tests of that path. */
+export function _setFiveMinuteCoins(on: boolean): void {
+  fiveMinuteCoins = on;
+}
+export const fiveMinuteCoinsScanned = () => fiveMinuteCoins;
+const scannedCoins = () => (fiveMinuteCoins ? universe : []);
+
 /** Stocks the scanner covers: the Nifty 50 when Angel One is set up. */
 export function stockUniverse(): string[] {
   return angelConfigured() ? NSE_SYMBOLS : [];
@@ -213,9 +228,9 @@ export function usUniverse(): string[] {
   return alpacaConfigured() ? US_SYMBOLS : [];
 }
 
-/** Everything with candles to measure traders on: coins, and stocks, Indian and US (whose candles are kept overnight). */
+/** Everything with candles to measure traders on: stocks, Indian and US (whose candles are kept overnight), and coins while scanned. */
 function measuredSymbols(): string[] {
-  return [...universe, ...stockUniverse(), ...usUniverse()];
+  return [...scannedCoins(), ...stockUniverse(), ...usUniverse()];
 }
 
 /** Whether a symbol's market is open for fresh candles now (coins always are). */
@@ -234,9 +249,9 @@ function justClosedStocks(now: number): string[] {
   return [...stockUniverse(), ...usUniverse()].filter((s) => !marketOpenFor(s, now) && marketOpenFor(s, now - SIGNAL_INTERVAL_MS));
 }
 
-/** The coins, plus the Indian stocks while NSE is open and the US stocks while the US market is. */
+/** The Indian stocks while NSE is open and the US stocks while the US market is (and the coins, while scanned). */
 function scanList(now: number): string[] {
-  return [...universe, ...(isNseOpen(now) ? stockUniverse() : []), ...(isUsOpen(now) ? usUniverse() : [])];
+  return [...scannedCoins(), ...(isNseOpen(now) ? stockUniverse() : []), ...(isUsOpen(now) ? usUniverse() : [])];
 }
 
 /**
@@ -349,7 +364,7 @@ async function refreshMarket(now: number): Promise<void> {
   // last session is loaded anyway (Angel One and Alpaca serve past candles
   // any time), at most hourly, so the traders' record doesn't vanish until
   // the open.
-  market.keepOnly([...new Set([...universe, ...stockUniverse(), ...usUniverse(), ...followed, MARKET_SYMBOL])]);
+  market.keepOnly([...new Set([...scannedCoins(), ...stockUniverse(), ...usUniverse(), ...followed, MARKET_SYMBOL])]);
   const missingStocks =
     now - lastStockBackfillAt >= STOCK_BACKFILL_GAP_MS
       ? [...stockUniverse(), ...usUniverse()].filter((s) => !marketOpenFor(s, now) && !market.getBars(s))
@@ -426,7 +441,7 @@ export function scannerStatus(uid: string, now: number = Date.now()) {
     lastAutopilotOpenAt: lastServerOpenAt(uid),
     /** The last hour's scans (when, how many checked and proposed), for the Floor's heartbeat. */
     recentScans: recentBeats(state?.reports ?? [], now),
-    coins: universe.length,
+    coins: scannedCoins().length,
     stocks: stockUniverse().length,
     usStocks: usUniverse().length,
     problems: market.problems(scanList(now)),

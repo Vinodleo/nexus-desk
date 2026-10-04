@@ -42,7 +42,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume
   (`NEXUS_DATA_DIR`), so it keeps working with the app closed.
-  - The scanner runs after every 5-minute candle close (`server/scanner/`).
+  - The scanner runs after every 5-minute candle close (`server/scanner/`), on Indian and US stocks in their hours.
+    Coins aren't scanned on 5-minute candles (owner's call, 5 Oct: with CoinDCX's real fee none pass the costs check;
+    `fiveMinuteCoinsScanned`, `_setFiveMinuteCoins` for the tests of that path): coins trade on the daily check, which
+    keeps their typical spreads current from the quotes it reads (`recordSpread`). It still scans when no market is
+    open, so the app (which scans by itself only while the server doesn't) stays out of it.
   - The server autopilot is in `server/scanner/autopilot.ts`.
   - The guardian (`server/guardian.ts`) manages stops and exits 24/7.
   - Live coin trades (`server/liveExecution.ts`): the server sends every exit itself (idempotent, retried). Each live
