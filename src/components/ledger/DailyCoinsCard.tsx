@@ -24,6 +24,8 @@ export interface DailyCoinsView {
   traders: { trader: string; trades: number; avgR: number; on: boolean; wins?: number; winR?: number; lossR?: number }[];
   /** The years the traders' records cover, in words ("since 2017"); absent from older servers (two years). */
   recordSpan?: string | null;
+  /** The daily traders are switched off (owner's call, 5 Oct 2026): none trades, whatever its record. Absent from older servers. */
+  dailyTradersOff?: boolean;
   /** Breakout 55/20's record since 2018 and whether it trades; null before it has run, absent from older servers. */
   breakout?: { trader: string; trades: number; avgR: number; on: boolean; wins?: number; winR?: number; lossR?: number } | null;
   /**
@@ -171,11 +173,17 @@ export const DailyCoinsCard: React.FC = () => {
           {view.traders.length > 0 && (
             <div className="p-2.5 rounded-xl bg-inset flex flex-col gap-1.5" data-testid="daily-traders">
               <div className="text-[11px] font-semibold text-muted">Daily record {span} with your trailing stop</div>
+              {view.dailyTradersOff && (
+                <div className="text-xs text-muted leading-snug" data-testid="daily-traders-off">
+                  Switched off (your call, 5 Oct): after CoinDCX's real fee they lose together, and one clearing the bar alone is
+                  likely luck. Their records stay here to watch.
+                </div>
+              )}
               {[...on, ...paused].map((t) => (
                 <div key={t.trader} className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
                   <span className={t.on ? "" : "text-muted"}>
                     {t.trader}
-                    {t.on ? "" : " · paused"}
+                    {t.on ? "" : view.dailyTradersOff ? " · off" : " · paused"}
                   </span>
                   <span className="text-muted ml-auto">
                     {t.trades} setups · <span className={`font-semibold ${pnlTone(t.avgR)}`}>{rSigned(t.avgR)}</span>
@@ -203,11 +211,14 @@ export const DailyCoinsCard: React.FC = () => {
 
       <Fold title="How the daily check works">
         <div className="text-xs text-muted leading-relaxed">
-          Once a day, just after the daily candle closes (5:30 am), the server checks coins on daily candles and opens paper trades within
-          your coin limits. Only traders whose daily record {span} is positive over 10+ setups trade. Trades are held up to 30 days.
-          Breakout 55/20 trades alongside them on this year's biggest coins: it buys a close above the 55-day high and sells a close below
-          the 20-day low, with no target and no trailing stop. If you switch your desk to live, breakout trades with real money (once the
-          server allows live orders) and the daily traders open nothing: they stay paper only.
+          Once a day, just after the daily candle closes (5:30 am), the server checks coins on daily candles. Breakout 55/20 trades on
+          this year's biggest coins: it buys a close above the 55-day high and sells a close below the 20-day low, with no target and no
+          trailing stop, within your coin limits.{" "}
+          {view.dailyTradersOff
+            ? "The daily traders are switched off: their setups are shown but open nothing."
+            : `The daily traders trade alongside it when their daily record ${span} is positive over 10+ setups, held up to 30 days.`}{" "}
+          If you switch your desk to live, breakout trades with real money (once the server allows live orders); the daily traders stay
+          paper only.
         </div>
       </Fold>
     </Card>

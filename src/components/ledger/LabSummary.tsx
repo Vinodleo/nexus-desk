@@ -27,6 +27,7 @@ const isEdgeView = (body: any): body is EdgeView => !!body && "table" in body;
 
 /** How many of the daily traders trade now, as a status. */
 function dailyStatus(dc: DailyCoinsView): { status: LabStatus; label: string } {
+  if (dc.dailyTradersOff) return { status: "off", label: "Switched off" };
   const on = dc.traders.filter((t) => t.on).length;
   return on > 0 ? { status: "trading", label: `${on} of ${dc.traders.length} trading` } : { status: "paused", label: "Paused" };
 }

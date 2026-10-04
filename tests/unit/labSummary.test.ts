@@ -154,6 +154,28 @@ describe("Coin strategies, side by side", () => {
     expect(summary.textContent).not.toContain("Coin breakout 55/20");
   });
 
+  it("shows the daily traders as switched off (your call) in both cards", async () => {
+    const off: Record<string, unknown> = {
+      ...routes,
+      "/api/daily-coins": {
+        ...(routes["/api/daily-coins"] as Record<string, unknown>),
+        traders: [{ trader: "Sofia Range Scalp", trades: 145, avgR: 0.22, on: false }],
+        dailyTradersOff: true,
+      },
+    };
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => new Response(JSON.stringify(off[path] ?? null), { status: off[path] ? 200 : 404 }));
+    render(createElement(StrategyRanking, { trailProfile: "tight" }));
+    const list = await screen.findByTestId("lab-ranking");
+    await within(list).findByText("5-minute traders, all together");
+    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toContain("Daily traders, all together−0.15Rsince 2018 · 20 setups · 25% won–Switched off");
+    cleanup();
+    render(createElement(LabSummary));
+    const summary = await screen.findByTestId("lab-summary");
+    await screen.findByText("Machine-learning filter");
+    expect(summary.textContent).toContain("Daily traders–Switched off+0.22R a trade since 2017");
+    expect(summary.textContent).toContain("Coin breakout 55/20●Trading");
+  });
+
   it("draws breakout's and the daily traders' years, and gives a year's numbers on a tap", async () => {
     render(createElement(YearByYear, { trailProfile: "tight" }));
     const breakout = await screen.findByTestId("years-breakout");

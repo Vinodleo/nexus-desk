@@ -16,7 +16,8 @@ early Oct).
 - [ ] No strategy that's going live shows **Behind the replay**.
 - [ ] Stops that gapped past (the scorecard's "gapped past it") are rare: a few, not most.
 - [ ] Decide which strategy goes live first. Expected: **coin breakout only**.
-      The daily coin traders' edge is small (+0.07R); US stocks need a broker (step 5).
+      With CoinDCX's real fee, coin breakout averaged +0.87R since 2018; the daily coin traders lost
+      together (−0.05R) and are switched off (5 Oct). US stocks need a broker (step 5).
 
 ## 2. Builds needed before real money (ask for each; one PR each)
 

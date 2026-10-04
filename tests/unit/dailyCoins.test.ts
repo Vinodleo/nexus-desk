@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MarketBar, StrategySetup, TradeProposal } from "../../src/types";
 import { appendBars, emptySeries, latestSlowSetups, SPACING_LOOKBACK_BARS, TIMEFRAME_RULES, HISTORY_VIEW_BARS, type CandleSeries } from "../../src/services/historyReplay";
 import { panelSetupsOnHistory } from "../../src/services/labSimulation";
@@ -147,6 +147,37 @@ describe("the daily scan", () => {
 
   beforeEach(async () => {
     await fresh();
+  });
+  // The daily traders' own path, as when they trade: switched off since 5 Oct (the last test here).
+  let switchedOff = true;
+  beforeAll(async () => {
+    const daily = await import("../../server/scanner/dailyCoins");
+    switchedOff = daily.dailyTradersSwitchedOff();
+    daily._setDailyTradersOff(false);
+  });
+  afterAll(async () => (await import("../../server/scanner/dailyCoins"))._setDailyTradersOff(switchedOff));
+
+  it("opens nothing for the daily traders while they're switched off (owner's call), whatever their record, and says why", async () => {
+    const daily = await fresh();
+    const { daemonPositions } = await import("../../server/guardian");
+    daily._setDailyTradersOff(true);
+    try {
+      const d = await deps();
+      await daily.runDailyCoins(d);
+      expect(d.open).not.toHaveBeenCalled();
+      expect(daemonPositions.size).toBe(0);
+      // A record of +0.20R over 20 setups would trade: switched off, it's paused with the reason.
+      expect(daily._dailyCoinsState().runs.u.picks[0]).toEqual({
+        symbol: "SOL/INR",
+        trader,
+        outcome: "paused",
+        reason: "the daily traders are switched off: after CoinDCX's fee they lose together",
+      });
+      expect(daily.dailyTraderGates(d.records()!.records as never, "tight").every((g) => !g.on)).toBe(true);
+      expect(daily.dailyCoinsView("u").dailyTradersOff).toBe(true);
+    } finally {
+      daily._setDailyTradersOff(false);
+    }
   });
 
   it("opens the day's setups as paper trades for traders with a positive daily record, priced in rupees on CoinDCX", async () => {
@@ -454,6 +485,13 @@ describe("breakout 55/20 paper trades", () => {
 });
 
 describe("the record daily traders are judged on", () => {
+  let switchedOff = true;
+  beforeAll(async () => {
+    const daily = await import("../../server/scanner/dailyCoins");
+    switchedOff = daily.dailyTradersSwitchedOff();
+    daily._setDailyTradersOff(false);
+  });
+  afterAll(async () => (await import("../../server/scanner/dailyCoins"))._setDailyTradersOff(switchedOff));
   const rec = (trades: number, totalR: number) => ({ trades, totalR, wins: Math.round(trades / 2), winR: Math.max(totalR, 0) + trades / 4, lossR: Math.min(totalR, 0) - trades / 4 });
   const write = (name: string, body: unknown) => fs.writeFileSync(path.join(dataDir, name), JSON.stringify(body));
   const longRun = (over: Record<string, unknown>) => ({
@@ -571,5 +609,12 @@ describe("the two-year replay's daily records, until the one since 2017 has fini
     // Replaying from the start: part of the markets.
     expect(slowRecordsComplete(run({ finishedAt: null }))).toBeNull();
     expect(slowRecordsComplete(null)).toBeNull();
+  });
+});
+
+describe("the owner's switch", () => {
+  it("keeps the daily coin traders switched off (owner's call, 5 Oct 2026: they lose together after CoinDCX's fee)", async () => {
+    const daily = await import("../../server/scanner/dailyCoins");
+    expect(daily.dailyTradersSwitchedOff()).toBe(true);
   });
 });
