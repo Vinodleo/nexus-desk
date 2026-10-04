@@ -22,7 +22,12 @@ early Oct).
 
 - [x] **Backup stops at CoinDCX** (Oct 2026): each live coin trade gets a stop-limit
       sell resting at CoinDCX, 0.5% under the server's stop, so a server outage can't
-      leave it unprotected (`server/liveExecution.ts`).
+      leave it unprotected (`server/liveExecution.ts`). **But CoinDCX's INR markets take
+      only market and limit orders** (its docs), so on the coins breakout trades there's
+      no backup stop: the server skips it where CoinDCX's market list doesn't offer
+      `stop_limit`. There, the server's own stop, Fly's automatic restarts and the
+      uptime alert are the protection; breakout's stops are wide (2 ATR, judged on
+      daily closes), so a short outage rarely matters.
 - [x] **A live path for coin breakout** (Oct 2026): on a desk in live mode, coin breakout
       opens real CoinDCX orders through the server's live checks (`LIVE_TRADING_ENABLED`,
       `LIVE_ALLOWED_MARKETS`, the order caps), with its backup stop; the daily traders open
@@ -33,11 +38,16 @@ early Oct).
       restore** while on paper.
 - [ ] **A daily check against CoinDCX**: the coins held there match the open live
       trades the app knows; a pop-up on any mismatch.
-- [ ] **Verify CoinDCX's API** where the code assumes (no docs could be reached from the
-      build environment): `orders/status` and `orders/cancel` accepting
-      `client_order_id`; `stop_limit` with `stop_price` and `price_per_unit` on INR
-      markets; whether buying fees come out of the coins received (then the coins held
-      are a little under the quantity bought, and selling it all would be refused).
+- [x] **Verify CoinDCX's API** (Oct 2026, from its docs, docs.coindcx.com):
+      `orders/status` and `orders/cancel` take `client_order_id` (or `id`); the status
+      reply's `total_quantity`, `remaining_quantity`, `avg_price` and statuses (`init`,
+      `open`, `partially_filled` open; `filled`, `partially_cancelled`, `cancelled`,
+      `rejected` done) are as the code reads them; signing (HMAC-SHA256 of the compact
+      JSON body, `X-AUTH-APIKEY`, `X-AUTH-SIGNATURE`) matches. A reused
+      `client_order_id` is refused, so each exit send now has its own. INR markets take
+      no `stop_limit` (above). **Still open:** whether buying fees come out of the coins
+      received (then the coins held are a little under the quantity bought, and selling
+      it all would be refused): check on the first watched trade.
 
 ## 3. One-time setup (the owner, from Google Cloud Shell; never secrets in chat)
 
@@ -63,10 +73,10 @@ early Oct).
 - [ ] The owner sets `LIVE_TRADING_ENABLED=true`, switches the desk to Live in Settings.
 - [ ] On the first trade, check:
   - [ ] The buy filled near the expected price.
-  - [ ] **CoinDCX → open orders shows the backup stop**: a stop-limit sell, the full
-        quantity, just under the app's stop. A **"Backup stop refused"** pop-up means
-        CoinDCX didn't take it: say so (the server still watches the stop).
-  - [ ] As the stop trails up, the backup order moves up with it.
+  - [ ] CoinDCX's coin balance after the buy: is it the full quantity bought, or a
+        little less (the fee taken in coins)? Closing must sell exactly what's held.
+  - [ ] (Only if CoinDCX ever offers stop orders on INR markets: the backup stop shows
+        in CoinDCX → open orders, and moves up as the stop trails.)
   - [ ] Closing from the app cancels the backup stop, then sells; the Book shows the
         trade with its fees.
 - [ ] The first 20–30 live trades match paper (scorecard). Only then raise the most to

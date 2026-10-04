@@ -18,6 +18,13 @@ describe("CoinDCX market rules", () => {
     ]);
   });
 
+  it("keep the order types each market takes: INR markets take no stop orders", () => {
+    const [btc] = parseMarketsDetails([
+      { coindcx_name: "BTCINR", base_currency_short_name: "INR", target_currency_short_name: "BTC", status: "active", order_types: ["limit_order", "market_order"] },
+    ]);
+    expect(btc.orderTypes).toEqual(["limit_order", "market_order"]);
+  });
+
   it("rounds down to the step without floating-point dust", () => {
     expect(floorToStep(0.00179999, { quantityStep: 0.0001, quantityPrecision: 4 })).toBe(0.0017);
     expect(floorToStep(0.3, { quantityStep: 0.1, quantityPrecision: 1 })).toBe(0.3);

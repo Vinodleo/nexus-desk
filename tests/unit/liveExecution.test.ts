@@ -11,7 +11,7 @@ let dir: string;
 // can be told to fail specific create calls.
 interface FakeExchange {
   creates: Array<Record<string, any>>;
-  createBehaviour: Array<"ok" | "drop-after-accept" | "drop-before-accept" | "reject">;
+  createBehaviour: Array<"ok" | "drop-after-accept" | "drop-before-accept" | "reject" | "drop-then-rejected">;
   statusBehaviour: "from-orders" | "unreachable";
 }
 let ex: FakeExchange;
@@ -24,15 +24,17 @@ function installFakeExchange() {
       const behaviour = ex.createBehaviour.shift() ?? "ok";
       if (behaviour === "drop-before-accept") throw new Error("socket hang up");
       if (behaviour === "reject") return new Response(JSON.stringify({ message: "Insufficient funds" }), { status: 422 });
-      ex.creates.push(body);
-      if (behaviour === "drop-after-accept") throw new Error("socket hang up");
+      // As CoinDCX: a client_order_id already used (even by a rejected order) is refused.
+      if (ex.creates.some((c) => c.client_order_id === body.client_order_id)) return new Response(JSON.stringify({ message: "Duplicate client_order_id" }), { status: 400 });
+      ex.creates.push(behaviour === "drop-then-rejected" ? { ...body, status: "rejected" } : body);
+      if (behaviour === "drop-after-accept" || behaviour === "drop-then-rejected") throw new Error("socket hang up");
       return new Response(JSON.stringify({ orders: [{ id: `ord${ex.creates.length}` }] }), { status: 200 });
     }
     if (url.endsWith("/exchange/v1/orders/status")) {
       if (ex.statusBehaviour === "unreachable") return new Response("{}", { status: 503 });
       const hit = ex.creates.find((c) => c.client_order_id === body.client_order_id);
       return hit
-        ? new Response(JSON.stringify({ id: `found_${body.client_order_id}`, status: "filled" }), { status: 200 })
+        ? new Response(JSON.stringify({ id: `found_${body.client_order_id}`, status: hit.status ?? "filled" }), { status: 200 })
         : new Response(JSON.stringify({ message: "not found" }), { status: 404 });
     }
     throw new Error(`unexpected fetch ${url}`);
@@ -111,6 +113,17 @@ describe("requestLiveExit", () => {
     expect(exec.getLivePosition("pos-1")?.status).toBe("CLOSED");
     expect(exec.getLivePosition("pos-1")?.exitOrderId).toBe("found_nx_exit_pos1");
     expect(ex.creates).toHaveLength(1); // looked up, not re-sent
+  });
+
+  it("re-sends under a new client order id after CoinDCX rejected the last one (it refuses a reused id)", async () => {
+    // The answer was lost, and CoinDCX had rejected the order.
+    ex.createBehaviour = ["drop-then-rejected"];
+    await exec.requestLiveExit("pos-1", "STOP_LOSS");
+    expect(exec.getLivePosition("pos-1")?.status).toBe("EXIT_PENDING");
+    await runRetries();
+    expect(exec.getLivePosition("pos-1")?.status).toBe("CLOSED");
+    expect(ex.creates.map((c) => c.client_order_id)).toEqual(["nx_exit_pos1", "nx_exit2_pos1"]);
+    expect(exec.exitClientOrderId("p-1", 3)).toBe("nx_exit3_p1");
   });
 
   it("re-sends when the exchange never received the order", async () => {
@@ -227,11 +240,15 @@ interface StopExchange {
 }
 let sx: StopExchange;
 
+/** CoinDCX's market list, when a test gives one (else it's unavailable, and stops are tried). */
+let marketsDetails: unknown[] | null = null;
+
 function installStopExchange() {
   sx = { orders: [], cancels: [], stopCreate: [], statusDown: false };
   const find = (body: any) => sx.orders.find((o) => (body.id ? o.id === body.id : o.client_order_id === body.client_order_id));
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
-    if (!url.includes("/exchange/v1/orders/")) return new Response("[]", { status: 503 }); // markets_details: no rules here
+    if (url.includes("markets_details")) return marketsDetails ? new Response(JSON.stringify(marketsDetails), { status: 200 }) : new Response("[]", { status: 503 });
+    if (!url.includes("/exchange/v1/orders/")) return new Response("[]", { status: 503 });
     const body = JSON.parse(String(init!.body));
     if (url.endsWith("/orders/create")) {
       const behaviour = body.order_type === "stop_limit" ? sx.stopCreate.shift() ?? "ok" : "ok";
@@ -277,6 +294,7 @@ describe("the backup stop at CoinDCX", () => {
   const closed: Array<[string, number]> = [];
   const refused: string[] = [];
   beforeEach(() => {
+    marketsDetails = null;
     installStopExchange();
     serverStop = 1000;
     closed.length = 0;
@@ -390,6 +408,32 @@ describe("the backup stop at CoinDCX", () => {
     expect(exec.getLivePosition("pos-3")!.exchangeStop!.status).toBe("PLACING");
     await exec.reconcileExchangeStops(t0 + 45_000);
     expect(exec.getLivePosition("pos-3")!.exchangeStop).toMatchObject({ status: "OPEN", seq: 2, clientOrderId: "nx_s2_pos3" });
+  });
+
+  it("isn't tried on a market where CoinDCX takes no stop orders (its INR markets), with no pop-up; placed where it does", async () => {
+    const market = (orderTypes: string[]) => [
+      { coindcx_name: "BTCINR", base_currency_short_name: "INR", target_currency_short_name: "BTC", base_currency_precision: 2, status: "active", order_types: orderTypes },
+    ];
+    marketsDetails = market(["limit_order", "market_order"]);
+    await exec.reconcileExchangeStops(t0);
+    await exec.reconcileExchangeStops(t0 + 15_000);
+    expect(stops()).toHaveLength(0);
+    expect(exec.getLivePosition("pos-1")!.exchangeStop).toMatchObject({ status: "UNSUPPORTED", lastError: "CoinDCX takes no stop orders on BTCINR" });
+    expect(refused).toEqual([]);
+    // An exit just sells: nothing rests there to cancel.
+    const rec = await exec.requestLiveExit("pos-1", "STOP_LOSS");
+    expect(rec?.status).toBe("CLOSED");
+    expect(sx.cancels).toEqual([]);
+    expect(sells()).toEqual([expect.objectContaining({ total_quantity: 2 })]);
+
+    // A market that takes them gets one.
+    vi.resetModules();
+    exec = await import("../../server/liveExecution");
+    exec.setStopSource(() => 1000);
+    exec.registerLiveEntry({ positionId: "pos-9", userId: "u1", market: "BTCINR", entrySide: "buy", quantity: 1, entryOrderId: "x", entryClientOrderId: "nx_open_pos9" });
+    marketsDetails = market(["limit_order", "market_order", "stop_limit"]);
+    await exec.reconcileExchangeStops(t0);
+    expect(stops()).toEqual([expect.objectContaining({ client_order_id: "nx_s1_pos9", stop_price: 995 })]);
   });
 
   it("an exit waits while it can't confirm the stop was cancelled, rather than selling coins the stop holds", async () => {

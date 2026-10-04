@@ -15,6 +15,8 @@ export interface MarketRule {
   minNotional: number;
   quantityPrecision: number;
   pricePrecision: number;
+  /** The order types CoinDCX takes on this market ("market_order", "limit_order", …); absent when its list didn't say. INR markets take no stop orders. */
+  orderTypes?: string[];
   /** True when the numbers were estimated because CoinDCX's list wasn't available. */
   estimated?: boolean;
 }
@@ -52,6 +54,7 @@ export function parseMarketsDetails(raw: unknown): MarketRule[] {
       minNotional: num(m.min_notional) ?? 0,
       quantityPrecision,
       pricePrecision,
+      ...(Array.isArray(m.order_types) ? { orderTypes: (m.order_types as unknown[]).map((t) => String(t)) } : {}),
     });
   }
   return out;
