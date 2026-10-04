@@ -261,6 +261,7 @@ export interface ExecutionToast {
 
 export type TradingExecutionMode = "PAPER" | "LIVE_COINDCX";
 
+/** Money at CoinDCX: the total is what's free to use plus what open orders hold. */
 export interface CoinDcxAccountBalance {
   totalInr: number;
   availableInr: number;

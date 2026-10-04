@@ -50,6 +50,17 @@ export async function getReferencePrice(market: string): Promise<number | undefi
   }
 }
 
+/**
+ * A currency's money at CoinDCX. Its docs: `balance` is what's free to use,
+ * `locked_balance` what open orders hold, and the total is the two together
+ * (`balance` isn't the total, so nothing is taken off it).
+ */
+function holding(row: any, digits: number): { total: number; available: number; locked: number } {
+  const available = Math.max(0, Number(row?.balance) || 0);
+  const locked = Math.max(0, Number(row?.locked_balance) || 0);
+  return { total: Number((available + locked).toFixed(digits)), available: Number(available.toFixed(digits)), locked: Number(locked.toFixed(digits)) };
+}
+
 // Reusable CoinDCX balance fetcher & validator
 const handleCoinDcxBalances = async (req: Request, res: Response) => {
   try {
@@ -93,26 +104,18 @@ const handleCoinDcxBalances = async (req: Request, res: Response) => {
 
     // Process currency balances
     const balances = Array.isArray(data) ? data : [];
-    const inrItem = balances.find((b: any) => b.currency === "INR");
-    const usdtItem = balances.find((b: any) => b.currency === "USDT");
-
-    const totalInr = inrItem ? Number(inrItem.balance || 0) : 0;
-    const lockedInr = inrItem ? Number(inrItem.locked_balance || 0) : 0;
-    const availableInr = Number(Math.max(0, totalInr - lockedInr).toFixed(2));
-
-    const totalUsdt = usdtItem ? Number(usdtItem.balance || 0) : 0;
-    const lockedUsdt = usdtItem ? Number(usdtItem.locked_balance || 0) : 0;
-    const availableUsdt = Number(Math.max(0, totalUsdt - lockedUsdt).toFixed(4));
+    const inr = holding(balances.find((b: any) => b.currency === "INR"), 2);
+    const usdt = holding(balances.find((b: any) => b.currency === "USDT"), 4);
 
     return res.json({
       success: true,
       balances,
-      totalInr,
-      availableInr,
-      lockedInr,
-      totalUsdt,
-      availableUsdt,
-      lockedUsdt,
+      totalInr: inr.total,
+      availableInr: inr.available,
+      lockedInr: inr.locked,
+      totalUsdt: usdt.total,
+      availableUsdt: usdt.available,
+      lockedUsdt: usdt.locked,
       keyMasked: maskKey(apiKey),
       timestamp: new Date().toISOString()
     });
