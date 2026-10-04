@@ -48,7 +48,7 @@ describe("sizing with market rules", () => {
     simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
   };
   const trade = (symbol: string, price: number) => {
-    const atr = price * 0.008; // a 1.2% stop: coins never stop closer (COIN_MIN_STOP_PCT)
+    const atr = price * 0.04; // a 6% stop: room for CoinDCX's 1.18% round trip (closer, the fees alone are too much)
     const setup: any = {
       id: "s", name: "t", family: "trend_following", direction: "LONG", symbol, timeframe: "5m", entryPrice: price,
       stopLoss: price - 1.5 * atr, takeProfit: price + 3.3 * atr, riskRewardRatio: 2.2, baseProbability: 0.58, qualifies: true,
@@ -69,9 +69,10 @@ describe("sizing with market rules", () => {
   });
 
   it("uses CoinDCX's own step once loaded", () => {
-    _setMarketRules([{ market: "BTCINR", symbol: "BTC/INR", minQuantity: 0.001, maxQuantity: 10, quantityStep: 0.001, minNotional: 100, quantityPrecision: 3, pricePrecision: 0 }]);
+    _setMarketRules([{ market: "BTCINR", symbol: "BTC/INR", minQuantity: 0.0001, maxQuantity: 10, quantityStep: 0.0001, minNotional: 100, quantityPrecision: 4, pricePrecision: 0 }]);
     const r = trade("BTC/INR", 5_861_300);
-    expect(r.recommendedPositionSizeUnits).toBe(0.001);
+    // ₹300 at risk on a ₹3,51,678 stop is 0.00085 BTC: CoinDCX's 0.0001 step makes it 0.0008.
+    expect(r.recommendedPositionSizeUnits).toBe(0.0008);
   });
 
   it("rejects with a size code when the exchange minimum can't be met", () => {

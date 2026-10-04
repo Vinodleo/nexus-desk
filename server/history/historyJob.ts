@@ -56,7 +56,7 @@ export const HISTORY_VERSION = 4;
  * Bump when only the slower (1-hour, 1-day) replay changes: replayed
  * markets redo it from their kept hourly candles, without downloading again.
  */
-export const SLOW_VERSION = 4;
+export const SLOW_VERSION = 5; // 5: CoinDCX's real fee (0.59% a side); the 5-minute replay gets it at its weekly rerun
 /** Results this old are replayed again. */
 export const RERUN_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Share of a core the replay uses on average. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_RISK_POLICY, evaluateExpectedValue, evaluateRiskEngine } from "../../src/services/riskEngine";
+import { nseRoundTripRate } from "../../src/shared/nse";
 import type { ExpectedValueAssessment, FailureInjectionState, MetaLabelScore, Position, StrategySetup } from "../../src/types";
 
 const setup = (over: Partial<StrategySetup> = {}): StrategySetup => ({
@@ -10,8 +11,9 @@ const setup = (over: Partial<StrategySetup> = {}): StrategySetup => ({
   symbol: "BTC/INR",
   timeframe: "5m",
   entryPrice: 1000,
-  stopLoss: 990,
-  takeProfit: 1030,
+  // A stop with room for CoinDCX's fees (1.18% a round trip): 6% away.
+  stopLoss: 940,
+  takeProfit: 1180,
   riskRewardRatio: 3,
   baseProbability: 0.55,
   qualifies: true,
@@ -144,10 +146,13 @@ describe("evaluateExpectedValue", () => {
     expect(thin.estimatedSlippageCost).toBeGreaterThan(deep.estimatedSlippageCost);
   });
 
-  it("charges stocks Angel One's intraday costs, not the crypto fee", () => {
+  it("charges stocks Angel One's intraday costs, and coins CoinDCX's fee", () => {
     const ev = evaluateExpectedValue(setup({ symbol: "RELIANCE" }), meta(0.6), 0.5, 80);
     const crypto = evaluateExpectedValue(setup({ symbol: "BTC/INR" }), meta(0.6), 0.5, 80);
-    // Per-order brokerage plus STT, stamp duty and GST: more than CoinDCX's 0.1% round trip.
-    expect(ev.estimatedBrokerageFee).toBeGreaterThan(crypto.estimatedBrokerageFee);
+    // ₹300 of risk on a ₹60 stop: 5 units, ₹5,000 of value.
+    expect(ev.estimatedBrokerageFee).toBeCloseTo(5000 * nseRoundTripRate(5000), 2);
+    // CoinDCX's 0.5% and GST a side, 1.18% a round trip: dearer than Angel One's charges.
+    expect(crypto.estimatedBrokerageFee).toBeCloseTo(5000 * 0.0118, 2);
+    expect(crypto.estimatedBrokerageFee).toBeGreaterThan(ev.estimatedBrokerageFee);
   });
 });

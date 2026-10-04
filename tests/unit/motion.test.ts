@@ -139,11 +139,11 @@ describe("the Floor", () => {
     expect(tick().style.opacity).toBe("1");
     const trail = container.querySelector('[data-testid="stop-trail"]') as HTMLElement;
     expect([trail.style.left, trail.style.width]).toEqual(["0%", "50%"]);
-    // ₹1 over entry on 10 coins, less ₹1 of fees on ₹1,000 there and back.
-    expect(container.textContent).toContain("Stop raised · ₹9 locked in");
-    // Still rising: the one tag stays, with the new amount.
+    // ₹1 over entry on 10 coins doesn't yet cover CoinDCX's ₹11.80 there and back on ₹1,000.
+    expect(container.textContent).toContain("Stop raised · ₹2 at risk now");
+    // Still rising: the one tag stays, with the new amount: ₹20 over entry, less the fees.
     rerender(createElement(LedgerFloor, floor({ positions: [sol({ stopLoss: 102 })] })));
-    expect(container.textContent).toContain("Stop raised · ₹19 locked in");
+    expect(container.textContent).toContain("Stop raised · ₹8 locked in");
     expect(container.textContent?.match(/Stop raised/g)).toHaveLength(1);
     act(() => vi.advanceTimersByTime(3400));
     expect(container.textContent).not.toContain("Stop raised");
@@ -163,10 +163,12 @@ describe("the Floor", () => {
 
   it("says a raised stop is at break-even, or what is still at risk", () => {
     const p = { symbol: "SOL/INR", direction: "LONG" as const, entryPrice: 100, quantity: 10 };
-    expect(stopRaisedTag(p, 100.1)).toEqual({ text: "Stop raised to break-even", tone: "gain" });
-    expect(stopRaisedTag(p, 99)).toEqual({ text: "Stop raised · ₹11 at risk now", tone: "ink" });
-    // Only the part still open counts once half is banked.
-    expect(stopRaisedTag({ ...p, bankedQuantity: 5 }, 102).text).toBe("Stop raised · ₹10 locked in");
+    // Break-even is the entry plus CoinDCX's 1.18% round trip: ₹101.18 a coin.
+    expect(stopRaisedTag(p, 101.2)).toEqual({ text: "Stop raised to break-even", tone: "gain" });
+    expect(stopRaisedTag(p, 100.1)).toEqual({ text: "Stop raised · ₹11 at risk now", tone: "ink" });
+    expect(stopRaisedTag(p, 99)).toEqual({ text: "Stop raised · ₹22 at risk now", tone: "ink" });
+    // Only the part still open counts once half is banked: ₹10 over entry on 5 coins, less ₹5.90.
+    expect(stopRaisedTag({ ...p, bankedQuantity: 5 }, 102).text).toBe("Stop raised · ₹4 locked in");
   });
 
   it("flashes the price green when it ticks up and red when it ticks down", () => {

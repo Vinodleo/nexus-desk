@@ -478,7 +478,7 @@ describe("the record daily traders are judged on", () => {
     expect(dailyCoinsView("u")).toMatchObject({ recordSpan: null, traders: [] });
 
     // Only the two-year replay so far: Sofia trades on +0.22R.
-    write("history_results.json", { version: 4, startedAt: 0, finishedAt: 1, fromMs: 0, toMs: 0, traders: [], markets: {}, records: {}, slow: { "1d": twoYears } });
+    write("history_results.json", { version: historyJob.HISTORY_VERSION, slowVersion: historyJob.SLOW_VERSION, startedAt: 0, finishedAt: 1, fromMs: 0, toMs: 0, traders: [], markets: {}, records: {}, slow: { "1d": twoYears } });
     reload();
     expect(dailyCoinsView("u")).toMatchObject({ recordSpan: "over two years", traders: [{ trader: "Sofia Range Scalp", trades: 145, on: true }] });
 
@@ -544,5 +544,27 @@ describe("the Lab's coin slots", () => {
     expect(dailyCoinsView("slots").coinSlots).toEqual({ used: 2, max: 4, breakout: { used: 1, max: 3 } });
     guardian._resetGuardian();
     _resetDeskStates();
+  });
+});
+
+describe("the two-year replay's daily records, until the one since 2017 has finished", () => {
+  it("judge the traders only once complete under the current slower replay", async () => {
+    const { slowRecordsComplete } = await import("../../server/scanner/dailyCoins");
+    const { SLOW_VERSION } = await import("../../server/history/historyJob");
+    const records = { tight: { "2026-Q3": { "crypto:Marcus Swing Trend": { trades: 12, totalR: 2, wins: 6, winR: 6, lossR: -4 } } } };
+    const run = (over: object = {}): any => ({
+      slowVersion: SLOW_VERSION,
+      finishedAt: 1,
+      slow: { "1d": records },
+      markets: { "BTC/INR": { status: "done", slowIncluded: true }, "ETH/INR": { status: "failed" } },
+      ...over,
+    });
+    expect(slowRecordsComplete(run())).toBe(records);
+    // Redoing the slower trades (a new SLOW_VERSION, as when the coin fee changed): a market still to redo.
+    expect(slowRecordsComplete(run({ markets: { "BTC/INR": { status: "done", slowIncluded: false } } }))).toBeNull();
+    expect(slowRecordsComplete(run({ slowVersion: SLOW_VERSION - 1 }))).toBeNull();
+    // Replaying from the start: part of the markets.
+    expect(slowRecordsComplete(run({ finishedAt: null }))).toBeNull();
+    expect(slowRecordsComplete(null)).toBeNull();
   });
 });

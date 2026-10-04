@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { averageFill, bookStats, depthScoreFor, parseCoinDcxOrderBook, type RawBook } from "../../src/shared/orderBook";
 import { toOrderBook } from "../../src/services/orderBookService";
 import { evaluateExpectedValue } from "../../src/services/riskEngine";
 import { _resetScannedCandles, scanAllMarkets } from "../../src/services/marketScannerService";
 import { SKIP_REASON_LABEL } from "../../src/services/scanOutcome";
 import type { MarketBar, MetaLabelScore, StrategySetup } from "../../src/types";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 vi.spyOn(console, "warn").mockImplementation(() => {});
 

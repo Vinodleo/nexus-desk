@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EXPECTANCY_TTL_MS,
   RECORD_DAYS,
@@ -17,6 +17,13 @@ import {
 } from "../../src/services/exitExpectancy";
 import { recordSpan } from "../../src/components/ledger/LedgerBreakdown";
 import type { MarketBar } from "../../src/types";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 // The traders' records: one trade at a time per trader and market (as the
 // desk trades live), and on the server the last 30 days of trades rather
@@ -130,6 +137,22 @@ describe("the server's store", () => {
     expect(traderHistory.load("tight")).toEqual([]);
     loadTraderRecords();
     expect(traderHistory.load("tight")).toEqual([trade]);
+  });
+
+  it("drops coin trades measured under the old coin fee, keeping the stocks'", async () => {
+    const { traderHistory, loadTraderRecords, _resetTraderRecords } = await import("../../server/scanner/traderRecords");
+    const coin = t({ symbol: "SOL/INR", entryMs: 5 * DAY, exitMs: 5 * DAY + HOUR, r: 0.4 });
+    const us = t({ symbol: "AAPL.US", entryMs: 5 * DAY, exitMs: 5 * DAY + HOUR, r: 0.2 });
+    // A file from before CoinDCX's real fee: no costs marker.
+    fs.writeFileSync(path.join(dataDir, "trader_records.json"), JSON.stringify({ tight: [coin, us] }));
+    _resetTraderRecords();
+    loadTraderRecords();
+    expect(traderHistory.load("tight")).toEqual([us]);
+    // Saved again with the marker: its coin trades are kept from now on.
+    traderHistory.save("tight", [coin, us]);
+    _resetTraderRecords();
+    loadTraderRecords();
+    expect(traderHistory.load("tight")).toEqual([coin, us]);
   });
 });
 

@@ -2,6 +2,7 @@ import { holdMinutesFor } from "../shared/coinHolds";
 import type { MarketBar, RegimeType, StrategySetup, TradeDirection } from "../types";
 import type { SkipReason } from "./scanOutcome";
 import { SIGNAL_INTERVAL_MS } from "./liveMarketStreamService";
+import { COIN_ROUND_TRIP_FEE, roundTripFeeRate } from "../shared/tradeCosts";
 
 // Shadow tracking: every setup the scanner finds, taken or not, is followed
 // on real candles until it would have hit its target or its stop (or timed
@@ -50,8 +51,8 @@ export interface ShadowSignal {
   r?: number;
 }
 
-/** Round-trip fees as a share of the entry price (CoinDCX taker, both sides). */
-export const ROUND_TRIP_FEE = 0.001;
+/** A coin's round-trip fees as a share of the entry price (CoinDCX's fee and GST, both sides). */
+export const ROUND_TRIP_FEE = COIN_ROUND_TRIP_FEE;
 /** Enough history for win-chance calibration, still small in localStorage. */
 export const MAX_KEPT = 1500;
 const STORAGE_KEY = "nexus_shadow_signals_v1";
@@ -100,7 +101,7 @@ function resultR(s: ShadowSignal, exit: number): number {
   const risk = Math.abs(s.entryPrice - s.stopLoss);
   if (risk <= 0) return 0;
   const move = s.direction === "LONG" ? exit - s.entryPrice : s.entryPrice - exit;
-  return (move - s.entryPrice * ROUND_TRIP_FEE) / risk;
+  return (move - s.entryPrice * roundTripFeeRate(s.symbol)) / risk;
 }
 
 /**

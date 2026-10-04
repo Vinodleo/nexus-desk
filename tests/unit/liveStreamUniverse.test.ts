@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { MarketBar } from "../../src/types";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 // The stream scans the coins the server picks (CoinDCX's most traded INR
 // coins), not a fixed list, and the scanner handles coins outside it.

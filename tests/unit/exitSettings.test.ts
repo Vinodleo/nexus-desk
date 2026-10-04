@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { simulateExit } from "../../src/services/exitComparison";
 import { updateTrailingStop, type TrailState } from "../../src/shared/trailingStop";
 import { applyTickToPosition } from "../../src/services/positionTick";
@@ -9,6 +9,13 @@ import { applyGuardianTick } from "../../server/guardianLogic";
 import { stopSlip } from "../../src/components/ledger/LedgerBook";
 import { ExitSettings } from "../../src/components/ledger/ExitSettings";
 import type { HistoricalTrade, MarketBar, Position, StrategySetup } from "../../src/types";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
+
+// These follow 5-minute coin setups through the app's later steps, so they
+// charge a cheaper venue's 0.1% round trip: CoinDCX's real 1.18% stops every
+// one of them at the costs check (lossFixes.test.ts shows it).
+beforeAll(() => _setCoinRoundTripFee(0.001));
+afterAll(() => _setCoinRoundTripFee());
 
 afterEach(cleanup);
 

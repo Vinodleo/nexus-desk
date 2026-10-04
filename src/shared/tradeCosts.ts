@@ -1,4 +1,5 @@
 import { isNseSymbol, nseRoundTripRate } from "./nse";
+import { COIN_FEE_PER_SIDE } from "./tradeMath";
 import { isUsSymbol, US_ROUND_TRIP_RATE } from "./usMarket";
 import { marketOf } from "./marketLimits";
 
@@ -13,8 +14,8 @@ import { marketOf } from "./marketLimits";
 /** Costs (fees + spread) may be at most this share of the distance to the stop. */
 export const MAX_COST_SHARE_OF_STOP = 0.25;
 
-/** CoinDCX's taker fee in and out (0.05% each way). */
-export const COIN_ROUND_TRIP_FEE = 0.001;
+/** CoinDCX's fee and its GST in and out (0.59% each way, 1.18% a round trip; shared/tradeMath). */
+export const COIN_ROUND_TRIP_FEE = Number((2 * COIN_FEE_PER_SIDE).toFixed(6));
 
 /**
  * Fees for a round trip as a share of its value. Indian stocks at a
@@ -24,7 +25,17 @@ export const COIN_ROUND_TRIP_FEE = 0.001;
 export function roundTripFeeRate(symbol: string, notionalInr: number = 10_000): number {
   if (isUsSymbol(symbol)) return US_ROUND_TRIP_RATE;
   if (isNseSymbol(symbol)) return nseRoundTripRate(notionalInr);
-  return COIN_ROUND_TRIP_FEE;
+  return coinRoundTrip;
+}
+
+let coinRoundTrip = COIN_ROUND_TRIP_FEE;
+/**
+ * Test hook: a cheaper coin round trip, for tests of the scanner's later
+ * steps on 5-minute coin setups. CoinDCX's real fee stops every one of
+ * those at the costs check (their stops are a few percent at most).
+ */
+export function _setCoinRoundTripFee(rate?: number): void {
+  coinRoundTrip = rate ?? COIN_ROUND_TRIP_FEE;
 }
 
 /** Fees plus the spread (both shares of price), as a share of the entry-to-stop distance. */

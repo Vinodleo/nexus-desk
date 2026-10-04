@@ -21,7 +21,9 @@ describe("costs next to the stop", () => {
   it("let a US stock with a tight spread through, and hold back a coin with a wide one", () => {
     expect(costsTooBigForStop("AAPL.US", 20000, 19940, 0.0002)).toBe(false); // 0.3% stop, 0.03% costs
     expect(costsTooBigForStop("SHIB/INR", 1, 0.988, 0.006)).toBe(true); // 1.2% stop, 0.7% costs
-    expect(costsTooBigForStop("BTC/INR", 100, 98.8, 0.0015)).toBe(false); // 1.2% stop, 0.25% costs
+    // CoinDCX's 0.59% a side: a 1.2% stop is far too close; a daily stop of 6% has room.
+    expect(costsTooBigForStop("BTC/INR", 100, 98.8, 0.0015)).toBe(true); // 1.2% stop, 1.33% costs
+    expect(costsTooBigForStop("BTC/INR", 100, 94, 0.0015)).toBe(false); // 6% stop, 1.33% costs
     expect(MAX_COST_SHARE_OF_STOP).toBe(0.25);
   });
 

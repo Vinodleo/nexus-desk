@@ -38,7 +38,7 @@ function proposal(symbol: string, over: Partial<TradeProposal> = {}, setup: Part
     personaVotesCast: 3,
     riskCalc: { recommendedPositionSizeUnits: 3, riskDollars: 100 },
     metaScore: { confidence: 0.6, calibratedWinProbability: 0.6 },
-    setup: { symbol, name: "Test", direction: "LONG", entryPrice: 1000, stopLoss: 980, takeProfit: 1060, family: "breakout_confirmation", horizon: "intraday", ...setup },
+    setup: { symbol, name: "Test", direction: "LONG", entryPrice: 1000, stopLoss: 940, takeProfit: 1180, family: "breakout_confirmation", horizon: "intraday", ...setup },
     ...over,
   } as unknown as TradeProposal;
 }
@@ -83,17 +83,19 @@ describe("per-market limits", () => {
       expect(r.passedAllChecks).toBe(true);
       return r.recommendedPositionSizeUnits * (1000 - stopLoss);
     };
-    // A 4% stop and a 1.2% stop both lose ₹50: the wider one is a third the size.
-    expect(lossAtStop(960)).toBeCloseTo(50, 1);
-    expect(lossAtStop(988)).toBeCloseTo(50, 1);
-    // A 0.5% stop would need ₹10,000; the ₹5,000 amount caps it, so it loses less.
-    expect(lossAtStop(995)).toBeCloseTo(25, 1);
+    // A 10% stop and a 6% stop both lose ₹50: the wider one is 60% the size.
+    // (Coin stops need room for CoinDCX's 1.18% round trip: under about 4.7% the fees alone are too much.)
+    expect(lossAtStop(900)).toBeCloseTo(50, 1);
+    expect(lossAtStop(940)).toBeCloseTo(50, 1);
+    // ₹500 at risk on a 6% stop would need ₹8,333; the ₹5,000 amount caps it, so it loses less.
+    const bigger = { ...sized, marketLimits: { ...sized.marketLimits, coins: { ...sized.marketLimits.coins, riskPerTradeInr: 500 } } };
+    expect(lossAtStop(940, bigger)).toBeCloseTo(300, 1);
     // The share of equity still caps it: ₹10,000 of equity at 0.3% is ₹30.
-    expect(lossAtStop(960, { ...sized, equity: 10000 })).toBeCloseTo(30, 1);
+    expect(lossAtStop(940, { ...sized, equity: 10000 })).toBeCloseTo(30, 1);
   });
 
   it("size each trade to its market's amount, and count trades per market", () => {
-    const setup = { symbol: "SOL/INR", direction: "LONG", entryPrice: 1000, stopLoss: 980, takeProfit: 1060, riskRewardRatio: 3 } as StrategySetup;
+    const setup = { symbol: "SOL/INR", direction: "LONG", entryPrice: 1000, stopLoss: 940, takeProfit: 1180, riskRewardRatio: 3 } as StrategySetup;
     const score = { calibratedWinProbability: 0.6, confidence: 0.6 } as MetaLabelScore;
     const ev = { isPositiveEdge: true, expectedNetValue: 100 } as ExpectedValueAssessment;
     const noDrills = {
@@ -133,7 +135,7 @@ describe("per-market limits", () => {
       simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
     };
     const run = (symbol: string, positions: any[]) =>
-      evaluateRiskEngine({ symbol, direction: "LONG", entryPrice: 1000, stopLoss: 980, takeProfit: 1060, riskRewardRatio: 3 } as StrategySetup, score, ev, positions, 0, 80, roomy, noDrills, false);
+      evaluateRiskEngine({ symbol, direction: "LONG", entryPrice: 1000, stopLoss: 940, takeProfit: 1180, riskRewardRatio: 3 } as StrategySetup, score, ev, positions, 0, 80, roomy, noDrills, false);
     const twoBanks = [held("HDFCBANK"), held("ICICIBANK")];
     expect(roomy.maxCorrelatedPositionsPerGroup).toBe(2);
     const third = run("SBIN", twoBanks);
@@ -187,7 +189,7 @@ describe("per-market limits", () => {
       globalKillSwitchActive: false, simulateAgentTimeout: false, simulateStaleMarketData: false,
       simulateDailyLossBreach: false, simulateOrderBookThinLiquidity: false, simulateConflictingSignals: false,
     };
-    const setup = { symbol: "SOL/INR", direction: "LONG", entryPrice: 1000, stopLoss: 980, takeProfit: 1060, riskRewardRatio: 3 } as StrategySetup;
+    const setup = { symbol: "SOL/INR", direction: "LONG", entryPrice: 1000, stopLoss: 940, takeProfit: 1180, riskRewardRatio: 3 } as StrategySetup;
     const run = (s: StrategySetup, positions: any[]) => evaluateRiskEngine(s, score, ev, positions, 0, 80, roomy, noDrills, false);
     expect(run(setup, breakouts).passedAllChecks).toBe(true);
     expect(run({ ...setup, strategy: "breakout" }, breakouts).rejectionReason).toMatch(/Maximum open coin breakout trades reached \(2\/2\)/);

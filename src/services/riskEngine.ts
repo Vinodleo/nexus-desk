@@ -12,7 +12,8 @@ import { openQuantity } from "../shared/exitRules";
 import { nseRoundTripRate } from "../shared/nse";
 import { ruleFor } from "./marketRulesStore";
 import type { RiskRejectionCode } from "./scanOutcome";
-import { costShareOfStop, MAX_COIN_SPREAD, MAX_COST_SHARE_OF_STOP, roundTripFeeRate, spreadTooWide } from "../shared/tradeCosts";
+import { COIN_ROUND_TRIP_FEE, costShareOfStop, MAX_COIN_SPREAD, MAX_COST_SHARE_OF_STOP, roundTripFeeRate, spreadTooWide } from "../shared/tradeCosts";
+import { MAKER_FEE_RATE, TAKER_FEE_RATE } from "../shared/tradeMath";
 
 export interface RiskPolicyConfig {
   equity: number;
@@ -25,11 +26,10 @@ export interface RiskPolicyConfig {
   minLiquidityScore: number; // 30 minimum order book depth
   maxSpreadTolerancePercent: number; // 0.08% max spread
   fixedBrokerageFeeDollars: number; // legacy equity-style flat fee — unused now, kept for backward compatibility
-  // CoinDCX INR-Margin Futures Fee Structure:
-  // 0.02% maker / 0.05% taker per side, applying to both opening and closing a position.
-  takerFeeRatePerSide: number; // 0.0005 (0.05% per side taker fee)
-  makerFeeRatePerSide: number; // 0.0002 (0.02% per side maker fee)
-  takerFeeRateRoundTrip: number; // 0.0010 (0.10% round trip conservative assumption for taker open + taker close)
+  // CoinDCX INR spot: 0.5% a side plus 18% GST on it (shared/tradeMath).
+  takerFeeRatePerSide: number; // 0.0059
+  makerFeeRatePerSide: number; // 0.0059
+  takerFeeRateRoundTrip: number; // 0.0118
   autopilotMaxApprovalsPerHour: number; // hard cap on trades opened via Autonomous Self-Approval per rolling hour
   autopilotMinConsensus: number; // 0..1 — min weighted trader-panel agreement required for self-approval
   autopilotMinPersonaVotes: number; // min number of personas that must have voted for self-approval to fire
@@ -52,12 +52,10 @@ export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
   minLiquidityScore: 35,
   maxSpreadTolerancePercent: 0.10,
   fixedBrokerageFeeDollars: 20.0,
-  // CoinDCX INR-Margin Futures Fee:
-  // 0.02% maker / 0.05% taker applied to both opening and closing.
-  // Using 0.05% per side (0.10% round-trip) as the conservative baseline taker rate.
-  takerFeeRatePerSide: 0.0005,
-  makerFeeRatePerSide: 0.0002,
-  takerFeeRateRoundTrip: 0.0010, // 0.05% open + 0.05% close = 0.10% round-trip
+  // CoinDCX INR spot: 0.5% a side plus 18% GST on it (shared/tradeMath).
+  takerFeeRatePerSide: TAKER_FEE_RATE,
+  makerFeeRatePerSide: MAKER_FEE_RATE,
+  takerFeeRateRoundTrip: COIN_ROUND_TRIP_FEE,
   autopilotMaxApprovalsPerHour: 3,
   autopilotMinConsensus: 0.7,
   autopilotMinPersonaVotes: 2,
@@ -94,7 +92,7 @@ export function evaluateExpectedValue(
   const estimatedSpreadCost = spread * units;
   const estimatedBrokerageFee = isEquity
     ? setup.entryPrice * units * nseRoundTripRate(setup.entryPrice * units) // Angel One intraday costs (shared/nse)
-    : setup.entryPrice * units * policy.takerFeeRateRoundTrip;
+    : setup.entryPrice * units * roundTripFeeRate(setup.symbol);
   const estimatedRate = depthScore < 40 ? 0.0006 : 0.0002; // higher in thin liquidity
   // A book too thin to fill the trade gets a punitive 1%; the liquidity check rejects it anyway.
   const slippageRate =

@@ -1,9 +1,7 @@
-import { isUsSymbol, US_ROUND_TRIP_RATE } from "../shared/usMarket";
 import type { StrategySetup } from "../types";
 import { fitQuantity } from "../shared/marketRules";
 import { ruleFor } from "./marketRulesStore";
-import { TAKER_FEE_RATE } from "../shared/tradeMath";
-import { isNseSymbol, nseRoundTripRate } from "../shared/nse";
+import { roundTripFeeRate } from "../shared/tradeCosts";
 
 // A proposal is priced at the close of the candle it came from; by the time
 // it's approved the market has moved. The entry is taken at the live price,
@@ -14,8 +12,6 @@ import { isNseSymbol, nseRoundTripRate } from "../shared/nse";
 
 /** Least reward-to-risk, after fees, still worth entering at the live price. */
 export const MIN_REWARD_TO_RISK_AT_ENTRY = 1.0;
-/** Fees in and out, as a share of price (taker both ways, the worst case). */
-const ROUND_TRIP_FEES = 2 * TAKER_FEE_RATE;
 
 export type EntryPricing =
   | { ok: true; entryPrice: number; units: number; rewardToRisk: number }
@@ -37,8 +33,7 @@ export function priceEntry(
 
   // Fees come off the reward and add to the loss, so a tight setup is judged
   // on what it actually pays.
-  const fees =
-    entry * (isUsSymbol(setup.symbol) ? US_ROUND_TRIP_RATE : isNseSymbol(setup.symbol) ? nseRoundTripRate(entry * units) : ROUND_TRIP_FEES);
+  const fees = entry * roundTripFeeRate(setup.symbol, entry * units);
   const rewardToRisk = (reward - fees) / (risk + fees);
   if (rewardToRisk < MIN_REWARD_TO_RISK_AT_ENTRY) {
     const movedPct = (Math.abs(entry - setup.entryPrice) / setup.entryPrice) * 100;
