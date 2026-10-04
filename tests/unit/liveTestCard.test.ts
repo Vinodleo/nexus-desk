@@ -62,6 +62,30 @@ describe("the test live order card", () => {
     expect(screen.getByRole("button", { name: "Buy ₹200" })).toBeTruthy();
   });
 
+  it("looks again every 3 seconds while the server reads CoinDCX's balance, holding Sell back until it has", async () => {
+    vi.useFakeTimers();
+    try {
+      const reading = { ...bought, settling: true, coinReceived: undefined, inrSpent: undefined };
+      api.fetch.mockResolvedValueOnce(json(report({ run: reading }))).mockResolvedValue(json(report({ run: bought })));
+      await show();
+      expect(screen.getByText("Reading CoinDCX's balance (it can take a few seconds to show an order)…")).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Sell it" }) as HTMLButtonElement).disabled).toBe(true);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(api.fetch).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("CoinDCX holds all 0.01: the fee came out of rupees, so sales of the whole quantity work.")).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Sell it" }) as HTMLButtonElement).disabled).toBe(false);
+      // Settled: no more looking.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(api.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows the server's refusal", async () => {
     api.fetch
       .mockResolvedValueOnce(json(report()))
