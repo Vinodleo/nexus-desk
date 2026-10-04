@@ -50,6 +50,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     `reconcileExchangeStops` every 15 s): moved up as the stop trails (by 0.5%+, cancel then replace), cancelled before
     any exit (it holds the coins), and a fill there closes the trade in the guardian at CoinDCX's price
     (`setExchangeStopListener`). If CoinDCX refuses it, a pop-up says so once and the guardian watches the stop alone.
+    CoinDCX's INR markets take only market and limit orders (its docs), so where its market list (`orderTypes`)
+    doesn't offer `stop_limit` no backup stop is tried (`UNSUPPORTED`, no pop-up). Each exit send has its own
+    `client_order_id` (`exitClientOrderId`): CoinDCX refuses a reused one, even a rejected order's.
   - Web Push sends the trade pop-ups.
   - Daily backups (`server/backup.ts`): every top-level file in the data folder (not the rebuildable folders, not
     `angel_tokens.json`) as one gzipped JSON a day to an S3 bucket (Fly's Tigris, set up by `fly storage create`, which

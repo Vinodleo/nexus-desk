@@ -11,11 +11,12 @@ import { getMarketRule } from "./marketRules";
 // position guardian hits a stop/target/expiry or the user closes it — so a
 // closed or sleeping browser can never leave a real position open.
 //
-// Exits are idempotent: each position has one deterministic exit
-// client_order_id. Before re-sending a failed exit we ask CoinDCX whether an
-// order with that client_order_id already exists, and only re-send if it
-// doesn't. That relies on /exchange/v1/orders/status accepting
-// `client_order_id` — verify against CoinDCX's docs before going live.
+// Exits are idempotent: each send has its own deterministic client_order_id
+// (CoinDCX refuses a reused one, even a rejected order's). Before sending
+// again we ask CoinDCX whether the last one exists, and only send (under the
+// next id) if it doesn't, or was rejected or cancelled. CoinDCX's docs
+// (Oct 2026) confirm /exchange/v1/orders/status and /cancel take
+// `client_order_id`.
 //
 // Each live long also has a backup stop resting at CoinDCX (a stop-limit
 // sell, BACKSTOP_GAP below the server's stop): if the server is down when
@@ -23,6 +24,10 @@ import { getMarketRule } from "./marketRules";
 // that normally acts; the backup follows it up as it trails, and is
 // cancelled before any exit (it holds the coins). If CoinDCX refuses stop
 // orders, the owner is told and the server watches the stop alone, as before.
+// CoinDCX's INR markets take only market and limit orders (its docs: "BTCINR
+// market has only limit and market type orders"), so where its market list
+// doesn't offer stop_limit no backup stop is tried: the server's stop, its
+// automatic restarts and the uptime alert are the protection there.
 
 type Side = "buy" | "sell";
 
@@ -34,7 +39,7 @@ export type LivePositionStatus = "OPEN" | "EXIT_PENDING" | "CLOSED" | "EXIT_FAIL
  * is confirmed, CANCELLED (replaced, or cleared for an exit), FILLED when it
  * sold the position, REFUSED when CoinDCX wouldn't take it.
  */
-export type ExchangeStopStatus = "PLACING" | "OPEN" | "CANCELLING" | "CANCELLED" | "FILLED" | "REFUSED";
+export type ExchangeStopStatus = "PLACING" | "OPEN" | "CANCELLING" | "CANCELLED" | "FILLED" | "REFUSED" | "UNSUPPORTED";
 
 export interface ExchangeStop {
   clientOrderId: string;
@@ -71,6 +76,8 @@ export interface LivePositionRecord {
   closedAt?: string;
   /** The backup stop resting at CoinDCX, once placed. */
   exchangeStop?: ExchangeStop;
+  /** Exit orders sent so far (each under its own client order id). */
+  exitSends?: number;
 }
 
 const MAX_EXIT_ATTEMPTS = 10;
@@ -130,6 +137,11 @@ async function signedPost(endpoint: string, body: Record<string, unknown>) {
 // CoinDCX client_order_id: keep it short and alphanumeric/underscore.
 export function clientOrderId(kind: "open" | "exit", positionId: string): string {
   return `nx_${kind}_${positionId.replace(/[^A-Za-z0-9]/g, "")}`.slice(0, 36);
+}
+
+/** A position's `attempt`th exit order (the first keeps the plain id). */
+export function exitClientOrderId(positionId: string, attempt: number): string {
+  return attempt <= 1 ? clientOrderId("exit", positionId) : `nx_exit${attempt}_${positionId.replace(/[^A-Za-z0-9]/g, "")}`.slice(0, 36);
 }
 
 /** A position's `seq`th backup stop order. */
@@ -287,7 +299,6 @@ function markClosed(rec: LivePositionRecord, exitOrderId: string | undefined) {
 
 async function attemptExit(rec: LivePositionRecord): Promise<void> {
   const exitSide: Side = rec.entrySide === "buy" ? "sell" : "buy";
-  rec.exitClientOrderId = rec.exitClientOrderId || clientOrderId("exit", rec.positionId);
 
   // The backup stop holds the coins: cancel it first, and see whether it sold any.
   const stop = rec.exchangeStop;
@@ -312,7 +323,7 @@ async function attemptExit(rec: LivePositionRecord): Promise<void> {
 
   // If an earlier send may have reached the exchange (even one interrupted by
   // a crash), check before sending again.
-  if (rec.exitSentAt) {
+  if (rec.exitSentAt && rec.exitClientOrderId) {
     const existing = await lookupByClientOrderId(rec.exitClientOrderId);
     if (existing.state === "found") return markClosed(rec, existing.orderId);
     if (existing.state === "unknown") {
@@ -324,6 +335,9 @@ async function attemptExit(rec: LivePositionRecord): Promise<void> {
   // No risk-cap check here: the registry entry proves this server opened the
   // position, and an exit must never be blocked by caps or the kill switch.
   rec.exitAttempts += 1;
+  // A new id for each send: CoinDCX refuses one already used.
+  rec.exitClientOrderId = exitClientOrderId(rec.positionId, (rec.exitSends ?? 0) + 1);
+  rec.exitSends = (rec.exitSends ?? 0) + 1;
   rec.exitSentAt = new Date().toISOString();
   save();
 
@@ -452,6 +466,16 @@ async function reconcileStop(rec: LivePositionRecord, now: number): Promise<void
   }
   const prices = await backstopPrices(rec.market, stopSource(rec.positionId) ?? NaN);
   if (!prices) return;
+  // Not offered on this market (CoinDCX's INR markets): nothing to place, nothing to tell.
+  const types = (await getMarketRule(rec.market).catch(() => undefined))?.orderTypes;
+  if (types && !types.includes("stop_limit")) {
+    if (stop?.status !== "UNSUPPORTED") {
+      rec.exchangeStop = { clientOrderId: "", ...prices, status: "UNSUPPORTED", seq: stop?.seq ?? 0, placedAt: new Date(now).toISOString(), lastError: `CoinDCX takes no stop orders on ${rec.market}` };
+      save();
+      console.log(`[LiveExecution] No backup stop for ${rec.positionId}: CoinDCX takes no stop orders on ${rec.market}; the server watches its stop.`);
+    }
+    return;
+  }
   if (stop?.status === "REFUSED" && now - Date.parse(stop.placedAt) < STOP_REFUSED_RETRY_MS) return;
   if (stop?.status === "OPEN") {
     if (prices.stopPrice < stop.stopPrice * (1 + STOP_MOVE_MIN)) return;
