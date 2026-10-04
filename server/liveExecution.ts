@@ -120,7 +120,13 @@ function credentials() {
   };
 }
 
-async function signedPost(endpoint: string, body: Record<string, unknown>) {
+/** Whether the server has CoinDCX keys (names only; the keys never leave it). */
+export function hasCoinDcxKeys(): boolean {
+  const { apiKey, apiSecret } = credentials();
+  return Boolean(apiKey && apiSecret);
+}
+
+async function signedPost(endpoint: string, body: Record<string, unknown>, timeoutMs?: number) {
   const { apiKey, apiSecret } = credentials();
   if (!apiKey || !apiSecret) throw new Error("CoinDCX API credentials are not configured on the server");
   const payload = JSON.stringify({ ...body, timestamp: Date.now() });
@@ -129,9 +135,27 @@ async function signedPost(endpoint: string, body: Record<string, unknown>) {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-AUTH-APIKEY": apiKey, "X-AUTH-SIGNATURE": signature },
     body: payload,
+    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   });
   const data: any = await response.json().catch(() => ({}));
   return { ok: response.ok, status: response.status, data };
+}
+
+/**
+ * Every currency held at CoinDCX, by name ("BTC", "INR"): the usable balance
+ * plus what open orders hold (CoinDCX's docs: total = balance +
+ * locked_balance). Throws when CoinDCX doesn't answer with the list.
+ */
+export async function fetchCoinBalances(): Promise<Record<string, number>> {
+  const result = await signedPost("/exchange/v1/users/balances", {}, 30_000);
+  if (!result.ok || !Array.isArray(result.data)) throw new Error(result.data?.message || `CoinDCX answered ${result.status}`);
+  const held: Record<string, number> = {};
+  for (const row of result.data) {
+    const currency = String(row?.currency ?? row?.currency_short_name ?? "").toUpperCase();
+    const total = (Number(row?.balance) || 0) + (Number(row?.locked_balance) || 0);
+    if (currency) held[currency] = (held[currency] ?? 0) + total;
+  }
+  return held;
 }
 
 // CoinDCX client_order_id: keep it short and alphanumeric/underscore.
@@ -258,6 +282,11 @@ export function isOpenLivePosition(positionId: string): boolean {
 
 export function listLivePositions(userId: string): LivePositionRecord[] {
   return Object.values(registry).filter((r) => r.userId === userId);
+}
+
+/** Every live position this server has recorded, whoever opened it (the daily check against CoinDCX). */
+export function allLivePositions(): LivePositionRecord[] {
+  return Object.values(registry);
 }
 
 type ExitListener = (rec: LivePositionRecord) => void;

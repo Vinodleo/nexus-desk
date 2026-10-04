@@ -8,7 +8,7 @@ vi.mock("../../src/context/AuthContext", () => ({
 }));
 vi.mock("../../src/hooks/usePWAInstall", () => ({ usePWAInstall: () => ({ isInstallable: false, isInstalled: false, install: vi.fn() }) }));
 
-import { SettingsSheet, backupSummary, formatSpan, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
+import { SettingsSheet, backupSummary, coinDcxCheckSummary, formatSpan, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
 
 import { cleanMarketLimits } from "../../src/shared/marketLimits";
 afterEach(cleanup);
@@ -286,5 +286,44 @@ describe("Settings: backups", () => {
     render(createElement(SettingsSheet, props({ serverStatus: status({ ...on, configured: false, missing: ["BUCKET_NAME"] }) })));
     expect(screen.getByText("Backups")).toBeTruthy();
     expect(screen.getByText("The server can't see BUCKET_NAME: run `fly secrets deploy` in Cloud Shell (docs/hosting.md)")).toBeTruthy();
+  });
+});
+
+describe("Settings: the CoinDCX check", () => {
+  const status = (coinDcxCheck?: object) =>
+    ({ startedAt: 0, uptimeSec: 60, cloudRun: null, storage: { dir: "/data", kept: true, note: "" }, scanner: { lastTickAt: 0, lastCycleDoneAt: 0, stalled: false }, coinDcxCheck }) as any;
+  const on = { configured: true, lastAt: null, lastTriedAt: null, trades: 0, coins: [], problems: [], extras: [], lastError: null, lastErrorAt: null, liveTrades: 0 };
+  const now = Date.parse("2026-10-05T12:00:00Z");
+  const checked = { ...on, lastAt: now - 2 * 60 * 60 * 1000, lastTriedAt: now - 2 * 60 * 60 * 1000 };
+
+  it("says whether the coins at CoinDCX match the live trades", () => {
+    expect(coinDcxCheckSummary(status(), now)).toMatchObject({ badge: "—" });
+    expect(coinDcxCheckSummary(status({ ...on, configured: false }), now)).toEqual({ sub: "No CoinDCX keys on the server: needed only for live trading", badge: "Off", tone: "text-muted" });
+    expect(coinDcxCheckSummary(status(on), now)).toMatchObject({ badge: "On", sub: "Keys set; the first check runs a few minutes after the server starts" });
+    expect(coinDcxCheckSummary(status(checked), now)).toEqual({ sub: "Checked 2 h ago: no live trades; the keys work", badge: "OK", tone: "text-gain" });
+    expect(coinDcxCheckSummary(status({ ...checked, trades: 1, coins: ["BTC"], extras: [{ coin: "ETH", held: 0.01 }] }), now)).toEqual({
+      sub: "Checked 2 h ago: 1 live trade (BTC), coins match · also held outside the app: ETH", badge: "OK", tone: "text-gain",
+    });
+  });
+
+  it("shows a mismatch and a failed check", () => {
+    const problems = [
+      { coin: "BTC", kind: "missing", expected: 0.002, held: 0.0012, positions: ["p1"] },
+      { coin: "SOL", kind: "fee", expected: 1, held: 0.996, positions: ["p2"] },
+    ];
+    expect(coinDcxCheckSummary(status({ ...checked, trades: 2, problems }), now)).toEqual({
+      sub: "BTC: CoinDCX has 0.0012, the live trades hold 0.002 · SOL: 0.4% under the live trade's 1 (likely the fee); close it at CoinDCX",
+      badge: "Mismatch",
+      tone: "text-loss",
+    });
+    const failing = { ...checked, lastError: "CoinDCX answered 401", lastErrorAt: now - 60_000 };
+    expect(coinDcxCheckSummary(status(failing), now)).toEqual({ sub: "Last check failed: CoinDCX answered 401. It tries again within the hour.", badge: "Failing", tone: "text-warn" });
+    expect(coinDcxCheckSummary(status({ ...failing, liveTrades: 1 }), now).tone).toBe("text-loss");
+  });
+
+  it("shows in the Server section", () => {
+    render(createElement(SettingsSheet, props({ serverStatus: status({ ...on, configured: false }) })));
+    expect(screen.getByText("CoinDCX check")).toBeTruthy();
+    expect(screen.getByText("No CoinDCX keys on the server: needed only for live trading")).toBeTruthy();
   });
 });

@@ -222,7 +222,8 @@ their day in UTC; Settings shows when the last one ran.
    day once only, so forgetting this is harmless.)
 
 A restore brings back that day's open positions. With live trades, check
-them against CoinDCX afterwards.
+them against CoinDCX afterwards: Settings → Server → **CoinDCX check** does it
+about 10 minutes after the restart.
 
 ## Checking it works
 
@@ -231,6 +232,8 @@ them against CoinDCX afterwards.
     restarted.
   - **Saved state** says **Kept**.
   - **Backups** says **On**, with a backup within the last day.
+  - **CoinDCX check** says **OK** once CoinDCX keys are set (**Off** without
+    them: paper trading needs none).
   - **Scanning** says **On the server** with a recent last scan.
 - **`https://YOUR_URL/api/health`** answers 200, and `scanner.lastTickAt` is
   within the last 5 minutes. It answers 503 if the scanner's loop has stopped.

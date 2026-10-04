@@ -53,6 +53,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     CoinDCX's INR markets take only market and limit orders (its docs), so where its market list (`orderTypes`)
     doesn't offer `stop_limit` no backup stop is tried (`UNSUPPORTED`, no pop-up). Each exit send has its own
     `client_order_id` (`exitClientOrderId`): CoinDCX refuses a reused one, even a rejected order's.
+  - The CoinDCX check (`server/coinDcxCheck.ts`): the coins held at CoinDCX (`fetchCoinBalances`, balance plus
+    locked_balance) match the open live trades (`compareHoldings`): hourly while any are open, daily otherwise. A coin
+    missing, a little short (up to `FEE_SHORT` 1%: the fee taken in coins) or a failed exit's coins still held pops up
+    once a day, once seen on two checks 5 minutes apart; coins beyond the live trades are only listed. Trades opened
+    in the last 5 minutes and ones being closed aren't compared. Settings → Server → CoinDCX check.
   - Web Push sends the trade pop-ups.
   - Daily backups (`server/backup.ts`): every top-level file in the data folder (not the rebuildable folders, not
     `angel_tokens.json`) as one gzipped JSON a day to an S3 bucket (Fly's Tigris, set up by `fly storage create`, which
@@ -197,8 +202,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   are tested on their daily candles since 2016 in the Lab, and trade only if one clearly beats its costs. US since 2016:
   breakout +0.39R over 554 trades (8 of 11 years up), momentum +0.26R (9 of 11), moving averages +0.32R (5 of 11): US
   breakout and US momentum paper-trade (owner's call), each on its own slots. India: breakout +0.23R but 5 of 11 years and mostly 2020; not traded.
-- **Going live:** only when the owner asks. The checklist is `docs/going-live.md` (proof on paper, the builds still
-  needed: a daily check against CoinDCX; setup; the watched first trade). Coin breakout's live path and backups are built.
+- **Going live:** only when the owner asks. The checklist is `docs/going-live.md` (proof on paper, setup, the
+  watched first trade). Coin breakout's live path, backups and the daily CoinDCX check are built.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
 
 ## Gotchas
