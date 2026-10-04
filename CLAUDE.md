@@ -53,6 +53,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     CoinDCX's INR markets take only market and limit orders (its docs), so where its market list (`orderTypes`)
     doesn't offer `stop_limit` no backup stop is tried (`UNSUPPORTED`, no pop-up). Each exit send has its own
     `client_order_id` (`exitClientOrderId`): CoinDCX refuses a reused one, even a rejected order's.
+  - The test live order (`server/liveTest.ts`, Settings → Connections → Test live order): one real ₹200 buy
+    (`TEST_ORDER_INR`) and, on "Sell it", its sale, through `placeLiveEntry` and `requestLiveExit` with the desk left on
+    Paper. Not in the guardian (no stop). It reads the balances around each order: where the fee came from
+    (`feeFromCoins`), what it cost. Refuses before sending with live orders off, too little at CoinDCX or one unsold.
   - The CoinDCX check (`server/coinDcxCheck.ts`): the coins held at CoinDCX (`fetchCoinBalances`, balance plus
     locked_balance) match the open live trades (`compareHoldings`): hourly while any are open, daily otherwise. A coin
     missing, a little short (up to `FEE_SHORT` 1%: the fee taken in coins) or a failed exit's coins still held pops up
