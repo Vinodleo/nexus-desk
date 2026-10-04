@@ -56,7 +56,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - The test live order (`server/liveTest.ts`, Settings → Connections → Test live order): one real ₹200 buy
     (`TEST_ORDER_INR`) and, on "Sell it", its sale, through `placeLiveEntry` and `requestLiveExit` with the desk left on
     Paper. Not in the guardian (no stop). It reads the balances around each order: where the fee came from
-    (`feeFromCoins`), what it cost. Refuses before sending with live orders off, too little at CoinDCX or one unsold.
+    (`feeFromCoins`), what it cost (`roundTripCost`: fees, TDS, price move). CoinDCX's balances can take seconds to
+    show an order, so after answering the app it keeps reading them (`followUp`, every 3 s, `BALANCE_READS`) until
+    both the coin and rupees moved, while the card looks again (`settling`). Refuses before sending with live orders
+    off, too little at CoinDCX, one unsold, or the balances still being read.
   - The CoinDCX check (`server/coinDcxCheck.ts`): the coins held at CoinDCX (`fetchCoinBalances`, balance plus
     locked_balance) match the open live trades (`compareHoldings`): hourly while any are open, daily otherwise. A coin
     missing, a little short (up to `FEE_SHORT` 1%: the fee taken in coins) or a failed exit's coins still held pops up

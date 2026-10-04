@@ -14,14 +14,19 @@ import { TEST_NEEDS_INR, TEST_ORDER_INR, type LiveTestReport, type LiveTestRun }
 // desk left on Paper, so nothing else trades live meanwhile. It isn't in the
 // guardian: no stop, no target; it's held only until the owner sells it.
 //
-// It reads CoinDCX's balances before and after each order, which answers the
-// open question from the API check: whether the buying fee comes out of the
-// coins (then CoinDCX holds a little less than was bought, and a sale of the
-// whole quantity is refused) or out of rupees.
+// It reads CoinDCX's balances before and after each order: where the fee
+// comes from (rupees, the first test showed: 0.59% a side), what was spent
+// and what came back. CoinDCX's balances can take a few seconds to show an
+// order, so after answering the app it keeps reading them (every few
+// seconds, up to two minutes) until both the coin and the rupees have moved,
+// and the app looks again meanwhile ("settling").
 
 const STATE_FILE = "live_test.json";
 /** How long to let a market order fill before asking CoinDCX how it went. */
 const SETTLE_MS = 3000;
+/** How often CoinDCX's balances are read after an order, and how many times, until they show it (two minutes). */
+const BALANCE_POLL_MS = 3000;
+export const BALANCE_READS = 40;
 
 const dataDir = () => process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data");
 const coinOf = (market: string) => market.replace(/(INR|USDT)$/, "");
@@ -29,11 +34,15 @@ const coinOf = (market: string) => market.replace(/(INR|USDT)$/, "");
 interface TestState {
   userId: string;
   run: LiveTestRun;
+  /** The balances just before the sale was sent: what came back is measured from them. */
+  beforeSale?: Record<string, number> | null;
 }
 
 let state: TestState | null = null;
 let loaded = false;
 let busy = false;
+/** The follow-up of the last order (its fill and the balances), for tests to wait on. */
+let following: Promise<void> = Promise.resolve();
 
 export interface LiveTestDeps {
   now: () => number;
@@ -69,6 +78,8 @@ function load(dir: string): void {
   try {
     const file = path.join(dir, STATE_FILE);
     if (fs.existsSync(file)) state = JSON.parse(fs.readFileSync(file, "utf8"));
+    // A restart stopped any follow-up of the balances: nothing is still being read.
+    if (state?.run.settling) state.run = { ...state.run, settling: false };
   } catch {}
 }
 
@@ -84,7 +95,11 @@ function save(dir: string): void {
 function refresh(deps: LiveTestDeps): void {
   if (!state || state.run.status !== "SELLING") return;
   const rec = deps.record(state.run.positionId);
-  if (rec?.status === "CLOSED") state.run = { ...state.run, status: "SOLD", soldAt: rec.closedAt, error: undefined };
+  if (rec?.status === "CLOSED") {
+    // Sold on one of the server's retries: its price and what came back, followed as after any sale.
+    state.run = { ...state.run, status: "SOLD", soldAt: rec.closedAt, error: undefined, settling: true };
+    following = followUp(deps, state.run.positionId, "sell", state.beforeSale ?? null);
+  }
   else if (rec?.status === "EXIT_FAILED") state.run = { ...state.run, status: "SELL_FAILED", error: rec.lastError };
   else if (rec?.lastError) state.run = { ...state.run, error: rec.lastError };
   save(deps.dir());
@@ -92,6 +107,46 @@ function refresh(deps: LiveTestDeps): void {
 
 const delta = (after: Record<string, number> | null, before: Record<string, number> | null, currency: string) =>
   after && before ? Number(((after[currency] ?? 0) - (before[currency] ?? 0)).toFixed(8)) : undefined;
+
+/**
+ * After an order: its average price from CoinDCX, then the balances, read
+ * until both the coin and the rupees have moved the order's way (a buy: coin
+ * up, rupees down; a sale: the reverse). Updates the run if it's still this one.
+ */
+async function followUp(deps: LiveTestDeps, positionId: string, side: "buy" | "sell", before: Record<string, number> | null): Promise<void> {
+  const update = (patch: Partial<LiveTestRun>) => {
+    if (!state || state.run.positionId !== positionId) return;
+    state.run = { ...state.run, ...patch };
+    save(deps.dir());
+  };
+  try {
+    await deps.wait(SETTLE_MS);
+    const rec = deps.record(positionId);
+    const ref =
+      side === "buy"
+        ? rec && { orderId: rec.entryOrderId, clientOrderId: rec.entryClientOrderId }
+        : rec?.exitClientOrderId ? { orderId: rec.exitOrderId, clientOrderId: rec.exitClientOrderId } : undefined;
+    const filled = ref ? await deps.status(ref).catch(() => undefined) : undefined;
+    if (filled?.avgPrice) update(side === "buy" ? { buyPrice: filled.avgPrice } : { sellPrice: filled.avgPrice });
+    if (!before || !state) return;
+    const coin = state.run.coin;
+    const moved = (now: Record<string, number>) =>
+      side === "buy"
+        ? (now[coin] ?? 0) > (before[coin] ?? 0) && (now.INR ?? 0) < (before.INR ?? 0)
+        : (now.INR ?? 0) > (before.INR ?? 0) && (now[coin] ?? 0) < (before[coin] ?? 0);
+    for (let i = 0; i < BALANCE_READS; i++) {
+      const now = await deps.balances().catch(() => null);
+      if (now && moved(now)) {
+        update(side === "buy" ? { coinReceived: delta(now, before, coin), inrSpent: delta(before, now, "INR") } : { inrReceived: delta(now, before, "INR") });
+        return;
+      }
+      await deps.wait(BALANCE_POLL_MS);
+    }
+    update({ balanceNote: `CoinDCX's balance didn't show the ${side === "buy" ? "buy" : "sale"} within two minutes: check it on CoinDCX.` });
+  } finally {
+    update({ settling: false });
+  }
+}
 
 /** For Settings: whether a test can run, and the last one. */
 export function liveTestStatus(userId: string, deps: LiveTestDeps = realDeps): LiveTestReport {
@@ -110,6 +165,7 @@ export async function startLiveTest(userId: string, symbol: string, deps: LiveTe
   if (busy) return { ok: false, status: 409, error: "A test order is already being sent." };
   if (state && (state.run.status === "BOUGHT" || state.run.status === "SELLING"))
     return { ok: false, status: 409, error: `The last test's ${state.run.coin} isn't sold yet: sell it first.` };
+  if (state?.run.settling) return { ok: false, status: 409, error: "Still reading CoinDCX's balance after the last order; try again in a moment." };
   if (!deps.keys()) return { ok: false, status: 400, error: "No CoinDCX keys on the server (COINDCX_API_KEY, COINDCX_API_SECRET)." };
   const cfg = deps.config();
   if (!cfg.enabled) return { ok: false, status: 403, error: "Live trading is off on the server (LIVE_TRADING_ENABLED isn't \"true\")." };
@@ -135,18 +191,12 @@ export async function startLiveTest(userId: string, symbol: string, deps: LiveTe
     if (!result.ok) return { ok: false, status: result.status, error: result.error };
     state = {
       userId,
-      run: { positionId, market, coin, status: "BOUGHT", quantity: result.quantity, boughtAt: new Date(deps.now()).toISOString(), buyOrderId: result.orderId },
+      run: { positionId, market, coin, status: "BOUGHT", quantity: result.quantity, boughtAt: new Date(deps.now()).toISOString(), buyOrderId: result.orderId, settling: true },
     };
     save(deps.dir());
     console.log(`[LiveTest] Bought ${result.quantity} ${market} for the live test (order ${result.orderId}).`);
-
-    // How it filled, and what CoinDCX now holds.
-    await deps.wait(SETTLE_MS);
-    const rec = deps.record(positionId);
-    const filled = rec ? await deps.status({ orderId: rec.entryOrderId, clientOrderId: rec.entryClientOrderId }) : undefined;
-    const after = await deps.balances().catch(() => null);
-    state.run = { ...state.run, buyPrice: filled?.avgPrice, coinReceived: delta(after, before, coin), inrSpent: delta(before, after, "INR") };
-    save(deps.dir());
+    // How it filled, and what CoinDCX then holds: followed after answering.
+    following = followUp(deps, positionId, "buy", before);
     return { ok: true, run: state.run };
   } finally {
     busy = false;
@@ -159,10 +209,12 @@ export async function sellLiveTest(userId: string, deps: LiveTestDeps = realDeps
   refresh(deps);
   if (!state || state.userId !== userId) return { ok: false, status: 404, error: "No test order to sell." };
   if (state.run.status !== "BOUGHT") return { ok: true, run: state.run };
+  if (state.run.settling) return { ok: false, status: 409, error: "Still reading CoinDCX's balance after the buy; try again in a moment." };
   if (busy) return { ok: false, status: 409, error: "The test order is busy; try again in a moment." };
   busy = true;
   try {
     const before = await deps.balances().catch(() => null);
+    state.beforeSale = before;
     state.run = { ...state.run, status: "SELLING" };
     save(deps.dir());
     const rec = await deps.exit(state.run.positionId, "TEST_ORDER");
@@ -172,21 +224,23 @@ export async function sellLiveTest(userId: string, deps: LiveTestDeps = realDeps
       save(deps.dir());
       return { ok: true, run: state.run };
     }
-    await deps.wait(SETTLE_MS);
-    const sold = rec.exitClientOrderId ? await deps.status({ orderId: rec.exitOrderId, clientOrderId: rec.exitClientOrderId }) : undefined;
-    const after = await deps.balances().catch(() => null);
-    state.run = { ...state.run, status: "SOLD", soldAt: rec.closedAt, sellPrice: sold?.avgPrice, inrReceived: delta(after, before, "INR"), error: undefined };
+    state.run = { ...state.run, status: "SOLD", soldAt: rec.closedAt, error: undefined, settling: true };
     save(deps.dir());
     console.log(`[LiveTest] Sold the live test's ${state.run.coin}.`);
+    following = followUp(deps, state.run.positionId, "sell", before);
     return { ok: true, run: state.run };
   } finally {
     busy = false;
   }
 }
 
-/** Test hook. */
+/** Test hooks. */
 export function _resetLiveTest(): void {
   state = null;
   loaded = false;
   busy = false;
+  following = Promise.resolve();
+}
+export function _liveTestFollowed(): Promise<void> {
+  return following;
 }

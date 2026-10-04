@@ -3,6 +3,8 @@
 // work before any strategy trades real money. What the server reports, and
 // how Settings puts it in words.
 
+import { COIN_SALE_TDS } from "./tradeMath";
+
 /** What the test buys, in rupees: over CoinDCX's usual ₹100 minimum with room for the fee and a small fall. */
 export const TEST_ORDER_INR = 200;
 /** What it needs at CoinDCX: the order and its fee. */
@@ -36,6 +38,10 @@ export interface LiveTestRun {
   inrReceived?: number;
   /** CoinDCX's last refusal of the sale. */
   error?: string;
+  /** The server is still reading CoinDCX's balances after the last order (they can take a few seconds to show it). */
+  settling?: boolean;
+  /** The balances never showed the order. */
+  balanceNote?: string;
 }
 
 export interface LiveTestReport {
@@ -52,17 +58,38 @@ export interface LiveTestReport {
 const qty = (x: number) => String(Number(x.toPrecision(6)));
 const inr = (x: number) => `₹${x.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/** Whether the fee came out of the coins: what CoinDCX holds of the buy is under the quantity bought. */
+/**
+ * Whether the fee came out of the coins: what CoinDCX holds of the buy is a
+ * little under the quantity bought. Unknown until the balances showed the
+ * buy: a holding under half the quantity means they hadn't caught up (the
+ * first test's early read said 0), not a fee.
+ */
 export function feeFromCoins(run: LiveTestRun): boolean | undefined {
-  if (run.coinReceived === undefined) return undefined;
-  return run.coinReceived < run.quantity * (1 - 1e-4);
+  const got = run.coinReceived;
+  if (got === undefined || !(got > run.quantity * 0.5)) return undefined;
+  return got < run.quantity * (1 - 1e-4);
+}
+
+/**
+ * What the round trip cost, split into CoinDCX's fees, the TDS withheld from
+ * the sale (reclaimed when filing) and the price move; once all four figures
+ * are known.
+ */
+export function roundTripCost(run: LiveTestRun): { total: number; fees: number; tds: number; move: number } | undefined {
+  const { inrSpent, inrReceived, buyPrice, sellPrice, quantity } = run;
+  if (!(inrSpent && inrSpent > 0) || !(inrReceived && inrReceived > 0) || !buyPrice || !sellPrice) return undefined;
+  const bought = quantity * buyPrice;
+  const sold = quantity * sellPrice;
+  const tds = sold * COIN_SALE_TDS;
+  const round = (x: number) => Number(x.toFixed(2));
+  return { total: round(inrSpent - inrReceived), fees: round(inrSpent - bought + (sold - tds - inrReceived)), tds: round(tds), move: round(bought - sold) };
 }
 
 /** The test's result in plain words, one line each. */
 export function liveTestLines(run: LiveTestRun): string[] {
   const lines: string[] = [];
   const price = run.buyPrice ? ` at ${inr(run.buyPrice)}` : "";
-  const spent = run.inrSpent !== undefined ? ` (${inr(run.inrSpent)} spent with the fee)` : "";
+  const spent = run.inrSpent && run.inrSpent > 0 ? ` (${inr(run.inrSpent)} spent with the fee)` : "";
   lines.push(`Bought ${qty(run.quantity)} ${run.coin}${price}${spent}.`);
   const fromCoins = feeFromCoins(run);
   if (fromCoins === true) {
@@ -77,9 +104,17 @@ export function liveTestLines(run: LiveTestRun): string[] {
     lines.push(`The sale failed${run.error ? ` (${run.error})` : ""}. Sell it on CoinDCX by hand.`);
   } else if (run.status === "SOLD") {
     const at = run.sellPrice ? ` at ${inr(run.sellPrice)}` : "";
-    const back = run.inrReceived !== undefined ? `: ${inr(run.inrReceived)} back` : "";
+    const back = run.inrReceived && run.inrReceived > 0 ? `: ${inr(run.inrReceived)} back` : "";
     lines.push(`Sold${at}${back}.`);
-    if (run.inrSpent !== undefined && run.inrReceived !== undefined) lines.push(`The test cost ${inr(run.inrSpent - run.inrReceived)} (fees, spread and the price move).`);
+    const cost = roundTripCost(run);
+    if (cost) {
+      const what = cost.total >= 0 ? `cost ${inr(cost.total)}` : `made ${inr(-cost.total)}`;
+      lines.push(
+        `The round trip ${what}: ${inr(cost.fees)} in fees, ${inr(cost.tds)} TDS (reclaimed when you file), and the price ${cost.move >= 0 ? "fell" : "rose"} ${inr(Math.abs(cost.move))}.`
+      );
+    }
   }
+  if (run.settling) lines.push("Reading CoinDCX's balance (it can take a few seconds to show an order)…");
+  if (run.balanceNote) lines.push(run.balanceNote);
   return lines;
 }

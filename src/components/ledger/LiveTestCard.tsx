@@ -36,13 +36,14 @@ export const LiveTestCard: React.FC<{ active: boolean }> = ({ active }) => {
     void load();
   }, [active, load]);
 
-  // While a sale is pending, look again every 10 seconds.
+  // While the server reads CoinDCX's balances after an order, look again every 3 seconds; while a sale is pending, every 10.
+  const settling = !!report?.run?.settling;
   const selling = report?.run?.status === "SELLING";
   useEffect(() => {
-    if (!active || !selling) return;
-    const t = setInterval(() => void load(), 10_000);
+    if (!active || (!settling && !selling)) return;
+    const t = setInterval(() => void load(), settling ? 3000 : 10_000);
     return () => clearInterval(t);
-  }, [active, selling, load]);
+  }, [active, settling, selling, load]);
 
   const markets = report?.markets ?? [];
   const picked = markets.includes(market) ? market : markets[0] ?? "";
@@ -71,7 +72,7 @@ export const LiveTestCard: React.FC<{ active: boolean }> = ({ active }) => {
   if (!report) return null;
   const run = report.run;
   const open = run && (run.status === "BOUGHT" || run.status === "SELLING");
-  const ready = report.keys && report.liveEnabled && picked !== "" && !open;
+  const ready = report.keys && report.liveEnabled && picked !== "" && !open && !settling;
   const amount = `₹${report.amountInr}`;
   const sub = !report.keys
     ? `Buys ${amount} of a coin for real, then sells it. Needs CoinDCX keys on the server.`
@@ -90,7 +91,7 @@ export const LiveTestCard: React.FC<{ active: boolean }> = ({ active }) => {
         </div>
         <div className="shrink-0 flex items-center gap-2">
           {run?.status === "BOUGHT" ? (
-            <button type="button" className={button} disabled={busy !== null} onClick={() => void send("sell")}>
+            <button type="button" className={button} disabled={busy !== null || settling} onClick={() => void send("sell")}>
               {busy === "sell" ? "Selling…" : "Sell it"}
             </button>
           ) : selling ? (
