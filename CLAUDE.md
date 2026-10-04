@@ -117,7 +117,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   top 3 weekly), on the same coins and years, costs included, results in R by quarter (`classic`). Bumping
   `CLASSIC_VERSION` redoes only them, from the kept candles, leaving the traders' results alone. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
   machine-learning test (`waitForOtherWork`, `backgroundWorkBusy`). Its records (the last finished run's while it reruns,
-  `dailyLongRecords`) decide which traders take daily paper trades (owner's call, 4 Oct: nine years over two).
+  `dailyLongRecords`, and `dailyLongClassic` for breakout) decide which traders take daily paper trades (owner's call, 4 Oct:
+  nine years over two). A run of an older `DAILY_LONG_VERSION` decides nothing, even while it waits to rerun (shown with a
+  note, `stale`); a due run blocked by other background work looks again every 15 minutes (`nextDailyLongCheckMs`).
 - **Stocks on daily candles since 2016 (Lab):** `server/history/stocksLong.ts` runs the classic strategies on US and
   Indian stocks' daily candles: US from Alpaca (all exchanges' trades where the plan allows, else IEX; adjusted for splits
   and dividends, `fetchUsDailyBars`), India from Angel One (`fetchNseDaily`, unadjusted, so splits and bonus issues are found

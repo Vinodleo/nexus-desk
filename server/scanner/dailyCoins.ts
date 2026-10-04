@@ -16,7 +16,7 @@ import { getMarketRules } from "../marketRules";
 import { fetchOrderBook } from "../coindcxMarketData";
 import { fetchCoinDaily, type HistoryFetch } from "../history/historyCandles";
 import { historyRunInfo, SLOW_VERSION } from "../history/historyJob";
-import { cohortFor, dailyLongRecords, dailyLongRunInfo, inCohort } from "../history/dailyLong";
+import { cohortFor, dailyLongClassic, dailyLongRecords, inCohort } from "../history/dailyLong";
 import { closeServerPosition, daemonPositions, type DaemonPosition } from "../guardian";
 import { getDeskState, scanningDesks, type DeskState } from "./deskState";
 import { runServerAutopilot, serverAutopilotOn, type ServerAutopilotHooks } from "./autopilot";
@@ -155,7 +155,7 @@ const realDeps: DailyCoinsDeps = {
   desks: scanningDesks,
   dailyPnl: serverDailyPnl,
   open: runServerAutopilot,
-  classic: () => dailyLongRunInfo()?.classic ?? null,
+  classic: dailyLongClassic,
   positions: () => [...daemonPositions.values()],
   close: (id, price) => closeServerPosition(id, price, "TRAILING_STOP"),
   liveEntry: placeLiveEntry,

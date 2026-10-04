@@ -16,6 +16,8 @@ import { rSigned } from "./LedgerBreakdown";
 
 export interface DailyLongView {
   running: boolean;
+  /** The results are from an older version of the replay (the old coin fee): on show until it runs again, nothing trades on them. Missing on an older server. */
+  stale?: boolean;
   current: string | null;
   finished: number;
   total: number;
@@ -64,6 +66,8 @@ export const isDailyLongView = (body: any): body is DailyLongView =>
   !!body && typeof body.records === "object" && body.records !== null && typeof body.running === "boolean" && typeof body.cohorts === "object";
 
 const RUNNING_REFRESH_MS = 60_000;
+/** Said while the results are from the old coin fee and wait to be replayed again. */
+export const STALE_NOTE = "From the old 0.05% coin fee: it replays with CoinDCX's real 0.59% once the other background work is done. Nothing trades on these meanwhile.";
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 const coin = (symbol: string) => symbol.replace(/\/INR$/, "");
 
@@ -129,6 +133,8 @@ export const DailyLongCard: React.FC<{ trailProfile?: TrailProfileId }> = ({ tra
           <span className="text-ink">
             Replaying: {view.finished} of {view.total} coins checked{view.current ? ` · ${coin(view.current)}` : ""}
           </span>
+        ) : view.stale ? (
+          <span className="text-warn">{STALE_NOTE}</span>
         ) : view.run?.finishedAt ? (
           <span className="text-muted">
             {day(view.run.fromMs)} – {day(view.run.toMs)} · {view.run.done} coins · updated {day(view.run.finishedAt)}

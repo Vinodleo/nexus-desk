@@ -483,7 +483,7 @@ describe("the record daily traders are judged on", () => {
     expect(dailyCoinsView("u")).toMatchObject({ recordSpan: "over two years", traders: [{ trader: "Sofia Range Scalp", trades: 145, on: true }] });
 
     // The replay since 2017 has finished: Sofia lost over it (−0.04R), so she's paused.
-    write("daily_long.json", longRun({ records: nineYears }));
+    write("daily_long.json", longRun({ version: long.DAILY_LONG_VERSION, records: nineYears }));
     reload();
     const view = dailyCoinsView("u");
     expect(view.recordSpan).toBe("since 2017");
@@ -493,13 +493,18 @@ describe("the record daily traders are judged on", () => {
     ]);
 
     // Replaying again: the last finished records still decide.
-    write("daily_long.json", longRun({ finishedAt: null, records: { tight: { "2018-Q1": { "crypto:Sofia Range Scalp": rec(2, 2) } } }, lastRecords: nineYears }));
+    write("daily_long.json", longRun({ version: long.DAILY_LONG_VERSION, finishedAt: null, records: { tight: { "2018-Q1": { "crypto:Sofia Range Scalp": rec(2, 2) } } }, lastRecords: nineYears }));
     reload();
     expect(dailyCoinsView("u").traders).toEqual(view.traders);
     // Never finished yet: the two years.
-    write("daily_long.json", longRun({ finishedAt: null }));
+    write("daily_long.json", longRun({ version: long.DAILY_LONG_VERSION, finishedAt: null }));
     reload();
     expect(dailyCoinsView("u").recordSpan).toBe("over two years");
+    // Finished, but under an older version (the old coin fee) and not yet replayed again: not judged on,
+    // and breakout's classic record with it.
+    write("daily_long.json", longRun({ version: long.DAILY_LONG_VERSION - 1, records: nineYears, classic: { "2022-Q1": { breakout: rec(20, 10) } } }));
+    reload();
+    expect(dailyCoinsView("u")).toMatchObject({ recordSpan: "over two years", breakout: null });
     fs.rmSync(path.join(dataDir, "daily_long.json"), { force: true });
     fs.rmSync(path.join(dataDir, "history_results.json"), { force: true });
     reload();

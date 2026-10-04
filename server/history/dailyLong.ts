@@ -55,6 +55,9 @@ export const DAILY_LONG_FROM_MS = Date.UTC(2017, 7, 1);
 const RERUN_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 const START_DELAY_MS = 20 * 60 * 1000;
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+/** While a replay is due but other background work is running, it looks again this often. */
+const WAITING_CHECK_MS = 15 * 60 * 1000;
+export const nextDailyLongCheckMs = (dueButWaiting: boolean) => (dueButWaiting ? WAITING_CHECK_MS : CHECK_EVERY_MS);
 const CYCLE_WAIT_MS = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PROFILES = Object.keys(TRAIL_PROFILES) as TrailProfileId[];
@@ -421,9 +424,11 @@ export function startDailyLongJob(): void {
   loadDailyLong();
   waitForOtherWork(() => active !== null);
   const check = () => {
-    timer = setTimeout(check, CHECK_EVERY_MS);
     const due = dailyLongDue(run, Date.now()) || (run !== null && (run.finishedAt === null || run.classicVersion !== CLASSIC_VERSION));
-    if (!active && !historyRunning() && !backgroundWorkBusy() && due) void startDailyLong(false);
+    const free = !active && !historyRunning() && !backgroundWorkBusy();
+    if (free && due) void startDailyLong(false);
+    // Due but waiting for other work: looked at again soon, not hours later.
+    timer = setTimeout(check, nextDailyLongCheckMs(due && !free && !active));
   };
   timer = setTimeout(check, START_DELAY_MS);
 }
@@ -451,6 +456,8 @@ export function dailyLongView() {
         }
       : null,
     records: run?.records ?? {},
+    /** The results are from an older version (the old coin fee), kept on show until it replays again; nothing trades on them. */
+    stale: !!run && run.version !== DAILY_LONG_VERSION,
     /** The classic strategies' results on the same coins and years, by quarter (null until they've run). */
     classic: run?.classic ?? null,
     /** Each coin's own result in its list years. */
@@ -478,8 +485,15 @@ export function _resetDailyLong(): void {
  * judge each trader on.
  */
 export function dailyLongRecords(): HistoryRecords | null {
-  if (!run) return null;
+  // A run of an older version (other rules or costs, like the old coin fee) waiting to be replayed again judges no one.
+  if (!run || run.version !== DAILY_LONG_VERSION) return null;
   return run.finishedAt !== null ? run.records : run.lastRecords ?? null;
+}
+
+/** The classic strategies' records (breakout's decides whether it trades), or null before they've run or while they're from an older version. */
+export function dailyLongClassic(): ClassicRecords | null {
+  if (!run || run.version !== DAILY_LONG_VERSION) return null;
+  return run.classic ?? null;
 }
 
 /** The kept run (finished or not), for the machine-learning test. */

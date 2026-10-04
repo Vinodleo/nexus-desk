@@ -8,7 +8,7 @@ import { edgePaused, recordSpan, rSigned, type EdgeTable } from "./LedgerBreakdo
 import { useLabFeed } from "./labFeed";
 import { LabChip, SignedBar, YearColumns, type LabStatus } from "./labUi";
 import { isDailyCoinsView, type DailyCoinsView } from "./DailyCoinsCard";
-import { classicByYear, isDailyLongView, recordsByYear } from "./DailyLongCard";
+import { classicByYear, isDailyLongView, recordsByYear, STALE_NOTE } from "./DailyLongCard";
 import { isHistoryView } from "./HistoryCard";
 import { isMlTestView } from "./MlTestCard";
 import { isUsBreakoutView } from "./UsBreakoutCard";
@@ -82,6 +82,19 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
         name="Daily traders"
         {...dailyStatus(dc)}
         detail={`${rSigned(avg)} a trade ${dc.recordSpan ?? "over two years"}, all together · ${setups.toLocaleString("en-IN")} setups`}
+        onOpen={onOpen && (() => onOpen("records"))}
+      />
+    );
+  }
+  // No coin records to judge on yet (the replay since 2017 is running, or waits to run with the real fee): both wait.
+  if (dc && dc.traders.length === 0 && !dc.breakout) {
+    rows.push(
+      <SummaryRow
+        key="coins-waiting"
+        name="Coin breakout and daily traders"
+        status="paused"
+        label="Paused"
+        detail="waiting for the replay since 2017 to finish: its records decide"
         onOpen={onOpen && (() => onOpen("records"))}
       />
     );
@@ -180,7 +193,11 @@ export const StrategyRanking: React.FC<{ trailProfile?: TrailProfileId }> = ({ t
         name: CLASSIC_STRATEGIES[id].name,
         sub: `since 2018 · ${stats.trades.toLocaleString("en-IN")} trades · ${stats.winPct}% won`,
         avgR: stats.avgR,
-        ...(breakout ? { status: dc!.breakout!.on ? "trading" : "paused", label: dc!.breakout!.on ? "Trading" : "Paused" } : { status: "off", label: "Not traded" }),
+        ...(breakout
+          ? { status: dc!.breakout!.on ? "trading" : "paused", label: dc!.breakout!.on ? "Trading" : "Paused" }
+          : id === "breakout" && dl.stale
+            ? { status: "paused", label: "Paused" }
+            : { status: "off", label: "Not traded" }),
       });
     }
   }
@@ -192,7 +209,7 @@ export const StrategyRanking: React.FC<{ trailProfile?: TrailProfileId }> = ({ t
         name: "Daily traders, all together",
         sub: `since ${years[0].year} · ${stats.trades.toLocaleString("en-IN")} setups · ${stats.winPct}% won`,
         avgR: stats.avgR,
-        ...(dc && dc.traders.length > 0 ? dailyStatus(dc) : { status: "off", label: "Not traded" }),
+        ...(dc && dc.traders.length > 0 ? dailyStatus(dc) : dl.stale ? { status: "paused", label: "Paused" } : { status: "off", label: "Not traded" }),
       });
   }
   if (hv) {
@@ -216,6 +233,11 @@ export const StrategyRanking: React.FC<{ trailProfile?: TrailProfileId }> = ({ t
       <div className="text-xs text-muted leading-snug">
         After fees and spreads, with your trailing stop. The upright line marks the {rSigned(MIN_EDGE_R)} a strategy needs to trade.
       </div>
+      {dl?.stale && (
+        <div className="text-xs text-warn leading-snug" data-testid="lab-ranking-stale">
+          Since 2018: {STALE_NOTE}
+        </div>
+      )}
       <ul className="m-0 p-0 list-none flex flex-col mt-1" data-testid="lab-ranking">
         {rows.map((r, k) => (
           <li key={r.name} className="flex flex-col gap-1 py-1.5">
