@@ -6,7 +6,9 @@ import { placeLiveEntry } from "../liveEntry";
 import { daemonPositions, scheduleDaemonDiskSave } from "../guardian";
 import { broadcastToUser } from "../realtime";
 
-import { validate, executeTradeBody, closePositionBody } from "../validation";
+import { liveTestStatus, sellLiveTest, startLiveTest } from "../liveTest";
+
+import { validate, executeTradeBody, closePositionBody, liveTestBody } from "../validation";
 
 export const router = Router();
 
@@ -102,5 +104,22 @@ router.post("/api/live/close-position", validate({ body: closePositionBody }), a
 
 router.get("/api/live/positions", (req: Request, res: Response) => {
   res.json({ success: true, positions: listLivePositions((req as AuthedRequest).user!.uid) });
+});
+
+// The live test order (server/liveTest.ts): one small real buy, and its sale.
+router.get("/api/live/test-order", (req: Request, res: Response) => {
+  res.json({ success: true, ...liveTestStatus((req as AuthedRequest).user!.uid) });
+});
+
+router.post("/api/live/test-order", validate({ body: liveTestBody }), async (req: Request, res: Response) => {
+  const result = await startLiveTest((req as AuthedRequest).user!.uid, req.body.market);
+  if (!result.ok) return res.status(result.status).json({ success: false, error: result.error });
+  res.json({ success: true, run: result.run });
+});
+
+router.post("/api/live/test-order/sell", async (req: Request, res: Response) => {
+  const result = await sellLiveTest((req as AuthedRequest).user!.uid);
+  if (!result.ok) return res.status(result.status).json({ success: false, error: result.error });
+  res.json({ success: true, run: result.run });
 });
 

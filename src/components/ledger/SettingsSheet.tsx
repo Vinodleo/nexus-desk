@@ -28,6 +28,7 @@ import { reviewerSummary } from "../../services/reviewerSummary";
 import { nseTakesEntries } from "../../shared/nse";
 import { usTakesEntries } from "../../shared/usMarket";
 import { coinProblemLine } from "../../shared/coinDcxCheck";
+import { LiveTestCard } from "./LiveTestCard";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -545,6 +546,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               status ? <span className="text-muted">Not set up</span> : <Checking />
             )}
           </Row>
+          {status?.configured && <LiveTestCard active={props.isOpen} />}
           <Row label="Zerodha Kite" sub={props.zerodhaStatus === "error" ? props.zerodhaError : "Indian equities"}>
             {props.zerodhaStatus === "connected" ? (
               <Connected />

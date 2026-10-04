@@ -81,6 +81,27 @@ early Oct).
 - [ ] **Settings in the app**: coins, most to lose per trade **₹500**; amount per trade small
       (₹5,000–10,000); breakout trades at once **2**.
 
+## 3½. A test order (₹200, any time, owner's call)
+
+Settings → Connections → **Test live order** buys ₹200 of a coin at CoinDCX for real and,
+when you tap **Sell it**, sells it, through the same checks and exit every live trade
+takes (`server/liveTest.ts`). The desk stays on **Paper**, so nothing else trades live.
+It answers the fee question (does CoinDCX take the buying fee in coins?) and shows the
+fill prices and what the round trip cost.
+
+- [ ] About **₹300** at CoinDCX (₹200, its fee, and room). With less it refuses before
+      sending anything.
+- [ ] CoinDCX API key set on the server (trading allowed, **withdrawals off**), from Cloud
+      Shell: `fly secrets set COINDCX_API_KEY=… COINDCX_API_SECRET=… -a nexus-desk-vinodleo`.
+- [ ] Live orders allowed, small caps, two coins to pick from:
+      `fly secrets set LIVE_TRADING_ENABLED=true LIVE_ALLOWED_MARKETS=BTCINR,ETHINR LIVE_MAX_ORDER_NOTIONAL_INR=300 LIVE_MAX_DAILY_NOTIONAL_INR=1000 LIVE_MAX_DAILY_ORDERS=4 -a nexus-desk-vinodleo`
+- [ ] Settings → Connections → Test live order → **Buy ₹200** → **Yes, buy**. Read the
+      result (screenshot it for Claude; it has no secrets), then **Sell it**. If a coin's
+      size is under CoinDCX's minimum, it says so before sending; pick the other coin.
+- [ ] If the sale is refused because the fee came out of the coins, sell the coin on
+      CoinDCX by hand, and tell Claude: exits then need to sell only what's held.
+- [ ] Afterwards, live orders off again: `fly secrets unset LIVE_TRADING_ENABLED -a nexus-desk-vinodleo`.
+
 ## 4. The first live trade (watched together)
 
 - [ ] Small funds in CoinDCX (₹10,000–20,000).

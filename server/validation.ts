@@ -50,6 +50,11 @@ export const closePositionBody = z.object({
   reason: z.string().max(40).optional(),
 });
 
+/** The live test order's coin: "BTCINR" or "BTC/INR". */
+export const liveTestBody = z.object({
+  market: z.string().regex(/^[A-Za-z0-9]{2,16}\/?INR$/i, "must be a CoinDCX INR market, like BTCINR"),
+});
+
 // ---------- guardian ----------
 
 const syncedPosition = z
