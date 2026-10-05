@@ -863,6 +863,7 @@ export default function App() {
         stopAtExit: pos.stopLoss,
         riskAtOpen: riskAtOpen(pos),
         ...(pos.openedByServer ? { openedByServer: true } : {}),
+        ...(pos.isLiveOrder ? { isLiveOrder: true } : {}),
         ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
         ...(pos.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
         ...(slowStrategyOf(pos.strategy) ? { strategy: slowStrategyOf(pos.strategy) } : {}),
