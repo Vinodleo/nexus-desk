@@ -24,6 +24,9 @@ import {
   saveStoredStats,
   loadStoredCapital,
   saveStoredCapital,
+  loadPaperStart,
+  savePaperStart,
+  restartedPaperCapital,
   loadStoredPositions,
   saveStoredPositions,
   resetStoredExperiencesToBaseline,
@@ -143,6 +146,19 @@ export default function App() {
   const [dailyRealizedPnl, setDailyRealizedPnl] = useState<number>(() => loadStoredCapital().dailyRealizedPnl);
   const [allTimeRealizedPnl, setAllTimeRealizedPnl] = useState<number>(() => loadStoredCapital().allTimeRealizedPnl || 0);
   const [cash, setCash] = useState<number>(() => loadStoredCapital().cash);
+  // What the paper balance last started at (Settings → Paper money).
+  const [paperStart, setPaperStart] = useState<number>(loadPaperStart);
+  const restartPaperMoney = useCallback(
+    (amountInr: number) => {
+      const fresh = restartedPaperCapital(amountInr, dailyRealizedPnl);
+      savePaperStart(amountInr);
+      setPaperStart(amountInr);
+      setEquity(fresh.equity);
+      setCash(fresh.cash);
+      setAllTimeRealizedPnl(fresh.allTimeRealizedPnl);
+    },
+    [dailyRealizedPnl]
+  );
   const [killSwitchActive, setKillSwitchActive] = useState<boolean>(savedControls?.killSwitch ?? false);
   // Known once saved here or read from the server; the server isn't sent
   // settings before then, so a default can't overwrite its copy.
@@ -1922,6 +1938,7 @@ export default function App() {
         zerodhaError={zerodha.error}
         onZerodhaConnect={zerodha.connect}
         dailyLossLimit={riskPolicy.hardDailyLossLimit}
+        paperMoney={{ start: paperStart, equity, onRestart: restartPaperMoney }}
         maxOpenPositions={riskPolicy.maxSimultaneousPositions}
         riskLimits={riskLimits}
         onRiskLimitsChange={setRiskLimits}

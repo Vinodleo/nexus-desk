@@ -61,6 +61,13 @@ export const DEFAULT_RISK_POLICY: RiskPolicyConfig = {
   autopilotMinPersonaVotes: 2,
 };
 
+/** The daily loss limit grows with the money: 2.5% of it, never under DEFAULT_RISK_POLICY's ₹2,500. */
+export const DAILY_LOSS_SHARE = 0.025;
+export function dailyLossLimitFor(equity: number): number {
+  const base = DEFAULT_RISK_POLICY.hardDailyLossLimit;
+  return Number.isFinite(equity) && equity > 0 ? Math.max(base, Math.round(equity * DAILY_LOSS_SHARE)) : base;
+}
+
 // 1. Calculate Expected Net Value after conservative costs (Section 7)
 export function evaluateExpectedValue(
   setup: StrategySetup,

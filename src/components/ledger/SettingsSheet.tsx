@@ -15,6 +15,7 @@ import {
   defaultRiskPerTrade,
   MAX_TRADES_CHOICES,
   MOMENTUM_TRADES_CHOICES,
+  PAPER_MONEY_CHOICES,
   RISK_CHOICES,
   type MarketKey,
   type MarketLimits,
@@ -44,6 +45,8 @@ export interface SettingsSheetProps {
   zerodhaError: string;
   onZerodhaConnect: () => void;
   dailyLossLimit: number;
+  /** The paper balance: what it last started at, what it is now, and starting it again at another amount. */
+  paperMoney?: { start: number; equity: number; onRestart: (amountInr: number) => void };
   maxOpenPositions: number;
   riskLimits: RiskLimits;
   onRiskLimitsChange: (next: Partial<RiskLimits>) => void;
@@ -107,6 +110,9 @@ export function formatSpan(ms: number): string {
   if (h < 48) return `${h} h`;
   return `${Math.round(h / 24)} days`;
 }
+
+/** The choices, with the current value among them. */
+const withCurrent = (choices: number[], current: number) => (choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b));
 
 const selectClass =
   "min-h-9 rounded-full border border-line bg-surface px-3 text-[13px] font-semibold text-ink cursor-pointer";
@@ -251,7 +257,6 @@ const MarketLimitRows: React.FC<{
   const mine = limits[market];
   const set = (patch: Partial<MarketLimits[MarketKey]>) => onChange({ ...limits, [market]: { ...mine, ...patch } });
   const overCap = liveCapInr !== undefined && mine.amountPerTradeInr > liveCapInr;
-  const withCurrent = (choices: number[], current: number) => (choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b));
   const risk = mine.riskPerTradeInr ?? defaultRiskPerTrade(mine.amountPerTradeInr);
   // Breakout 55/20 trades coins and US stocks, on slots of its own.
   const trades = market !== "stocks";
@@ -357,6 +362,8 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
   const { currentUser, userRole, logout } = useAuth();
   const pwa = usePWAInstall();
   const [confirmLive, setConfirmLive] = useState(false);
+  // A new paper amount picked, waiting for "Start again".
+  const [paperPick, setPaperPick] = useState<number | null>(null);
   // Opens as a circle from the gear (and closes back into it); without the
   // gear's place, or with reduced motion, it rises and fades as before.
   const origin = props.from ?? null;
@@ -364,7 +371,10 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
   const presence = usePresence(props.isOpen, circle ? 320 : 220);
 
   useEffect(() => {
-    if (!props.isOpen) setConfirmLive(false);
+    if (!props.isOpen) {
+      setConfirmLive(false);
+      setPaperPick(null);
+    }
   }, [props.isOpen]);
 
   useEffect(() => {
@@ -481,6 +491,37 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               </button>
             </div>
           )}
+          {!isLive && props.paperMoney && (
+            <Row label="Paper money" sub={`Now ${formatMoney(props.paperMoney.equity, { decimals: 0 })} · pick an amount to start again at`}>
+              <RollingSelect
+                label="Paper money"
+                value={paperPick ?? props.paperMoney.start}
+                options={withCurrent(PAPER_MONEY_CHOICES, props.paperMoney.start)}
+                format={(v) => formatMoney(v, { decimals: 0 })}
+                onChange={(v) => setPaperPick(v === props.paperMoney!.start ? null : v)}
+              />
+            </Row>
+          )}
+          {!isLive && props.paperMoney && paperPick !== null && (
+            <div className="py-3 border-b border-line text-xs leading-relaxed bg-inset -mx-3.5 px-3.5" data-testid="paper-money-confirm">
+              Starts the paper balance again at {formatMoney(paperPick, { decimals: 0 })}, and the all-time P&L from zero. Trades, records
+              and open trades stay. Set each market's amount and most to lose per trade below to match.{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  props.paperMoney!.onRestart(paperPick);
+                  setPaperPick(null);
+                }}
+                className="font-semibold underline cursor-pointer"
+              >
+                Start again
+              </button>{" "}
+              ·{" "}
+              <button type="button" onClick={() => setPaperPick(null)} className="font-semibold underline cursor-pointer">
+                Cancel
+              </button>
+            </div>
+          )}
           <Row label="Live orders on server" sub="Set by LIVE_TRADING_ENABLED">
             <span className={liveRisk?.enabled ? "text-warn" : "text-muted"}>
               {liveRisk ? (liveRisk.enabled ? "Allowed" : "Blocked") : "Unknown"}
@@ -513,7 +554,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             limits={props.riskLimits.marketLimits}
             onChange={(marketLimits) => props.onRiskLimitsChange({ marketLimits })}
           />
-          <Row label="Daily loss limit">
+          <Row label="Daily loss limit" sub="2.5% of your money, at least ₹2,500: no new trades once a day loses this">
             <span>{formatMoney(props.dailyLossLimit, { decimals: 0 })}</span>
           </Row>
         </Group>

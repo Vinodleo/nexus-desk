@@ -94,6 +94,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     every other trade only against trades at once, in the autopilot and the risk check alike, so the daily traders
     can't keep them out. Their scheduled checks open past the autopilot's hourly cap (their slots bound them) but
     still count toward it. Positions of these slower strategies carry `strategy` (`SlowStrategy` in `types.ts`).
+  - Paper money (Settings → Trading, paper only): the paper balance starts again at a picked amount
+    (`PAPER_MONEY_CHOICES`, `restartedPaperCapital`; the all-time P&L from zero, trades kept; the start in its own
+    localStorage key, not the capital state Firebase copies). The daily loss limit is 2.5% of the money, at least ₹2,500
+    (`dailyLossLimitFor`, on the phone and the server); amounts per trade go up to ₹2 lakh and risk to ₹10,000.
 - **Trader records ("Traders with your exits"):** `src/services/exitExpectancy.ts`.
   - It replays every trader's setups under the live exits, after fees and spreads.
   - One trade at a time per trader and market; the server keeps 30 days of trades (`server/scanner/traderRecords.ts`).

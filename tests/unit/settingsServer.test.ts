@@ -327,3 +327,31 @@ describe("Settings: the CoinDCX check", () => {
     expect(screen.getByText("No CoinDCX keys on the server: needed only for live trading")).toBeTruthy();
   });
 });
+
+describe("Settings: paper money", () => {
+  it("starts the paper balance again at a picked amount once confirmed, on paper only", () => {
+    const onRestart = vi.fn();
+    const paperMoney = { start: 100_000, equity: 101_250, onRestart };
+    render(createElement(SettingsSheet, props({ paperMoney, dailyLossLimit: 2_500 })));
+    expect(screen.getByText("Now ₹1,01,250 · pick an amount to start again at")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Paper money"), { target: { value: "1000000" } });
+    expect(onRestart).not.toHaveBeenCalled();
+    expect(screen.getByTestId("paper-money-confirm").textContent).toContain("Starts the paper balance again at ₹10,00,000");
+    fireEvent.click(screen.getByText("Start again"));
+    expect(onRestart).toHaveBeenCalledWith(1_000_000);
+    expect(screen.queryByTestId("paper-money-confirm")).toBeNull();
+    // Cancelled: nothing changes.
+    fireEvent.change(screen.getByLabelText("Paper money"), { target: { value: "500000" } });
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(onRestart).toHaveBeenCalledTimes(1);
+    // Larger trade sizes to choose from.
+    const amounts = [...(screen.getByLabelText("Coins: amount per trade") as HTMLSelectElement).options].map((o) => o.textContent);
+    expect(amounts).toContain("₹1,00,000");
+    const risks = [...(screen.getByLabelText("Coins: most to lose per trade") as HTMLSelectElement).options].map((o) => o.textContent);
+    expect(risks).toContain("₹10,000");
+    cleanup();
+
+    render(createElement(SettingsSheet, props({ paperMoney, tradingMode: "LIVE_COINDCX" })));
+    expect(screen.queryByLabelText("Paper money")).toBeNull();
+  });
+});

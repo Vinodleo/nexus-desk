@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { DEFAULT_RISK_POLICY, type RiskPolicyConfig } from "../services/riskEngine";
+import { dailyLossLimitFor, DEFAULT_RISK_POLICY, type RiskPolicyConfig } from "../services/riskEngine";
 import { cleanMarketLimits, type MarketLimits } from "../shared/marketLimits";
 
 // The trade-size limits you can change in Settings, kept in this browser.
@@ -66,6 +66,7 @@ export function useRiskPolicy(equity: number) {
         0
       ),
       equity: equity > 0 ? equity : DEFAULT_RISK_POLICY.equity,
+      hardDailyLossLimit: dailyLossLimitFor(equity),
     }),
     [limits, equity]
   );
