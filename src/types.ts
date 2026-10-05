@@ -358,6 +358,8 @@ export interface HistoricalTrade {
   fillAtExit?: number;
   /** Opened by the server's autopilot (possibly while the app was closed). */
   openedByServer?: boolean;
+  /** A real order (CoinDCX), not paper: the tax report counts only these. */
+  isLiveOrder?: boolean;
   /** Rupees at stake when it opened (distance to the first stop × quantity): 1R, to read results in R. */
   riskAtOpen?: number;
   /** The price the signal came from; entryPrice against it is what the entry cost (entrySlip). */

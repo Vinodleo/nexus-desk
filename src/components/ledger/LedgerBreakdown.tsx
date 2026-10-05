@@ -8,6 +8,7 @@ import { marketOf } from "../../shared/marketLimits";
 import { GrowBar, prefersReducedMotion, useSlideFrom } from "./motion";
 import { ChevronDown } from "lucide-react";
 import { MIN_CONDITION_SETUPS, type ConditionBreakdown } from "../../services/conditionStats";
+import { TaxReportCard } from "./TaxReportCard";
 
 // Where the book's money goes: average win against average loss, and the
 // same by trader, coin and exit. Plus the scanner's own record of each
@@ -892,6 +893,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
       <Rows title="By coin" rows={byCoin} limit={8} />
       <CoinCosts activity={measures.activity} />
       <Rows title="By exit" rows={byExit} />
+      <TaxReportCard trades={trades} />
     </div>
   );
 };
