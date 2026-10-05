@@ -146,6 +146,47 @@ describe("the machine-learning test card", () => {
     cleanup();
     vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, running: true, testing: "breakout", phase: "judging", breakout: { ready: true, result: null } }));
     render(createElement(MlTestCard));
-    expect((await screen.findByTestId("ml-progress")).textContent).toBe("Breakout trades: Judging year by year · it rests between steps, so it takes a while");
+    expect((await screen.findByTestId("ml-progress")).textContent).toBe(
+      "Breakout and momentum trades: Judging year by year · it rests between steps, so it takes a while"
+    );
+  });
+
+  it("shows momentum's test the same way, coins marked as not traded", async () => {
+    const verdict = (every: number, picks: number, skipped: number, passed: boolean, from: number) => ({
+      fromYear: from, toYear: 2025, every: stats(200, 40, every, every - 0.3), picks: stats(100, 45, picks, picks - 0.4), skipped: stats(100, 35, skipped, skipped - 0.4),
+      importance: [{ label: "rise over 90 days", share: 0.4 }], passed,
+    });
+    const momentum = { markets: { coins: verdict(0.11, 0.2, 0.02, false, 2022), us: verdict(0.26, 0.6, -0.5, true, 2020) } };
+    const breakout = { ready: true, result: { ranAt: 0, markets: { coins: null, us: null }, momentum } };
+    vi.mocked(apiFetch).mockResolvedValue(reply({ ...done, breakout }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-momentum-coins")).textContent).toBe(
+      "Coins (not traded) judged 2022–2025✕Doesn't pass" + "Every trade200 trades+0.11R" + "Its picks100 trades+0.20R" + "Skipped100 trades+0.02R" +
+        "The trades it skips still made +0.02R a trade: skipping them would cost profit."
+    );
+    expect(screen.getByTestId("ml-momentum-us").textContent).toContain("US stocks judged 2020–2025✓Passes");
+    expect(screen.getByTestId("ml-breakout-status").textContent).toBe("Too few years of breakout trades to judge yet.");
+    cleanup();
+
+    // A verdict from before momentum was tested, or one with none of its trades saved: it waits for the replays to save them.
+    const waits = "Waits for the replays to save their momentum trades.";
+    vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, breakout: { ready: true, result: { ranAt: 0, markets: { coins: null, us: null } } } }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-momentum-status")).textContent).toBe(waits);
+    cleanup();
+    const unsaved = { savedAt: { coins: null, us: null }, markets: { coins: null, us: null } };
+    vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, breakout: { ready: true, result: { ranAt: 0, ...unsaved, savedAt: { coins: 1, us: null }, momentum: unsaved } } }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-momentum-status")).textContent).toBe(waits);
+    expect(screen.getByTestId("ml-breakout-status").textContent).toBe("Too few years of breakout trades to judge yet.");
+    cleanup();
+    // Never run: ready once either strategy's trades are saved.
+    vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, breakout: { ready: true, result: null } }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-momentum-status")).textContent).toBe("Ready to run.");
+    cleanup();
+    vi.mocked(apiFetch).mockResolvedValueOnce(reply({ ...done, breakout: { ready: false, result: null } }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-momentum-status")).textContent).toBe(waits);
   });
 });

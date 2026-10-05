@@ -15,11 +15,19 @@ import { addRow, binEdges, emptyTable, predict, summary, trainBoosted, type Boos
 // The years judged are pooled. Breakout wins about a trade in three or four,
 // a few of them big; a filter that cuts trades only helps if the ones it cuts
 // lose money, so that's what it must show.
+//
+// Momentum's trades (top 3 by their rise over 90 days, rebalanced weekly) are
+// tested the same way, on the same readings at their entry: they're about as
+// few, and a pick held while it stays in the top 3 is a trade like a breakout.
 
 /** Bump when the readings change: setups saved with the old ones are left. */
 export const BREAKOUT_READINGS_VERSION = 1;
 
-/** What's read at each breakout's close, in plain words. */
+/** The slower strategies whose replayed trades the test learns from. */
+export type MlStrategy = "breakout" | "momentum";
+export const ML_STRATEGIES: MlStrategy[] = ["breakout", "momentum"];
+
+/** What's read at each breakout's (or momentum pick's) close, in plain words. */
 export const BREAKOUT_READINGS: { name: string; label: string }[] = [
   { name: "strength", label: "how far above the 55-day high" },
   { name: "atrPct", label: "volatility (ATR)" },
@@ -37,7 +45,7 @@ const FEATURES: Feature[] = BREAKOUT_READINGS.map((r) => ({ name: r.name, group:
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HIGH_DAYS = 55;
 
-/** A replayed breakout trade with what was known at its entry, and its result (after costs, in R). */
+/** A replayed breakout (or momentum) trade with what was known at its entry, and its result (after costs, in R). */
 export interface BreakoutSetup {
   symbol: string;
   entryMs: number;
@@ -88,21 +96,27 @@ export function breakoutReadings(
 
 /**
  * Breakout 55/20's replayed trades on one coin's or stock's daily candles
- * (breakoutTrades), each with its readings at entry. Trades still open when
- * the candles end are left out: their result isn't known.
+ * (breakoutTrades), each with its readings at entry; or momentum's on it
+ * (`strategy`). Trades still open when the candles end are left out: their
+ * result isn't known.
  */
-export function breakoutSetups(s: CandleSeries, trades: ClassicTrade[], market?: MarketCandles): BreakoutSetup[] {
+export function breakoutSetups(s: CandleSeries, trades: ClassicTrade[], market?: MarketCandles, strategy: MlStrategy = "breakout"): BreakoutSetup[] {
   const range = atr(s);
   const avg200 = sma(s.c, 200);
   const index = new Map(s.t.map((t, k) => [t, k]));
   return trades.flatMap((t) => {
-    if (t.strategy !== "breakout") return [];
+    if (t.strategy !== strategy) return [];
     // A trade enters at a day's close: the candle that started a day before.
     const i = index.get(t.entryMs - DAY_MS);
     if (t.open || i === undefined) return [];
     const x = breakoutReadings(s, i, range, avg200, market).map((v) => (Number.isFinite(v) ? Number(v.toPrecision(6)) : null));
     return [{ symbol: t.symbol, entryMs: t.entryMs, exitMs: t.exitMs, r: Number(t.r.toFixed(4)), x }];
   });
+}
+
+/** Momentum's replayed trades across coins (or stocks), each with its readings on its own candles. */
+export function momentumSetups(series: Record<string, CandleSeries>, trades: ClassicTrade[], market?: MarketCandles): BreakoutSetup[] {
+  return Object.entries(series).flatMap(([symbol, s]) => breakoutSetups(s, trades.filter((t) => t.symbol === symbol), market, "momentum"));
 }
 
 /** Small data: shallow trees, small leaves, stopped early on the year before the one judged. */

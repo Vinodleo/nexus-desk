@@ -320,6 +320,13 @@ describe("the long daily replay", () => {
     expect(setups.setups.every((s) => ["BTC/INR", "LUNA/INR"].includes(s.symbol) && s.x.length === BREAKOUT_READINGS.length)).toBe(true);
     // Bitcoin's trend at each entry: known once it has 200 days.
     expect(setups.setups.some((s) => s.x[BREAKOUT_READINGS.findIndex((r) => r.name === "marketUp")] !== null)).toBe(true);
+    // Momentum's closed trades too, in a file of their own.
+    const picks = readBreakoutSetups("coins", "momentum")!;
+    const momentumTrades = Object.values(classic).reduce((n, q) => n + (q.momentum?.trades ?? 0), 0);
+    expect(picks.savedAt).toBe(setups.savedAt);
+    expect(picks.setups.length).toBeGreaterThan(0);
+    expect(picks.setups.length).toBeLessThanOrEqual(momentumTrades);
+    expect(picks.setups.every((s) => ["BTC/INR", "LUNA/INR"].includes(s.symbol) && s.x.length === BREAKOUT_READINGS.length)).toBe(true);
 
     // The strategies changed: redone from the kept candles, nothing downloaded, the traders' results and finish kept.
     const kept = { ...run, classic: undefined, classicVersion: long.CLASSIC_VERSION - 1 };

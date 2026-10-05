@@ -191,7 +191,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   the split above, so it's judged year by year (`walkForward`): each year from the fifth is judged by a model trained on
   the years before but the last, which sets the cut (the middle of its predictions); the model's picks are its more
   promising half. It passes only if the trades it would skip clearly lost (`highR` below zero) and its picks are
-  `MIN_EDGE_R`+ ahead of every trade (`ml_test_breakout.json`). Decides nothing live.
+  `MIN_EDGE_R`+ ahead of every trade (`ml_test_breakout.json`). Momentum's (top 3) replayed trades are tested the same
+  way alongside, on the same readings (`momentumSetups`, `momentum_setups_coins.json`, `momentum_setups_us.json`;
+  verdict in the same file's `momentum`, coins marked "not traded" in the Lab). Decides nothing live.
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
   - It, the win-chance calibration and the trade memory count each trader's move once
     (`oneShadowAtATime` in `shadowTracker.ts`), not once per candle a setup stayed valid.
