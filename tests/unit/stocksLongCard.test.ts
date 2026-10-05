@@ -72,6 +72,31 @@ describe("Stocks on daily candles since 2016", () => {
     expect(screen.getByText(/NIFTYBEES is above its own/)).toBeTruthy();
   });
 
+  it("shows the funds of gold, bonds and the rest on a tab of their own, without a share-market guard", async () => {
+    vi.mocked(apiFetch).mockResolvedValue(
+      reply(
+        view({
+          classic: { ...view().classic, funds: { "2022-Q1": { breakout: rec(12, 5, 14, -5) } } },
+          cohorts: { ...view().cohorts, funds: { "2016": ["GLD", "TLT"] } },
+          funds: { us: "SPY", nse: "NIFTYBEES", funds: "SPY" },
+          run: { ...view().run, problems: [...view().run.problems, { symbol: "TLT.US", note: "Only 100 days of candles" }] },
+        })
+      )
+    );
+    render(createElement(StocksLongCard));
+    await screen.findByTestId("stocks-ranking");
+    // US doesn't list the fund's problem.
+    expect(screen.getByTestId("stocks-problems").textContent).toBe("Not replayed: GE (Only 120 days of candles).");
+    fireEvent.click(screen.getByRole("tab", { name: "Funds" }));
+    expect(within(screen.getByTestId("stocks-ranking")).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Breakout 55/20+0.75R12 trades · 42% won✓Above the bar",
+    ]);
+    expect(screen.getByTestId("stocks-cohorts").textContent).toBe("GLD (gold), TLT (long US government bonds). The same funds every year.");
+    expect(screen.getByTestId("stocks-problems").textContent).toBe("Not replayed: TLT (Only 100 days of candles).");
+    expect(screen.getByText(/Holds a fund while its 50-day average is above its 200-day; or until/)).toBeTruthy();
+    expect(screen.getByText(/No share-market guard/)).toBeTruthy();
+  });
+
   it("shows its progress while it runs, and nothing for an older server", async () => {
     vi.mocked(apiFetch).mockResolvedValue(
       reply(view({ running: true, current: "RELIANCE", waitingForNse: true, finished: 40, total: 66, classic: {}, run: { ...view().run, finishedAt: null } }))

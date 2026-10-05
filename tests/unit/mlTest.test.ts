@@ -252,7 +252,7 @@ describe("the machine-learning test on breakout trades", () => {
     expect(ml.mlTestView().breakout.ready).toBe(true);
     await ml.startMlTest(deps, ["breakout"]);
     const result = ml.mlTestView().breakout.result!;
-    expect(result.savedAt).toEqual({ coins: 1000, us: 2000 });
+    expect(result.savedAt).toEqual({ coins: 1000, us: 2000, funds: null });
     // Coins: learns from 2018–2020, judges 2022 to 2025.
     expect(result.markets.coins).toMatchObject({ fromYear: 2022, toYear: 2025, setups: 480, passed: true });
     expect(result.markets.coins!.skipped.avgR).toBeLessThan(0);
@@ -272,7 +272,23 @@ describe("the machine-learning test on breakout trades", () => {
     const { saveBreakoutSetups } = await saved();
     saveBreakoutSetups("coins", breakouts(2023, true, 1), 1000);
     await ml.startMlTest(deps, ["breakout"]);
-    expect(ml.mlTestView().breakout.result!.markets).toEqual({ coins: null, us: null });
+    expect(ml.mlTestView().breakout.result!.markets).toEqual({ coins: null, us: null, funds: null });
+  });
+
+  it("judges the funds' breakout and momentum trades (gold, bonds and the rest) the same way, once the stocks' replay saves them", async () => {
+    const { saveBreakoutSetups } = await saved();
+    saveBreakoutSetups("us", breakouts(2016, false, 2), 1000);
+    await ml.startMlTest(deps, ["breakout"]);
+    expect(ml.mlTestDue("breakout")).toBe(false);
+    // The funds saved since: due again.
+    saveBreakoutSetups("funds", breakouts(2016, true, 5), 2000);
+    saveBreakoutSetups("funds", breakouts(2016, false, 6), 2000, "momentum");
+    expect(ml.mlTestDue("breakout")).toBe(true);
+    await ml.startMlTest(deps, ["breakout"]);
+    const result = ml.mlTestView().breakout.result!;
+    expect(result.markets.funds).toMatchObject({ fromYear: 2020, toYear: 2025, setups: 600, passed: true });
+    expect(result.momentum!.markets.funds).toMatchObject({ fromYear: 2020, setups: 600, passed: false });
+    expect(result.savedAt.funds).toBe(2000);
   });
 
   it("judges momentum's trades the same way, alongside breakout's, and again when a replay saves them anew", async () => {
@@ -286,8 +302,8 @@ describe("the machine-learning test on breakout trades", () => {
     expect(ml.mlTestView().breakout.ready).toBe(true);
     await ml.startMlTest(deps, ["breakout"]);
     const result = ml.mlTestView().breakout.result!;
-    expect(result.markets).toEqual({ coins: null, us: null });
-    expect(result.momentum!.savedAt).toEqual({ coins: 1000, us: 2000 });
+    expect(result.markets).toEqual({ coins: null, us: null, funds: null });
+    expect(result.momentum!.savedAt).toEqual({ coins: 1000, us: 2000, funds: null });
     expect(result.momentum!.markets.coins).toMatchObject({ fromYear: 2022, toYear: 2025, setups: 480, passed: false });
     expect(result.momentum!.markets.us).toMatchObject({ fromYear: 2020, toYear: 2025, setups: 600, passed: true });
     expect(result.momentum!.markets.us!.skipped.avgR).toBeLessThan(0);

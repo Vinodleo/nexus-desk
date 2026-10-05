@@ -10,13 +10,15 @@ import { useLabFeed } from "./labFeed";
 import { Fold, LabChip, SignedBar, YearColumns } from "./labUi";
 import { classicByYear } from "./DailyLongCard";
 
-// The classic strategies on US and Indian stocks' daily candles since 2016
-// (server/history/stocksLong.ts): each strategy's average a trade after
-// costs against the edge a strategy needs, year by year, market by market.
-// US breakout's and momentum's records decide whether those paper-trade
-// (server/scanner/usBreakout.ts, usMomentum.ts); the rest decides nothing.
+// The classic strategies on US and Indian stocks' daily candles since 2016,
+// and on funds of gold, bonds and other assets (server/history/stocksLong.ts):
+// each strategy's average a trade after costs against the edge a strategy
+// needs, year by year, market by market. US breakout's and momentum's records
+// decide whether those paper-trade (server/scanner/usBreakout.ts,
+// usMomentum.ts); the rest decides nothing.
 
-type StockMarket = "us" | "nse";
+/** "funds" is absent from older servers. */
+type StockMarket = "us" | "nse" | "funds";
 
 export interface StocksLongView {
   running: boolean;
@@ -34,8 +36,8 @@ export interface StocksLongView {
     adjusted: { symbol: string; count: number }[];
   } | null;
   classic: Partial<Record<StockMarket, ClassicRecords>>;
-  cohorts: Record<StockMarket, Record<string, string[]>>;
-  funds: Record<StockMarket, string>;
+  cohorts: Partial<Record<StockMarket, Record<string, string[]>>>;
+  funds: Partial<Record<StockMarket, string>>;
 }
 
 export const isStocksLongView = (body: any): body is StocksLongView =>
@@ -44,11 +46,26 @@ export const isStocksLongView = (body: any): body is StocksLongView =>
 const MARKETS: { id: StockMarket; label: string }[] = [
   { id: "us", label: "US" },
   { id: "nse", label: "India" },
+  { id: "funds", label: "Funds" },
 ];
+
+/** What each fund holds. */
+export const FUND_NAMES: Record<string, string> = {
+  GLD: "gold", SLV: "silver", GDX: "gold miners", TLT: "long US government bonds", IEF: "7–10 year US government bonds",
+  TIP: "inflation-linked US bonds", LQD: "company bonds", HYG: "high-yield bonds", DBC: "commodities", USO: "oil", UUP: "the US dollar",
+  VNQ: "US property", EFA: "shares outside the US", EEM: "emerging-market shares", QQQ: "the Nasdaq 100", IWM: "small US companies",
+};
 const RUNNING_REFRESH_MS = 60_000;
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 const ticker = (symbol: string) => symbol.replace(/\.US$/, "");
 const isUs = (symbol: string) => symbol.endsWith(".US");
+
+/** How each strategy trades the funds: no share-market guard (gold and bonds often rise when shares fall). */
+const FUND_RULE: Record<ClassicId, string> = {
+  breakout: "Buys a close above the last 55 days' high; sells a close below the last 20 days' low, or 2 ATR below the entry.",
+  maTrend: "Holds a fund while its 50-day average is above its 200-day; or until 3 ATR below the entry.",
+  momentum: "At each week's last close holds the 3 funds that rose most over 90 days (if they rose); or until 3 ATR below the entry.",
+};
 
 /** How each strategy trades stocks, in a line (the market's fund guards in place of Bitcoin). */
 const STOCK_RULE: Record<ClassicId, (fund: string) => string> = {
@@ -72,8 +89,14 @@ export const StocksLongCard: React.FC = () => {
   const [market, setMarket] = useState<StockMarket>("us");
   if (!view) return null;
 
-  const classic = view.classic[market];
-  const fund = view.funds[market];
+  // An older server, without the funds: back to US.
+  const shown: StockMarket = view.cohorts[market] ? market : "us";
+  const markets = MARKETS.filter((m) => view.cohorts[m.id]);
+  const classic = view.classic[shown];
+  const fund = view.funds[shown] ?? "";
+  const isFunds = shown === "funds";
+  // A market's stocks: its lists and its index fund.
+  const listed = new Set([...Object.values(view.cohorts[shown] ?? {}).flat(), fund]);
   const byYear = classic ? classicByYear(classic) : new Map<string, Partial<Record<ClassicId, TraderRecord>>>();
   const years = [...byYear.keys()].sort();
   const totals = CLASSIC_IDS.map((id) => ({ id, stats: recordStats(sumRecords(years.map((y) => byYear.get(y)?.[id]))) }))
@@ -82,9 +105,9 @@ export const StocksLongCard: React.FC = () => {
   const min = Math.min(-0.25, ...totals.map((t) => t.stats.avgR)) * 1.05;
   const max = Math.max(0.25, ...totals.map((t) => t.stats.avgR)) * 1.05;
   const best = totals[0];
-  const problems = (view.run?.problems ?? []).filter((p) => isUs(p.symbol) === (market === "us"));
-  const adjusted = (view.run?.adjusted ?? []).filter((a) => isUs(a.symbol) === (market === "us"));
-  const index = MARKETS.findIndex((m) => m.id === market);
+  const problems = (view.run?.problems ?? []).filter((p) => listed.has(ticker(p.symbol)) && isUs(p.symbol) === (shown !== "nse"));
+  const adjusted = (view.run?.adjusted ?? []).filter((a) => isUs(a.symbol) === (shown !== "nse"));
+  const index = markets.findIndex((m) => m.id === shown);
 
   return (
     <Card aria-label="Stocks on daily candles since 2016" className="flex flex-col gap-2">
@@ -106,20 +129,25 @@ export const StocksLongCard: React.FC = () => {
         </div>
       </div>
 
-      <div role="tablist" aria-label="Stock market" className="relative grid grid-cols-2 p-0.5 rounded-full bg-inset border border-line">
+      <div
+        role="tablist"
+        aria-label="Stock market"
+        className="relative grid p-0.5 rounded-full bg-inset border border-line"
+        style={{ gridTemplateColumns: `repeat(${markets.length}, minmax(0, 1fr))` }}
+      >
         <span
           aria-hidden="true"
           className="nx-segment-pill absolute inset-y-0.5 left-0.5 rounded-full bg-accent"
-          style={{ width: "calc((100% - 4px) / 2)", transform: `translateX(${index * 100}%)` }}
+          style={{ width: `calc((100% - 4px) / ${markets.length})`, transform: `translateX(${index * 100}%)` }}
         />
-        {MARKETS.map((m) => (
+        {markets.map((m) => (
           <button
             key={m.id}
             type="button"
             role="tab"
-            aria-selected={m.id === market}
+            aria-selected={m.id === shown}
             onClick={() => setMarket(m.id)}
-            className={`relative min-h-9 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${m.id === market ? "text-on-accent" : "text-muted"}`}
+            className={`relative min-h-9 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${m.id === shown ? "text-on-accent" : "text-muted"}`}
           >
             {m.label}
           </button>
@@ -157,7 +185,7 @@ export const StocksLongCard: React.FC = () => {
           </ul>
           {best && (
             <YearColumns
-              key={`${market}-${best.id}`}
+              key={`${shown}-${best.id}`}
               title={`Best: ${CLASSIC_STRATEGIES[best.id].name}`}
               years={years.map((year) => ({ year, rec: byYear.get(year)?.[best.id] ?? { trades: 0, totalR: 0, wins: 0, winR: 0, lossR: 0 } }))}
               unit="trades"
@@ -185,32 +213,56 @@ export const StocksLongCard: React.FC = () => {
         </>
       )}
 
-      <Fold title="Stocks each year">
+      <Fold title={isFunds ? "The funds" : "Stocks each year"}>
         <div className="flex flex-col gap-1 text-[11px] text-muted" data-testid="stocks-cohorts">
-          {Object.entries(view.cohorts[market] ?? {}).map(([year, list]) => (
-            <div key={year}>
-              <span className="font-semibold text-ink">{year}</span> {list.join(", ")}
+          {isFunds ? (
+            <div>
+              {Object.values(view.cohorts.funds ?? {})
+                .flat()
+                .map((t) => (FUND_NAMES[t] ? `${t} (${FUND_NAMES[t]})` : t))
+                .join(", ")}
+              . The same funds every year.
             </div>
-          ))}
-          <div>Later years use the last list.</div>
+          ) : (
+            <>
+              {Object.entries(view.cohorts[shown] ?? {}).map(([year, list]) => (
+                <div key={year}>
+                  <span className="font-semibold text-ink">{year}</span> {list.join(", ")}
+                </div>
+              ))}
+              <div>Later years use the last list.</div>
+            </>
+          )}
         </div>
       </Fold>
 
       <Fold title="How this test works">
         <div className="text-xs text-muted leading-relaxed">
-          The classic strategies on {market === "us" ? "US" : "Indian"} stocks' daily candles since 2016. Each year trades only its 20 biggest
-          stocks on 1 January, picked before that year's results. {fund}, the market's index fund, stands in for Bitcoin as the market guard.
-          {market === "us"
-            ? " Candles from Alpaca, adjusted for splits and dividends; costs are Alpaca's fees and a typical spread."
-            : " Candles from Angel One, with splits and bonus issues adjusted; costs are delivery charges (held overnight, about 0.5% a round trip) and a typical spread."}{" "}
-          {market === "us"
-            ? `Breakout's and momentum's records here decide whether they paper-trade US stocks (each needs ${rSigned(MIN_EDGE_R)} a trade over ${MIN_TRADER_TRADES}+ trades); moving averages isn't traded.`
-            : "It decides nothing: paper trading follows only if a strategy clearly beats its costs, and only when you say so."}
+          {isFunds ? (
+            <>
+              The classic strategies on 16 funds listed in the US, across kinds of assets (gold, silver, bonds, commodities, the dollar, property
+              and shares), since 2016: the same funds every year. No share-market guard: gold and bonds often rise when shares fall, which is why
+              trend following spread across assets has smoother years than on one market. Candles from Alpaca, adjusted for splits and
+              dividends (bond funds' interest included); costs are Alpaca's fees and a typical spread. It decides nothing: paper trading follows
+              only if a strategy clearly beats its costs, and only when you say so.
+            </>
+          ) : (
+            <>
+              The classic strategies on {shown === "us" ? "US" : "Indian"} stocks' daily candles since 2016. Each year trades only its 20 biggest
+              stocks on 1 January, picked before that year's results. {fund}, the market's index fund, stands in for Bitcoin as the market guard.
+              {shown === "us"
+                ? " Candles from Alpaca, adjusted for splits and dividends; costs are Alpaca's fees and a typical spread."
+                : " Candles from Angel One, with splits and bonus issues adjusted; costs are delivery charges (held overnight, about 0.5% a round trip) and a typical spread."}{" "}
+              {shown === "us"
+                ? `Breakout's and momentum's records here decide whether they paper-trade US stocks (each needs ${rSigned(MIN_EDGE_R)} a trade over ${MIN_TRADER_TRADES}+ trades); moving averages isn't traded.`
+                : "It decides nothing: paper trading follows only if a strategy clearly beats its costs, and only when you say so."}
+            </>
+          )}
         </div>
         <ul className="m-0 p-0 list-none flex flex-col gap-1">
           {CLASSIC_IDS.map((id) => (
             <li key={id} className="text-[11px] text-muted leading-relaxed">
-              <span className="font-semibold text-ink">{CLASSIC_STRATEGIES[id].name}:</span> {STOCK_RULE[id](fund)}
+              <span className="font-semibold text-ink">{CLASSIC_STRATEGIES[id].name}:</span> {isFunds ? FUND_RULE[id] : STOCK_RULE[id](fund)}
             </li>
           ))}
         </ul>
