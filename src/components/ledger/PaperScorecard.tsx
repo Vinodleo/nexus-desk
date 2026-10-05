@@ -54,11 +54,13 @@ export const PaperScorecard: React.FC<{ trades: HistoricalTrade[]; positions: Po
   const dc = useLabFeed("/api/daily-coins", isDailyCoinsView);
   const us = useLabFeed("/api/us-breakout", isUsBreakoutView);
   const momentum = useLabFeed("/api/us-momentum", isUsMomentumView);
-  if (!dc && !us && !momentum) return null;
+  const funds = useLabFeed("/api/funds-breakout", isUsBreakoutView);
+  if (!dc && !us && !momentum && !funds) return null;
 
   const replays: Record<PaperStrategy, { record: ReplayRecord; detail: boolean } | null> = {
     coinBreakout: dc?.breakout ? { record: asRecord(dc.breakout), detail: hasDetail(dc.breakout) } : null,
     usBreakout: us?.gate ? { record: asRecord(us.gate), detail: hasDetail(us.gate) } : null,
+    fundsBreakout: funds?.gate ? { record: asRecord(funds.gate), detail: hasDetail(funds.gate) } : null,
     usMomentum: momentum?.gate ? { record: asRecord(momentum.gate), detail: hasDetail(momentum.gate) } : null,
     // The daily traders that trade now, together.
     dailyCoins: (() => {

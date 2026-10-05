@@ -62,7 +62,12 @@ export function useRiskPolicy(equity: number) {
       ...limits,
       // The per-market limits decide; this total is for display.
       maxSimultaneousPositions: (["coins", "stocks", "us"] as const).reduce(
-        (n, m) => n + limits.marketLimits[m].maxOpenTrades + (limits.marketLimits[m].breakoutTrades ?? 0) + (limits.marketLimits[m].momentumTrades ?? 0),
+        (n, m) =>
+          n +
+          limits.marketLimits[m].maxOpenTrades +
+          (limits.marketLimits[m].breakoutTrades ?? 0) +
+          (limits.marketLimits[m].momentumTrades ?? 0) +
+          (limits.marketLimits[m].fundsTrades ?? 0),
         0
       ),
       equity: equity > 0 ? equity : DEFAULT_RISK_POLICY.equity,

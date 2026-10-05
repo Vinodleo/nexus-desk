@@ -72,6 +72,7 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
   const ml = useLabFeed("/api/ml-test", isMlTestView);
   const us = useLabFeed("/api/us-breakout", isUsBreakoutView);
   const momentum = useLabFeed("/api/us-momentum", isUsMomentumView);
+  const funds = useLabFeed("/api/funds-breakout", isUsBreakoutView);
   const rows: React.ReactNode[] = [];
 
   if (dc && dc.traders.length > 0) {
@@ -120,6 +121,18 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
         status={us.gate.on ? "trading" : "paused"}
         label={us.gate.on ? "Trading" : "Paused"}
         detail={`${rSigned(us.gate.avgR)} a trade since 2016 · ${us.gate.trades} trades`}
+        onOpen={onOpen && (() => onOpen("records"))}
+      />
+    );
+  }
+  if (funds?.gate) {
+    rows.push(
+      <SummaryRow
+        key="funds-breakout"
+        name="Funds breakout 55/20"
+        status={funds.gate.on ? "trading" : "paused"}
+        label={funds.gate.on ? "Trading" : "Paused"}
+        detail={`${rSigned(funds.gate.avgR)} a trade since 2016 · ${funds.gate.trades} trades · gold, bonds and more`}
         onOpen={onOpen && (() => onOpen("records"))}
       />
     );

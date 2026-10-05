@@ -10,6 +10,7 @@ import { CLASSIC_VERSION } from "./dailyLong";
 import { breakoutSetups, marketCandles, momentumSetups, type BreakoutSetup } from "../../src/services/breakoutModel";
 import { saveBreakoutSetups } from "./breakoutSetups";
 import { scannerHeartbeat } from "../scanner/scannerService";
+import { FUNDS } from "../../src/shared/funds";
 
 // The classic strategies (src/services/classicStrategies.ts) on US and
 // Indian stocks' daily candles since 2016: whether breakout 55/20, moving
@@ -58,15 +59,8 @@ export type StockMarket = "us" | "nse" | "funds";
 /** US first, then the funds (from Alpaca too), India last: its downloads wait for NSE to close. */
 export const STOCK_MARKETS: StockMarket[] = ["us", "funds", "nse"];
 
-/**
- * Funds across kinds of assets, all listed in the US since before 2015: gold,
- * silver and gold miners; long, middle and inflation-linked US government
- * bonds, company bonds and high-yield ones; commodities and oil; the dollar;
- * US property; shares outside the US and in emerging markets; the Nasdaq 100
- * and small US companies. SPY, the US index fund, is their market reading
- * (not traded here, as in the US market).
- */
-export const FUNDS = ["GLD", "SLV", "GDX", "TLT", "IEF", "TIP", "LQD", "HYG", "DBC", "USO", "UUP", "VNQ", "EFA", "EEM", "QQQ", "IWM"];
+/** The funds (shared/funds.ts). SPY, the US index fund, is their market reading (not traded here, as in the US market). */
+export { FUNDS };
 
 /**
  * The 20 biggest stocks by market value on 1 January each year, from memory

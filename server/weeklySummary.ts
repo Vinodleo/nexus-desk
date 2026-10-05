@@ -6,7 +6,7 @@ import { formatMoney } from "../src/components/ledger/format";
 import { closedTradesFor, daemonPositions, type DaemonClosedTrade, type DaemonPosition } from "./guardian";
 import { scanningDesks } from "./scanner/deskState";
 import { dailyCoinsView } from "./scanner/dailyCoins";
-import { usBreakoutView } from "./scanner/usBreakout";
+import { fundsBreakoutView, usBreakoutView } from "./scanner/usBreakout";
 import { usMomentumView } from "./scanner/usMomentum";
 import type { PushMessage } from "./push";
 
@@ -30,6 +30,7 @@ const STATE_FILE = "weekly_summary.json";
 const STRATEGIES: { id: Exclude<PaperStrategy, "dailyCoins">; name: string }[] = [
   { id: "coinBreakout", name: "Coin breakout" },
   { id: "usBreakout", name: "US breakout" },
+  { id: "fundsBreakout", name: "Funds breakout" },
   { id: "usMomentum", name: "US momentum" },
 ];
 
@@ -124,6 +125,7 @@ const realDeps: Omit<WeeklySummaryDeps, "notify"> = {
   replays: (uid) => ({
     coinBreakout: dailyCoinsView(uid).breakout?.avgR ?? null,
     usBreakout: usBreakoutView(uid).gate?.avgR ?? null,
+    fundsBreakout: fundsBreakoutView(uid).gate?.avgR ?? null,
     usMomentum: usMomentumView(uid).gate?.avgR ?? null,
   }),
 };

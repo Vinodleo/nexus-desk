@@ -19,7 +19,7 @@ import { MlTestCard } from "./MlTestCard";
 import { DailyCoinsCard } from "./DailyCoinsCard";
 import { DailyLongCard } from "./DailyLongCard";
 import { StocksLongCard } from "./StocksLongCard";
-import { UsBreakoutCard } from "./UsBreakoutCard";
+import { FundsBreakoutCard, UsBreakoutCard } from "./UsBreakoutCard";
 import { UsMomentumCard } from "./UsMomentumCard";
 import { PaperScorecard } from "./PaperScorecard";
 import { LabSummary, StrategyRanking, YearByYear, type LabTab } from "./LabSummary";
@@ -273,6 +273,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({
         <LabSummary onOpen={setTab} />
         <DailyCoinsCard />
         <UsBreakoutCard />
+        <FundsBreakoutCard />
         <UsMomentumCard />
       </section>
 

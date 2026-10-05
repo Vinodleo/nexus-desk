@@ -49,7 +49,7 @@ describe("per-market limits", () => {
     expect(cleanMarketLimits(null)).toEqual(DEFAULT_MARKET_LIMITS);
     expect(cleanMarketLimits({ coins: { amountPerTradeInr: 2500, maxOpenTrades: 4 }, stocks: { amountPerTradeInr: -5, maxOpenTrades: 99 } })).toEqual({
       // Saved before risk per trade existed: 1% of the amount; before breakout's own slots: 3; before momentum's: none for coins.
-      coins: { amountPerTradeInr: 2500, maxOpenTrades: 4, riskPerTradeInr: 25, breakoutTrades: 3, momentumTrades: 0 },
+      coins: { amountPerTradeInr: 2500, maxOpenTrades: 4, riskPerTradeInr: 25, breakoutTrades: 3, momentumTrades: 0, fundsTrades: 0 },
       stocks: DEFAULT_MARKET_LIMITS.stocks,
       // Saved before US stocks existed: the default.
       us: DEFAULT_MARKET_LIMITS.us,

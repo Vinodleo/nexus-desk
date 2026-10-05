@@ -1,6 +1,7 @@
 import type { SlowStrategy } from "../types";
 import { isNseSymbol, NSE_UNIVERSE } from "./nse";
 import { isUsSymbol, US_UNIVERSE, usTicker } from "./usMarket";
+import { isFundSymbol } from "./funds";
 
 // How much goes into each trade, how much it may lose, and how many trades
 // can be open at once, set separately for coins (CoinDCX), Indian stocks
@@ -40,6 +41,12 @@ export interface MarketLimit {
    * cleanMarketLimits fills it in.
    */
   momentumTrades?: number;
+  /**
+   * Breakout 55/20's trades on the funds (gold, bonds and the rest, US-listed:
+   * shared/funds.ts) open at the same time, on slots of their own apart from
+   * breakout's on US stocks. cleanMarketLimits fills it in.
+   */
+  fundsTrades?: number;
 }
 
 export type MarketLimits = Record<MarketKey, MarketLimit>;
@@ -58,6 +65,10 @@ export const DEFAULT_BREAKOUT_TRADES: Record<MarketKey, number> = { coins: 3, st
 export const MOMENTUM_TRADES_CHOICES = [0, 1, 2, 3];
 /** Until you choose: momentum's own slots (it trades US stocks only). */
 export const DEFAULT_MOMENTUM_TRADES: Record<MarketKey, number> = { coins: 0, stocks: 0, us: 3 };
+/** The funds' breakout slots: none switches it off. */
+export const FUNDS_TRADES_CHOICES = [0, 1, 2, 3, 4, 5, 6];
+/** Until you choose: the funds' own slots (US-listed, so in the US limits). */
+export const DEFAULT_FUNDS_TRADES: Record<MarketKey, number> = { coins: 0, stocks: 0, us: 3 };
 
 /**
  * Until you choose, a trade may lose 1% of the market's amount per trade
@@ -73,9 +84,9 @@ export function defaultRiskPerTrade(amountPerTradeInr: number): number {
 }
 
 export const DEFAULT_MARKET_LIMITS: MarketLimits = {
-  coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3, momentumTrades: 0 },
-  stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 0, momentumTrades: 0 },
-  us: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3, momentumTrades: 3 },
+  coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3, momentumTrades: 0, fundsTrades: 0 },
+  stocks: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 0, momentumTrades: 0, fundsTrades: 0 },
+  us: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3, momentumTrades: 3, fundsTrades: 3 },
 };
 
 export const MARKET_LABEL: Record<MarketKey, string> = { coins: "coin", stocks: "Indian stock", us: "US stock" };
@@ -94,6 +105,7 @@ export function cleanMarketLimits(raw: unknown): MarketLimits {
     // Absent (limits from before breakout's slots) reads as NaN: the default.
     const breakout = r[key]?.breakoutTrades === undefined ? NaN : Number(r[key].breakoutTrades);
     const momentum = r[key]?.momentumTrades === undefined ? NaN : Number(r[key].momentumTrades);
+    const funds = r[key]?.fundsTrades === undefined ? NaN : Number(r[key].fundsTrades);
     const amountPerTradeInr = Number.isFinite(amount) && amount >= 100 && amount <= 1_000_000 ? Math.round(amount) : d.amountPerTradeInr;
     return {
       amountPerTradeInr,
@@ -102,6 +114,7 @@ export function cleanMarketLimits(raw: unknown): MarketLimits {
       riskPerTradeInr: Number.isFinite(risk) && risk >= 10 && risk <= 100_000 ? Math.round(risk) : defaultRiskPerTrade(amountPerTradeInr),
       breakoutTrades: Number.isInteger(breakout) && breakout >= 0 && breakout <= 20 ? breakout : DEFAULT_BREAKOUT_TRADES[key],
       momentumTrades: Number.isInteger(momentum) && momentum >= 0 && momentum <= 20 ? momentum : DEFAULT_MOMENTUM_TRADES[key],
+      fundsTrades: Number.isInteger(funds) && funds >= 0 && funds <= 20 ? funds : DEFAULT_FUNDS_TRADES[key],
     };
   };
   return { coins: one("coins"), stocks: one("stocks"), us: one("us") };
@@ -145,18 +158,29 @@ export const slowStrategyOf = (strategy: unknown): SlowStrategy | undefined =>
 
 /**
  * Which slots a trade (or proposal's setup) takes: breakout 55/20's and
- * momentum's have their own; null is the rest's (the 5-minute and daily
- * traders'), the market's trades at once.
+ * momentum's have their own, and breakout's on the funds theirs apart from
+ * its US stocks'; null is the rest's (the 5-minute and daily traders'), the
+ * market's trades at once.
  */
-export type SlotKind = SlowStrategy | null;
-export const slotKindOf = (p: { strategy?: string } | undefined): SlotKind => slowStrategyOf(p?.strategy) ?? null;
+export type SlotKind = SlowStrategy | "funds" | null;
+export const slotKindOf = (p: { strategy?: string; symbol?: string } | undefined): SlotKind => {
+  const slow = slowStrategyOf(p?.strategy) ?? null;
+  return slow === "breakout" && isFundSymbol(p?.symbol) ? "funds" : slow;
+};
+
+/** The trades a market's slots of a kind hold, in words: "US stock", "coin breakout", "funds breakout". */
+export const slotTradesLabel = (market: MarketKey, kind: SlotKind): string =>
+  kind === "funds" ? "funds breakout" : `${MARKET_LABEL[market]}${kind ? ` ${kind}` : ""}`;
 
 /** Positions open in `symbol`'s market on the same slots as a new trade of that kind. */
 export function openInSlots<T extends { symbol: string; strategy?: string }>(positions: T[], symbol: string, kind: SlotKind): T[] {
   return openInMarket(positions, symbol).filter((p) => slotKindOf(p) === kind);
 }
 
-/** How many trades of a kind may be open at once in a market: breakout's or momentum's own slots, or the rest's. */
+/** How many trades of a kind may be open at once in a market: breakout's, momentum's or the funds' own slots, or the rest's. */
 export function slotsFor(limit: MarketLimit, kind: SlotKind): number {
-  return kind === "breakout" ? limit.breakoutTrades ?? 0 : kind === "momentum" ? limit.momentumTrades ?? 0 : limit.maxOpenTrades;
+  if (kind === "breakout") return limit.breakoutTrades ?? 0;
+  if (kind === "momentum") return limit.momentumTrades ?? 0;
+  if (kind === "funds") return limit.fundsTrades ?? 0;
+  return limit.maxOpenTrades;
 }
