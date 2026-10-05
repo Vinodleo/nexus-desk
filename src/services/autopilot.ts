@@ -5,7 +5,7 @@ import { ruleFor } from "./marketRulesStore";
 import { isBuiltOnSyntheticPrices } from "./dataProvenance";
 import { openQuantity, planPartialQuantity } from "../shared/exitRules";
 import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
-import { MARKET_LABEL, marketOf, sectorOf, slotKindOf, slotsFor, type MarketKey, type SlotKind } from "../shared/marketLimits";
+import { MARKET_LABEL, marketOf, sectorOf, slotKindOf, slotsFor, slotTradesLabel, slowStrategyOf, type MarketKey, type SlotKind } from "../shared/marketLimits";
 
 // Self-Approve (autopilot): which proposals it opens on its own. Shared by the
 // app and the server scanner, so a trade is let through by the same rules
@@ -164,7 +164,7 @@ export function selectAutopilotTrades(
       if (tooMany)
         reasons.push(
           marketLimit
-            ? `would exceed ${slotsFor(marketLimit, kind)} open ${MARKET_LABEL[market]}${kind ? ` ${kind}` : ""} trade${slotsFor(marketLimit, kind) === 1 ? "" : "s"} at once`
+            ? `would exceed ${slotsFor(marketLimit, kind)} open ${slotTradesLabel(market, kind)} trade${slotsFor(marketLimit, kind) === 1 ? "" : "s"} at once`
             : `would exceed max ${policy.maxSimultaneousPositions} simultaneous positions`
         );
       if (tooExposed) reasons.push(`would exceed max ${(policy.maxAllowedExposureFraction * 100).toFixed(0)}% portfolio exposure`);
@@ -220,7 +220,8 @@ export function positionFromProposal(
 ): Position {
   const { setup } = proposal;
   const runner = trailsAsRunner(setup);
-  const slow = slotKindOf(setup);
+  // A slower strategy's trade (breakout's, the funds' included, or momentum's): it keeps its strategy's name.
+  const slow = slowStrategyOf(setup.strategy);
   return {
     id: opts.id,
     symbol: proposal.symbol,

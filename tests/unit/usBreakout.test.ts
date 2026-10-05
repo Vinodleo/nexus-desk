@@ -178,3 +178,69 @@ describe("US breakout trades", () => {
     expect(us.usBreakoutStocks(2026)).toContain("BRK.B.US");
   });
 });
+
+describe("funds breakout trades (gold, bonds and the rest)", () => {
+  beforeEach(async () => {
+    await fresh();
+  });
+
+  /** US limits with one breakout slot for stocks and two for the funds. */
+  const narrow = {
+    ...desk,
+    riskLimits: {
+      ...desk.riskLimits,
+      marketLimits: { ...desk.riskLimits.marketLimits, us: { amountPerTradeInr: 20000, maxOpenTrades: 3, riskPerTradeInr: 200, breakoutTrades: 1, fundsTrades: 2 } },
+    },
+  };
+  const funds = { "2020-Q1": { breakout: rec(443, 443 * 0.54) } };
+
+  it("buy the funds above their 55-day high right after the US check, on slots of their own, and sell them below their 20-day low", async () => {
+    const us = await fresh();
+    const { daemonPositions } = await import("../../server/guardian");
+    const { slotKindOf } = await import("../../src/shared/marketLimits");
+    const prices: Record<string, number> = { "AAPL.US": 105, "BRK.B.US": 104, "GLD.US": 105, "TLT.US": 104, "SLV.US": 103 };
+    const at = async (now: number, classic: unknown, over: Record<string, number> = {}) =>
+      deps(now, {
+        desks: () => [["u", narrow]],
+        classic: () => classic,
+        quotes: vi.fn(async (symbols: string[]) => Object.fromEntries(symbols.map((s) => [s, quote({ ...prices, ...over }[s] ?? 100)]))),
+      });
+
+    // US stocks: one breakout slot, so one of AAPL and Berkshire.
+    await us.runUsBreakout(await at(monday, { "2020-Q1": { breakout: rec(554, 554 * 0.39) } }));
+    expect(us._usBreakoutState().runs.u.picks.filter((p) => p.outcome === "opened")).toHaveLength(1);
+    // The funds: their own two slots, whatever US stocks hold, filled in the list's order; the third waits.
+    const d = await at(monday, funds);
+    await us.runFundsBreakout(d);
+    const run = us._fundsBreakoutState().runs.u;
+    expect(run).toMatchObject({ day: "2026-10-05", coins: 16, failed: [] });
+    expect(d.quotes.mock.calls[0][0]).toEqual(us.breakoutFunds());
+    expect(run.picks.filter((p) => p.outcome === "opened").map((p) => p.symbol).sort()).toEqual(["GLD.US", "SLV.US"]);
+    expect(run.picks.find((p) => p.symbol === "TLT.US")).toMatchObject({ outcome: "waiting", reason: expect.stringContaining("would exceed 2 open funds breakout trades at once") });
+    const fundTrades = [...daemonPositions.values()].filter((p) => p.symbol === "GLD.US" || p.symbol === "SLV.US");
+    expect(fundTrades.every((p) => p.strategy === "breakout" && p.trailProfile === "fixed" && slotKindOf(p) === "funds")).toBe(true);
+    expect([...daemonPositions.values()].filter((p) => slotKindOf(p) === "breakout")).toHaveLength(1);
+
+    // Tuesday: gold falls below its 20-day low. The US check leaves the funds alone; the funds' check sells it.
+    await us.runUsBreakout(await at(tuesday, { "2020-Q1": { breakout: rec(554, 554 * 0.39) } }, { "GLD.US": 90, "AAPL.US": 100, "BRK.B.US": 100 }));
+    expect(us._usBreakoutState().runs.u.picks.some((p) => p.symbol === "GLD.US")).toBe(false);
+    expect([...daemonPositions.values()].some((p) => p.symbol === "GLD.US")).toBe(true);
+    await us.runFundsBreakout(await at(tuesday, funds, { "GLD.US": 90, "TLT.US": 100, "SLV.US": 100 }));
+    expect(us._fundsBreakoutState().runs.u.picks).toContainEqual({ symbol: "GLD.US", trader: "Breakout 55/20", outcome: "sold", reason: "closed below its 20-day low" });
+    expect([...daemonPositions.values()].some((p) => p.symbol === "GLD.US")).toBe(false);
+    expect([...daemonPositions.values()].some((p) => p.symbol === "SLV.US")).toBe(true);
+  });
+
+  it("trade only while the funds' own record since 2016 clears the bar", async () => {
+    const us = await fresh();
+    await us.runFundsBreakout(
+      await deps(monday, {
+        classic: () => ({ "2020-Q1": { breakout: rec(443, -20) } }),
+        quotes: vi.fn(async (symbols: string[]) => Object.fromEntries(symbols.map((s) => [s, quote(s === "GLD.US" ? 105 : 100)]))),
+      })
+    );
+    expect(us._fundsBreakoutState().runs.u.picks).toEqual([
+      { symbol: "GLD.US", trader: "Breakout 55/20", outcome: "paused", reason: "record since 2016 −0.045R (needs +0.05R)" },
+    ]);
+  });
+});

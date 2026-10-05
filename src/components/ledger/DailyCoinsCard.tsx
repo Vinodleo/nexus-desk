@@ -52,15 +52,16 @@ const OUTCOME = {
   paused: { label: "paused", icon: "‖", tone: "text-muted" },
 } as const;
 
-/** The autopilot's reason when a market's slots were full ("would exceed 2 open coin trades at once"), or breakout's or momentum's own. */
-const noFreeSlot = (kind: "breakout" | "momentum" | null) => new RegExp(`open (coin|US stock)${kind ? ` ${kind}` : ""} trades? at once`);
+/** The autopilot's reason when a market's slots were full ("would exceed 2 open coin trades at once"), or breakout's, momentum's or the funds' own. */
+const noFreeSlot = (kind: "breakout" | "momentum" | "funds" | null) =>
+  kind === "funds" ? /open funds breakout trades? at once/ : new RegExp(`open (coin|US stock)${kind ? ` ${kind}` : ""} trades? at once`);
 /** A coin or US stock without its suffix ("SOL", "AAPL"). */
 export const shortName = (symbol: string) => symbol.replace(/\/INR$|\.US$/, "");
 
 type Pick = NonNullable<DailyCoinsView["run"]>["picks"][number];
 
 /** The check's picks that waited for a free slot: breakout's or momentum's own, or the rest's. */
-export const waitedForSlot = (picks: Pick[], kind: "breakout" | "momentum" | null = null): string[] =>
+export const waitedForSlot = (picks: Pick[], kind: "breakout" | "momentum" | "funds" | null = null): string[] =>
   [...new Set(picks.filter((p) => p.outcome === "waiting" && noFreeSlot(kind).test(p.reason ?? "")).map((p) => p.symbol))];
 
 /** A market's trades open now against its limit, and which of the day's setups waited for a slot. */

@@ -30,9 +30,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   set per device (`src/services/theme.ts`). Use the tokens, never fixed colours.
   The Lab (`LedgerLab.tsx`) has four tabs, the last one picked remembered per device:
   - **Today:** what's trading and why (`LabSummary`), the daily coin check with its coin slots (`DailyCoinsCard`),
-    the US breakout check (`UsBreakoutCard`) and the weekly US momentum check (`UsMomentumCard`).
+    the US breakout check (`UsBreakoutCard`), the funds' breakout check (`FundsBreakoutCard`) and the weekly US
+    momentum check (`UsMomentumCard`).
   - **Records:** the scorecard first (`PaperScorecard`, `services/paperScorecard.ts`): coin breakout's, US breakout's,
-    US momentum's and the daily coin traders' real paper trades from the Book against their replays (R, share won, average win and loss,
+    the funds' breakout's, US momentum's and the daily coin traders' real paper trades from the Book against their replays (R, share won, average win and loss,
     exits, stops that gapped; "in line", "behind" or "ahead" once 10+ trades, by two standard errors). Then every coin
     strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`), the classic strategies
     on stocks (`StocksLongCard`, US and India), and the replays' details.
@@ -90,7 +91,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - Per-market limits: `marketLimits.ts`, the amount per trade, risk per trade and trades at once for each market,
     and at most 2 open trades in one stock sector (`sectorOf`). Breakout 55/20 has slots of its own in coins and US
     stocks (`breakoutTrades`, 3 until chosen, none switches it off), and US momentum in US stocks (`momentumTrades`,
-    0 to 3, 3 until chosen): each kind counts only against its own (`SlotKind`, `slotKindOf`, `openInSlots`, `slotsFor`),
+    0 to 3, 3 until chosen), and breakout on the funds in US stocks (`fundsTrades`, slot kind "funds" for a breakout
+    trade on a fund, `isFundSymbol`, 3 until chosen): each kind counts only against its own (`SlotKind`, `slotKindOf`, `openInSlots`, `slotsFor`),
     every other trade only against trades at once, in the autopilot and the risk check alike, so the daily traders
     can't keep them out. Their scheduled checks open past the autopilot's hourly cap (their slots bound them) but
     still count toward it. Positions of these slower strategies carry `strategy` (`SlowStrategy` in `types.ts`).
@@ -150,7 +152,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   US government, inflation-linked, company and high-yield bonds, commodities, oil, the dollar, property, shares outside
   the US, the Nasdaq 100, small companies), the same every year, with no share-market guard (`GUARDED`: gold and bonds
   often rise when shares fall), replayed between US stocks and India; a finished run without them replays just them
-  (`stocksLongMissing`). The Lab's stocks card has a Funds tab. Trades nothing.
+  (`stocksLongMissing`). The Lab's stocks card has a Funds tab. Breakout paper-trades them (below); the rest trade nothing.
+  The fund list is shared (`src/shared/funds.ts`).
 - **Daily coin trades (paper, owner's call, 3 Oct; switched off 5 Oct):** `server/scanner/dailyCoins.ts`. **The daily
   traders are switched off** (owner's call, 5 Oct, `dailyTradersSwitchedOff`): with CoinDCX's real fee they lost together
   since 2018 (−0.05R, 1 of 9 years up), and the one still clearing the bar alone is likely the best of seven by luck. Their
@@ -183,9 +186,17 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   overnight, up to a year. US stocks trade in fractions of a share (`ruleFor`, `US_FRACTION`); any US stock is known,
   share classes too ("BRK.B.US"). It trades only while the stocks' replay's US breakout record since 2016 averages
   `MIN_EDGE_R`+ over `MIN_TRADER_TRADES`+ trades (`stocksLongClassic`). If Alpaca's prices fail, it tries again each minute until 3:50.
+- **Funds breakout 55/20 trades (paper, owner's call, 5 Oct):** the same check as US breakout, run a second time right
+  after it (`runFundsBreakout`, `breakoutFunds`, state `funds_breakout.json`, `/api/funds-breakout`) on the 16 funds, the
+  same every year. Positions carry `strategy: "breakout"` (all breakout behaviour: held overnight up to a year, sold
+  below the 20-day low by its own check, fixed stop), on the funds' own US slots (`fundsTrades`), within the US amount and
+  risk per trade, never live. Each check sees only its own held trades (`mine`: a fund's trade is the funds' check's). It
+  trades only while the funds' breakout record since 2016 in the stocks' replay clears the bar (`stocksLongClassic("funds")`;
+  +0.54R over 443 trades, 9 of 11 years up, +0.50R in 2022 when coins and US stocks lost). Scored apart (`fundsBreakout`)
+  in the Lab's scorecard and the Sunday summary.
 - **US momentum, top 3 (paper, owner's call):** `server/scanner/usMomentum.ts`. On each week's last US session
   (`weekLastSession`, from Alpaca's market calendar `fetchUsSessions`; Friday without it) at 3:45 pm New York, right
-  after US breakout's check (one timer runs both in turn, `startUsChecks`, so they see each other's trades): this year's
+  after US breakout's and the funds' checks (one timer runs them in turn, `startUsChecks`, so they see each other's trades): this year's
   20 biggest US stocks ranked by their rise over 90 sessions (`momentumRise`, `momentumTop`, shared with the replay),
   the top 3 that rose are the week's picks while SPY is above its 200-day average (`fundUp`), none when it isn't. A
   held momentum trade no longer picked is sold at the bid (even with autopilot off); one still picked is kept; a pick

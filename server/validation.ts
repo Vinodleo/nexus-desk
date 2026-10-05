@@ -147,6 +147,8 @@ const marketLimit = z.object({
   breakoutTrades: z.number().int().min(0).max(20).optional(),
   // US momentum's own slots (none switches it off), from the momentum update on.
   momentumTrades: z.number().int().min(0).max(20).optional(),
+  // The funds' breakout slots (none switches it off), from the funds update on.
+  fundsTrades: z.number().int().min(0).max(20).optional(),
 });
 
 export const deskStateBody = z.object({

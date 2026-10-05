@@ -4,6 +4,7 @@ import type { TradeProposal } from "../../src/types";
 import { appendBars, emptySeries, type CandleSeries } from "../../src/services/historyReplay";
 import { breakoutExitAt, type ClassicRecords } from "../../src/services/classicStrategies";
 import { isUsSymbol, nyParts, usSymbol, US_SQUARE_OFF } from "../../src/shared/usMarket";
+import { FUNDS, isFundSymbol } from "../../src/shared/funds";
 import { toClosedBars } from "../../src/services/liveMarketStreamService";
 import { fetchUsDailyBars, fetchUsSnapshots, type UsQuote } from "../alpaca";
 import { usdInr } from "../fx";
@@ -41,6 +42,13 @@ import {
 // Within your US limits, through the server autopilot, never live. It trades
 // only while its US record since 2016 averages MIN_EDGE_R+ over
 // MIN_TRADER_TRADES+ trades (breakoutGate on the stocks' replay).
+//
+// The same check runs a second time on the funds (owner's call): gold, bonds
+// and other assets listed in the US (shared/funds.ts), the same list every
+// year, on slots of their own (the US limits' fundsTrades), judged on the
+// funds' own record since 2016 in the stocks' replay. Each check keeps its own
+// state, and sees only its own held trades: a fund's breakout trade is sold
+// by the funds' check, a stock's by the US one.
 
 /** 3:45 pm New York: the check runs from then until the 3:50 close of intraday trades. */
 export const US_CHECK_AT = 15 * 60 + 45;
@@ -51,16 +59,31 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** The record US breakout trades are judged on, in words. */
 const SPAN = "since 2016";
 
-const file = () => path.join(process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data"), "us_breakout.json");
-
 interface Saved {
   /** The New York day of the last check. */
   lastDay: string | null;
   runs: Record<string, DailyRun>;
 }
 
-let state: Saved = { lastDay: null, runs: {} };
-let running = false;
+/** One of the two checks: US stocks', or the funds'. */
+interface BreakoutCheck {
+  /** For the logs. */
+  tag: string;
+  /** Its state file. */
+  file: string;
+  /** What it checks this year, as the desk names them ("AAPL.US", "GLD.US"). */
+  list: (year: number) => string[];
+  /** The held breakout trades it judges for exits. */
+  mine: (p: { strategy?: string; symbol: string }) => boolean;
+  /** Its slots: breakout's on US stocks, or the funds'. */
+  slot: "breakout" | "funds";
+  /** The stocks' replay's results it's judged on. */
+  market: "us" | "funds";
+  state: Saved;
+  running: boolean;
+}
+
+const dataFile = (name: string) => path.join(process.env.NEXUS_DATA_DIR || path.join(process.cwd(), "data"), name);
 
 export interface UsBreakoutDeps {
   now: () => number;
@@ -93,11 +116,36 @@ const realDeps: UsBreakoutDeps = {
   positions: () => [...daemonPositions.values()],
   close: (id, price) => closeServerPosition(id, price, "TRAILING_STOP"),
 };
+/** The funds' check: the same, judged on the funds' record. */
+const fundsRealDeps: UsBreakoutDeps = { ...realDeps, classic: () => stocksLongClassic("funds") };
 
 const OUTCOME_ORDER: Record<DailyPick["outcome"], number> = { opened: 0, sold: 1, kept: 2, waiting: 3, paused: 4 };
 
 /** This year's list, as the desk names US stocks ("AAPL.US"). */
 export const usBreakoutStocks = (year: number) => stockCohortFor("us", year).map(usSymbol);
+/** The funds, as the desk names them ("GLD.US"): the same every year. */
+export const breakoutFunds = () => FUNDS.map(usSymbol);
+
+const STOCKS: BreakoutCheck = {
+  tag: "UsBreakout",
+  file: "us_breakout.json",
+  list: usBreakoutStocks,
+  mine: (p) => p.strategy === "breakout" && isUsSymbol(p.symbol) && !isFundSymbol(p.symbol),
+  slot: "breakout",
+  market: "us",
+  state: { lastDay: null, runs: {} },
+  running: false,
+};
+const FUNDS_CHECK: BreakoutCheck = {
+  tag: "FundsBreakout",
+  file: "funds_breakout.json",
+  list: breakoutFunds,
+  mine: (p) => p.strategy === "breakout" && isFundSymbol(p.symbol),
+  slot: "funds",
+  market: "funds",
+  state: { lastDay: null, runs: {} },
+  running: false,
+};
 
 /** Whether `now` is in the check's window on a weekday (US holidays have no new candles, so nothing breaks out then). */
 export function usCheckDue(now: number): boolean {
@@ -120,22 +168,28 @@ export function withToday(rows: unknown[], today: string, rate: number, price: n
   return s;
 }
 
-/** The day's check, once, at 3:45 pm New York on a weekday. */
-export async function runUsBreakout(deps: UsBreakoutDeps = realDeps): Promise<void> {
+/** The day's check of US stocks, once, at 3:45 pm New York on a weekday. */
+export const runUsBreakout = (deps: UsBreakoutDeps = realDeps): Promise<void> => runCheck(STOCKS, deps);
+/** The day's check of the funds, the same way, right after. */
+export const runFundsBreakout = (deps: UsBreakoutDeps = fundsRealDeps): Promise<void> => runCheck(FUNDS_CHECK, deps);
+
+async function runCheck(check: BreakoutCheck, deps: UsBreakoutDeps): Promise<void> {
   const now = deps.now();
   const day = nyParts(now).day;
-  if (running || state.lastDay === day || !usCheckDue(now)) return;
+  const state = check.state;
+  if (check.running || state.lastDay === day || !usCheckDue(now)) return;
   const desks = deps.desks(now);
-  const held = deps.positions().filter((p) => p.strategy === "breakout" && isUsSymbol(p.symbol));
+  const held = deps.positions().filter(check.mine);
   if (desks.length === 0 && held.length === 0) return;
-  running = true;
+  check.running = true;
+  const save = () => saveCheck(check);
   // Marked first: a restart mid-check doesn't trade the day twice.
   const lastDay = state.lastDay;
   state.lastDay = day;
   save();
   try {
     const rate = deps.rate();
-    const list = usBreakoutStocks(Number(day.slice(0, 4)));
+    const list = check.list(Number(day.slice(0, 4)));
     const symbols = [...new Set([...list, ...held.map((p) => p.symbol)])];
     if (!rate) {
       const note = "No USD/INR rate yet, so US prices couldn't be read.";
@@ -148,7 +202,7 @@ export async function runUsBreakout(deps: UsBreakoutDeps = realDeps): Promise<vo
     } catch (err) {
       // Nothing traded yet: the next minute tries again, until 3:50.
       state.lastDay = lastDay;
-      console.warn("[UsBreakout] Couldn't read US prices; trying again:", err);
+      console.warn(`[${check.tag}] Couldn't read US prices; trying again:`, err);
       return;
     }
     const failed: string[] = [];
@@ -215,17 +269,17 @@ export async function runUsBreakout(deps: UsBreakoutDeps = realDeps): Promise<vo
       }
       picks.sort((a, b) => OUTCOME_ORDER[a.outcome] - OUTCOME_ORDER[b.outcome]);
       state.runs[uid] = { at: now, day, coins: symbols.length, failed, picks, ...(note ? { note } : {}) };
-      console.log(`[UsBreakout] ${day}: ${symbols.length} stocks, opened ${picks.filter((p) => p.outcome === "opened").map((p) => p.symbol).join(", ") || "none"} for ${uid}.`);
+      console.log(`[${check.tag}] ${day}: ${symbols.length} checked, opened ${picks.filter((p) => p.outcome === "opened").map((p) => p.symbol).join(", ") || "none"} for ${uid}.`);
     }
     // Sales for a desk that isn't scanning (it still holds its breakout trades).
     for (const [uid, sold] of soldFor) {
       if (!desks.some(([d]) => d === uid)) state.runs[uid] = { at: now, day, coins: symbols.length, failed, picks: sold };
     }
   } catch (err) {
-    console.error("[UsBreakout] Check failed:", err);
+    console.error(`[${check.tag}] Check failed:`, err);
   } finally {
     save();
-    running = false;
+    check.running = false;
   }
 }
 
@@ -243,46 +297,62 @@ export function nextUsCheckAt(now: number, lastDay: string | null): number {
   return now;
 }
 
-/** What the Lab shows a user: the last check, breakout's US record and whether it trades, the US slots, and the next check. */
-export function usBreakoutView(uid: string, now: number = Date.now()) {
+/** What the Lab shows a user of one check: the last one, its record and whether it trades, its slots in use, and the next check. */
+function checkView(check: BreakoutCheck, uid: string, now: number) {
   const desk = getDeskState(uid);
   return {
-    run: state.runs[uid] ?? null,
-    gate: breakoutGate(realDeps.classic()) ?? null,
-    /** US breakout trades open now against breakout's own US slots. */
-    slots: desk ? slotsInUse(uid, desk, "us", "breakout") : null,
-    nextAt: nextUsCheckAt(now, state.lastDay),
+    run: check.state.runs[uid] ?? null,
+    gate: breakoutGate(stocksLongClassic(check.market)) ?? null,
+    /** Its trades open now against its own US slots. */
+    slots: desk ? slotsInUse(uid, desk, "us", check.slot) : null,
+    nextAt: nextUsCheckAt(now, check.state.lastDay),
   };
 }
+/** US stocks' check: the last one, breakout's US record and whether it trades, the US slots, and the next check. */
+export const usBreakoutView = (uid: string, now: number = Date.now()) => checkView(STOCKS, uid, now);
+/** The funds' check, the same way. */
+export const fundsBreakoutView = (uid: string, now: number = Date.now()) => checkView(FUNDS_CHECK, uid, now);
 
+function loadCheck(check: BreakoutCheck): void {
+  try {
+    if (!fs.existsSync(dataFile(check.file))) return;
+    const saved = JSON.parse(fs.readFileSync(dataFile(check.file), "utf8"));
+    if (saved && typeof saved === "object") check.state = { lastDay: typeof saved.lastDay === "string" ? saved.lastDay : null, runs: saved.runs ?? {} };
+  } catch (err) {
+    console.warn(`[${check.tag}] Couldn't read the last check:`, err);
+  }
+}
+
+/** Both checks' last runs, from disk. */
 export function loadUsBreakout(): void {
+  loadCheck(STOCKS);
+  loadCheck(FUNDS_CHECK);
+}
+
+function saveCheck(check: BreakoutCheck): void {
+  const file = dataFile(check.file);
   try {
-    if (!fs.existsSync(file())) return;
-    const saved = JSON.parse(fs.readFileSync(file(), "utf8"));
-    if (saved && typeof saved === "object") state = { lastDay: typeof saved.lastDay === "string" ? saved.lastDay : null, runs: saved.runs ?? {} };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(check.state), "utf8");
+    fs.renameSync(`${file}.tmp`, file);
   } catch (err) {
-    console.warn("[UsBreakout] Couldn't read the last check:", err);
+    console.warn(`[${check.tag}] Couldn't save the check:`, err);
   }
 }
 
-function save(): void {
-  try {
-    fs.mkdirSync(path.dirname(file()), { recursive: true });
-    fs.writeFileSync(`${file()}.tmp`, JSON.stringify(state), "utf8");
-    fs.renameSync(`${file()}.tmp`, file());
-  } catch (err) {
-    console.warn("[UsBreakout] Couldn't save the check:", err);
-  }
-}
-
-/** Whether a check is under way (US momentum's waits for it, so the two don't buy the same stock at once). */
-export const usBreakoutBusy = () => running;
+/** Whether a check is under way (US momentum's waits for them, so they don't buy the same stock at once). */
+export const usBreakoutBusy = () => STOCKS.running || FUNDS_CHECK.running;
 
 /** Test hooks. */
 export function _resetUsBreakout(): void {
-  state = { lastDay: null, runs: {} };
-  running = false;
+  for (const check of [STOCKS, FUNDS_CHECK]) {
+    check.state = { lastDay: null, runs: {} };
+    check.running = false;
+  }
 }
 export function _usBreakoutState(): Saved {
-  return state;
+  return STOCKS.state;
+}
+export function _fundsBreakoutState(): Saved {
+  return FUNDS_CHECK.state;
 }

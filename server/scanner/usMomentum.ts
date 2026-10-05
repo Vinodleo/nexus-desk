@@ -24,7 +24,7 @@ import {
   type DailyRun,
   type TraderGate,
 } from "./dailyCoins";
-import { loadUsBreakout, runUsBreakout, usBreakoutBusy, usBreakoutStocks, usCheckDue, US_CHECK_AT, withToday } from "./usBreakout";
+import { loadUsBreakout, runFundsBreakout, runUsBreakout, usBreakoutBusy, usBreakoutStocks, usCheckDue, US_CHECK_AT, withToday } from "./usBreakout";
 
 // Momentum, top 3, on US stocks (paper, owner's call): the classic strategy
 // that was up in 9 of the 11 years since 2016 on them
@@ -387,8 +387,10 @@ function save(): void {
 export function startUsChecks(): void {
   loadUsBreakout();
   loadUsMomentum();
+  // US stocks' breakout, the funds' breakout, then momentum: each sees the trades the one before opened.
   timer = setInterval(async () => {
     await runUsBreakout();
+    await runFundsBreakout();
     await runUsMomentum();
   }, CHECK_EVERY_MS);
 }

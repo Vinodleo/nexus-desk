@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
-const { UsBreakoutCard } = await import("../../src/components/ledger/UsBreakoutCard");
+const { FundsBreakoutCard, UsBreakoutCard } = await import("../../src/components/ledger/UsBreakoutCard");
 
 afterEach(cleanup);
 const reply = (body: unknown) => new Response(JSON.stringify(body));
@@ -73,5 +73,36 @@ describe("US breakout trades", () => {
     const { container } = render(createElement(UsBreakoutCard));
     await new Promise((r) => setTimeout(r, 0));
     expect(container.innerHTML).toBe("");
+  });
+});
+
+describe("funds breakout trades (gold, bonds and the rest)", () => {
+  it("shows the funds' check from its own route, with its own slots and record", async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path: string) =>
+      reply(
+        path === "/api/funds-breakout"
+          ? view({
+              run: {
+                at: Date.parse("2026-10-05T19:46:00Z"), day: "2026-10-05", coins: 16, failed: [],
+                picks: [
+                  { symbol: "GLD.US", trader: "Breakout 55/20", outcome: "opened" },
+                  { symbol: "TLT.US", trader: "Breakout 55/20", outcome: "waiting", reason: "would exceed 1 open funds breakout trade at once" },
+                ],
+              },
+              gate: { trader: "Breakout 55/20", trades: 443, avgR: 0.54, on: true },
+              slots: { used: 1, max: 1 },
+            })
+          : view()
+      )
+    );
+    render(createElement(FundsBreakoutCard));
+    expect((await screen.findByTestId("funds-status")).textContent).toMatch(/^Last check .+ · 16 funds · next /);
+    expect(screen.getByText("Funds breakout 55/20 (paper)")).toBeTruthy();
+    expect(screen.getByTestId("funds-record").textContent).toBe("Record since 2016: 443 trades · +0.54R●Trading");
+    expect(screen.getByTestId("funds-slots").textContent).toBe(
+      "Funds breakout slots: 1 of 1 in useTLT waited for a free slot. To take more, raise Settings → US stocks: funds breakout trades at once."
+    );
+    expect(screen.getByText(/gold, silver, gold miners/)).toBeTruthy();
+    expect(vi.mocked(apiFetch).mock.calls.some(([path]) => path === "/api/funds-breakout")).toBe(true);
   });
 });

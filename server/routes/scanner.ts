@@ -14,7 +14,7 @@ import { dailyCoinsView } from "../scanner/dailyCoins";
 import { dailyLongView } from "../history/dailyLong";
 import { stocksLongView } from "../history/stocksLong";
 import { usMomentumView } from "../scanner/usMomentum";
-import { usBreakoutView } from "../scanner/usBreakout";
+import { fundsBreakoutView, usBreakoutView } from "../scanner/usBreakout";
 import { PAUSE_AFTER_MS, eventWindowAt } from "../../src/shared/eventCalendar";
 
 // The app's side of the server scanner: it sends its desk settings, and
@@ -108,6 +108,11 @@ router.get("/api/stocks-long", (_req: Request, res: Response) => {
 // Breakout 55/20 on US stocks (the Lab): the last daily check, its record, and the US slots.
 router.get("/api/us-breakout", (req: Request, res: Response) => {
   res.json({ success: true, ...usBreakoutView(uidOf(req)) });
+});
+
+// The funds' breakout check (gold, bonds and the rest): the same shape.
+router.get("/api/funds-breakout", (req: Request, res: Response) => {
+  res.json({ success: true, ...fundsBreakoutView(uidOf(req)) });
 });
 
 // Momentum, top 3, on US stocks (the Lab): the last weekly check, its record, and its US slots.

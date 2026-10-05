@@ -11,8 +11,10 @@ import {
   AMOUNT_CHOICES,
   BREAKOUT_TRADES_CHOICES,
   DEFAULT_BREAKOUT_TRADES,
+  DEFAULT_FUNDS_TRADES,
   DEFAULT_MOMENTUM_TRADES,
   defaultRiskPerTrade,
+  FUNDS_TRADES_CHOICES,
   MAX_TRADES_CHOICES,
   MOMENTUM_TRADES_CHOICES,
   PAPER_MONEY_CHOICES,
@@ -264,6 +266,8 @@ const MarketLimitRows: React.FC<{
   // Momentum, top 3, trades US stocks only, on slots of its own too.
   const momentumHere = market === "us";
   const momentum = mine.momentumTrades ?? DEFAULT_MOMENTUM_TRADES[market];
+  // Breakout on the funds (gold, bonds and the rest, US-listed), on slots of their own.
+  const funds = mine.fundsTrades ?? DEFAULT_FUNDS_TRADES[market];
   // A stop closer than this (share of price) reaches the amount per trade first, so risks less.
   const fullRiskStopPct = (risk / mine.amountPerTradeInr) * 100;
   return (
@@ -307,7 +311,7 @@ const MarketLimitRows: React.FC<{
       <Row
         label={`${title}: trades at once`}
         sub={`Up to ${formatMoney(mine.amountPerTradeInr * mine.maxOpenTrades, { decimals: 0 })} in ${title.toLowerCase()} at a time${
-          momentumHere ? ", besides breakout's and momentum's" : trades ? ", besides breakout's" : ""
+          momentumHere ? ", besides breakout's, momentum's and the funds'" : trades ? ", besides breakout's" : ""
         }`}
       >
         <RollingSelect
@@ -351,6 +355,24 @@ const MarketLimitRows: React.FC<{
             options={withCurrent(MOMENTUM_TRADES_CHOICES, momentum)}
             format={(v) => (v === 0 ? "Off" : String(v))}
             onChange={(v) => set({ momentumTrades: v })}
+          />
+        </Row>
+      )}
+      {momentumHere && (
+        <Row
+          label={`${title}: funds breakout trades at once`}
+          sub={
+            funds > 0
+              ? `Breakout on gold, bond and other funds, on slots of its own, up to ${formatMoney(mine.amountPerTradeInr * funds, { decimals: 0 })} more`
+              : "Breakout doesn't trade the funds"
+          }
+        >
+          <RollingSelect
+            label={`${title}: funds breakout trades at once`}
+            value={funds}
+            options={withCurrent(FUNDS_TRADES_CHOICES, funds)}
+            format={(v) => (v === 0 ? "Off" : String(v))}
+            onChange={(v) => set({ fundsTrades: v })}
           />
         </Row>
       )}

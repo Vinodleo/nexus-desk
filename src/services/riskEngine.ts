@@ -1,4 +1,4 @@
-import { MARKET_LABEL, marketOf, openInSector, openInSlots, sectorOf, slotKindOf, slotsFor, type MarketLimits } from "../shared/marketLimits";
+import { MARKET_LABEL, marketOf, openInSector, openInSlots, sectorOf, slotKindOf, slotsFor, slotTradesLabel, type MarketLimits } from "../shared/marketLimits";
 import {
   StrategySetup,
   MetaLabelScore,
@@ -248,7 +248,7 @@ export function evaluateRiskEngine(
     if (passed && inMarket >= max) {
       passed = false;
       rejectionCode = "max_positions";
-      rejectionReason = `REJECTED BY RISK: Maximum open ${MARKET_LABEL[marketOf(setup.symbol)]}${kind ? ` ${kind}` : ""} trades reached (${inMarket}/${max}).`;
+      rejectionReason = `REJECTED BY RISK: Maximum open ${slotTradesLabel(marketOf(setup.symbol), kind)} trades reached (${inMarket}/${max}).`;
     }
   } else if (passed && activePositions.length >= maxSimultaneousPositions) {
     passed = false;
