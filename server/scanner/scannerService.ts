@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { Position } from "../../src/types";
 import { scanAllMarkets, type FullScanReport } from "../../src/services/marketScannerService";
-import { DEFAULT_RISK_POLICY, type RiskPolicyConfig } from "../../src/services/riskEngine";
+import { dailyLossLimitFor, DEFAULT_RISK_POLICY, type RiskPolicyConfig } from "../../src/services/riskEngine";
 import { SIGNAL_INTERVAL_MS, nextCandleFetchAt } from "../../src/services/liveMarketStreamService";
 import { recentBeats } from "../../src/shared/scanHeartbeat";
 import { MAX_KEPT, mergeShadows, resolveShadows, type ShadowSignal } from "../../src/services/shadowTracker";
@@ -278,6 +278,7 @@ export function riskPolicyFor(desk: DeskState): RiskPolicyConfig {
     ...desk.riskLimits,
     ...(desk.riskLimits.marketLimits ? { marketLimits: cleanMarketLimits(desk.riskLimits.marketLimits) } : {}),
     equity: desk.equity > 0 ? desk.equity : DEFAULT_RISK_POLICY.equity,
+    hardDailyLossLimit: dailyLossLimitFor(desk.equity),
   };
 }
 

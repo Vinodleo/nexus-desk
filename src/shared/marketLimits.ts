@@ -44,9 +44,12 @@ export interface MarketLimit {
 
 export type MarketLimits = Record<MarketKey, MarketLimit>;
 
-export const AMOUNT_CHOICES = [1000, 2000, 3000, 5000, 10000, 25000, 50000];
+/** Up to ₹2 lakh a trade, for a larger paper desk (PAPER_MONEY_CHOICES). */
+export const AMOUNT_CHOICES = [1000, 2000, 3000, 5000, 10000, 25000, 50000, 75000, 100000, 150000, 200000];
 export const MAX_TRADES_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10];
-export const RISK_CHOICES = [25, 50, 75, 100, 150, 200, 300, 500, 1000];
+export const RISK_CHOICES = [25, 50, 75, 100, 150, 200, 300, 500, 1000, 2000, 3000, 5000, 7500, 10000];
+/** What the paper balance can start again at (Settings → Paper money). */
+export const PAPER_MONEY_CHOICES = [100000, 200000, 500000, 1000000, 2500000];
 /** Breakout slots: none switches breakout off in that market. */
 export const BREAKOUT_TRADES_CHOICES = [0, 1, 2, 3, 4, 5, 6, 8, 10];
 /** Until you choose: breakout's own slots in each market it trades (none for Indian stocks). */

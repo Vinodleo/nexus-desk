@@ -270,6 +270,38 @@ export function loadStoredCapital(): AgentCapitalState {
   return fallback;
 }
 
+/** The paper balance's first start. */
+export const PAPER_START_INR = 100000;
+// Kept on its own, not in the capital state: that's copied to Firebase, whose rules take only its listed fields.
+const STORAGE_KEY_PAPER_START = "nexus_paper_start_inr_v1";
+
+/** What the paper balance last started at (Settings → Paper money): ₹1 lakh until chosen. */
+export function loadPaperStart(): number {
+  try {
+    const saved = Number(localStorage.getItem(STORAGE_KEY_PAPER_START));
+    return Number.isFinite(saved) && saved > 0 ? saved : PAPER_START_INR;
+  } catch {
+    return PAPER_START_INR;
+  }
+}
+
+export function savePaperStart(amountInr: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_PAPER_START, String(amountInr));
+  } catch (err) {
+    console.warn("Failed to save the paper start to LocalStorage:", err);
+  }
+}
+
+/**
+ * The paper balance started again at `amountInr` (Settings → Paper money):
+ * the all-time P&L restarts from zero; today's stays (it counts toward
+ * today's loss limit). Trades, records and open trades aren't touched.
+ */
+export function restartedPaperCapital(amountInr: number, dailyRealizedPnl: number): AgentCapitalState {
+  return { equity: amountInr, cash: amountInr, dailyRealizedPnl, allTimeRealizedPnl: 0 };
+}
+
 /**
  * Persist capital state.
  */
