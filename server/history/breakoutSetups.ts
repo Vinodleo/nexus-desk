@@ -5,13 +5,14 @@ import { BREAKOUT_READINGS_VERSION, type BreakoutSetup, type MlStrategy } from "
 // Every replayed breakout 55/20 trade with its readings at entry, kept for
 // the machine-learning test on breakout trades (history/mlTest.ts): the
 // coins' from the daily replay since 2017 (history/dailyLong.ts), US stocks'
-// from the stocks' replay since 2016 (history/stocksLong.ts). Momentum's
+// from the stocks' replay since 2016 (history/stocksLong.ts), and the funds'
+// (gold, bonds and the rest) from the same replay. Momentum's
 // trades the same way, in files of their own. A few hundred trades each, so
 // plain JSON.
 
-/** The markets breakout paper-trades. */
-export type BreakoutMarket = "coins" | "us";
-export const BREAKOUT_MARKETS: BreakoutMarket[] = ["coins", "us"];
+/** The markets breakout paper-trades, and the funds it's tested on. */
+export type BreakoutMarket = "coins" | "us" | "funds";
+export const BREAKOUT_MARKETS: BreakoutMarket[] = ["coins", "us", "funds"];
 
 export interface SavedBreakoutSetups {
   version: number;

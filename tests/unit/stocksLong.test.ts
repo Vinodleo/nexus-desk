@@ -135,7 +135,7 @@ describe("the replay", () => {
     await stocks.startStocksLong(true, d);
     const run = stocks._stocksLongRun()!;
     expect(run.finishedAt).not.toBeNull();
-    expect(run.done).toEqual(["us", "nse"]);
+    expect(run.done).toEqual(["us", "funds", "nse"]);
     expect(run.classicVersion).toBe(CLASSIC_VERSION);
     // US breakout and momentum trades are saved for the machine-learning test (closed ones: these still rise, so none yet); India's aren't.
     const { readBreakoutSetups } = await import("../../server/history/breakoutSetups");
@@ -160,19 +160,72 @@ describe("the replay", () => {
     expect(waits.filter((ms) => ms === 10 * 60 * 1000).length).toBe(1);
 
     const view = stocks.stocksLongView();
-    expect(view).toMatchObject({ running: false, funds: { us: "SPY", nse: "NIFTYBEES" } });
+    expect(view).toMatchObject({ running: false, funds: { us: "SPY", nse: "NIFTYBEES", funds: "SPY" } });
     expect(view.run!.problems).toEqual([{ symbol: "HDFC", note: "HDFC isn't listed at Angel One" }]);
     expect(view.run!.adjusted).toEqual([{ symbol: "RELIANCE", count: 1 }]);
-    expect(Object.keys(view.classic)).toEqual(["us", "nse"]);
+    expect(Object.keys(view.classic)).toEqual(["us", "funds", "nse"]);
     // Kept on disk, and due again in a month (or when the classic strategies change).
     stocks._resetStocksLong();
     stocks.loadStocksLong();
     const saved = stocks._stocksLongRun()!;
-    expect(saved.done).toEqual(["us", "nse"]);
+    expect(saved.done).toEqual(["us", "funds", "nse"]);
     expect(stocks.stocksLongDue(saved, saved.finishedAt! + 29 * DAY)).toBe(false);
     expect(stocks.stocksLongDue(saved, saved.finishedAt! + 31 * DAY)).toBe(true);
     expect(stocks.stocksLongDue({ ...saved, classicVersion: CLASSIC_VERSION - 1 }, saved.finishedAt!)).toBe(true);
     expect(stocks.stocksLongDue(null, 0)).toBe(true);
+  });
+
+  it("replays the funds across kinds of assets, the same every year and with no share-market guard, and saves their trades for the machine-learning test", async () => {
+    // SPY falls the whole time: US stocks' guard is down; the funds' isn't.
+    const { deps: d, downloads } = deps({
+      download: async (symbol: string) => {
+        downloads.push(symbol);
+        if (symbol === "SPY.US") return { series: weekdays(toMs, 5 * HOUR, -0.001) };
+        return { series: weekdays(toMs, symbol.endsWith(".US") ? 5 * HOUR : -5.5 * HOUR) };
+      },
+    });
+    await stocks.startStocksLong(true, d);
+    const run = stocks._stocksLongRun()!;
+    expect(stocks.stockSymbols("funds")).toEqual(["SPY.US", ...stocks.FUNDS.map((t) => `${t}.US`)]);
+    expect(stocks.FUNDS).toEqual(expect.arrayContaining(["GLD", "TLT", "IEF", "SLV"]));
+    expect(stocks.inStockCohort("GLD.US", Date.UTC(2016, 5, 1), "funds")).toBe(true);
+    expect(stocks.inStockCohort("GLD.US", Date.UTC(2030, 5, 1), "funds")).toBe(true);
+    expect(stocks.inStockCohort("GLD.US", Date.UTC(2016, 5, 1))).toBe(false);
+    const count = (market: "us" | "funds", id: "breakout" | "maTrend" | "momentum") =>
+      Object.values(run.classic[market]!).reduce((n, q) => n + (q[id]?.trades ?? 0), 0);
+    // Every fund rises steadily: one breakout trade each, from 2016.
+    expect(count("funds", "breakout")).toBe(stocks.FUNDS.length);
+    expect(Object.keys(run.classic.funds!).every((q) => q >= "2016")).toBe(true);
+    // Moving averages and momentum trade the funds with SPY falling; US stocks' don't.
+    expect(count("funds", "maTrend")).toBeGreaterThan(0);
+    expect(count("funds", "momentum")).toBeGreaterThan(0);
+    expect(count("us", "maTrend")).toBe(0);
+    expect(count("us", "momentum")).toBe(0);
+    // Saved for the machine-learning test (closed trades only: these still rise, so none yet).
+    const { readBreakoutSetups } = await import("../../server/history/breakoutSetups");
+    expect(readBreakoutSetups("funds")).toMatchObject({ savedAt: d.now(), setups: [] });
+    expect(readBreakoutSetups("funds", "momentum")).toMatchObject({ savedAt: d.now(), setups: [] });
+  });
+
+  it("replays a market added since a finished run (the funds) alone, without downloading the others again", async () => {
+    const first = deps();
+    await stocks.startStocksLong(true, first.deps);
+    // A run from before the funds: finished with US stocks and India only.
+    const before = { ...stocks._stocksLongRun()!, done: ["us", "nse"] as ("us" | "nse")[], classic: { ...stocks._stocksLongRun()!.classic, funds: undefined } };
+    fs.writeFileSync(path.join(dataDir, "stocks_long.json"), JSON.stringify(before));
+    stocks._resetStocksLong();
+    stocks.loadStocksLong();
+    expect(stocks.stocksLongMissing(stocks._stocksLongRun())).toBe(true);
+    expect(stocks.stocksLongDue(stocks._stocksLongRun(), toMs)).toBe(false);
+    const second = deps();
+    await stocks.startStocksLong(false, second.deps);
+    expect(second.downloads).toEqual(stocks.stockSymbols("funds"));
+    const run = stocks._stocksLongRun()!;
+    expect(run.done).toEqual(["us", "nse", "funds"]);
+    expect(run.classic.funds).toBeTruthy();
+    expect(run.classic.us).toEqual(before.classic.us);
+    expect(stocks.stocksLongMissing(run)).toBe(false);
+    expect(stocks.stocksLongMissing(null)).toBe(false);
   });
 
   it("keeps the last results on show while it replays again, market by market", async () => {

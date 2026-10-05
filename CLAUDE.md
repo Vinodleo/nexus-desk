@@ -146,6 +146,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   fees and a spread; for India, delivery charges (`stockCost`). Results by quarter per market (`stocks_long.json`), kept
   on show while it reruns. Monthly, at `CPU_SHARE`, never alongside the other background work; Indian downloads wait for
   NSE to close. It decides nothing: stocks paper-trade a strategy only if it clearly beats its costs and the owner says so.
+  A third market, the funds (owner's ask): 16 US-listed funds across kinds of assets (`FUNDS`: gold, silver, gold miners,
+  US government, inflation-linked, company and high-yield bonds, commodities, oil, the dollar, property, shares outside
+  the US, the Nasdaq 100, small companies), the same every year, with no share-market guard (`GUARDED`: gold and bonds
+  often rise when shares fall), replayed between US stocks and India; a finished run without them replays just them
+  (`stocksLongMissing`). The Lab's stocks card has a Funds tab. Trades nothing.
 - **Daily coin trades (paper, owner's call, 3 Oct; switched off 5 Oct):** `server/scanner/dailyCoins.ts`. **The daily
   traders are switched off** (owner's call, 5 Oct, `dailyTradersSwitchedOff`): with CoinDCX's real fee they lost together
   since 2018 (−0.05R, 1 of 9 years up), and the one still clearing the bar alone is likely the best of seven by luck. Their
@@ -202,7 +207,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   promising half. It passes only if the trades it would skip clearly lost (`highR` below zero) and its picks are
   `MIN_EDGE_R`+ ahead of every trade (`ml_test_breakout.json`). Momentum's (top 3) replayed trades are tested the same
   way alongside, on the same readings (`momentumSetups`, `momentum_setups_coins.json`, `momentum_setups_us.json`;
-  verdict in the same file's `momentum`, coins marked "not traded" in the Lab). Decides nothing live.
+  verdict in the same file's `momentum`, coins marked "not traded" in the Lab). The funds' (gold, bonds and the rest)
+  are tested the same way (`BreakoutMarket` "funds", `*_setups_funds.json`, marked "not traded"). Decides nothing live.
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
   - It, the win-chance calibration and the trade memory count each trader's move once
     (`oneShadowAtATime` in `shadowTracker.ts`), not once per candle a setup stayed valid.

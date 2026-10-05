@@ -24,6 +24,14 @@ import { scannerHeartbeat } from "../scanner/scannerService";
 // splits and dividends; Angel One's aren't, so splits and bonus issues are
 // found in its candles and the earlier prices adjusted (adjustForSplits).
 //
+// A third "market", funds (FUNDS): 16 funds listed in the US across kinds of
+// assets (gold, silver, bonds, commodities, the dollar, property, shares
+// outside the US), the same list every year, with no share-market guard: gold
+// and bonds often rise when shares fall. Trend following spread over assets
+// like these is how trend funds smooth their years; whether it would here is
+// the test (and the machine-learning test on its breakout and momentum
+// trades, history/mlTest.ts).
+//
 // It runs in the background like the other replays, at CPU_SHARE of a core,
 // never alongside them, and again monthly. Indian downloads wait for NSE to
 // close. Its results decide nothing: paper trading follows only if a
@@ -46,8 +54,19 @@ const RETRY_AFTER_MS = 10 * 60 * 1000;
 const MIN_DAYS = 250;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type StockMarket = "us" | "nse";
-export const STOCK_MARKETS: StockMarket[] = ["us", "nse"];
+export type StockMarket = "us" | "nse" | "funds";
+/** US first, then the funds (from Alpaca too), India last: its downloads wait for NSE to close. */
+export const STOCK_MARKETS: StockMarket[] = ["us", "funds", "nse"];
+
+/**
+ * Funds across kinds of assets, all listed in the US since before 2015: gold,
+ * silver and gold miners; long, middle and inflation-linked US government
+ * bonds, company bonds and high-yield ones; commodities and oil; the dollar;
+ * US property; shares outside the US and in emerging markets; the Nasdaq 100
+ * and small US companies. SPY, the US index fund, is their market reading
+ * (not traded here, as in the US market).
+ */
+export const FUNDS = ["GLD", "SLV", "GDX", "TLT", "IEF", "TIP", "LQD", "HYG", "DBC", "USO", "UUP", "VNQ", "EFA", "EEM", "QQQ", "IWM"];
 
 /**
  * The 20 biggest stocks by market value on 1 January each year, from memory
@@ -79,13 +98,17 @@ export const STOCK_COHORTS: Record<StockMarket, Record<number, string[]>> = {
     2024: ["RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "BHARTIARTL", "SBIN", "HINDUNILVR", "ITC", "LT", "BAJFINANCE", "HCLTECH", "KOTAKBANK", "AXISBANK", "ADANIENT", "MARUTI", "SUNPHARMA", "TITAN", "ONGC", "NTPC"],
     2025: ["RELIANCE", "HDFCBANK", "TCS", "BHARTIARTL", "ICICIBANK", "SBIN", "INFY", "HINDUNILVR", "ITC", "BAJFINANCE", "LT", "HCLTECH", "SUNPHARMA", "KOTAKBANK", "MARUTI", "M&M", "AXISBANK", "NTPC", "ULTRACEMCO", "ONGC"],
   },
+  // The same funds every year.
+  funds: { 2016: FUNDS },
 };
 
-/** Each market's index fund: its 200-day average guards moving averages and momentum. It isn't traded here. */
-export const MARKET_FUND: Record<StockMarket, string> = { us: "SPY", nse: "NIFTYBEES" };
+/** Each market's index fund: its 200-day average guards moving averages and momentum (not the funds'). It isn't traded here. */
+export const MARKET_FUND: Record<StockMarket, string> = { us: "SPY", nse: "NIFTYBEES", funds: "SPY" };
+/** Whether the market fund's 200-day average guards a market: the funds' gold and bonds often rise when shares fall. */
+const GUARDED: Record<StockMarket, boolean> = { us: true, nse: true, funds: false };
 
-/** The desk's name for a stock ("AAPL.US", "RELIANCE"), and its ticker. */
-const symbolOf = (market: StockMarket, ticker: string) => (market === "us" ? `${ticker}.US` : ticker);
+/** The desk's name for a stock or fund ("AAPL.US", "GLD.US", "RELIANCE"), and its ticker. */
+const symbolOf = (market: StockMarket, ticker: string) => (market === "nse" ? ticker : `${ticker}.US`);
 const tickerOf = (symbol: string) => symbol.replace(/\.US$/, "");
 const marketOf = (symbol: string): StockMarket => (symbol.endsWith(".US") ? "us" : "nse");
 
@@ -96,9 +119,9 @@ export function stockCohortFor(market: StockMarket, year: number): string[] {
   return STOCK_COHORTS[market][Math.min(years[years.length - 1], year)];
 }
 
-/** Whether a trade opened at `ms` on `symbol` counts: the stock was on that year's list. */
-export function inStockCohort(symbol: string, ms: number): boolean {
-  return stockCohortFor(marketOf(symbol), new Date(ms).getUTCFullYear()).includes(tickerOf(symbol));
+/** Whether a trade opened at `ms` on `symbol` counts: the stock was on that year's list (the funds' list, for the funds). */
+export function inStockCohort(symbol: string, ms: number, market: StockMarket = marketOf(symbol)): boolean {
+  return stockCohortFor(market, new Date(ms).getUTCFullYear()).includes(tickerOf(symbol));
 }
 
 /** A market's stocks: its fund first, then every stock on any year's list. */
@@ -109,9 +132,9 @@ export function stockSymbols(market: StockMarket): string[] {
 
 /** A round trip's costs on a market's daily trades (share of the trade): fees and a typical spread; India's as delivery. */
 export function stockCost(market: StockMarket): number {
-  return market === "us"
-    ? roundTripFeeRate("SPY.US") + UNREAD_STOCK_SPREAD.us
-    : nseDeliveryRoundTripRate(SLOW_NSE_TRADE_INR) + UNREAD_STOCK_SPREAD.nse;
+  return market === "nse"
+    ? nseDeliveryRoundTripRate(SLOW_NSE_TRADE_INR) + UNREAD_STOCK_SPREAD.nse
+    : roundTripFeeRate("SPY.US") + UNREAD_STOCK_SPREAD.us;
 }
 
 /** What a split or bonus issue does to the price: 2-for-1 halves it, 1:2 bonus takes it to two thirds, and so on. */
@@ -219,6 +242,11 @@ export function stocksLongDue(saved: StocksLongRun | null, now: number): boolean
   return saved.finishedAt !== null && now - saved.finishedAt > RERUN_AFTER_MS;
 }
 
+/** A finished run without a market added since (the funds): carried on to replay just that one, nothing downloaded again. */
+export function stocksLongMissing(saved: StocksLongRun | null): boolean {
+  return !!saved && saved.finishedAt !== null && STOCK_MARKETS.some((m) => !saved.done.includes(m));
+}
+
 async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<void> {
   const stopped = () => gen !== generation;
   if (fresh || !run) {
@@ -294,40 +322,41 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
     current = null;
 
     const fund = symbolOf(market, MARKET_FUND[market]);
-    const up = series[fund] ? uptrend(series[fund]) : () => undefined;
-    // US breakout and momentum trades with their readings at entry, for the machine-learning test on them.
+    const up = !GUARDED[market] ? () => true : series[fund] ? uptrend(series[fund]) : () => undefined;
+    // US stocks' and the funds' breakout and momentum trades with their readings at entry, for the machine-learning test on them.
     const fundMarket = series[fund] ? marketCandles(series[fund]) : undefined;
+    const learn = market !== "nse";
     const setups: BreakoutSetup[] = [];
     const cost = stockCost(market);
     const stocks = Object.fromEntries(Object.entries(series).filter(([symbol]) => symbol !== fund));
     const classic: ClassicRecords = {};
     for (const [symbol, s] of Object.entries(stocks)) {
       const started = deps.now();
-      const eligible = (ms: number) => inStockCohort(symbol, ms);
+      const eligible = (ms: number) => inStockCohort(symbol, ms, market);
       const breakouts = breakoutTrades(symbol, s, cost, eligible);
       addClassicTrades(classic, breakouts);
-      if (market === "us") setups.push(...breakoutSetups(s, breakouts, fundMarket));
+      if (learn) setups.push(...breakoutSetups(s, breakouts, fundMarket));
       addClassicTrades(classic, maTrendTrades(symbol, s, up, cost, eligible));
       await rest(deps.now() - started);
       if (stopped()) return;
     }
     const started = deps.now();
-    const momentum = momentumTrades(stocks, up, () => cost, inStockCohort, stockWeekClose);
+    const momentum = momentumTrades(stocks, up, () => cost, (symbol, ms) => inStockCohort(symbol, ms, market), stockWeekClose);
     addClassicTrades(classic, momentum);
-    const momentumPicks = market === "us" ? momentumSetups(stocks, momentum, fundMarket) : [];
+    const momentumPicks = learn ? momentumSetups(stocks, momentum, fundMarket) : [];
     await rest(deps.now() - started);
     if (stopped()) return;
     r.classic[market] = classic;
     r.done.push(market);
-    if (market === "us") {
-      saveBreakoutSetups("us", setups, deps.now());
-      saveBreakoutSetups("us", momentumPicks, deps.now(), "momentum");
+    if (market !== "nse") {
+      saveBreakoutSetups(market, setups, deps.now());
+      saveBreakoutSetups(market, momentumPicks, deps.now(), "momentum");
     }
     save();
   }
   r.finishedAt = deps.now();
   save();
-  console.log(`[StocksLong] Replayed the classic strategies on ${Object.values(r.markets).filter((m) => m.status === "done").length} stocks' daily candles since 2016.`);
+  console.log(`[StocksLong] Replayed the classic strategies on ${Object.values(r.markets).filter((m) => m.status === "done").length} stocks' and funds' daily candles since 2016.`);
 }
 
 /** Starts a run unless one is going: from the start when `fresh` or due, otherwise carrying on with the kept one. */
@@ -352,7 +381,7 @@ export function startStocksLongJob(): void {
   waitForOtherWork(() => active !== null);
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);
-    const due = stocksLongDue(run, Date.now()) || (run !== null && run.finishedAt === null);
+    const due = stocksLongDue(run, Date.now()) || (run !== null && run.finishedAt === null) || stocksLongMissing(run);
     if (!active && !historyRunning() && !backgroundWorkBusy() && due) void startStocksLong(false);
   };
   timer = setTimeout(check, START_DELAY_MS);

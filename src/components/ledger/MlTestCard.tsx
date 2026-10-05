@@ -45,18 +45,21 @@ export interface MlTestView {
 }
 
 type BreakoutVerdict = Pick<BreakoutMlVerdict, "fromYear" | "toYear" | "every" | "picks" | "skipped" | "importance" | "passed">;
-type SlowResult = { savedAt?: Record<"coins" | "us", number | null>; markets: { coins: BreakoutVerdict | null; us: BreakoutVerdict | null } };
+type SlowMarket = "coins" | "us" | "funds";
+/** The funds (gold, bonds and the rest) are absent from older servers' verdicts. */
+type SlowResult = { savedAt?: Partial<Record<SlowMarket, number | null>>; markets: Partial<Record<SlowMarket, BreakoutVerdict | null>> };
 type BreakoutResult = SlowResult & { ranAt: number; momentum?: SlowResult };
-const BREAKOUT_MARKET_TITLE = { coins: "Coins", us: "US stocks" } as const;
+const SLOW_MARKETS: SlowMarket[] = ["coins", "us", "funds"];
+const BREAKOUT_MARKET_TITLE: Record<SlowMarket, string> = { coins: "Coins", us: "US stocks", funds: "Gold, bond and other funds" };
 const STRATEGY = {
-  breakout: { title: "Breakout trades", trades: "breakout trades", notTraded: {} as Partial<Record<"coins" | "us", boolean>> },
-  // Coins don't trade momentum (your call: +0.11R a trade since 2018, well behind breakout): its test is shown, marked.
-  momentum: { title: "Momentum trades (top 3)", trades: "momentum trades", notTraded: { coins: true } as Partial<Record<"coins" | "us", boolean>> },
+  breakout: { title: "Breakout trades", trades: "breakout trades", notTraded: { funds: true } as Partial<Record<SlowMarket, boolean>> },
+  // Coins don't trade momentum (your call: +0.11R a trade since 2018, well behind breakout), and the funds trade nothing yet: their tests are shown, marked.
+  momentum: { title: "Momentum trades (top 3)", trades: "momentum trades", notTraded: { coins: true, funds: true } as Partial<Record<SlowMarket, boolean>> },
 } as const;
 
 /** Each market's verdict on a strategy's trades: every trade against the model's picks and the trades it would skip. */
 const SlowVerdicts: React.FC<{ strategy: keyof typeof STRATEGY; ready: boolean; result: SlowResult | null }> = ({ strategy, ready, result: r }) => {
-  const markets = r ? (["coins", "us"] as const).flatMap((m) => (r.markets[m] ? [{ market: m, v: r.markets[m]! }] : [])) : [];
+  const markets = r ? SLOW_MARKETS.flatMap((m) => (r.markets[m] ? [{ market: m, v: r.markets[m]! }] : [])) : [];
   // Judged with none of this strategy's trades saved yet: it waits for the replays.
   const saved = !r?.savedAt || Object.values(r.savedAt).some((at) => at !== null);
   const { title, trades, notTraded } = STRATEGY[strategy];
@@ -264,7 +267,8 @@ export const MlTestCard: React.FC = () => {
           trades. It decides nothing live.
         </div>
         <div className="text-xs text-muted leading-relaxed mt-1.5">
-          Breakout and momentum trades are fewer (a few hundred per market), so they're judged year by year: for each year from the fifth on,
+          Breakout and momentum trades (on coins, US stocks, and funds of gold, bonds and the rest) are fewer (a few hundred per market), so
+          they're judged year by year: for each year from the fifth on,
           a model learns from the years before but the last, the last sets how choosy it is (the middle of its predictions), and that year's
           trades are judged, never seen. It reads each trade at its entry: how far past the 55-day high, its rises over 20 and 90 days, its
           volatility and volume, its day, and the market's trend. Their profit comes mostly from a few big winners, so a filter helps only if

@@ -151,6 +151,18 @@ describe("the machine-learning test card", () => {
     );
   });
 
+  it("shows the funds' tests (gold, bonds and the rest) beside the markets that trade, marked as not traded", async () => {
+    const verdict = (passed: boolean) => ({
+      fromYear: 2020, toYear: 2025, every: stats(300, 35, 0.2, 0.05), picks: stats(150, 40, 0.5, 0.2), skipped: stats(150, 30, -0.3, -0.5),
+      importance: [], passed,
+    });
+    const breakout = { ready: true, result: { ranAt: 0, markets: { coins: null, us: null, funds: verdict(true) }, momentum: { markets: { funds: verdict(false) } } } };
+    vi.mocked(apiFetch).mockResolvedValue(reply({ ...done, breakout }));
+    render(createElement(MlTestCard));
+    expect((await screen.findByTestId("ml-breakout-funds")).textContent).toContain("Gold, bond and other funds (not traded) judged 2020–2025✓Passes");
+    expect(screen.getByTestId("ml-momentum-funds").textContent).toContain("Gold, bond and other funds (not traded) judged 2020–2025✕Doesn't pass");
+  });
+
   it("shows momentum's test the same way, coins marked as not traded", async () => {
     const verdict = (every: number, picks: number, skipped: number, passed: boolean, from: number) => ({
       fromYear: from, toYear: 2025, every: stats(200, 40, every, every - 0.3), picks: stats(100, 45, picks, picks - 0.4), skipped: stats(100, 35, skipped, skipped - 0.4),
