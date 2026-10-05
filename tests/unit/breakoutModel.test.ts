@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { appendBars, emptySeries } from "../../src/services/historyReplay";
-import { atr, breakoutTrades, sma } from "../../src/services/classicStrategies";
+import { atr, breakoutTrades, momentumTrades, sma } from "../../src/services/classicStrategies";
 import { seeded } from "../../src/services/setupModel";
-import { BREAKOUT_READINGS, breakoutReadings, breakoutSetups, marketCandles, MIN_BREAKOUT_PICKS, walkForward, type BreakoutSetup } from "../../src/services/breakoutModel";
+import { BREAKOUT_READINGS, breakoutReadings, breakoutSetups, marketCandles, MIN_BREAKOUT_PICKS, momentumSetups, walkForward, type BreakoutSetup } from "../../src/services/breakoutModel";
 
 // The machine-learning test on breakout 55/20 trades: readings at each
 // breakout's close, and a year-by-year test of whether skipping the model's
@@ -56,6 +56,37 @@ describe("breakout readings", () => {
     expect(setups[0].r).toBeLessThan(0);
     expect(setups[0].x).toHaveLength(BREAKOUT_READINGS.length);
     expect(setups[0].x[1]).toBeGreaterThan(0);
+  });
+});
+
+describe("momentum's readings", () => {
+  it("are saved with each replayed momentum pick, read on its own coin's candles, leaving out one still open", () => {
+    // Two coins rising at different paces for 120 days, then the faster one falls: it leaves the top at the next week's close.
+    const days = 160;
+    const fast = series(Array.from({ length: days }, (_, k) => {
+      const c = k < 120 ? 100 * 1.01 ** k : 100 * 1.01 ** 119 * 0.97 ** (k - 119);
+      return [c, c * 1.01, c * 0.99, c, 10] as [number, number, number, number, number];
+    }));
+    const slow = series(Array.from({ length: days }, (_, k) => {
+      const c = 50 * 1.002 ** k;
+      return [c, c * 1.01, c * 0.99, c, 10] as [number, number, number, number, number];
+    }));
+    const coins = { "FAST/INR": fast, "SLOW/INR": slow };
+    const trades = momentumTrades(coins, () => true, () => 0.002, () => true);
+    const closed = trades.filter((t) => !t.open);
+    expect(closed.length).toBeGreaterThan(0);
+    const setups = momentumSetups(coins, trades);
+    expect(setups).toHaveLength(closed.length);
+    // Each pick read on its own candles: its 90-day rise is its own coin's at the entry.
+    const rise90 = BREAKOUT_READINGS.findIndex((r) => r.name === "rise90");
+    for (const setup of setups) {
+      const s = coins[setup.symbol as keyof typeof coins];
+      const i = s.t.indexOf(setup.entryMs - DAY);
+      expect(setup.x[rise90]).toBeCloseTo(s.c[i] / s.c[i - 90] - 1, 4);
+    }
+    // Breakout's own setups leave momentum's trades out, and the other way round.
+    expect(breakoutSetups(fast, trades)).toEqual([]);
+    expect(momentumSetups(coins, breakoutTrades("FAST/INR", fast, 0.002, () => true))).toEqual([]);
   });
 });
 

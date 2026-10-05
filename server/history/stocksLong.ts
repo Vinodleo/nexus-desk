@@ -7,7 +7,7 @@ import { nseDeliveryRoundTripRate } from "../../src/shared/nse";
 import { fetchNseDaily, fetchUsDaily, type HistoryFetch } from "./historyCandles";
 import { backgroundWorkBusy, CPU_SHARE, historyRunning, nseBusy, SLOW_NSE_TRADE_INR, UNREAD_STOCK_SPREAD, waitForOtherWork } from "./historyJob";
 import { CLASSIC_VERSION } from "./dailyLong";
-import { breakoutSetups, marketCandles, type BreakoutSetup } from "../../src/services/breakoutModel";
+import { breakoutSetups, marketCandles, momentumSetups, type BreakoutSetup } from "../../src/services/breakoutModel";
 import { saveBreakoutSetups } from "./breakoutSetups";
 import { scannerHeartbeat } from "../scanner/scannerService";
 
@@ -295,7 +295,7 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
 
     const fund = symbolOf(market, MARKET_FUND[market]);
     const up = series[fund] ? uptrend(series[fund]) : () => undefined;
-    // US breakout trades with their readings at entry, for the machine-learning test on breakout trades.
+    // US breakout and momentum trades with their readings at entry, for the machine-learning test on them.
     const fundMarket = series[fund] ? marketCandles(series[fund]) : undefined;
     const setups: BreakoutSetup[] = [];
     const cost = stockCost(market);
@@ -312,12 +312,17 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
       if (stopped()) return;
     }
     const started = deps.now();
-    addClassicTrades(classic, momentumTrades(stocks, up, () => cost, inStockCohort, stockWeekClose));
+    const momentum = momentumTrades(stocks, up, () => cost, inStockCohort, stockWeekClose);
+    addClassicTrades(classic, momentum);
+    const momentumPicks = market === "us" ? momentumSetups(stocks, momentum, fundMarket) : [];
     await rest(deps.now() - started);
     if (stopped()) return;
     r.classic[market] = classic;
     r.done.push(market);
-    if (market === "us") saveBreakoutSetups("us", setups, deps.now());
+    if (market === "us") {
+      saveBreakoutSetups("us", setups, deps.now());
+      saveBreakoutSetups("us", momentumPicks, deps.now(), "momentum");
+    }
     save();
   }
   r.finishedAt = deps.now();

@@ -274,4 +274,39 @@ describe("the machine-learning test on breakout trades", () => {
     await ml.startMlTest(deps, ["breakout"]);
     expect(ml.mlTestView().breakout.result!.markets).toEqual({ coins: null, us: null });
   });
+
+  it("judges momentum's trades the same way, alongside breakout's, and again when a replay saves them anew", async () => {
+    const { saveBreakoutSetups, readBreakoutSetups } = await saved();
+    // Only momentum's saved so far: ready, and due.
+    saveBreakoutSetups("coins", breakouts(2018, false, 3), 1000, "momentum");
+    saveBreakoutSetups("us", breakouts(2016, true, 4), 2000, "momentum");
+    expect(readBreakoutSetups("coins")).toBeNull();
+    expect(fs.existsSync(path.join(dataDir, "momentum_setups_us.json"))).toBe(true);
+    expect(ml.mlTestDue("breakout")).toBe(true);
+    expect(ml.mlTestView().breakout.ready).toBe(true);
+    await ml.startMlTest(deps, ["breakout"]);
+    const result = ml.mlTestView().breakout.result!;
+    expect(result.markets).toEqual({ coins: null, us: null });
+    expect(result.momentum!.savedAt).toEqual({ coins: 1000, us: 2000 });
+    expect(result.momentum!.markets.coins).toMatchObject({ fromYear: 2022, toYear: 2025, setups: 480, passed: false });
+    expect(result.momentum!.markets.us).toMatchObject({ fromYear: 2020, toYear: 2025, setups: 600, passed: true });
+    expect(result.momentum!.markets.us!.skipped.avgR).toBeLessThan(0);
+    expect(ml.mlTestDue("breakout")).toBe(false);
+    saveBreakoutSetups("coins", breakouts(2018, false, 3), 3000, "momentum");
+    expect(ml.mlTestDue("breakout")).toBe(true);
+  });
+
+  it("runs again once momentum's trades are saved, after a verdict on breakout's alone", async () => {
+    const { saveBreakoutSetups } = await saved();
+    saveBreakoutSetups("coins", breakouts(2018, true, 1), 1000);
+    await ml.startMlTest(deps, ["breakout"]);
+    // A verdict kept from before momentum was tested: no momentum part.
+    const old = { ...ml.mlTestView().breakout.result!, momentum: undefined };
+    fs.writeFileSync(path.join(dataDir, "ml_test_breakout.json"), JSON.stringify(old));
+    ml._resetMlTest();
+    ml.loadMlTest();
+    expect(ml.mlTestDue("breakout")).toBe(false);
+    saveBreakoutSetups("us", breakouts(2016, true, 4), 2000, "momentum");
+    expect(ml.mlTestDue("breakout")).toBe(true);
+  });
 });

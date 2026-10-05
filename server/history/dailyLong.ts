@@ -19,7 +19,7 @@ import { TRADER_PERSONAS } from "../../src/services/personaEngine";
 import { TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
 import { roundTripFeeRate } from "../../src/shared/tradeCosts";
 import { addClassicTrades, breakoutTrades, btcUptrend, maTrendTrades, momentumTrades, type ClassicRecords } from "../../src/services/classicStrategies";
-import { breakoutSetups, marketCandles, type BreakoutSetup } from "../../src/services/breakoutModel";
+import { breakoutSetups, marketCandles, momentumSetups, type BreakoutSetup } from "../../src/services/breakoutModel";
 import { saveBreakoutSetups } from "./breakoutSetups";
 import { fetchCoinDailySince, type HistoryFetch } from "./historyCandles";
 import { backgroundWorkBusy, CPU_SHARE, historyRunning, historySpread, setupsFileName, waitForOtherWork } from "./historyJob";
@@ -48,8 +48,9 @@ export const DAILY_LONG_VERSION = 3;
  * Bump when only the classic strategies change (src/services/
  * classicStrategies.ts): they're replayed again from the kept daily candles,
  * leaving the traders' results (and the daily trades they decide) as they are.
+ * (4: momentum's trades saved with their readings, for the machine-learning test.)
  */
-export const CLASSIC_VERSION = 3;
+export const CLASSIC_VERSION = 4;
 /** From Binance's first candles (August 2017). */
 export const DAILY_LONG_FROM_MS = Date.UTC(2017, 7, 1);
 const RERUN_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
@@ -324,7 +325,7 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
     const classic: ClassicRecords = {};
     const btcCandles = coins[BTC];
     const btcUp = btcCandles ? btcUptrend(btcCandles) : () => undefined;
-    // Each breakout trade with its readings at entry, for the machine-learning test on breakout trades.
+    // Each breakout and momentum trade with its readings at entry, for the machine-learning test on them.
     const btcMarket = btcCandles ? marketCandles(btcCandles) : undefined;
     const setups: BreakoutSetup[] = [];
     const costFor = (symbol: string) => roundTripFeeRate(symbol) + historySpread(symbol, deps.spread(symbol));
@@ -339,12 +340,15 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
       if (stopped()) return;
     }
     const started = deps.now();
-    addClassicTrades(classic, momentumTrades(coins, btcUp, costFor, inCohort));
+    const momentum = momentumTrades(coins, btcUp, costFor, inCohort);
+    addClassicTrades(classic, momentum);
+    const momentumPicks = momentumSetups(coins, momentum, btcMarket);
     await rest(deps.now() - started);
     if (stopped()) return;
     r.classic = classic;
     r.classicVersion = CLASSIC_VERSION;
     saveBreakoutSetups("coins", setups, deps.now());
+    saveBreakoutSetups("coins", momentumPicks, deps.now(), "momentum");
   }
   if (replayedAny || r.finishedAt === null) r.finishedAt = deps.now();
   save();

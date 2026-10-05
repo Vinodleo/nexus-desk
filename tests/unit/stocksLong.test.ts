@@ -137,9 +137,10 @@ describe("the replay", () => {
     expect(run.finishedAt).not.toBeNull();
     expect(run.done).toEqual(["us", "nse"]);
     expect(run.classicVersion).toBe(CLASSIC_VERSION);
-    // US breakout trades are saved for the machine-learning test (closed ones: these still rise, so none yet); India's aren't.
+    // US breakout and momentum trades are saved for the machine-learning test (closed ones: these still rise, so none yet); India's aren't.
     const { readBreakoutSetups } = await import("../../server/history/breakoutSetups");
     expect(readBreakoutSetups("us")).toMatchObject({ savedAt: d.now(), setups: [] });
+    expect(readBreakoutSetups("us", "momentum")).toMatchObject({ savedAt: d.now(), setups: [] });
     // Every US stock rises steadily: one breakout trade each, opened in its first list year (none before 2016), the fund not traded.
     const usStocks = stocks.stockSymbols("us").length - 1;
     const breakouts = (market: "us" | "nse") => Object.values(run.classic[market]!).reduce((n, q) => n + (q.breakout?.trades ?? 0), 0);

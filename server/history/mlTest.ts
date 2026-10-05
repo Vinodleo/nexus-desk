@@ -8,7 +8,7 @@ import { scanningDesks } from "../scanner/deskState";
 import { dailyLongRunInfo, dailyLongRunning, dailySetupsDir } from "./dailyLong";
 import { stocksLongRunning } from "./stocksLong";
 import { BREAKOUT_MARKETS, readBreakoutSetups, type BreakoutMarket } from "./breakoutSetups";
-import { BREAKOUT_READINGS_VERSION, walkForward, type BreakoutMlVerdict } from "../../src/services/breakoutModel";
+import { BREAKOUT_READINGS_VERSION, ML_STRATEGIES, walkForward, type BreakoutMlVerdict, type MlStrategy } from "../../src/services/breakoutModel";
 import {
   addRow,
   binEdges,
@@ -48,7 +48,8 @@ import { isUsSymbol } from "../../src/shared/usMarket";
 // A third test, on breakout 55/20's replayed trades (coins since 2018, US
 // stocks since 2016, saved by those replays: history/breakoutSetups.ts), is
 // judged year by year instead: they're a few hundred, too few for the split
-// above (src/services/breakoutModel.ts). It's small and quick.
+// above (src/services/breakoutModel.ts). Momentum's (top 3) are judged the
+// same way, alongside. It's small and quick.
 
 /** Bump when the test changes enough that an old verdict no longer stands. */
 export const ML_TEST_VERSION = 1;
@@ -142,14 +143,19 @@ export interface MlTestResult {
   markets: Record<MarketKind, MarketVerdict | null>;
 }
 
-/** The test on breakout trades: each market's verdict, judged year by year. */
-export interface BreakoutMlResult {
-  version: number;
-  ranAt: number;
+/** One strategy's test: each market's verdict, judged year by year. */
+export interface SlowMlResult {
   /** When each market's setups were saved (the test is due again when they're saved anew). */
   savedAt: Record<BreakoutMarket, number | null>;
   /** Each market's verdict; null with too few years of trades. */
   markets: Record<BreakoutMarket, (BreakoutMlVerdict & { setups: number }) | null>;
+}
+
+/** The test on breakout trades, and momentum's alongside (absent from older verdicts). */
+export interface BreakoutMlResult extends SlowMlResult {
+  version: number;
+  ranAt: number;
+  momentum?: SlowMlResult;
 }
 /** Its version: the test's and the readings'. */
 const BREAKOUT_ML_VERSION = ML_TEST_VERSION * 100 + BREAKOUT_READINGS_VERSION;
@@ -215,10 +221,15 @@ const marketOf = (symbol: string): MarketKind => (isUsSymbol(symbol) ? "us" : is
 export function mlTestDue(source?: MlSource): boolean {
   if (!source) return ML_SOURCES.some((s) => mlTestDue(s));
   if (source === "breakout") {
-    const saved = BREAKOUT_MARKETS.map((m) => readBreakoutSetups(m)?.savedAt ?? null);
-    if (saved.every((at) => at === null)) return false;
+    const saved = (strategy: MlStrategy) => BREAKOUT_MARKETS.map((m) => readBreakoutSetups(m, strategy)?.savedAt ?? null);
+    if (ML_STRATEGIES.every((strategy) => saved(strategy).every((at) => at === null))) return false;
     const r = breakoutResult;
-    return !r || r.version !== BREAKOUT_ML_VERSION || BREAKOUT_MARKETS.some((m, k) => r.savedAt[m] !== saved[k]);
+    if (!r || r.version !== BREAKOUT_ML_VERSION) return true;
+    // Due again when a replay saves anew: either strategy's trades, in either market.
+    return ML_STRATEGIES.some((strategy) => {
+      const judged = slowResultOf(r, strategy);
+      return BREAKOUT_MARKETS.some((m, k) => (judged?.savedAt[m] ?? null) !== saved(strategy)[k]);
+    });
   }
   const run = SOURCE[source].run();
   if (!hasSetups(run)) return false;
@@ -229,23 +240,36 @@ export function mlTestDue(source?: MlSource): boolean {
 /** A source can be tested: its replay has finished with setups saved, and isn't replaying. */
 const testable = (source: MlSource) =>
   source === "breakout"
-    ? BREAKOUT_MARKETS.some((m) => (readBreakoutSetups(m)?.setups.length ?? 0) > 0) && !dailyLongRunning() && !stocksLongRunning()
+    ? ML_STRATEGIES.some((strategy) => BREAKOUT_MARKETS.some((m) => (readBreakoutSetups(m, strategy)?.setups.length ?? 0) > 0)) &&
+      !dailyLongRunning() &&
+      !stocksLongRunning()
     : hasSetups(SOURCE[source].run()) && !SOURCE[source].running();
 
-/** The test on breakout trades: each market's saved setups, judged year by year. Quick: a few hundred trades. */
-function breakoutWork(deps: MlDeps): void {
-  phase = "judging";
-  const savedAt = {} as BreakoutMlResult["savedAt"];
-  const markets = {} as BreakoutMlResult["markets"];
+/** A strategy's part of the verdict: breakout's at the top, momentum's in its own field. */
+const slowResultOf = (r: BreakoutMlResult, strategy: MlStrategy): SlowMlResult | undefined => (strategy === "breakout" ? r : r.momentum);
+
+/** One strategy's test: each market's saved setups, judged year by year. */
+function slowTest(strategy: MlStrategy): SlowMlResult {
+  const savedAt = {} as SlowMlResult["savedAt"];
+  const markets = {} as SlowMlResult["markets"];
   for (const market of BREAKOUT_MARKETS) {
-    const saved = readBreakoutSetups(market);
+    const saved = readBreakoutSetups(market, strategy);
     savedAt[market] = saved?.savedAt ?? null;
     const verdict = saved && saved.setups.length > 0 ? walkForward(saved.setups) : null;
     markets[market] = verdict ? { ...verdict, setups: saved!.setups.length } : null;
   }
-  breakoutResult = { version: BREAKOUT_ML_VERSION, ranAt: deps.now(), savedAt, markets };
+  return { savedAt, markets };
+}
+
+/** The test on breakout trades and momentum's. Quick: a few hundred trades each. */
+function breakoutWork(deps: MlDeps): void {
+  phase = "judging";
+  const breakout = slowTest("breakout");
+  const momentum = slowTest("momentum");
+  breakoutResult = { version: BREAKOUT_ML_VERSION, ranAt: deps.now(), ...breakout, momentum };
   saveMlTest("breakout");
-  console.log(`[MlTest] breakout done: passed in ${BREAKOUT_MARKETS.filter((m) => markets[m]?.passed).join(", ") || "no market"}.`);
+  const passed = (r: SlowMlResult) => BREAKOUT_MARKETS.filter((m) => r.markets[m]?.passed).join(", ") || "no market";
+  console.log(`[MlTest] breakout done: passed in ${passed(breakout)}; momentum: passed in ${passed(momentum)}.`);
 }
 
 async function work(source: CsvSource, deps: MlDeps): Promise<void> {
@@ -412,7 +436,7 @@ export function mlTestView() {
     ready: testable("5m"),
     result: results["5m"],
     daily: { ready: testable("daily"), result: results.daily },
-    /** The test on breakout trades, coins and US stocks. */
+    /** The test on breakout trades, coins and US stocks, and momentum's. */
     breakout: { ready: testable("breakout"), result: breakoutResult },
   };
 }
