@@ -32,6 +32,14 @@ export function priceForPosition(pos: Pick<Position, "symbol">, prices: Record<s
   return usdt ? usdt * USDT_INR_FALLBACK_RATE : undefined;
 }
 
+/** A position at `price`: that price now, and the open P&L it makes (half banked at +1R counted at its price). */
+export function markedPosition<T extends Position>(pos: T, price: number): T {
+  const isLong = pos.direction === "LONG";
+  const pnl = (blendedExitPrice(pos, price) - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
+  const moneyPlaced = pos.entryPrice * pos.quantity;
+  return { ...pos, currentPrice: price, unrealizedPnl: pnl, unrealizedPnlPercent: moneyPlaced > 0 ? (pnl / moneyPlaced) * 100 : 0 };
+}
+
 /**
  * The price to judge a position on: with a fresh quote, what it could be
  * closed at (the bid for a long, the ask for a short); otherwise the latest
@@ -95,7 +103,6 @@ export function applyTickToPosition(
   }
 
   const pos: Position = { ...original };
-  const isLong = pos.direction === "LONG";
   let changed = false;
   let exitReason: TickExitReason | null = null;
 
@@ -115,8 +122,6 @@ export function applyTickToPosition(
     return { kind: "exit", position: pos, reason: exitReason, price };
   }
 
-  const pnl = (blendedExitPrice(pos, price) - pos.entryPrice) * pos.quantity * (isLong ? 1 : -1);
-  const moneyPlaced = pos.entryPrice * pos.quantity;
   if (Math.abs(price - pos.currentPrice) > 0.0001) changed = true;
   // Trailing state must persist even on a tick that moves nothing else.
   // (The old inline code kept it by mutating state in place.)
@@ -130,7 +135,7 @@ export function applyTickToPosition(
 
   return {
     kind: "updated",
-    position: { ...pos, currentPrice: price, unrealizedPnl: pnl, unrealizedPnlPercent: (pnl / moneyPlaced) * 100 },
+    position: markedPosition(pos, price),
     changed,
     ...(banked ? { banked: true } : {}),
   };

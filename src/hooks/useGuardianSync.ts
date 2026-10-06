@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { mergeGuardState, type GuardFields } from "../shared/trailingStop";
 import { apiFetch } from "../services/apiClient";
 import type { DaemonCloseEvent } from "../services/daemonEvents";
+import { markedPosition } from "../services/positionTick";
+import { marketOf } from "../shared/marketLimits";
 import type { Position } from "../types";
 
 const LAST_POLL_KEY = "nexus_last_daemon_poll";
@@ -10,11 +12,19 @@ const SYNC_THROTTLE_MS = 1500;
 const idsOf = (positions: Position[]) => positions.map((p) => p.id).sort().join(",");
 
 /**
+ * Whether the app has prices of its own for a position: coins stream to it
+ * live. US and Indian stocks don't, so their price (and the open P&L it
+ * makes) comes from the guardian, which the server's scans keep current.
+ */
+const priceFromGuardian = (symbol: string) => marketOf(symbol) !== "coins";
+
+/**
  * The browser's positions with the guardian's progress folded in (the more
  * protective stop, the further target, wider extremes, trailing, banked
- * half). Returns `prev` itself when nothing changes.
+ * half), and its price for positions the app has no prices for. Returns
+ * `prev` itself when nothing changes.
  */
-export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { id: string })[]): Position[] {
+export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { id: string; currentPrice?: number })[]): Position[] {
   const byId = new Map(guardian.map((g) => [g.id, g]));
   let changed = false;
   const next = prev.map((p) => {
@@ -22,12 +32,17 @@ export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { 
     if (!g) return p;
     const merged = mergeGuardState(p.direction, p.entryPrice, g, p);
     const differs = (Object.keys(merged) as (keyof GuardFields)[]).some((k) => merged[k] !== undefined && merged[k] !== p[k]);
-    if (!differs) return p;
+    const price = priceFromGuardian(p.symbol) && g.currentPrice && g.currentPrice > 0 && g.currentPrice !== p.currentPrice ? g.currentPrice : null;
+    if (!differs && price === null) return p;
     changed = true;
-    return { ...p, ...Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) };
+    const guarded = { ...p, ...Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) };
+    return price === null ? guarded : markedPosition(guarded, price);
   });
   return changed ? next : prev;
 }
+
+/** A position as the guardian sent it, its open P&L worked out from its price (the guardian doesn't keep one). */
+const asSent = (g: Position): Position => (g.currentPrice > 0 ? markedPosition(g, g.currentPrice) : g);
 
 /**
  * The browser's positions plus any the server's autopilot opened that this
@@ -47,7 +62,7 @@ export function adoptServerOpened(
   const added: Position[] = [];
   for (const g of guardian) {
     if (!g.openedByServer || g.clientSeen || have.has(g.id) || held.has(g.symbol) || isClosed(g.id)) continue;
-    added.push(g);
+    added.push(asSent(g));
     held.add(g.symbol);
   }
   return added.length > 0 ? [...added, ...prev] : prev;
@@ -142,7 +157,7 @@ export function useGuardianSync(
         if (data.activePositions?.length > 0) {
           setActivePositions((prev) =>
             prev.length === 0
-              ? data.activePositions.filter((p: Position) => !isClosedRef.current(p.id))
+              ? data.activePositions.filter((p: Position) => !isClosedRef.current(p.id)).map(asSent)
               : adoptServerOpened(adoptGuardianState(prev, data.activePositions), data.activePositions, isClosedRef.current)
           );
         }
