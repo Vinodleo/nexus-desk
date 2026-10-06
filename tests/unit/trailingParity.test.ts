@@ -125,6 +125,10 @@ describe("keeping the two copies in step", () => {
     expect(next[1]).toBe(sol);
     // The same price again: nothing to do.
     expect(adoptGuardianState(next, [{ id: "n", currentPrice: 22993, ...guard }])).toBe(next);
+    // Kept from before with the guardian's price already but no P&L (the market closed, so the price doesn't move): worked out.
+    const kept = { ...nvda, currentPrice: 22993, unrealizedPnl: 0, unrealizedPnlPercent: 0 };
+    const fixed = adoptGuardianState([kept], [{ id: "n", currentPrice: 22993, ...guard }]);
+    expect(fixed[0].unrealizedPnl).toBeCloseTo(-80 * 4.3339, 6);
 
     // A trade the server opened arrives with its open P&L worked out (the guardian keeps none).
     const opened = adoptServerOpened([], [{ ...nvda, id: "m", symbol: "MSFT.US", entryPrice: 50824, currentPrice: 50558, quantity: 1.9675, openedByServer: true }], () => false);

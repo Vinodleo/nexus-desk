@@ -32,11 +32,15 @@ export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { 
     if (!g) return p;
     const merged = mergeGuardState(p.direction, p.entryPrice, g, p);
     const differs = (Object.keys(merged) as (keyof GuardFields)[]).some((k) => merged[k] !== undefined && merged[k] !== p[k]);
-    const price = priceFromGuardian(p.symbol) && g.currentPrice && g.currentPrice > 0 && g.currentPrice !== p.currentPrice ? g.currentPrice : null;
-    if (!differs && price === null) return p;
+    const guarded = differs ? { ...p, ...Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) } : p;
+    const price = priceFromGuardian(p.symbol) && g.currentPrice && g.currentPrice > 0 ? g.currentPrice : null;
+    // At the guardian's price, with the open P&L it makes: also when the price is the one already shown but its P&L isn't
+    // (a position kept from before the app worked it out, while the market is closed and the price doesn't move).
+    const marked = price === null ? guarded : markedPosition(guarded, price);
+    const repriced = marked.currentPrice !== p.currentPrice || Math.abs(marked.unrealizedPnl - p.unrealizedPnl) > 0.005;
+    if (!differs && !repriced) return p;
     changed = true;
-    const guarded = { ...p, ...Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) };
-    return price === null ? guarded : markedPosition(guarded, price);
+    return marked;
   });
   return changed ? next : prev;
 }
