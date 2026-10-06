@@ -259,6 +259,14 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   are tested on their daily candles since 2016 in the Lab, and trade only if one clearly beats its costs. US since 2016:
   breakout +0.39R over 554 trades (8 of 11 years up), momentum +0.26R (9 of 11), moving averages +0.32R (5 of 11): US
   breakout and US momentum paper-trade (owner's call), each on its own slots. India: breakout +0.23R but 5 of 11 years and mostly 2020; not traded.
+- **Funds moving averages 50/200 (later, owner's call, 5 Oct):** once funds breakout has 2–3 months on paper and behaves
+  like its replay (the Lab's scorecard), add 50/200 on the funds as a second, slower strategy: 2 slots of its own in the
+  US limits, no share-market guard (as in the funds' replay), checked with the other US checks, paper only, gated on the
+  funds' 50/200 record since 2016 (`stocksLongClassic("funds")`, `maTrend`). Its replay: +1.19R a trade over 112 trades
+  (8 of 11 years up, all of 2023–26; −1.03R 2016, −0.85R 2017, −1.01R 2022), but only about 10 trades a year, so about
+  12R a year against funds breakout's 22R, and a few big runs (gold's) carry it. It competes with funds breakout for the
+  same funds (one trade per fund). Not to be traded: coins' 50/200 (+1.07R, mostly 2020, overlaps coin breakout) and
+  US stocks' (+0.33R, 5 of 11 years up).
 - **Going live:** only when the owner asks. The checklist is `docs/going-live.md` (proof on paper, setup, the
   watched first trade). Coin breakout's live path, backups and the daily CoinDCX check are built.
 - **IBKR:** the owner is applying for an IBKR Pro account (no deposit yet). An integration may follow later.
