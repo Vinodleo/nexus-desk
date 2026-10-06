@@ -8,7 +8,7 @@ vi.mock("../../src/services/apiClient", () => ({ apiFetch: (...a: unknown[]) => 
 import { applyTickToPosition } from "../../src/services/positionTick";
 import { applyGuardianTick } from "../../server/guardianLogic";
 import { mergeGuardState } from "../../src/shared/trailingStop";
-import { adoptGuardianState, useGuardianSync } from "../../src/hooks/useGuardianSync";
+import { adoptGuardianState, adoptServerOpened, useGuardianSync } from "../../src/hooks/useGuardianSync";
 import type { Position } from "../../src/types";
 
 const position = (over: Partial<Position> = {}): Position => ({
@@ -108,6 +108,27 @@ describe("keeping the two copies in step", () => {
     expect(next[1]).toBe(other);
     // Nothing new: the same array back, so React doesn't re-render.
     expect(adoptGuardianState(next, [{ id: "p", stopLoss: 1010, takeProfit: 1050, highestPrice: 1030, lowestPrice: 1000, trailActive: true }])).toBe(next);
+  });
+
+  it("takes the guardian's price for stocks the app has no prices for, with the open P&L it makes; coins keep the app's own", () => {
+    // A US breakout bought at ₹23,073 for 4.3339 shares, ₹22,993 now on the server.
+    const guard = { stopLoss: 22034, takeProfit: 0, highestPrice: 23073, lowestPrice: 22993, trailActive: false };
+    const nvda = position({ id: "n", symbol: "NVDA.US", entryPrice: 23073, currentPrice: 23073, quantity: 4.3339, stopLoss: 22034, takeProfit: 0, highestPrice: 23073, lowestPrice: 23073 });
+    const sol = position({ id: "s", currentPrice: 1010 });
+    const next = adoptGuardianState([nvda, sol], [
+      { id: "n", currentPrice: 22993, ...guard },
+      { id: "s", currentPrice: 1005, stopLoss: 990, takeProfit: 1020, highestPrice: 1000, lowestPrice: 1000, trailActive: false },
+    ]);
+    expect(next[0].currentPrice).toBe(22993);
+    expect(next[0].unrealizedPnl).toBeCloseTo(-80 * 4.3339, 6);
+    expect(next[0].unrealizedPnlPercent).toBeCloseTo((-80 / 23073) * 100, 6);
+    expect(next[1]).toBe(sol);
+    // The same price again: nothing to do.
+    expect(adoptGuardianState(next, [{ id: "n", currentPrice: 22993, ...guard }])).toBe(next);
+
+    // A trade the server opened arrives with its open P&L worked out (the guardian keeps none).
+    const opened = adoptServerOpened([], [{ ...nvda, id: "m", symbol: "MSFT.US", entryPrice: 50824, currentPrice: 50558, quantity: 1.9675, openedByServer: true }], () => false);
+    expect(opened[0].unrealizedPnl).toBeCloseTo(-266 * 1.9675, 6);
   });
 });
 
