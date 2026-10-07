@@ -39,6 +39,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     on stocks (`StocksLongCard`, US and India), and the replays' details.
   - **Tests:** the machine-learning tests (daily coins, breakout trades, 5-minute) and the coin check (`CoinCheckCard`).
   - **Tools:** the older hands-on training tools.
+  A trade that opens with the app on screen (the server's, the phone's autopilot, or approved in the Queue) unfolds a
+  ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it
+  took; several queue up.
   Explanations and long lists fold away (`Fold`); chips, bars and year columns are in `labUi.tsx`. The cards read
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume

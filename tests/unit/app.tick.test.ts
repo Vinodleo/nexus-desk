@@ -108,4 +108,27 @@ describe("App live ticks", () => {
     // And the signal's price, for what the entry cost.
     expect(trade.signalPrice).toBe(998);
   }, 30000);
+
+  it("unfolds a ticket when the server opens a trade, and puts it away on Got it", async () => {
+    const { default: App } = await import("../../src/App");
+    await act(async () => {
+      render(createElement(App));
+    });
+    const opened = {
+      id: "srv-eth", symbol: "ETH/INR", direction: "LONG", setupName: "Breakout 55/20", strategy: "breakout", entryPrice: 200000, currentPrice: 200000,
+      quantity: 0.05, stopLoss: 190000, initialStopLoss: 190000, takeProfit: 0, unrealizedPnl: 0, unrealizedPnlPercent: 0,
+      openTime: new Date().toISOString(), expectedHoldingTimeMinutes: 525600, metaConfidence: 0.6, openedByServer: true,
+    };
+    await act(async () => {
+      for (const ws of sockets) ws.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "POSITION_OPENED", data: opened }) }));
+    });
+    const ticket = screen.getByRole("dialog", { name: "ETH/INR" });
+    expect(ticket.textContent).toContain("Coin breakout 55/20 · by the server");
+    // A paper desk: the ticket shows the ₹10,000 it took from the free cash.
+    expect(screen.getByTestId("ticket-cash").textContent).toContain("₹10,000 is tied up in this trade until it closes.");
+    await act(async () => {
+      screen.getByRole("button", { name: "Got it" }).click();
+    });
+    expect(screen.queryByRole("dialog", { name: "ETH/INR" })).toBeNull();
+  }, 30000);
 });

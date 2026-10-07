@@ -69,6 +69,7 @@ import { useAuth } from "./context/AuthContext";
 import { useBackgroundExecution } from "./hooks/useBackgroundExecution";
 import { useAwayNotice } from "./hooks/useAwayNotice";
 import { AwayNotice } from "./components/ledger/AwayNotice";
+import { TradeTicket, ticketFor, type TicketTrade } from "./components/ledger/TradeTicket";
 import { BackgroundExecutionModal } from "./components/BackgroundExecutionModal";
 import {
   playTradeExecutionSound,
@@ -234,6 +235,12 @@ export default function App() {
   const activePositionsRef = React.useRef<Position[]>([]);
   const closedTradesRef = React.useRef<HistoricalTrade[]>([]);
   const away = useAwayNotice(activePositionsRef, closedTradesRef);
+  // A newly opened trade's ticket (several queue up). On paper it shows the free cash the trade took: the paper
+  // money and what was free just before it opened (none on a live desk).
+  const [tickets, setTickets] = useState<TicketTrade[]>([]);
+  const paperCashRef = React.useRef<() => { money: number; freeBefore: number } | undefined>(() => undefined);
+  paperCashRef.current = () =>
+    tradingMode === "PAPER" ? { money: equity, freeBefore: freeCash(equity, activePositionsRef.current) } : undefined;
   const handleReconcileMissedTicks = useCallback(
     (missedCycles: number, elapsedMs: number) => {
       if (!isPlaying || missedCycles <= 0) return;
@@ -405,16 +412,11 @@ export default function App() {
     (pos: Position) => {
       // Already have it, closed it, or hold that coin (the same signal opened here too).
       if (activePositionsRef.current.some((p) => p.id === pos.id || p.symbol === pos.symbol) || isClosedLocally(pos.id)) return;
+      const ticket = ticketFor(pos, "server", paperCashRef.current());
       setActivePositions((prev) => adoptServerOpened(prev, [pos], isClosedLocally));
       setSelfApprovedCount((prev) => prev + 1);
       playTradeExecutionSound();
-      setExecutionToast({
-        id: `toast-${Date.now()}`,
-        title: `■ [SELF-APPROVE] ${pos.symbol} opened on the server`,
-        message: `${pos.direction} ${pos.quantity} @ ₹${pos.entryPrice} (${pos.setupName}). The server's autopilot opened it after its scan.`,
-        type: "SUCCESS",
-        timestamp: new Date().toLocaleTimeString(),
-      });
+      setTickets((prev) => [...prev, ticket]);
     },
     [isClosedLocally]
   );
@@ -1134,7 +1136,8 @@ export default function App() {
           console.error("Order dispatch error:", err);
         });
 
-      // Add to active positions
+      // Add to active positions (the ticket's free cash is read first, from the trades open before this one).
+      const paperCash = paperCashRef.current();
       setActivePositions((prev) => [newPosition, ...prev]);
 
       // Mark proposal as approved
@@ -1154,21 +1157,9 @@ export default function App() {
         setSelfApprovedCount((prev) => prev + 1);
       }
 
-      // Audio & Toast
+      // Sound, and the trade's ticket.
       playTradeExecutionSound();
-      setExecutionToast({
-        id: `toast-${Date.now()}`,
-        title: isAutonomousSelfApproved
-          ? `■ [AI SELF-APPROVED] ${proposal.symbol} ${proposal.setup.direction}`
-          : `Limit Order Filled: ${proposal.symbol}`,
-        message: isAutonomousSelfApproved
-          ? `Agent Swarm self-approved ${proposal.symbol} with ${Math.round(
-              proposal.metaScore.calibratedWinProbability * 100
-            )}% P(Win). Entered at ₹${entryPrice} with ${priced.rewardToRisk.toFixed(2)}R to the target.`
-          : `${proposal.setup.direction} ${quantity} ${proposal.symbol} at ₹${entryPrice}. Stop and target are set.`,
-        type: "SUCCESS",
-        timestamp: new Date().toLocaleTimeString(),
-      });
+      setTickets((prev) => [...prev, ticketFor(newPosition, isAutonomousSelfApproved ? "autopilot" : "you", paperCash)]);
 
       logSecurityAudit(
         "ORDER_APPROVED",
@@ -1692,6 +1683,15 @@ export default function App() {
     <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col pb-20 bg-canvas text-ink font-ui">
 
       <AwayNotice notice={away.notice} onDismiss={away.dismiss} onOpenBook={() => setActiveTab("book")} />
+      <TradeTicket
+        tickets={tickets}
+        onNext={() => setTickets((prev) => prev.slice(1))}
+        onDone={() => setTickets([])}
+        onOpenFloor={() => {
+          setTickets([]);
+          setActiveTab("floor");
+        }}
+      />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-2xl w-full mx-auto space-y-4 px-5 pt-4">
