@@ -29,7 +29,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Colours are tokens in `src/index.css`. Themes are Ivory (default), Graphite (dark) and Blush (pink),
   set per device (`src/services/theme.ts`). Use the tokens, never fixed colours.
   The Lab (`LedgerLab.tsx`) has four tabs, the last one picked remembered per device:
-  - **Today:** what's trading and why (`LabSummary`), the desk's day (`DeskDayCard`: a 24-hour dial in India time of the
+  - **Today:** the slower strategies as a deck of cards to swipe (`StrategyLineup`: each one trading or paused, its
+    replay's average a trade and trades, each replayed year up or down, its rules), the other traders and the tests
+    (`LabSummary`), the desk's day (`DeskDayCard`: a 24-hour dial in India time of the
     market sessions and the server's scheduled checks with their next times; the check times live in `src/shared/deskDay.ts`
     and the server reads them there), the daily coin check with its coin slots (`DailyCoinsCard`),
     the US breakout check (`UsBreakoutCard`), the funds' breakout check (`FundsBreakoutCard`) and the weekly US

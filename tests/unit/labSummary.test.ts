@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
 const { LabSummary, StrategyRanking, YearByYear } = await import("../../src/components/ledger/LabSummary");
+const { StrategyLineup, yearsOf } = await import("../../src/components/ledger/StrategyLineup");
 const { labGet } = await import("../../src/components/ledger/labFeed");
 
 afterEach(cleanup);
@@ -67,6 +68,19 @@ const routes: Record<string, unknown> = {
       "2022-Q1": { breakout: rec(6, 2, 3, -5), maTrend: rec(2, 1, 3, -1), momentum: rec(3, 1, 2, -2) },
     },
   },
+  "/api/stocks-long": {
+    success: true, running: false, current: null, waitingForNse: false, finished: 3, total: 3, run: null, cohorts: {}, funds: {},
+    classic: {
+      // US breakout up in 2016 and 2024, down in 2022; momentum up in 2016 only.
+      us: {
+        "2016-Q1": { breakout: rec(5, 3, 6, -2), momentum: rec(4, 2, 4, -1) },
+        "2022-Q3": { breakout: rec(5, 1, 1, -4), momentum: rec(4, 1, 1, -3) },
+        "2024-Q2": { breakout: rec(5, 3, 5, -1) },
+      },
+      // Funds breakout up in 2022.
+      funds: { "2022-Q1": { breakout: rec(6, 3, 6, -2) } },
+    },
+  },
   "/api/history": {
     success: true, running: false, phase: "idle", current: null, finished: 1, total: 1, run: null,
     // 5-minute coin trades over two years: −0.20R (the US one doesn't count).
@@ -87,11 +101,8 @@ describe("What's trading", () => {
     await screen.findByText("Machine-learning filter");
     expect([...list.children].map((r) => r.textContent)).toEqual([
       // Sofia's +0.22R over 145 and Kenji's +0.28R over 8, together.
+      // Coin, US and funds breakout and US momentum are the deck of strategies above it.
       "Daily traders●1 of 2 trading+0.22R a trade since 2017, all together · 153 setups›",
-      "Coin breakout 55/20●Trading+0.98R a trade since 2018 · 476 trades›",
-      "US breakout 55/20●Trading+0.39R a trade since 2016 · 554 trades›",
-      "Funds breakout 55/20●Trading+0.54R a trade since 2016 · 443 trades · gold, bonds and more›",
-      "US momentum, top 3●Trading+0.26R a trade since 2016 · 341 trades · weekly›",
       "5-minute traders●2 of 3 tradingeach trader in each market, with your exits · since 27 Sept›",
       "Machine-learning filter✕Doesn't passits picks +0.05R against +0.14R for every setup · not used live›",
     ]);
@@ -175,7 +186,7 @@ describe("Coin strategies, side by side", () => {
     const summary = await screen.findByTestId("lab-summary");
     await screen.findByText("Machine-learning filter");
     expect(summary.textContent).toContain("Daily traders–Switched off+0.22R a trade since 2017");
-    expect(summary.textContent).toContain("Coin breakout 55/20●Trading");
+    expect(summary.textContent).not.toContain("Coin breakout 55/20");
   });
 
   it("draws breakout's and the daily traders' years, and gives a year's numbers on a tap", async () => {
@@ -191,5 +202,82 @@ describe("Coin strategies, side by side", () => {
     // A second tap puts it away.
     fireEvent.click(within(traders).getByRole("button", { name: "2018: +0.10R a setup over 10 setups" }));
     expect(traders.textContent).toContain("Tap a year for its numbers.");
+  });
+});
+
+describe("the deck of strategies", () => {
+  it("shows each slower strategy's record and years, the one in front first, and moves on a tap, a dot or a swipe", async () => {
+    const onOpen = vi.fn();
+    render(createElement(StrategyLineup, { onOpen }));
+    const coin = await screen.findByTestId("lineup-coin-breakout");
+    await screen.findByTestId("lineup-us-momentum");
+    // Coin breakout, US breakout, funds breakout, US momentum, in that order.
+    expect([...screen.getByTestId("lineup-deck").children].map((s) => s.getAttribute("data-testid"))).toEqual([
+      "lineup-slot-coin-breakout", "lineup-slot-us-breakout", "lineup-slot-funds-breakout", "lineup-slot-us-momentum",
+    ]);
+    expect(coin.textContent).toContain("COINS · DAILY");
+    expect(coin.textContent).toContain("Trading on paper");
+    expect(coin.textContent).toContain("a trade on average, replayed since 2018 · 476 trades");
+    // The front card's average rolls up from zero; the others wait at zero.
+    await waitFor(() => expect(coin.querySelector(".sr-only")?.textContent).toBe("+0.98R"));
+    expect(screen.getByTestId("lineup-us-breakout").querySelector(".sr-only")?.textContent).toBe("+0.00R");
+    // Its years, from the replay since 2017: up in 2018, down in 2022.
+    await waitFor(() => expect(within(coin).getByTestId("lineup-years").textContent).toBe("20181 of 2 years up2022"));
+    expect(coin.getAttribute("aria-hidden")).toBe("false");
+    expect(screen.getByTestId("lineup-us-breakout").getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByTestId("lineup-slot-coin-breakout").style.transform).toBe("none");
+    expect(screen.getByTestId("lineup-slot-us-breakout").style.transform).toContain("translateX(88%)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next strategy" }));
+    const us = screen.getByTestId("lineup-us-breakout");
+    expect(us.getAttribute("aria-hidden")).toBe("false");
+    expect(screen.getByTestId("lineup-slot-coin-breakout").style.transform).toContain("translateX(-88%)");
+    await waitFor(() => expect(us.querySelector(".sr-only")?.textContent).toBe("+0.39R"));
+    expect(within(us).getByTestId("lineup-years").textContent).toBe("20162 of 3 years up2024");
+
+    fireEvent.click(screen.getByRole("button", { name: "US momentum, top 3" }));
+    const momentum = screen.getByTestId("lineup-us-momentum");
+    expect(momentum.getAttribute("aria-hidden")).toBe("false");
+    expect(momentum.textContent).toContain("US STOCKS · WEEKLY");
+    expect(within(momentum).getByTestId("lineup-years").textContent).toBe("20161 of 2 years up2022");
+    expect((screen.getByRole("button", { name: "Next strategy" }) as HTMLButtonElement).disabled).toBe(true);
+
+    // A swipe right goes back one. (jsdom has no PointerEvent: a mouse event carries the finger's place.)
+    if (!("PointerEvent" in window)) (window as any).PointerEvent = class extends MouseEvent {};
+    const deck = screen.getByTestId("lineup-deck");
+    fireEvent.pointerDown(deck, { clientX: 100 });
+    fireEvent.pointerUp(deck, { clientX: 220 });
+    expect(screen.getByTestId("lineup-funds-breakout").getAttribute("aria-hidden")).toBe("false");
+    expect(screen.getByTestId("lineup-funds-breakout").textContent).toContain("16 funds: gold, silver, bonds");
+
+    fireEvent.click(within(screen.getByTestId("lineup-funds-breakout")).getByRole("button", { name: "See its records ›" }));
+    expect(onOpen).toHaveBeenCalledWith("records");
+  });
+
+  it("says when a strategy is paused, and shows nothing without answers", async () => {
+    const paused: Record<string, unknown> = {
+      "/api/us-breakout": { ...(routes["/api/us-breakout"] as Record<string, unknown>), gate: { trader: "Breakout 55/20", trades: 554, avgR: 0.05, on: false } },
+    };
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => new Response(JSON.stringify(paused[path] ?? null), { status: paused[path] ? 200 : 404 }));
+    render(createElement(StrategyLineup));
+    const us = await screen.findByTestId("lineup-us-breakout");
+    expect(us.textContent).toContain("‖Paused");
+    // No yearly records loaded: no years drawn.
+    expect(within(us).queryByTestId("lineup-years")).toBeNull();
+    cleanup();
+    vi.mocked(apiFetch).mockImplementation(async () => new Response("Not found", { status: 404 }));
+    const { container } = render(createElement(StrategyLineup));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("counts each replayed year with trades, oldest first", () => {
+    expect(yearsOf(undefined, "breakout")).toEqual([]);
+    expect(
+      yearsOf({ "2019-Q4": { breakout: rec(2, 1, 3, -1) }, "2018-Q1": { breakout: rec(2, 0, 0, -2) }, "2018-Q3": { breakout: rec(2, 2, 2, 0) }, "2020-Q1": { maTrend: rec(1, 1, 1, 0) } }, "breakout")
+    ).toEqual([
+      { year: "2018", r: 0 },
+      { year: "2019", r: 1 },
+    ]);
   });
 });
