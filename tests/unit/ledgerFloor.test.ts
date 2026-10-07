@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LedgerFloor, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
+import { LedgerFloor, riskLadder, rMultiple, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
 import { formatMoney, formatPct, formatPrice } from "../../src/components/ledger/format";
 import { HOLD_MS } from "../../src/components/ledger/ui";
 import type { Position } from "../../src/types";
@@ -53,9 +53,14 @@ describe("LedgerFloor", () => {
     // Paper equity: the paper money and the open trade's profit (₹94,483.96 + ₹23.04).
     expect(text).toContain("Paper equity₹94,507.00");
     expect(text).toContain("−₹5,688.13");
-    // Free cash: the paper money less what the open trade cost (0.0012 BTC at ₹58,42,100).
-    expect(screen.getByTestId("free-cash").textContent).toBe("Free cash ₹87,473.44");
-    expect(text).toContain("9.9%");
+    // The money ring: free cash is the paper money less what the open trade cost (0.0012 BTC at ₹58,42,100 is
+    // ₹7,010.52), and the ring is filled to the share in trades (7.4%).
+    expect(screen.getByTestId("free-cash").textContent).toBe("Free cash₹87,473.44");
+    expect(screen.getByTestId("in-trades").textContent).toBe("In 1 trade₹7,011");
+    expect(screen.getByTestId("money-ring").textContent).toBe("7%in trades");
+    expect(screen.getByTestId("money-ring").style.getPropertyValue("--nx-ring")).toBe("7.4");
+    // The ring says what's in trades, so the autopilot card doesn't repeat it on paper.
+    expect(text).not.toContain("9.9%");
     expect(text).toContain("₹2,500");
     expect(text).toContain("Trailing stop active · locked above entry");
     expect(text).toContain("Guardian online · live trading off");
@@ -66,6 +71,8 @@ describe("LedgerFloor", () => {
     const { container } = render(createElement(LedgerFloor, props({ isLive: true })));
     expect(container.textContent).toContain("CoinDCX equity₹94,483.96");
     expect(screen.queryByTestId("free-cash")).toBeNull();
+    expect(screen.queryByTestId("money-ring")).toBeNull();
+    expect(container.textContent).toContain("In trades · 9.9%");
   });
 
   it("says when half a position has been banked", () => {
@@ -217,5 +224,62 @@ describe("autopilot in Live mode", () => {
     rerender(createElement(LedgerFloor, props({ isLive: true, autopilotOn: true, scanLocation: "server", liveTradingEnabled: false })));
     expect(card().textContent).toMatch(/Live orders are blocked on the server, so live trades wait for you/);
     expect(screen.queryByLabelText("Server autopilot")).toBeNull();
+  });
+});
+
+// A US breakout trade: bought at ₹100 with the stop at ₹90 (1R = ₹10 a share), now ₹115.
+const breakout: Position = {
+  ...btc, id: "b1", symbol: "NVDA.US", strategy: "breakout", entryPrice: 100, currentPrice: 115, quantity: 4, stopLoss: 90, initialStopLoss: 90,
+  takeProfit: 0, unrealizedPnl: 60, unrealizedPnlPercent: 15, trailActive: false, openedByServer: true, openTime: new Date(2026, 9, 5, 1, 15).toISOString(),
+};
+
+describe("a trade's line in R (breakout and momentum have no target)", () => {
+  it("runs from past the first stop to beyond +2R, further as the price runs, with a tick at each whole R", () => {
+    expect(rMultiple(breakout, 115)).toBeCloseTo(1.5);
+    expect(rMultiple({ ...breakout, direction: "SHORT", stopLoss: 110, initialStopLoss: 110 }, 85)).toBeCloseTo(1.5);
+    expect(rMultiple({ ...breakout, initialStopLoss: 100 }, 115)).toBeNull();
+    // −1.3R to +2.3R: the stop at −1R, the entry at 0, now at +1.5R.
+    const l = riskLadder(breakout, 115)!;
+    expect(l.stop).toBeCloseTo(0.3 / 3.6);
+    expect(l.entry).toBeCloseTo(1.3 / 3.6);
+    expect(l.now).toBeCloseTo(2.8 / 3.6);
+    expect(l.ticks.map((t) => t.r)).toEqual([1, 2]);
+    // At +5R the line reaches +5.3R; at +10R it marks every second R.
+    expect(riskLadder(breakout, 150)!.ticks.map((t) => t.r)).toEqual([1, 2, 3, 4, 5]);
+    expect(riskLadder(breakout, 200)!.ticks.map((t) => t.r)).toEqual([2, 4, 6, 8, 10]);
+  });
+
+  it("draws a breakout trade on its R line with where it stands, and a target trade on its stop-to-target line", () => {
+    render(createElement(LedgerFloor, props({ positions: [breakout, btc] })));
+    const tracks = screen.getAllByTestId("risk-track");
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].querySelectorAll("[data-testid=r-tick]")).toHaveLength(2);
+    expect((tracks[0].querySelector("[data-testid=position-marker]") as HTMLElement).style.left).toBe("77.78%");
+    expect(screen.getAllByTestId("position-track")).toHaveLength(1);
+    // The R pill: the breakout trade is up 1.5R; the BTC trade's first stop is above its entry, so it has none.
+    expect(screen.getAllByTestId("r-pill").map((e) => e.textContent)).toEqual(["+1.50R"]);
+  });
+
+  it("folds a trade's numbers open when tapped, and away again", () => {
+    render(createElement(LedgerFloor, props({ positions: [breakout] })));
+    const head = screen.getByRole("button", { name: "NVDA.US: show its numbers" });
+    const numbers = screen.getByTestId("position-numbers");
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    expect(numbers.className).not.toContain("nx-fold-open");
+    fireEvent.click(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    expect(numbers.className).toContain("nx-fold-open");
+    // ₹400 in it; −₹40 at the stop (4 shares, ₹10 each); 1R is ₹40; opened by the server.
+    expect(numbers.textContent).toContain("Money in it₹400");
+    expect(numbers.textContent).toContain("At the stop, before fees−₹40");
+    expect(numbers.textContent).toContain("Risk at the start (1R)₹40");
+    expect(numbers.textContent).toContain("· server");
+    fireEvent.click(screen.getByRole("button", { name: "NVDA.US: hide its numbers" }));
+    expect(numbers.className).not.toContain("nx-fold-open");
+  });
+
+  it("says what a stop above the entry locks in", () => {
+    render(createElement(LedgerFloor, props({ positions: [{ ...breakout, stopLoss: 105 }] })));
+    expect(screen.getByTestId("position-numbers").textContent).toContain("At the stop, before fees+₹20 locked in");
   });
 });

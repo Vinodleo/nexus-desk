@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight, AlertTriangle } from "lucide-react";
+import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight, ChevronDown, AlertTriangle } from "lucide-react";
 import type { Position } from "../../types";
 import { useLiveTickers } from "../../hooks/useLiveTickers";
 import { liveMarketStream, MIN_SIGNAL_BARS, type CandleStatus } from "../../services/liveMarketStreamService";
@@ -14,7 +14,7 @@ import { openQuantity } from "../../shared/exitRules";
 import { roundTripFeeRate } from "../../shared/tradeCosts";
 import type { ScanBeat } from "../../shared/scanHeartbeat";
 import { ScanHeartbeat } from "./ScanHeartbeat";
-import { freeCash } from "../../shared/paperCash";
+import { freeCash, moneyInTrades } from "../../shared/paperCash";
 
 /** The most common skip reasons, largest first, with their share of all skips. */
 export function topSkipReasons(counts: SkipCounts | undefined, limit = 3): { reason: SkipReason; label: string; pct: number }[] {
@@ -364,6 +364,42 @@ export function trackPoint(p: Pick<Position, "direction" | "stopLoss" | "initial
   return Math.max(0, Math.min(1, f));
 }
 
+/** How far `price` is from the entry in R (the first stop's distance), your way positive; null without a first stop. */
+export function rMultiple(p: Pick<Position, "direction" | "entryPrice" | "stopLoss" | "initialStopLoss">, price: number): number | null {
+  const side = p.direction === "LONG" ? 1 : -1;
+  const risk = side * (p.entryPrice - (p.initialStopLoss ?? p.stopLoss));
+  if (!(risk > 0) || !Number.isFinite(price)) return null;
+  return (side * (price - p.entryPrice)) / risk;
+}
+
+/**
+ * A trade without a target on a line measured in R: from just past its first
+ * stop (−1R) to beyond +2R, further once the price or the stop runs past it.
+ * Each place is a fraction 0–1 along the line; `ticks` mark the whole R above
+ * the entry (every second one or more on a long line). Null without a first stop.
+ */
+export function riskLadder(
+  p: Pick<Position, "direction" | "entryPrice" | "stopLoss" | "initialStopLoss">,
+  price: number
+): { now: number; entry: number; stop: number; ticks: { r: number; at: number }[] } | null {
+  const nowR = rMultiple(p, price);
+  const stopR = rMultiple(p, p.stopLoss);
+  if (nowR === null || stopR === null) return null;
+  const lo = Math.min(-1.3, nowR - 0.3);
+  const hi = Math.max(2.3, nowR + 0.3, stopR + 0.3);
+  const at = (r: number) => Math.max(0, Math.min(1, (r - lo) / (hi - lo)));
+  const step = Math.max(1, Math.ceil(Math.floor(hi) / 6));
+  const ticks: { r: number; at: number }[] = [];
+  for (let r = step; r <= hi; r += step) ticks.push({ r, at: at(r) });
+  return { now: at(nowR), entry: at(0), stop: at(stopR), ticks };
+}
+
+const signedR = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`;
+
+/** What the part still open makes or loses if the stop is hit, before fees. */
+export const atStop = (p: Pick<Position, "direction" | "entryPrice" | "stopLoss" | "quantity" | "bankedQuantity">) =>
+  (p.direction === "LONG" ? p.stopLoss - p.entryPrice : p.entryPrice - p.stopLoss) * openQuantity(p);
+
 /**
  * What a stop raised to `stop` means for the part still open, after the
  * round trip's fees: at break-even (within a rupee), a gain locked in, or a
@@ -468,6 +504,92 @@ const PositionTrack: React.FC<{ position: Position; bankedKey: number; stopRaise
   );
 };
 
+/**
+ * A trade without a target (breakout, momentum) on its line in R: the stop,
+ * the entry and each whole R above it; the run from the entry in green or red,
+ * and where the price is now (the marker glides as it moves and pulses a ring).
+ */
+const RiskTrack: React.FC<{ position: Position }> = ({ position: p }) => {
+  const l = riskLadder(p, p.currentPrice);
+  if (!l) return null;
+  const up = l.now >= l.entry;
+  const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
+  return (
+    <div className="relative h-5" aria-hidden="true" data-testid="risk-track">
+      <div className="absolute inset-x-0 top-2 h-1 rounded-full bg-line" />
+      <div
+        className={`absolute top-2 h-1 rounded-full nx-glide-left ${up ? "bg-gain" : "bg-loss"}`}
+        style={{ left: pct(Math.min(l.entry, l.now)), width: pct(Math.abs(l.now - l.entry)) }}
+      />
+      <div data-testid="stop-tick" className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss nx-stop-tick" style={{ left: pct(l.stop) }} />
+      <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-muted" style={{ left: pct(l.entry) }} />
+      {l.ticks.map((t) => (
+        <div key={t.r} data-testid="r-tick" className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-muted/40" style={{ left: pct(t.at) }} />
+      ))}
+      <div data-testid="position-marker" className="absolute top-[3px] w-3.5 h-3.5 -ml-[7px] nx-glide-left" style={{ left: pct(l.now) }}>
+        <span className={`absolute inset-0 rounded-full nx-ring ${up ? "bg-gain" : "bg-loss"}`} />
+        <span className={`absolute inset-0 rounded-full border-2 border-surface ${up ? "bg-gain" : "bg-loss"}`} />
+      </div>
+    </div>
+  );
+};
+
+/** Where the price is in R, tinted by which way it has gone. */
+const RPill: React.FC<{ r: number }> = ({ r }) => (
+  <span
+    data-testid="r-pill"
+    className={`text-[11px] font-bold px-2 py-0.5 rounded-full tabular-nums transition-colors ${
+      Math.abs(r) < 0.005 ? "bg-inset text-muted" : r > 0 ? "bg-gain/15 text-gain" : "bg-loss/15 text-loss"
+    }`}
+  >
+    {signedR(r)}
+  </span>
+);
+
+/**
+ * Paper money as a ring: the share tied up in open trades draws itself round,
+ * beside the free cash and what's in the trades. It glides as trades open and close.
+ */
+export const MoneyRing: React.FC<{ money: number; positions: Position[] }> = ({ money, positions }) => {
+  const inTrades = moneyInTrades(positions);
+  const share = money > 0 ? Math.max(0, Math.min(100, (inTrades / money) * 100)) : 0;
+  const open = positions.filter((p) => !p.isLiveOrder).length;
+  return (
+    <Card aria-label="Paper money" className="flex items-center gap-4">
+      <div
+        data-testid="money-ring"
+        className="nx-money-ring relative shrink-0 w-[88px] h-[88px] rounded-full grid place-items-center"
+        style={{ "--nx-ring": share.toFixed(1) } as React.CSSProperties}
+      >
+        <div className="w-[70%] h-[70%] rounded-full bg-surface flex flex-col items-center justify-center">
+          <span className="font-display text-lg leading-none tabular-nums">{Math.round(share)}%</span>
+          <span className="text-[10px] text-muted mt-0.5">in trades</span>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 min-w-0">
+        <div data-testid="free-cash">
+          <div className="text-xs text-muted flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-[3px] bg-accent-soft ring-1 ring-accent" />
+            Free cash
+          </div>
+          <div className="font-display text-xl tabular-nums">
+            <Rolling value={freeCash(money, positions)} format={(n) => formatMoney(n)} />
+          </div>
+        </div>
+        <div data-testid="in-trades">
+          <div className="text-xs text-muted flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-[3px] bg-accent" />
+            {open === 0 ? "Nothing in trades" : `In ${open} ${open === 1 ? "trade" : "trades"}`}
+          </div>
+          <div className="text-[15px] font-semibold tabular-nums">
+            <Rolling value={inTrades} format={(n) => formatMoney(n, { decimals: 0 })} />
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+};
+
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void; state?: ListItemState }> = ({
   position: p,
   onClose,
@@ -506,6 +628,11 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
 
   const tone = pnlTone(p.unrealizedPnl);
   const closing = state === "leave";
+  const r = rMultiple(p, p.currentPrice);
+  // Tapping the trade folds its numbers open under it.
+  const [open, setOpen] = useState(false);
+  const stopPnl = atStop(p);
+  const firstRisk = Math.abs(p.entryPrice - (p.initialStopLoss ?? p.stopLoss)) * p.quantity;
   return (
     <li
       className={`nx-item${
@@ -514,7 +641,13 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
       aria-hidden={closing || undefined}
     >
       <div className="flex flex-col gap-2 py-3.5 border-b border-line">
-        <div className="flex items-baseline justify-between gap-3">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={`${p.symbol}: ${open ? "hide" : "show"} its numbers`}
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-baseline justify-between gap-3 text-left w-full cursor-pointer rounded-lg -mx-1 px-1"
+        >
           <div className="min-w-0">
             <span className="text-base font-semibold">{p.symbol}</span>{" "}
             <span className="text-xs text-muted">
@@ -532,12 +665,46 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
               p.openedByServer && <div className="text-xs text-accent">Opened by the server at {clock(Date.parse(p.openTime))}</div>
             )}
           </div>
-          <Flash value={p.currentPrice} className={`font-display text-xl tabular-nums whitespace-nowrap px-1 -mx-1 ${tone}`}>
-            <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
-          </Flash>
+          <span className="flex flex-col items-end gap-1 shrink-0">
+            <Flash value={p.currentPrice} className={`font-display text-xl tabular-nums whitespace-nowrap px-1 -mx-1 ${tone}`}>
+              <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
+            </Flash>
+            <span className="flex items-center gap-1.5">
+              {r !== null && <RPill r={r} />}
+              <ChevronDown className={`w-3.5 h-3.5 text-muted nx-chevron${open ? " nx-chevron-open" : ""}`} strokeWidth={2} />
+            </span>
+          </span>
+        </button>
+        {/* A breakout or momentum trade has no target: its line runs in R instead. */}
+        {p.strategy ? <RiskTrack position={p} /> : <PositionTrack position={p} bankedKey={bankedKey} stopRaise={stopRaise} />}
+        <div className={`nx-fold${open ? " nx-fold-open" : ""}`} data-testid="position-numbers" aria-hidden={!open}>
+          <div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 py-2 text-xs tabular-nums">
+              <div>
+                <div className="text-muted">Money in it</div>
+                <div className="font-semibold">{formatMoney(moneyIn(p), { decimals: 0 })}</div>
+              </div>
+              <div>
+                <div className="text-muted">At the stop, before fees</div>
+                <div className={`font-semibold ${pnlTone(stopPnl)}`}>
+                  {formatMoney(stopPnl, { signed: true, decimals: 0 })}
+                  {stopPnl >= 0 ? " locked in" : ""}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted">Risk at the start (1R)</div>
+                <div className="font-semibold">{formatMoney(firstRisk, { decimals: 0 })}</div>
+              </div>
+              <div>
+                <div className="text-muted">Opened</div>
+                <div className="font-semibold">
+                  {clockText(Date.parse(p.openTime))}
+                  {p.openedByServer ? " · server" : ""}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        {/* A breakout or momentum trade has no target to draw a line to. */}
-        {!p.strategy && <PositionTrack position={p} bankedKey={bankedKey} stopRaise={stopRaise} />}
         <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted tabular-nums">
           <span>Entry {formatPrice(p.entryPrice)}</span>
           <Flash value={p.currentPrice} className="px-1 -mx-1 text-ink">
@@ -577,7 +744,6 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
   // On paper: what the account is worth now (the paper money and the open trades' profit), and what's free to trade
   // (the paper money less what the open trades cost). Live, CoinDCX's balance says both.
   const shownEquity = isLive ? equity : equity + openPnl;
-  const cashFree = isLive ? null : freeCash(equity, positions);
   // A closed trade holds its result for a moment, then slides away (nx-item-close).
   const rows = usePresenceList(positions, (p) => p.id, CLOSE_ANIMATION_MS);
   const signedMoney = (n: number) => formatMoney(n, { signed: true });
@@ -624,14 +790,12 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
           <span>
             All time <strong className={pnlTone(allTimePnl)}><Rolling value={allTimePnl} format={signedMoney} /></strong>
           </span>
-          {cashFree !== null && (
-            <span data-testid="free-cash">
-              Free cash <strong><Rolling value={cashFree} format={(n) => formatMoney(n)} /></strong>
-            </span>
-          )}
         </div>
         {props.todayCloses && <TodayLine closes={props.todayCloses} openPnl={openPnl} />}
       </section>
+
+      {/* On paper: the money free to trade against what the open trades tie up. Live, CoinDCX's balance says it. */}
+      {!isLive && <MoneyRing money={equity} positions={positions} />}
 
       <Card aria-label="Autopilot" className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
@@ -661,10 +825,13 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         </div>
         {serverAutopilot && <ScanHeartbeat lastScanAt={props.lastServerScanAt ?? 0} scans={props.serverScans ?? []} />}
         <div className="flex gap-2">
-          <StatTile
-            label={`In trades · ${(props.exposureFraction * 100).toFixed(1)}%`}
-            value={formatMoney(props.positions.reduce((a, p) => a + moneyIn(p), 0), { decimals: 0 })}
-          />
+          {/* On paper the money ring shows what's in trades. */}
+          {isLive && (
+            <StatTile
+              label={`In trades · ${(props.exposureFraction * 100).toFixed(1)}%`}
+              value={formatMoney(props.positions.reduce((a, p) => a + moneyIn(p), 0), { decimals: 0 })}
+            />
+          )}
           <div className="flex-1 basis-0 min-w-0 bg-inset rounded-[10px] px-2.5 py-2">
             <div className="text-[11px] text-muted">Daily loss left</div>
             <div className={`font-display text-lg tabular-nums truncate ${props.dailyLossLeft <= 0 ? "text-loss" : ""}`}>
