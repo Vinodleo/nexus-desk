@@ -356,6 +356,31 @@ html, body {
   mask: radial-gradient(circle 14px at 0 100%, #0000 98%, #000), radial-gradient(circle 14px at 100% 100%, #0000 98%, #000);
   mask-composite: intersect;
 }
+/* The desk's day (Lab → Today): the dial's rings sweep round when shown, the coins' ring of dashes turns slowly (they
+   trade all day), the hand swings round to the time, and a ring fades when another one is picked. */
+@property --nx-dial {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 360;
+}
+@keyframes nx-dial-sweep-in {
+  from { --nx-dial: 0; }
+}
+.nx-dial-sweep {
+  -webkit-mask-image: conic-gradient(#000 calc(var(--nx-dial) * 1deg), #0000 0);
+  mask-image: conic-gradient(#000 calc(var(--nx-dial) * 1deg), #0000 0);
+  animation: nx-dial-sweep-in 1600ms cubic-bezier(0.5, 0, 0.2, 1) 150ms both;
+}
+@keyframes nx-dial-spin {
+  to { transform: rotate(360deg); }
+}
+.nx-dial-flow { animation: nx-dial-spin 120s linear infinite; }
+.nx-dial-hand { transition: transform 1800ms cubic-bezier(0.3, 1.25, 0.4, 1); }
+.nx-dial-ring { transition: opacity 400ms ease; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-dial-sweep, .nx-dial-flow { animation: none; }
+  .nx-dial-hand, .nx-dial-ring { transition: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .nx-blob-squish, .nx-money-ring, .nx-ticket-unfold, .nx-ticket-stub, .nx-ticket-stamp, .nx-ticket-drain { animation: none; }
   .nx-money-ring, .nx-fold, .nx-chevron { transition: none; }
