@@ -9,6 +9,7 @@ import { dailyCoinsView } from "./scanner/dailyCoins";
 import { fundsBreakoutView, usBreakoutView } from "./scanner/usBreakout";
 import { usMomentumView } from "./scanner/usMomentum";
 import type { PushMessage } from "./push";
+import { SUMMARY_MINUTE_IST } from "../src/shared/deskDay";
 
 // A pop-up every Sunday at 10 am India time: the week's trades (closed,
 // won, still open, what they made) and how each slower strategy's paper
@@ -19,8 +20,8 @@ import type { PushMessage } from "./push";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-/** Sunday, 10:00 in India. */
-const SEND_MINUTE_IST = 10 * 60;
+/** Sunday, 10:00 in India (shared with the Lab's dial of the desk's day). */
+const SEND_MINUTE_IST = SUMMARY_MINUTE_IST;
 /** A summary missed by more than this (server down) isn't sent late. */
 const LATE_LIMIT_MS = 2 * DAY_MS;
 const CHECK_EVERY_MS = 30 * 60 * 1000;

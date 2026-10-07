@@ -9,6 +9,7 @@ import { roundPrice } from "../../src/services/strategyEngine";
 import { ruleFor } from "../../src/services/marketRulesStore";
 import { cleanMarketLimits, marketOf, slotKindOf, slotsFor, type MarketKey, type SlotKind } from "../../src/shared/marketLimits";
 import { fitQuantity } from "../../src/shared/marketRules";
+import { DAILY_SCAN_AFTER_MS } from "../../src/shared/deskDay";
 import { MAX_COIN_SPREAD, roundTripFeeRate, spreadTooWide } from "../../src/shared/tradeCosts";
 import { DEFAULT_TRAIL_PROFILE, TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingStop";
 import { getCoinUniverse } from "../coinUniverse";
@@ -48,8 +49,9 @@ import { recordSpread, riskPolicyFor, serverDailyPnl, typicalSpread } from "./sc
 // (LIVE_TRADING_ENABLED, the allowed coins, the order caps).
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Scanned this long after the day's close (Binance publishes it at once; a little margin). */
-export const DAILY_SCAN_AFTER_MS = 10 * 60 * 1000;
+// Scanned DAILY_SCAN_AFTER_MS after the day's close (Binance publishes it at once; a little margin). Shared with the
+// Lab's dial of the desk's day.
+export { DAILY_SCAN_AFTER_MS };
 /** A day not scanned by then (the server was down) is skipped: the entries would be hours late. */
 export const DAILY_SCAN_UNTIL_MS = 6 * 60 * 60 * 1000;
 /** Daily candles read per coin: the replay's warm-up (210) and view (300), with room. */

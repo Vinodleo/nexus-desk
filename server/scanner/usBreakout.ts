@@ -5,6 +5,7 @@ import { appendBars, emptySeries, type CandleSeries } from "../../src/services/h
 import { breakoutExitAt, type ClassicRecords } from "../../src/services/classicStrategies";
 import { isUsSymbol, nyParts, usSymbol, US_SQUARE_OFF } from "../../src/shared/usMarket";
 import { FUNDS, isFundSymbol } from "../../src/shared/funds";
+import { US_CHECK_AT } from "../../src/shared/deskDay";
 import { toClosedBars } from "../../src/services/liveMarketStreamService";
 import { fetchUsDailyBars, fetchUsSnapshots, type UsQuote } from "../alpaca";
 import { usdInr } from "../fx";
@@ -50,8 +51,9 @@ import {
 // state, and sees only its own held trades: a fund's breakout trade is sold
 // by the funds' check, a stock's by the US one.
 
-/** 3:45 pm New York: the check runs from then until the 3:50 close of intraday trades. */
-export const US_CHECK_AT = 15 * 60 + 45;
+// 3:45 pm New York (shared with the Lab's dial of the desk's day): the check runs from then until the 3:50 close of
+// intraday trades.
+export { US_CHECK_AT };
 /** Enough completed sessions for the 55-day high and the 20-day ATR. */
 const HISTORY_DAYS = 130;
 const PAUSE_MS = 300;

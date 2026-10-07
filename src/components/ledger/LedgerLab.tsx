@@ -17,6 +17,7 @@ import { ExitSettings } from "./ExitSettings";
 import { CoinCheckCard, HistoryCard } from "./HistoryCard";
 import { MlTestCard } from "./MlTestCard";
 import { DailyCoinsCard } from "./DailyCoinsCard";
+import { DeskDayCard } from "./DeskDayCard";
 import { DailyLongCard } from "./DailyLongCard";
 import { StocksLongCard } from "./StocksLongCard";
 import { FundsBreakoutCard, UsBreakoutCard } from "./UsBreakoutCard";
@@ -271,6 +272,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({
 
       <section {...panel("today")}>
         <LabSummary onOpen={setTab} />
+        <DeskDayCard />
         <DailyCoinsCard />
         <UsBreakoutCard />
         <FundsBreakoutCard />
