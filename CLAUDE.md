@@ -100,6 +100,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     (`PAPER_MONEY_CHOICES`, `restartedPaperCapital`; the all-time P&L from zero, trades kept; the start in its own
     localStorage key, not the capital state Firebase copies). The daily loss limit is 2.5% of the money, at least ₹2,500
     (`dailyLossLimitFor`, on the phone and the server); amounts per trade go up to ₹2 lakh and risk to ₹10,000.
+    A paper desk is a cash account (`src/shared/paperCash.ts`): open paper trades tie up what they cost (`moneyInTrades`),
+    and the autopilot, on the server and the phone, defers a trade costing more than the free cash left (`freeCash`,
+    `AutopilotBook.freeCash`, "not enough free cash"); live desks aren't held to it (CoinDCX's balance is). The Floor's
+    paper equity includes the open trades' profit, with the free cash beside it.
 - **Tax report (Book → Breakdown, owner's ask):** `src/services/taxReport.ts`, `TaxReportCard`. An Indian financial year's
   closed trades (1 April to 31 March, India time), live and paper apart (`isLiveOrder` on closed trades; only live are
   taxed): coins as crypto (30% plus cess on each winner's gain before fees, losses offset nothing, 1% TDS on each sale),

@@ -15,6 +15,7 @@ import { loadLiveRiskConfig } from "../liveOrderGuard";
 import { placeLiveEntry } from "../liveEntry";
 import { isNseSymbol } from "../../src/shared/nse";
 import { isUsSymbol } from "../../src/shared/usMarket";
+import { freeCash } from "../../src/shared/paperCash";
 import { reviewTrade } from "../tradeReviewer";
 import type { MarketBar } from "../../src/types";
 
@@ -128,6 +129,8 @@ export async function runServerAutopilot(
         recent.map((o) => o.id)
       ),
       quarantines: serverQuarantines(uid, desk, now),
+      // A paper desk spends only the money it has free (its paper money less what its open trades cost).
+      ...(live ? {} : { freeCash: freeCash(policy.equity, mine) }),
     },
     policy,
     deps.livePrice,

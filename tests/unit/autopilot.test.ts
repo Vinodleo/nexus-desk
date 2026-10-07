@@ -68,6 +68,15 @@ describe("selectAutopilotTrades", () => {
     // Price already most of the way to the target.
     expect(selectAutopilotTrades([proposal("SOL/INR")], empty, policy, at(1050), now).deferred[0].reason).toMatch(/reward is left/);
   });
+
+  it("on a paper desk, spends only the free cash: each trade taken counts against it, one that costs more waits", () => {
+    // ₹5,000 trades (₹100 at risk, the stop ₹20 below ₹1,000: 5 units); ₹7,000 free: the first opens, the second waits.
+    const { accepted, deferred } = selectAutopilotTrades([proposal("A/INR"), proposal("B/INR")], { ...empty, freeCash: 7000 }, policy, at(1000), now);
+    expect(accepted.map((a) => [a.proposal.symbol, a.units * a.entryPrice])).toEqual([["A/INR", 5000]]);
+    expect(deferred[0].reason).toBe("not enough free cash: ₹2,000 left for a ₹5,000 trade");
+    // A live desk (no free cash given) isn't held to it.
+    expect(selectAutopilotTrades([proposal("A/INR"), proposal("B/INR")], empty, policy, at(1000), now).accepted).toHaveLength(2);
+  });
 });
 
 describe("autopilotOpeningsLastHour", () => {

@@ -48,6 +48,7 @@ import { addSkipCounts } from "./services/scanOutcome";
 import { priceEntry } from "./services/entryPricing";
 import { shadowStore } from "./services/shadowTracker";
 import { useRiskPolicy } from "./hooks/useRiskPolicy";
+import { freeCash } from "./shared/paperCash";
 import { useTheme } from "./hooks/useTheme";
 import { liveMarketStream } from "./services/liveMarketStreamService";
 import { CheckCircle2, AlertTriangle, X, Play, ArrowRight } from "lucide-react";
@@ -1232,6 +1233,8 @@ export default function App() {
           positions: activePositions,
           openedLastHour: autopilotOpeningsLastHour(activePositions, closedTrades),
           quarantines: symbolQuarantines,
+          // A paper desk spends only the money it has free.
+          ...(tradingMode === "PAPER" ? { freeCash: freeCash(equity, activePositions) } : {}),
         },
         riskPolicy,
         (symbol, direction) => entryPrices.get(`${symbol}|${direction}`) ?? liveMarketStream.getLastPrice(symbol)

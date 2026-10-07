@@ -14,6 +14,7 @@ import { openQuantity } from "../../shared/exitRules";
 import { roundTripFeeRate } from "../../shared/tradeCosts";
 import type { ScanBeat } from "../../shared/scanHeartbeat";
 import { ScanHeartbeat } from "./ScanHeartbeat";
+import { freeCash } from "../../shared/paperCash";
 
 /** The most common skip reasons, largest first, with their share of all skips. */
 export function topSkipReasons(counts: SkipCounts | undefined, limit = 3): { reason: SkipReason; label: string; pct: number }[] {
@@ -573,6 +574,10 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
 
   // Equity's digits roll into place; P&L glides to new values; positions animate in and out.
   const openPnl = positions.reduce((acc, p) => acc + (p.unrealizedPnl || 0), 0);
+  // On paper: what the account is worth now (the paper money and the open trades' profit), and what's free to trade
+  // (the paper money less what the open trades cost). Live, CoinDCX's balance says both.
+  const shownEquity = isLive ? equity : equity + openPnl;
+  const cashFree = isLive ? null : freeCash(equity, positions);
   // A closed trade holds its result for a moment, then slides away (nx-item-close).
   const rows = usePresenceList(positions, (p) => p.id, CLOSE_ANIMATION_MS);
   const signedMoney = (n: number) => formatMoney(n, { signed: true });
@@ -610,7 +615,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
       <section aria-label="Account" className="flex flex-col gap-1.5">
         <div className="text-[13px] text-muted">{isLive ? "CoinDCX equity" : "Paper equity"}</div>
         <div className="flex font-display text-[46px] tracking-[-0.01em] tabular-nums">
-          <RollingDigits text={formatMoney(equity)} mutedFrom="." />
+          <RollingDigits text={formatMoney(shownEquity)} mutedFrom="." />
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] tabular-nums">
           <span>
@@ -619,6 +624,11 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
           <span>
             All time <strong className={pnlTone(allTimePnl)}><Rolling value={allTimePnl} format={signedMoney} /></strong>
           </span>
+          {cashFree !== null && (
+            <span data-testid="free-cash">
+              Free cash <strong><Rolling value={cashFree} format={(n) => formatMoney(n)} /></strong>
+            </span>
+          )}
         </div>
         {props.todayCloses && <TodayLine closes={props.todayCloses} openPnl={openPnl} />}
       </section>
