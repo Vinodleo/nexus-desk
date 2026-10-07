@@ -65,7 +65,7 @@ const SummaryRow: React.FC<{ name: string; status: LabStatus; label: string; det
   );
 };
 
-/** The Today tab's first card: each kind of trading, whether it's on, and the record that decides. */
+/** The Today tab's card under the deck of strategies: the other traders and the tests, whether each is on, and the record that decides. */
 export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpen }) => {
   const dc = useLabFeed("/api/daily-coins", isDailyCoinsView);
   const edge = useLabFeed("/api/scanner/exit-edge", isEdgeView);
@@ -101,54 +101,7 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
       />
     );
   }
-  if (dc?.breakout) {
-    rows.push(
-      <SummaryRow
-        key="breakout"
-        name={`Coin ${dc.breakout.trader.charAt(0).toLowerCase()}${dc.breakout.trader.slice(1)}`}
-        status={dc.breakout.on ? "trading" : "paused"}
-        label={dc.breakout.on ? "Trading" : "Paused"}
-        detail={`${rSigned(dc.breakout.avgR)} a trade since 2018 · ${dc.breakout.trades} trades`}
-        onOpen={onOpen && (() => onOpen("records"))}
-      />
-    );
-  }
-  if (us?.gate) {
-    rows.push(
-      <SummaryRow
-        key="us-breakout"
-        name="US breakout 55/20"
-        status={us.gate.on ? "trading" : "paused"}
-        label={us.gate.on ? "Trading" : "Paused"}
-        detail={`${rSigned(us.gate.avgR)} a trade since 2016 · ${us.gate.trades} trades`}
-        onOpen={onOpen && (() => onOpen("records"))}
-      />
-    );
-  }
-  if (funds?.gate) {
-    rows.push(
-      <SummaryRow
-        key="funds-breakout"
-        name="Funds breakout 55/20"
-        status={funds.gate.on ? "trading" : "paused"}
-        label={funds.gate.on ? "Trading" : "Paused"}
-        detail={`${rSigned(funds.gate.avgR)} a trade since 2016 · ${funds.gate.trades} trades · gold, bonds and more`}
-        onOpen={onOpen && (() => onOpen("records"))}
-      />
-    );
-  }
-  if (momentum?.gate) {
-    rows.push(
-      <SummaryRow
-        key="us-momentum"
-        name="US momentum, top 3"
-        status={momentum.gate.on ? "trading" : "paused"}
-        label={momentum.gate.on ? "Trading" : "Paused"}
-        detail={`${rSigned(momentum.gate.avgR)} a trade since 2016 · ${momentum.gate.trades} trades · weekly`}
-        onOpen={onOpen && (() => onOpen("records"))}
-      />
-    );
-  }
+  // Coin, US and funds breakout and US momentum are the deck of strategies above (StrategyLineup).
   if (edge?.table && edge.table.rows.length > 0) {
     const s = fiveMinuteStatus(edge.table);
     rows.push(
@@ -176,8 +129,8 @@ export const LabSummary: React.FC<{ onOpen?: (tab: LabTab) => void }> = ({ onOpe
   }
   if (rows.length === 0) return null;
   return (
-    <Card aria-label="What's trading" className="flex flex-col">
-      <div className="text-[11px] font-semibold text-muted uppercase tracking-[0.08em]">What's trading</div>
+    <Card aria-label="Other traders and tests" className="flex flex-col">
+      <div className="text-[11px] font-semibold text-muted uppercase tracking-[0.08em]">Other traders and tests</div>
       <div className="flex flex-col" data-testid="lab-summary">
         {rows}
       </div>

@@ -381,6 +381,14 @@ html, body {
   .nx-dial-sweep, .nx-dial-flow { animation: none; }
   .nx-dial-hand, .nx-dial-ring { transition: none; }
 }
+/* The Lab's deck of strategies: the cards slide and turn as the deck moves, the neighbours peeking out each side;
+   the picked dot stretches. */
+.nx-deck-slot { transition: transform 620ms cubic-bezier(0.3, 1.15, 0.4, 1), opacity 450ms ease; }
+.nx-deck-card { box-shadow: 0 26px 50px -36px color-mix(in srgb, var(--nx-scrim) 70%, transparent); }
+.nx-deck-dot { transition: width 450ms cubic-bezier(0.3, 1.4, 0.4, 1), background-color 300ms ease; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-deck-slot, .nx-deck-dot { transition: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .nx-blob-squish, .nx-money-ring, .nx-ticket-unfold, .nx-ticket-stub, .nx-ticket-stamp, .nx-ticket-drain { animation: none; }
   .nx-money-ring, .nx-fold, .nx-chevron { transition: none; }
