@@ -50,13 +50,22 @@ describe("LedgerFloor", () => {
   it("shows the account, limits and positions from its props", () => {
     const { container } = render(createElement(LedgerFloor, props()));
     const text = container.textContent ?? "";
-    expect(text).toContain("₹94,483.96");
+    // Paper equity: the paper money and the open trade's profit (₹94,483.96 + ₹23.04).
+    expect(text).toContain("Paper equity₹94,507.00");
     expect(text).toContain("−₹5,688.13");
+    // Free cash: the paper money less what the open trade cost (0.0012 BTC at ₹58,42,100).
+    expect(screen.getByTestId("free-cash").textContent).toBe("Free cash ₹87,473.44");
     expect(text).toContain("9.9%");
     expect(text).toContain("₹2,500");
     expect(text).toContain("Trailing stop active · locked above entry");
     expect(text).toContain("Guardian online · live trading off");
     expect(text).toContain("BTC 58,61,300 +0.31% · ETH 2,65,922 \u22123.04% in 24h");
+  });
+
+  it("shows CoinDCX's balance as it is when live, with no paper free cash", () => {
+    const { container } = render(createElement(LedgerFloor, props({ isLive: true })));
+    expect(container.textContent).toContain("CoinDCX equity₹94,483.96");
+    expect(screen.queryByTestId("free-cash")).toBeNull();
   });
 
   it("says when half a position has been banked", () => {

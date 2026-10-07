@@ -34,6 +34,8 @@ export interface AutopilotBook {
   /** Positions autopilot opened in the last hour, open or closed. */
   openedLastHour: number;
   quarantines: Record<string, { quarantinedUntilMs: number }>;
+  /** A paper desk's money free to trade (shared/paperCash): a trade that costs more waits. Absent on a live desk. */
+  freeCash?: number;
 }
 
 /**
@@ -95,6 +97,7 @@ export function selectAutopilotTrades(
   }
   let exposure = book.positions.reduce((acc, p) => acc + openQuantity(p) * p.currentPrice, 0);
   let hourly = book.openedLastHour;
+  let cashLeft = book.freeCash;
   const held = new Set(book.positions.map((p) => p.symbol));
 
   const accepted: AutopilotAccepted[] = [];
@@ -158,8 +161,10 @@ export function selectAutopilotTrades(
     const agreement = proposal.ensembleAgreement ?? 1;
     const votes = proposal.personaVotesCast ?? 1;
     const lacksConsensus = agreement < policy.autopilotMinConsensus || votes < policy.autopilotMinPersonaVotes;
+    // A paper desk can't spend money it doesn't have.
+    const shortOfCash = cashLeft !== undefined && added > cashLeft + 0.01;
 
-    if (tooMany || tooExposed || sectorFull || alreadyHeld || overHourly || lacksConsensus) {
+    if (tooMany || tooExposed || sectorFull || alreadyHeld || overHourly || lacksConsensus || shortOfCash) {
       const reasons: string[] = [];
       if (tooMany)
         reasons.push(
@@ -171,6 +176,7 @@ export function selectAutopilotTrades(
       if (sectorFull) reasons.push(`would exceed ${policy.maxCorrelatedPositionsPerGroup} open trades in ${sector!.label}`);
       if (alreadyHeld) reasons.push(`already holding a ${proposal.symbol} position`);
       if (overHourly) reasons.push(`would exceed ${policy.autopilotMaxApprovalsPerHour} autonomous approvals/hour`);
+      if (shortOfCash) reasons.push(`not enough free cash: ₹${Math.round(cashLeft!).toLocaleString("en-IN")} left for a ₹${Math.round(added).toLocaleString("en-IN")} trade`);
       if (lacksConsensus)
         reasons.push(
           `panel consensus ${(agreement * 100).toFixed(0)}% with ${votes} vote(s) — needs ${(policy.autopilotMinConsensus * 100).toFixed(0)}%/${policy.autopilotMinPersonaVotes}`
@@ -184,6 +190,7 @@ export function selectAutopilotTrades(
     slots[market] += 1;
     if (sector) openBySector.set(sector.key, (openBySector.get(sector.key) ?? 0) + 1);
     exposure += added;
+    if (cashLeft !== undefined) cashLeft -= added;
     hourly += 1;
     held.add(proposal.symbol);
   }

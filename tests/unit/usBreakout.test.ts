@@ -179,6 +179,18 @@ describe("US breakout trades", () => {
   });
 });
 
+describe("a paper desk's free cash", () => {
+  it("is all the server's autopilot spends: a trade that costs more than is left waits", async () => {
+    const us = await fresh();
+    // ₹6,000 of paper money: one ₹200-risk US trade (about ₹4,900) fits, the second doesn't.
+    const poor = { ...desk, equity: 6000 };
+    await us.runUsBreakout(await deps(monday, { desks: () => [["u", poor]] }));
+    const picks = us._usBreakoutState().runs.u.picks;
+    expect(picks.filter((p) => p.outcome === "opened")).toHaveLength(1);
+    expect(picks.find((p) => p.outcome === "waiting")?.reason).toMatch(/^not enough free cash: ₹\d[\d,]* left for a ₹[\d,]+ trade$/);
+  });
+});
+
 describe("funds breakout trades (gold, bonds and the rest)", () => {
   beforeEach(async () => {
     await fresh();
