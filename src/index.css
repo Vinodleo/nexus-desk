@@ -292,7 +292,41 @@ html, body {
   to { transform: none; opacity: 1; }
 }
 .nx-snack-in { animation: nx-snack-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
-.nx-tab-indicator { transition: transform 300ms cubic-bezier(0.3, 0.9, 0.3, 1.15); }
+/* The bottom bar's blob behind the picked tab: it slides across with a little overshoot and stretches as it goes,
+   like a drop of liquid, then settles. */
+.nx-tab-indicator { transition: transform 520ms cubic-bezier(0.45, 1.45, 0.4, 1); }
+@keyframes nx-blob-squish {
+  0% { transform: none; }
+  30% { transform: scaleX(1.4) scaleY(0.82); }
+  65% { transform: scaleX(0.93) scaleY(1.05); }
+  100% { transform: none; }
+}
+.nx-blob-squish { animation: nx-blob-squish 520ms ease-out both; }
+
+/* The Floor's money ring (paper): the share in trades draws itself round when shown, then glides as it changes. */
+@property --nx-ring {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+@keyframes nx-ring-draw {
+  from { --nx-ring: 0; }
+}
+.nx-money-ring {
+  background: conic-gradient(var(--nx-accent) calc(var(--nx-ring) * 1%), var(--nx-accent-soft) 0);
+  transition: --nx-ring 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: nx-ring-draw 1400ms cubic-bezier(0.2, 0.8, 0.2, 1) 200ms both;
+}
+/* A trade's numbers fold open under it when tapped. */
+.nx-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 380ms cubic-bezier(0.2, 0.8, 0.3, 1); }
+.nx-fold-open { grid-template-rows: 1fr; }
+.nx-fold > * { min-height: 0; overflow: hidden; }
+.nx-chevron { transition: transform 320ms cubic-bezier(0.3, 1.4, 0.4, 1); }
+.nx-chevron-open { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  .nx-blob-squish, .nx-money-ring { animation: none; }
+  .nx-money-ring, .nx-fold, .nx-chevron { transition: none; }
+}
 
 /* Open trades. A new one sweeps a soft band across once it has grown in. */
 @keyframes nx-sweep {

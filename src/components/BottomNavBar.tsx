@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import { useSlideFrom } from "./ledger/motion";
 import { LayoutGrid, AlignLeft, BookOpen, TrendingUp, FlaskConical } from "lucide-react";
 
@@ -30,20 +30,28 @@ export function useTabSlide(activeTab: TabType): string | undefined {
 
 export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onTabChange, pendingQueueCount, bookBumpKey = 0 }) => {
   const activeIndex = Math.max(0, TAB_ORDER.indexOf(activeTab));
+  // The blob stretches only once a tab has been picked, not when the app opens.
+  const firstTab = useRef<TabType | null>(activeTab);
+  const moved = activeTab !== firstTab.current || firstTab.current === null;
+  if (moved) firstTab.current = null;
   return (
     <nav
       aria-label="Main"
       className="fixed bottom-0 left-0 right-0 z-40 bg-surface border-t border-line pt-1 px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] select-none font-ui"
     >
       <div className="relative max-w-lg mx-auto grid grid-cols-5">
-        {/* A short bar above the active tab that slides to the new one. */}
+        {/* A soft blob behind the active tab that slides to the new one, stretching as it goes (not on first show). */}
         <span
           aria-hidden="true"
           data-testid="tab-indicator"
-          className="nx-tab-indicator absolute -top-1 left-0 w-1/5 h-[3px] flex justify-center pointer-events-none"
+          className="nx-tab-indicator absolute inset-y-1 left-0 w-1/5 px-1.5 pointer-events-none"
           style={{ transform: `translateX(${activeIndex * 100}%)` }}
         >
-          <span className="w-8 h-full rounded-b-full bg-accent" />
+          <span
+            key={activeIndex}
+            data-testid="tab-blob"
+            className={`block w-full h-full rounded-2xl bg-accent-soft${moved ? " nx-blob-squish" : ""}`}
+          />
         </span>
         {TABS.map(({ id, label, icon: Icon }) => {
           const isActive = activeTab === id;

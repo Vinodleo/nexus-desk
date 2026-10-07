@@ -103,7 +103,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     A paper desk is a cash account (`src/shared/paperCash.ts`): open paper trades tie up what they cost (`moneyInTrades`),
     and the autopilot, on the server and the phone, defers a trade costing more than the free cash left (`freeCash`,
     `AutopilotBook.freeCash`, "not enough free cash"); live desks aren't held to it (CoinDCX's balance is). The Floor's
-    paper equity includes the open trades' profit, with the free cash beside it.
+    paper equity includes the open trades' profit; under it a ring shows the free cash against what's in trades (`MoneyRing`).
+    Breakout and momentum trades (no target) sit on a line in R (`riskLadder`), every trade shows where it is in R, and
+    tapping one folds its numbers open.
 - **Tax report (Book → Breakdown, owner's ask):** `src/services/taxReport.ts`, `TaxReportCard`. An Indian financial year's
   closed trades (1 April to 31 March, India time), live and paper apart (`isLiveOrder` on closed trades; only live are
   taxed): coins as crypto (30% plus cess on each winner's gain before fees, losses offset nothing, 1% TDS on each sale),

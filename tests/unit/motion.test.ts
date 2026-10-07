@@ -233,6 +233,22 @@ describe("the tabs", () => {
     expect(getByRole("button", { name: "Floor" }).querySelector(".nx-tab-bounce")).toBeNull();
     expect(getByRole("button", { name: "Queue, 2 waiting" }).querySelector(".nx-badge-pop")?.textContent).toBe("2");
   });
+
+  it("the indicator's blob stretches as it moves to a new tab, each time, but not when the app opens", async () => {
+    const { BottomNavBar } = await import("../../src/components/BottomNavBar");
+    const bar = (activeTab: any) => createElement(BottomNavBar, { activeTab, onTabChange: () => {}, pendingQueueCount: 0 });
+    const { rerender, getByTestId } = render(bar("floor"));
+    expect(getByTestId("tab-blob").className).not.toContain("nx-blob-squish");
+    rerender(bar("floor"));
+    expect(getByTestId("tab-blob").className).not.toContain("nx-blob-squish");
+    rerender(bar("book"));
+    const first = getByTestId("tab-blob");
+    expect(first.className).toContain("nx-blob-squish");
+    rerender(bar("lab"));
+    // A new element, so the stretch plays again.
+    expect(getByTestId("tab-blob")).not.toBe(first);
+    expect(getByTestId("tab-blob").className).toContain("nx-blob-squish");
+  });
 });
 
 describe("the trade line", () => {
