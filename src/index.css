@@ -323,8 +323,41 @@ html, body {
 .nx-fold > * { min-height: 0; overflow: hidden; }
 .nx-chevron { transition: transform 320ms cubic-bezier(0.3, 1.4, 0.4, 1); }
 .nx-chevron-open { transform: rotate(180deg); }
+/* The ticket a newly opened trade unfolds into: the top swings down, the stub folds out under it, the PAPER (or
+   LIVE) stamp thumps on, and on paper the free cash drains to what's left. Notched where it tears. */
+@keyframes nx-ticket-unfold {
+  0% { transform: perspective(1000px) rotateX(-80deg) translateY(-24px); opacity: 0; }
+  45% { opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+.nx-ticket-unfold { transform-origin: top center; animation: nx-ticket-unfold 900ms cubic-bezier(0.2, 0.9, 0.3, 1.08) 100ms both; }
+@keyframes nx-ticket-fold {
+  0% { transform: perspective(900px) rotateX(90deg); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+.nx-ticket-stub { transform-origin: top center; animation: nx-ticket-fold 700ms cubic-bezier(0.2, 0.9, 0.3, 1.12) 850ms both; }
+@keyframes nx-ticket-stamp {
+  0% { transform: scale(2.3) rotate(-26deg); opacity: 0; }
+  100% { transform: rotate(-10deg); opacity: 1; }
+}
+.nx-ticket-stamp { animation: nx-ticket-stamp 480ms cubic-bezier(0.3, 1.7, 0.4, 1) 1300ms both; }
+@keyframes nx-ticket-drain { from { width: var(--nx-from); } }
+.nx-ticket-drain { animation: nx-ticket-drain 1100ms cubic-bezier(0.6, 0, 0.2, 1) 1500ms both; }
+.nx-notch-top {
+  -webkit-mask: radial-gradient(circle 14px at 0 0, #0000 98%, #000), radial-gradient(circle 14px at 100% 0, #0000 98%, #000);
+  -webkit-mask-composite: source-in;
+  mask: radial-gradient(circle 14px at 0 0, #0000 98%, #000), radial-gradient(circle 14px at 100% 0, #0000 98%, #000);
+  mask-composite: intersect;
+}
+.nx-notch-bottom {
+  -webkit-mask: radial-gradient(circle 14px at 0 100%, #0000 98%, #000), radial-gradient(circle 14px at 100% 100%, #0000 98%, #000);
+  -webkit-mask-composite: source-in;
+  mask: radial-gradient(circle 14px at 0 100%, #0000 98%, #000), radial-gradient(circle 14px at 100% 100%, #0000 98%, #000);
+  mask-composite: intersect;
+}
 @media (prefers-reduced-motion: reduce) {
-  .nx-blob-squish, .nx-money-ring { animation: none; }
+  .nx-blob-squish, .nx-money-ring, .nx-ticket-unfold, .nx-ticket-stub, .nx-ticket-stamp, .nx-ticket-drain { animation: none; }
   .nx-money-ring, .nx-fold, .nx-chevron { transition: none; }
 }
 
