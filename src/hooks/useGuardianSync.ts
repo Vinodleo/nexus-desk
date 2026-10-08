@@ -75,6 +75,9 @@ export function adoptServerOpened(
 // Keeps the server's 24/7 position guardian in step with the browser book:
 // pushes every change to the open positions, and pulls closes the guardian
 // made while this tab was asleep (on mount, on focus/visibility, every 10s).
+// Nothing is pushed until the guardian has answered once: the guardian drops
+// positions missing from a push, so an empty book (a new install, cleared
+// storage) first takes up the guardian's positions rather than wiping them.
 // Returns whether the guardian answered its last check (null until the first).
 export function useGuardianSync(
   activePositions: Position[],
@@ -83,6 +86,8 @@ export function useGuardianSync(
   isClosedLocally: (id: string) => boolean = () => false
 ) {
   const [online, setOnline] = useState<boolean | null>(null);
+  // The guardian has answered a catch-up poll, so the book holds its positions too.
+  const [heard, setHeard] = useState(false);
   const isClosedRef = useRef(isClosedLocally);
   isClosedRef.current = isClosedLocally;
 
@@ -95,6 +100,7 @@ export function useGuardianSync(
   const lastIds = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!heard) return;
     const sync = async () => {
       pending.current = null;
       const positions = latest.current;
@@ -125,7 +131,7 @@ export function useGuardianSync(
     } else if (!pending.current) {
       pending.current = setTimeout(() => void sync(), SYNC_THROTTLE_MS);
     }
-  }, [activePositions, setActivePositions]);
+  }, [activePositions, setActivePositions, heard]);
 
   useEffect(
     () => () => {
@@ -168,6 +174,7 @@ export function useGuardianSync(
         for (const ev of (data.events ?? []) as DaemonCloseEvent[]) {
           applyServerClose(ev);
         }
+        setHeard(true);
       } catch (err) {
         setOnline(false);
         console.warn("[DaemonSync] Error reconciling daemon events:", err);

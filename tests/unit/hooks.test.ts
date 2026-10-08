@@ -155,6 +155,36 @@ describe("useGuardianSync", () => {
     await waitFor(() => expect(result.current.map((p) => p.id)).toEqual(["srv-1"]));
   });
 
+  it("pushes nothing until the guardian has answered, so an empty book can't wipe its positions", async () => {
+    // A new install or cleared storage: the book starts empty while the guardian holds a trade.
+    apiFetch.mockImplementation((url: string) =>
+      url.startsWith("/api/daemon/closed-events") ? json({ events: [], activePositions: [position("srv-1")] }) : json({})
+    );
+    renderHook(() => {
+      const [positions, setPositions] = useState<Position[]>([]);
+      useGuardianSync(positions, setPositions, () => false);
+    });
+    await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => u === "/api/daemon/sync-positions")).toBe(true));
+    const urls = apiFetch.mock.calls.map(([u]) => u as string);
+    const firstSync = urls.indexOf("/api/daemon/sync-positions");
+    expect(urls.findIndex((u) => u.startsWith("/api/daemon/closed-events"))).toBeLessThan(firstSync);
+    // Every push carries the guardian's trade: none is empty.
+    for (const [u, init] of apiFetch.mock.calls) {
+      if (u === "/api/daemon/sync-positions") expect(JSON.parse(init.body).positions.map((p: Position) => p.id)).toEqual(["srv-1"]);
+    }
+  });
+
+  it("pushes nothing while the guardian can't be reached", async () => {
+    apiFetch.mockImplementation(() => json({ error: "down" }, 503));
+    renderHook(() => {
+      const [positions, setPositions] = useState<Position[]>([position("pos-1")]);
+      useGuardianSync(positions, setPositions, () => false);
+    });
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/daemon\/closed-events/)));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(apiFetch.mock.calls.some(([u]) => u === "/api/daemon/sync-positions")).toBe(false);
+  });
+
   it("removes its focus and visibility listeners on unmount", () => {
     apiFetch.mockImplementation(() => json({}));
     const addDoc = vi.spyOn(document, "addEventListener");

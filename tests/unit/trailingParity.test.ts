@@ -145,7 +145,11 @@ describe("syncing to the guardian", () => {
     const syncs = () => apiFetch.mock.calls.filter(([u]) => u === "/api/daemon/sync-positions").length;
     let positions = [position()];
     const { rerender } = renderHook(() => useGuardianSync(positions, vi.fn(), vi.fn()));
-    expect(syncs()).toBe(1); // first position: at once
+    expect(syncs()).toBe(0); // nothing before the guardian has answered once
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(syncs()).toBe(1); // then at once
     for (let i = 1; i <= 10; i++) {
       positions = [position({ currentPrice: 1000 + i })]; // ten price ticks
       rerender();
