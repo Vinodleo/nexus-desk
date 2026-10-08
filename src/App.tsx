@@ -1823,6 +1823,7 @@ export default function App() {
               risk={
                 <LedgerRisk
                   riskCalc={currentRiskCalculation}
+                  positions={activePositions}
                   marketLimits={riskLimits.marketLimits}
                   failureState={failureState}
                   onUpdateFailureState={(key, val) =>
