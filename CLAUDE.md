@@ -48,7 +48,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   took; several queue up.
   Book → Trades: the running total of closed trades as a line that draws itself (`MoneyLine`), a month of days tinted
   by what each made or lost (tap one for only its trades; `DayCalendar`, `BookCalendar.tsx`), and each row's result in R
-  after fees (`resultR`) with a slim line of how it moved.
+  after fees (`resultR`) with a slim line of how it moved. Book → Breakdown (last 7 days, this month or all, `tradesIn`):
+  where the money went (`MoneyWaterfall`, `moneyFlow`: won and lost before fees, the fees, what was kept; what coin
+  fees took), each strategy's result either side of zero (`ByStrategy`, `strategyOf`), and the win rate on a half dial
+  against the rate that breaks even (`WinGauge`), in `BookMoney.tsx`.
   Explanations and long lists fold away (`Fold`); chips, bars and year columns are in `labUi.tsx`. The cards read
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume
