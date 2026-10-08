@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { HistoricalTrade } from "../../types";
 import { formatMoney } from "./format";
@@ -89,7 +89,10 @@ const monthIndex = (ms: number) => {
   return d.getFullYear() * 12 + d.getMonth();
 };
 
-/** A month of days tinted by what they made; tap one to show only its trades (again to show all). */
+/**
+ * A month of days tinted by what they made, opening on this month; the arrows
+ * or a swipe go to any month. Tap a day to show only its trades (again to show all).
+ */
 export const DayCalendar: React.FC<{
   trades: HistoricalTrade[];
   picked: string | null;
@@ -97,48 +100,88 @@ export const DayCalendar: React.FC<{
   now?: number;
 }> = ({ trades, picked, onPick, now = Date.now() }) => {
   const totals = useMemo(() => dayTotals(trades), [trades]);
-  const dated = trades.filter((t) => t.closedAtMs !== undefined).map((t) => t.closedAtMs!);
-  const firstMonth = dated.length ? monthIndex(Math.min(...dated)) : monthIndex(now);
-  const lastMonth = dated.length ? monthIndex(Math.max(...dated)) : monthIndex(now);
-  // Opens on the month of the latest trade.
-  const [shown, setShown] = useState(lastMonth);
-  const month = Math.min(Math.max(shown, firstMonth), lastMonth);
+  const hasTrades = trades.some((t) => t.closedAtMs !== undefined);
+  // Opens on this month; the arrows (or a swipe) go to any month, earlier or later.
+  const thisMonth = monthIndex(now);
+  const [month, setMonth] = useState(thisMonth);
   const year = Math.floor(month / 12);
   const cells = monthGrid(year, month % 12);
   const most = Math.max(1, ...[...totals.values()].map((v) => Math.abs(v.net)));
   const today = localDay(now);
-  if (dated.length === 0) return null;
+  // The month's own total, from its days.
+  const prefix = `${year}-${String((month % 12) + 1).padStart(2, "0")}-`;
+  const monthTotal = [...totals.entries()].filter(([k]) => k.startsWith(prefix)).reduce((a, [, v]) => ({ net: a.net + v.net, count: a.count + v.count }), { net: 0, count: 0 });
+  // The new month slides in from the side it came from.
+  const slide = useRef({ month, cls: "" });
+  if (slide.current.month !== month) slide.current = { month, cls: month > slide.current.month ? "nx-tab-from-right" : "nx-tab-from-left" };
+  const startX = useRef<number | null>(null);
+  if (!hasTrades) return null;
   return (
     <section aria-label="Days" className="bg-surface border border-line rounded-[22px] p-3.5 flex flex-col gap-2" data-testid="day-calendar">
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
           aria-label="Earlier month"
-          disabled={month <= firstMonth}
-          onClick={() => setShown(month - 1)}
-          className="w-9 h-9 rounded-full grid place-items-center text-ink cursor-pointer disabled:opacity-30 disabled:cursor-default"
+          onClick={() => setMonth(month - 1)}
+          className="w-11 h-11 rounded-full grid place-items-center text-ink cursor-pointer"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
-        <div key={month} className="text-sm font-semibold nx-roll-in" data-testid="calendar-month">
-          {MONTH(year, month % 12)}
+        <div key={month} className="flex flex-col items-center nx-roll-in">
+          <div className="text-sm font-semibold" data-testid="calendar-month">
+            {MONTH(year, month % 12)}
+          </div>
+          <div className="text-[11px] text-muted tabular-nums" data-testid="calendar-month-total">
+            {monthTotal.count === 0 ? (
+              "No closed trades"
+            ) : (
+              <>
+                <span className={monthTotal.net > 0 ? "text-gain" : monthTotal.net < 0 ? "text-loss" : ""}>
+                  {formatMoney(monthTotal.net, { signed: true, decimals: 0 })}
+                </span>{" "}
+                · {monthTotal.count} {monthTotal.count === 1 ? "trade" : "trades"}
+              </>
+            )}
+          </div>
         </div>
         <button
           type="button"
           aria-label="Later month"
-          disabled={month >= lastMonth}
-          onClick={() => setShown(month + 1)}
-          className="w-9 h-9 rounded-full grid place-items-center text-ink cursor-pointer disabled:opacity-30 disabled:cursor-default"
+          onClick={() => setMonth(month + 1)}
+          className="w-11 h-11 rounded-full grid place-items-center text-ink cursor-pointer"
         >
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
+      {month !== thisMonth && (
+        <button
+          type="button"
+          onClick={() => setMonth(thisMonth)}
+          className="self-center min-h-8 px-3 rounded-full border border-line text-xs font-semibold text-accent cursor-pointer nx-badge-pop"
+        >
+          Back to this month
+        </button>
+      )}
       <div className="grid grid-cols-7 gap-[5px] text-[10px] font-semibold text-muted text-center" aria-hidden="true">
         {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
           <span key={i}>{d}</span>
         ))}
       </div>
-      <div key={month} className="grid grid-cols-7 gap-[5px]">
+      <div
+        key={month}
+        className={`grid grid-cols-7 gap-[5px] touch-pan-y ${slide.current.cls}`}
+        data-testid="calendar-days"
+        // A swipe sideways moves a month, like the arrows.
+        onPointerDown={(e) => (startX.current = e.clientX)}
+        onPointerUp={(e) => {
+          if (startX.current === null) return;
+          const dx = e.clientX - startX.current;
+          startX.current = null;
+          if (dx < -50) setMonth(month + 1);
+          else if (dx > 50) setMonth(month - 1);
+        }}
+        onPointerCancel={() => (startX.current = null)}
+      >
         {cells.map((c, i) => {
           const v = totals.get(c.key);
           const mix = v ? Math.round(18 + 52 * (Math.abs(v.net) / most)) : 0;

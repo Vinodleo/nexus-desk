@@ -10,7 +10,15 @@ const { dayTotals, localDay, monthGrid, moneyLine } = await import("../../src/co
 
 // Book → Trades: the money line, the calendar of days, and each row's R and move line.
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+/** Sets the phone's date (timers stay real). */
+const today = (y: number, m: number, d: number) => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(y, m - 1, d, 18));
+};
 
 /** Noon on a day on this machine's calendar. */
 const noon = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12).getTime();
@@ -52,25 +60,68 @@ describe("the money line and the days", () => {
   });
 
   it("draws the line in the summary, and tints each day by what it made", () => {
+    today(2026, 10, 8);
     render(createElement(LedgerBook, { trades, risk: null }));
     const line = screen.getByTestId("money-line");
     // It ends up, so it's drawn in the gain colour, the dot at the top.
     expect(line.className).toBe("text-gain");
     expect(screen.getByTestId("money-line-dot").style.top).toBe(`${(4 / 72) * 100}%`);
-    // Opens on the month of the latest trade.
+    // Opens on this month, with what its days made.
     expect(screen.getByTestId("calendar-month").textContent).toBe("October 2026");
+    expect(screen.getByTestId("calendar-month-total").textContent).toBe("+₹12,090 · 3 trades");
     expect(screen.getByTestId("day-2026-10-06").getAttribute("data-tone")).toBe("gain");
     expect(screen.getByTestId("day-2026-10-06").getAttribute("aria-label")).toBe("6 Oct: +₹2,670, 2 trades");
     expect(screen.getByTestId("day-2026-09-29").getAttribute("data-tone")).toBe("loss");
     // A day without trades is not a button.
     expect(screen.getByTestId("day-2026-10-01").tagName).toBe("SPAN");
-    expect((screen.getByRole("button", { name: "Later month" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Back to this month" })).toBeNull();
+  });
+
+  it("opens on this month even when the last trade was earlier, and goes to any month and back", () => {
+    today(2026, 11, 20);
+    render(createElement(LedgerBook, { trades, risk: null }));
+    expect(screen.getByTestId("calendar-month").textContent).toBe("November 2026");
+    expect(screen.getByTestId("calendar-month-total").textContent).toBe("No closed trades");
+    // Back two months to September: its one trade.
+    fireEvent.click(screen.getByRole("button", { name: "Earlier month" }));
     fireEvent.click(screen.getByRole("button", { name: "Earlier month" }));
     expect(screen.getByTestId("calendar-month").textContent).toBe("September 2026");
-    expect((screen.getByRole("button", { name: "Earlier month" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("calendar-month-total").textContent).toBe("−₹2,310 · 1 trade");
+    expect(screen.getByTestId("calendar-days").className).toContain("nx-tab-from-left");
+    // And further back than any trade, or on past this month: any month.
+    fireEvent.click(screen.getByRole("button", { name: "Earlier month" }));
+    expect(screen.getByTestId("calendar-month").textContent).toBe("August 2026");
+    fireEvent.click(screen.getByRole("button", { name: "Back to this month" }));
+    expect(screen.getByTestId("calendar-month").textContent).toBe("November 2026");
+    fireEvent.click(screen.getByRole("button", { name: "Later month" }));
+    expect(screen.getByTestId("calendar-month").textContent).toBe("December 2026");
+    expect(screen.getByTestId("calendar-days").className).toContain("nx-tab-from-right");
+    // A year on, past the new year.
+    for (let i = 0; i < 12; i++) fireEvent.click(screen.getByRole("button", { name: "Later month" }));
+    expect(screen.getByTestId("calendar-month").textContent).toBe("December 2027");
+  });
+
+  it("moves a month with a swipe sideways", () => {
+    today(2026, 10, 8);
+    // jsdom has no PointerEvent: a mouse event carries the finger's place.
+    if (!("PointerEvent" in window)) (window as any).PointerEvent = class extends MouseEvent {};
+    render(createElement(LedgerBook, { trades, risk: null }));
+    const swipe = (from: number, to: number) => {
+      fireEvent.pointerDown(screen.getByTestId("calendar-days"), { clientX: from });
+      fireEvent.pointerUp(screen.getByTestId("calendar-days"), { clientX: to });
+    };
+    swipe(250, 100);
+    expect(screen.getByTestId("calendar-month").textContent).toBe("November 2026");
+    swipe(100, 250);
+    swipe(100, 250);
+    expect(screen.getByTestId("calendar-month").textContent).toBe("September 2026");
+    // A small move is a tap, not a swipe.
+    swipe(100, 120);
+    expect(screen.getByTestId("calendar-month").textContent).toBe("September 2026");
   });
 
   it("shows only a tapped day's trades, until the day is tapped again or its chip cleared", () => {
+    today(2026, 10, 8);
     render(createElement(LedgerBook, { trades, risk: null }));
     const list = () => screen.getByRole("region", { name: "Closed trades" });
     expect(within(list()).getAllByRole("listitem")).toHaveLength(4);

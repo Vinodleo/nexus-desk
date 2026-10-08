@@ -47,7 +47,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it
   took; several queue up.
   Book → Trades: the running total of closed trades as a line that draws itself (`MoneyLine`), a month of days tinted
-  by what each made or lost (tap one for only its trades; `DayCalendar`, `BookCalendar.tsx`), and each row's result in R
+  by what each made or lost, opening on this month with its total, the arrows or a swipe going to any month (tap a day
+  for only its trades; `DayCalendar`, `BookCalendar.tsx`), and each row's result in R
   after fees (`resultR`) with a slim line of how it moved. Book → Breakdown (last 7 days, this month or all, `tradesIn`):
   where the money went (`MoneyWaterfall`, `moneyFlow`: won and lost before fees, the fees, what was kept; what coin
   fees took), each strategy's result either side of zero (`ByStrategy`, `strategyOf`), and the win rate on a half dial
