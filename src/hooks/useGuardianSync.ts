@@ -8,6 +8,51 @@ import type { Position } from "../types";
 
 const LAST_POLL_KEY = "nexus_last_daemon_poll";
 const SYNC_THROTTLE_MS = 1500;
+/** Positions that left this book (closed, or dropped), with when: told to the guardian for a week. */
+const GONE_KEY = "nexus_gone_positions";
+const GONE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+/** At most this many told at once (the newest). */
+const GONE_MAX = 300;
+
+function loadGone(): Map<string, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(GONE_KEY) ?? "[]");
+    if (Array.isArray(raw)) return new Map(raw.filter((e) => Array.isArray(e) && typeof e[0] === "string" && Number.isFinite(e[1])));
+  } catch {}
+  return new Map();
+}
+
+function saveGone(gone: Map<string, number>): void {
+  try {
+    localStorage.setItem(GONE_KEY, JSON.stringify([...gone]));
+  } catch {}
+}
+
+/**
+ * Notes the positions that left the book since `shown` (closed here, or
+ * dropped) and forgets ones back in it or older than a week. Returns whether
+ * the list changed.
+ */
+export function noteGone(gone: Map<string, number>, shown: Set<string>, now: Set<string>, at: number): boolean {
+  let changed = false;
+  for (const id of shown) {
+    if (!now.has(id) && !gone.has(id)) {
+      gone.set(id, at);
+      changed = true;
+    }
+  }
+  for (const [id, when] of gone) {
+    if (now.has(id) || when < at - GONE_KEEP_MS) {
+      gone.delete(id);
+      changed = true;
+    }
+  }
+  while (gone.size > GONE_MAX) {
+    gone.delete(gone.keys().next().value!);
+    changed = true;
+  }
+  return changed;
+}
 
 const idsOf = (positions: Position[]) => positions.map((p) => p.id).sort().join(",");
 
@@ -49,14 +94,15 @@ export function adoptGuardianState(prev: Position[], guardian: (GuardFields & { 
 const asSent = (g: Position): Position => (g.currentPrice > 0 ? markedPosition(g, g.currentPrice) : g);
 
 /**
- * The browser's positions plus any the server's autopilot opened that this
- * book doesn't have yet (`isClosed`: ones this app already closed, whose
- * removal the guardian may not have heard of yet). Not one in a coin the
- * book already holds: that's the same signal opened twice, and the server
- * drops its copy on the next sync. Returns `prev` itself when there's
- * nothing to add.
+ * The browser's positions plus any the guardian holds that this book doesn't
+ * have yet: opened by the server's autopilot, or on another device
+ * (`isClosed`: ones this app already closed or dropped, whose removal the
+ * guardian may not have heard of yet). Not a server-opened one the app
+ * hasn't seen in a coin the book already holds: that's the same signal
+ * opened twice, and the server drops its copy on the next sync. Returns
+ * `prev` itself when there's nothing to add.
  */
-export function adoptServerOpened(
+export function adoptGuardianPositions(
   prev: Position[],
   guardian: (Position & { openedByServer?: boolean; clientSeen?: boolean })[],
   isClosed: (id: string) => boolean
@@ -65,7 +111,8 @@ export function adoptServerOpened(
   const held = new Set(prev.map((p) => p.symbol));
   const added: Position[] = [];
   for (const g of guardian) {
-    if (!g.openedByServer || g.clientSeen || have.has(g.id) || held.has(g.symbol) || isClosed(g.id)) continue;
+    if (have.has(g.id) || isClosed(g.id)) continue;
+    if (g.openedByServer && !g.clientSeen && held.has(g.symbol)) continue;
     added.push(asSent(g));
     held.add(g.symbol);
   }
@@ -75,9 +122,12 @@ export function adoptServerOpened(
 // Keeps the server's 24/7 position guardian in step with the browser book:
 // pushes every change to the open positions, and pulls closes the guardian
 // made while this tab was asleep (on mount, on focus/visibility, every 10s).
-// Nothing is pushed until the guardian has answered once: the guardian drops
-// positions missing from a push, so an empty book (a new install, cleared
-// storage) first takes up the guardian's positions rather than wiping them.
+// Each push tells which positions left this book lately (closed or dropped):
+// only those leave the guardian, so another device's older book can't drop a
+// trade it hasn't heard of, and a catch-up poll takes up any trade the
+// guardian holds that this book lacks. Nothing is pushed until the guardian
+// has answered once, so an empty book (a new install, cleared storage) takes
+// up the guardian's positions first.
 // Returns whether the guardian answered its last check (null until the first).
 export function useGuardianSync(
   activePositions: Position[],
@@ -90,6 +140,11 @@ export function useGuardianSync(
   const [heard, setHeard] = useState(false);
   const isClosedRef = useRef(isClosedLocally);
   isClosedRef.current = isClosedLocally;
+  // Positions that left this book lately, and the ones it showed last.
+  const gone = useRef<Map<string, number> | null>(null);
+  gone.current ??= loadGone();
+  const shown = useRef<Set<string> | null>(null);
+  shown.current ??= new Set(activePositions.map((p) => p.id));
 
   // Pushes the book to the guardian: right away when a position opens or
   // closes, otherwise at most every SYNC_THROTTLE_MS (prices tick several
@@ -100,16 +155,21 @@ export function useGuardianSync(
   const lastIds = useRef<string | null>(null);
 
   useEffect(() => {
+    const ids = new Set(activePositions.map((p) => p.id));
+    if (noteGone(gone.current!, shown.current!, ids, Date.now())) saveGone(gone.current!);
+    shown.current = ids;
     if (!heard) return;
     const sync = async () => {
       pending.current = null;
       const positions = latest.current;
       lastIds.current = idsOf(positions);
+      const held = new Set(positions.map((p) => p.id));
+      const closedIds = [...gone.current!.keys()].filter((id) => !held.has(id));
       try {
         const res = await apiFetch("/api/daemon/sync-positions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ positions }),
+          body: JSON.stringify({ positions, closedIds }),
         });
         if (res.ok) {
           const data = await res.json();
@@ -160,16 +220,13 @@ export function useGuardianSync(
           localStorage.setItem(LAST_POLL_KEY, String(lastCheckedTime));
         } catch {}
 
-        // Empty local book but the guardian restored positions after a crash:
-        // show them. Otherwise take up whatever the guardian moved further
-        // while this tab slept (a tighter stop, a runner's extended target)
-        // and positions the server's autopilot opened meanwhile.
+        // Take up whatever the guardian moved further while this tab slept
+        // (a tighter stop, a runner's extended target) and the positions it
+        // holds that this book lacks: opened by the server's autopilot or on
+        // another device, or all of them into an empty book.
         if (data.activePositions?.length > 0) {
-          setActivePositions((prev) =>
-            prev.length === 0
-              ? data.activePositions.filter((p: Position) => !isClosedRef.current(p.id)).map(asSent)
-              : adoptServerOpened(adoptGuardianState(prev, data.activePositions), data.activePositions, isClosedRef.current)
-          );
+          const isClosed = (id: string) => gone.current!.has(id) || isClosedRef.current(id);
+          setActivePositions((prev) => adoptGuardianPositions(adoptGuardianState(prev, data.activePositions), data.activePositions, isClosed));
         }
         for (const ev of (data.events ?? []) as DaemonCloseEvent[]) {
           applyServerClose(ev);

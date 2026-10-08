@@ -100,6 +100,8 @@ interface DaemonPersistedState {
   lastUpdated: string;
   positions: DaemonPosition[];
   closedTrades: DaemonClosedTrade[];
+  /** Positions an app said it closed, with when (appClosedIds). */
+  appClosed?: [string, number][];
 }
 
 // Persistent daemon state configuration on disk
@@ -111,6 +113,22 @@ const DAEMON_STORAGE_TMP = path.join(DAEMON_STORAGE_DIR, "daemon_positions_state
 export const daemonPositions: Map<string, DaemonPosition> = new Map();
 const daemonClosedTrades: DaemonClosedTrade[] = [];
 let daemonLastSavedAt: string = new Date().toISOString();
+
+// Positions an app said it closed (or dropped), with when: another device's
+// older book can't bring one back. Kept two weeks, past the week an app keeps
+// telling of its closes.
+const appClosedIds: Map<string, number> = new Map();
+const APP_CLOSED_KEEP_MS = 14 * 24 * 60 * 60 * 1000;
+const APP_CLOSED_MAX = 2000;
+
+function pruneAppClosed(now: number): void {
+  for (const [id, at] of appClosedIds) if (at < now - APP_CLOSED_KEEP_MS) appClosedIds.delete(id);
+  // Oldest first (insertion order): drop the oldest past the cap.
+  for (const id of appClosedIds.keys()) {
+    if (appClosedIds.size <= APP_CLOSED_MAX) break;
+    appClosedIds.delete(id);
+  }
+}
 let daemonSaveTimer: NodeJS.Timeout | null = null;
 
 // Synchronous disk save with atomic write (.tmp -> rename)
@@ -119,11 +137,13 @@ export function saveDaemonStateToDisk(): void {
     if (!fs.existsSync(DAEMON_STORAGE_DIR)) {
       fs.mkdirSync(DAEMON_STORAGE_DIR, { recursive: true });
     }
+    pruneAppClosed(Date.now());
     const state: DaemonPersistedState = {
       version: 1,
       lastUpdated: new Date().toISOString(),
       positions: Array.from(daemonPositions.values()),
       closedTrades: daemonClosedTrades.slice(0, 200),
+      appClosed: [...appClosedIds],
     };
     daemonLastSavedAt = state.lastUpdated;
     fs.writeFileSync(DAEMON_STORAGE_TMP, JSON.stringify(state, null, 2), "utf8");
@@ -171,6 +191,11 @@ export function loadDaemonStateFromDisk(): void {
             }
           }
         }
+        if (Array.isArray(state.appClosed)) {
+          for (const entry of state.appClosed) {
+            if (Array.isArray(entry) && typeof entry[0] === "string" && Number.isFinite(entry[1])) appClosedIds.set(entry[0], entry[1]);
+          }
+        }
         console.log(
           `[Daemon Crash Recovery] ⚡ Restored ${daemonPositions.size} open position(s) and ${daemonClosedTrades.length} closed trade event(s) from persistent disk storage! Guardian active immediately upon boot.`
         );
@@ -215,7 +240,7 @@ const NEW_POSITION_NOTIFY_MS = 5 * 60 * 1000;
 
 // Sync positions from client to server daemon
 router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }), (req: Request, res: Response) => {
-  const { positions } = req.body;
+  const { positions, closedIds } = req.body as { positions: DaemonPosition[]; closedIds?: string[] };
   if (!Array.isArray(positions)) {
     return res.status(400).json({ error: "positions array required" });
   }
@@ -235,22 +260,36 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
     if (!t.userId) t.userId = uid;
   }
 
-  // Remove this user's positions that the client explicitly closed. A LIVE
-  // position is never dropped this way (e.g. by a client that lost its local
-  // state) — it leaves the guardian only through a real exchange exit. Nor is
-  // one the server's autopilot opened that the app hasn't picked up yet: its
-  // absence from the app's book doesn't mean it was closed there.
-  for (const [id, pos] of daemonPositions) {
-    if (pos.openedByServer && !pos.clientSeen) continue;
-    if (pos.userId === uid && !incomingIds.has(id) && !isOpenLivePosition(id)) {
-      daemonPositions.delete(id);
+  // Remove this user's positions that the client closed. A LIVE position is
+  // never dropped this way — it leaves the guardian only through a real
+  // exchange exit.
+  if (closedIds) {
+    // Only the ones it says it closed: a position missing from its book may
+    // be one it hasn't heard of yet (opened on another device, or by the
+    // server's autopilot), so it stays guarded and the app takes it up.
+    const now = Date.now();
+    for (const id of closedIds) {
+      if (!appClosedIds.has(id)) appClosedIds.set(id, now);
+      const pos = daemonPositions.get(id);
+      if (pos && pos.userId === uid && !isOpenLivePosition(id)) daemonPositions.delete(id);
+    }
+  } else {
+    // An app from before closedIds (an older version still cached): a
+    // position missing from its book was closed there. Not one the server's
+    // autopilot opened that the app hasn't picked up yet.
+    for (const [id, pos] of daemonPositions) {
+      if (pos.openedByServer && !pos.clientSeen) continue;
+      if (pos.userId === uid && !incomingIds.has(id) && !isOpenLivePosition(id)) {
+        daemonPositions.delete(id);
+      }
     }
   }
 
   // Update or insert current positions
   for (const p of positions) {
     if (!p || typeof p.id !== "string") continue;
-    if (closedPositionIds.has(p.id)) {
+    // Closed by the guardian, or by an app: another device's older book can't bring it back.
+    if (closedPositionIds.has(p.id) || (appClosedIds.has(p.id) && !daemonPositions.has(p.id))) {
       rejectedResurrections.push(p.id);
       continue;
     }
@@ -464,6 +503,7 @@ export function openServerPosition(uid: string, position: DaemonPosition, opts: 
 export function _resetGuardian(): void {
   daemonPositions.clear();
   daemonClosedTrades.length = 0;
+  appClosedIds.clear();
 }
 
 /** What a restart would need to carry on guarding a position the same way. */

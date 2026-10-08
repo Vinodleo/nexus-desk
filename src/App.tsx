@@ -88,7 +88,7 @@ import { getExpectancyTable, marketTrendFrom } from "./services/exitExpectancy";
 import { fetchServerDeskControls, loadDeskControls, saveDeskControls } from "./services/deskControls";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
-import { adoptServerOpened, useGuardianSync } from "./hooks/useGuardianSync";
+import { adoptGuardianPositions, useGuardianSync } from "./hooks/useGuardianSync";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 import { useLiveFeed } from "./hooks/useLiveFeed";
 import {
@@ -413,7 +413,7 @@ export default function App() {
       // Already have it, closed it, or hold that coin (the same signal opened here too).
       if (activePositionsRef.current.some((p) => p.id === pos.id || p.symbol === pos.symbol) || isClosedLocally(pos.id)) return;
       const ticket = ticketFor(pos, "server", paperCashRef.current());
-      setActivePositions((prev) => adoptServerOpened(prev, [pos], isClosedLocally));
+      setActivePositions((prev) => adoptGuardianPositions(prev, [pos], isClosedLocally));
       setSelfApprovedCount((prev) => prev + 1);
       playTradeExecutionSound();
       setTickets((prev) => [...prev, ticket]);

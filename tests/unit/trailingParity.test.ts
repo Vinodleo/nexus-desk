@@ -8,7 +8,7 @@ vi.mock("../../src/services/apiClient", () => ({ apiFetch: (...a: unknown[]) => 
 import { applyTickToPosition } from "../../src/services/positionTick";
 import { applyGuardianTick } from "../../server/guardianLogic";
 import { mergeGuardState } from "../../src/shared/trailingStop";
-import { adoptGuardianState, adoptServerOpened, useGuardianSync } from "../../src/hooks/useGuardianSync";
+import { adoptGuardianState, adoptGuardianPositions, useGuardianSync } from "../../src/hooks/useGuardianSync";
 import type { Position } from "../../src/types";
 
 const position = (over: Partial<Position> = {}): Position => ({
@@ -131,7 +131,7 @@ describe("keeping the two copies in step", () => {
     expect(fixed[0].unrealizedPnl).toBeCloseTo(-80 * 4.3339, 6);
 
     // A trade the server opened arrives with its open P&L worked out (the guardian keeps none).
-    const opened = adoptServerOpened([], [{ ...nvda, id: "m", symbol: "MSFT.US", entryPrice: 50824, currentPrice: 50558, quantity: 1.9675, openedByServer: true }], () => false);
+    const opened = adoptGuardianPositions([], [{ ...nvda, id: "m", symbol: "MSFT.US", entryPrice: 50824, currentPrice: 50558, quantity: 1.9675, openedByServer: true }], () => false);
     expect(opened[0].unrealizedPnl).toBeCloseTo(-266 * 1.9675, 6);
   });
 });
