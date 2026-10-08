@@ -9,6 +9,7 @@ import { GrowBar, prefersReducedMotion, useSlideFrom } from "./motion";
 import { ChevronDown } from "lucide-react";
 import { MIN_CONDITION_SETUPS, type ConditionBreakdown } from "../../services/conditionStats";
 import { TaxReportCard } from "./TaxReportCard";
+import { ByStrategy, MoneyWaterfall, WinGauge } from "./BookMoney";
 
 // Where the book's money goes: average win against average loss, and the
 // same by trader, coin and exit. Plus the scanner's own record of each
@@ -706,36 +707,6 @@ export const TraderRecord: React.FC<{ table: EdgeTable | null; trades?: Historic
   );
 };
 
-/** The win rate against the rate that breaks even, as a bar with a mark. */
-export const WinRateBar: React.FC<{ winPct: number; breakEvenPct: number }> = ({ winPct, breakEvenPct }) => {
-  const ahead = winPct >= breakEvenPct;
-  return (
-    <div className="flex flex-col gap-1">
-      <div
-        className="relative h-2.5 rounded-full bg-inset"
-        role="meter"
-        aria-label="Win rate against break-even"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={winPct}
-      >
-        <div className="absolute inset-0 rounded-full overflow-hidden">
-          <GrowBar fraction={winPct / 100} className={ahead ? "bg-gain" : "bg-loss"} />
-        </div>
-        <span
-          aria-hidden="true"
-          className="absolute -top-1 -bottom-1 w-0.5 rounded-full bg-ink nx-fade-in"
-          style={{ left: `calc(${Math.max(0, Math.min(100, breakEvenPct))}% - 1px)`, animationDelay: "500ms" }}
-        />
-      </div>
-      <div className="flex justify-between text-[11px] text-muted tabular-nums">
-        <span className={ahead ? "text-gain" : "text-loss"}>won {winPct}%</span>
-        <span>break-even {breakEvenPct}%</span>
-      </div>
-    </div>
-  );
-};
-
 type ConditionMarket = "all" | "coins" | "stocks" | "us";
 
 /**
@@ -817,15 +788,20 @@ export const WhenSetupsWin: React.FC<{ data: ConditionBreakdown | null }> = ({ d
   );
 };
 
-type Range = "week" | "all";
+type Range = "week" | "month" | "all";
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The period's trades: the last 7 days, this calendar month (on this phone's calendar), or all. */
+export function tradesIn(trades: HistoricalTrade[], range: Range, now: number): HistoricalTrade[] {
+  if (range === "all") return trades;
+  const d = new Date(now);
+  const from = range === "week" ? now - WEEK_MS : new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  return trades.filter((t) => (t.closedAtMs ?? 0) >= from);
+}
 
 export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number }> = ({ trades, now = Date.now() }) => {
   const [range, setRange] = useState<Range>("week");
-  const inRange = useMemo(
-    () => (range === "all" ? trades : trades.filter((t) => (t.closedAtMs ?? 0) >= now - WEEK_MS)),
-    [trades, range, now]
-  );
+  const inRange = useMemo(() => tradesIn(trades, range, now), [trades, range, now]);
   const summary = payoffSummary(inRange);
   const byTrader = useMemo(() => breakdown(inRange, (t) => t.setupName || "Unknown"), [inRange]);
   const byMarket = useMemo(() => breakdown(inRange, (t) => MARKET_TITLE_BY_KEY[marketOf(t.symbol)]), [inRange]);
@@ -839,6 +815,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
         {(
           [
             ["week", "Last 7 days"],
+            ["month", "This month"],
             ["all", "All"],
           ] as const
         ).map(([id, label]) => (
@@ -856,6 +833,8 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
         ))}
       </div>
 
+      <MoneyWaterfall trades={inRange} />
+
       {summary ? (
         <Card aria-label="Wins against losses" className="flex flex-col gap-3">
           <div className="text-sm">
@@ -868,7 +847,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
               </>
             )}
           </div>
-          {summary.breakEvenWinPct !== null && <WinRateBar winPct={summary.winPct} breakEvenPct={summary.breakEvenWinPct} />}
+          {summary.breakEvenWinPct !== null && <WinGauge winPct={summary.winPct} breakEvenPct={summary.breakEvenWinPct} />}
           <div className="flex gap-2">
             <StatTile label="Avg win" value={formatMoney(summary.avgWin, { decimals: 0 })} valueClassName="text-base text-gain" />
             <StatTile label="Avg loss" value={formatMoney(summary.avgLoss, { decimals: 0 })} valueClassName="text-base text-loss" />
@@ -885,6 +864,7 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
         </Card>
       )}
 
+      <ByStrategy trades={inRange} />
       <HowTradesMoved trades={inRange} />
       <TraderRecord table={measures.table} trades={trades} />
       <WhenSetupsWin data={measures.conditions} />
