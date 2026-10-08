@@ -46,6 +46,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   A trade that opens with the app on screen (the server's, the phone's autopilot, or approved in the Queue) unfolds a
   ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it
   took; several queue up.
+  Book → Trades: the running total of closed trades as a line that draws itself (`MoneyLine`), a month of days tinted
+  by what each made or lost (tap one for only its trades; `DayCalendar`, `BookCalendar.tsx`), and each row's result in R
+  after fees (`resultR`) with a slim line of how it moved.
   Explanations and long lists fold away (`Fold`); chips, bars and year columns are in `labUi.tsx`. The cards read
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume

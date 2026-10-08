@@ -6,6 +6,7 @@ import { Card, StatTile } from "./ui";
 import { EXIT_LABEL, formatMoney, formatPct, formatPrice, pnlTone, stopSlip } from "./format";
 import { LedgerBreakdown, tradeExcursion } from "./LedgerBreakdown";
 import { Rolling, staggerDelay, usePresence, useSlideFrom } from "./motion";
+import { DayCalendar, MoneyLine, localDay } from "./BookCalendar";
 
 export type BookFilter = "all" | "wins" | "losses";
 
@@ -151,6 +152,30 @@ const HowItMoved: React.FC<{ trade: HistoricalTrade }> = ({ trade: t }) => {
   );
 };
 
+/** The result in R after fees (what the trade made over what it risked); null without the risk recorded. */
+export const resultR = (t: HistoricalTrade): number | null => ((t.riskAtOpen ?? 0) > 0 ? t.realizedPnl / t.riskAtOpen! : null);
+
+/** The row's slim move line: the stop, the entry, how far it went each way and where it closed. */
+const RowMoveBar: React.FC<{ trade: HistoricalTrade }> = ({ trade: t }) => {
+  const m = moveLine(t);
+  if (!m) return null;
+  const f = (r: number) => ((r - m.lo) / (m.hi - m.lo)) * 100;
+  const x = (r: number) => `${f(r).toFixed(2)}%`;
+  return (
+    <span className="relative block h-3 mt-1" aria-hidden="true" data-testid="row-move">
+      <span className="absolute inset-x-0 top-[5px] h-0.5 rounded-full bg-line" />
+      <span className="absolute top-1 h-1 rounded-full bg-muted/30 nx-grow" style={{ left: x(-m.worstR), width: `${(f(m.bestR) - f(-m.worstR)).toFixed(2)}%` }} />
+      <span className="absolute top-0 w-0.5 h-3 -ml-px rounded-full bg-loss" style={{ left: x(-1) }} />
+      <span className="absolute top-0 w-0.5 h-3 -ml-px rounded-full bg-muted" style={{ left: x(0) }} />
+      <span
+        data-testid="row-move-exit"
+        className={`absolute top-[1px] w-2.5 h-2.5 -ml-[5px] rounded-full border-2 border-surface nx-exit-pop ${t.realizedPnl > 0 ? "bg-gain" : "bg-loss"}`}
+        style={{ left: x(m.exitR) }}
+      />
+    </span>
+  );
+};
+
 const TradeRow: React.FC<{
   trade: HistoricalTrade;
   open: boolean;
@@ -161,6 +186,7 @@ const TradeRow: React.FC<{
 }> = ({ trade: t, open, onToggle, onUpdateTrade, index = 0 }) => {
   const tone = pnlTone(t.realizedPnl);
   const reason = EXIT_LABEL[t.exitReason] ?? t.exitReason;
+  const r = resultR(t);
   // Opening lifts the row into a card and grows its details open; closing folds them away first.
   const details = usePresence(open, 260);
   return (
@@ -171,7 +197,7 @@ const TradeRow: React.FC<{
         aria-expanded={open}
         className="w-full flex items-center justify-between gap-3 py-3 text-left cursor-pointer"
       >
-        <span className="min-w-0 flex flex-col gap-0.5">
+        <span className="min-w-0 flex-1 flex flex-col gap-0.5">
           <span>
             <span className="font-semibold">{t.symbol}</span>{" "}
             <span className="text-xs text-muted">
@@ -184,10 +210,21 @@ const TradeRow: React.FC<{
             {t.strategy ? ` · ${t.strategy}` : t.timeframe === "1d" ? " · daily" : ""}
           </span>
           {!open && t.autopsy && <span className="text-xs font-semibold text-accent">Read autopsy</span>}
+          <RowMoveBar trade={t} />
         </span>
         <span className="shrink-0 flex items-center gap-1.5">
-          <span className={`font-display text-[19px] tabular-nums whitespace-nowrap ${tone}`}>
-            {formatMoney(t.realizedPnl, { signed: true })}
+          <span className="flex flex-col items-end gap-1">
+            <span className={`font-display text-[19px] tabular-nums whitespace-nowrap ${tone}`}>
+              {formatMoney(t.realizedPnl, { signed: true })}
+            </span>
+            {r !== null && (
+              <span
+                data-testid="row-r"
+                className={`text-[11px] font-bold px-2 py-px rounded-full tabular-nums ${r > 0 ? "bg-gain/15 text-gain" : r < 0 ? "bg-loss/15 text-loss" : "bg-inset text-muted"}`}
+              >
+                {`${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`}
+              </span>
+            )}
           </span>
           <ChevronDown className={`w-4 h-4 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
         </span>
@@ -253,16 +290,19 @@ export const LedgerBookTrades: React.FC<{
   onUpdateTrade?: (t: HistoricalTrade) => void;
 }> = ({ trades, onUpdateTrade }) => {
   const [filter, setFilter] = useState<BookFilter>("all");
+  // A day picked on the calendar: only its trades show.
+  const [day, setDay] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [shown, setShown] = useState(PAGE);
   const summary = useMemo(() => summarizeTrades(trades), [trades]);
 
   const filtered = useMemo(() => {
-    const list =
-      filter === "wins" ? trades.filter((t) => t.realizedPnl > 0) : filter === "losses" ? trades.filter((t) => t.realizedPnl <= 0) : trades;
+    const list = (
+      filter === "wins" ? trades.filter((t) => t.realizedPnl > 0) : filter === "losses" ? trades.filter((t) => t.realizedPnl <= 0) : trades
+    ).filter((t) => !day || (t.closedAtMs !== undefined && localDay(t.closedAtMs) === day));
     // Newest first.
     return [...list].sort((a, b) => (b.closedAtMs ?? 0) - (a.closedAtMs ?? 0));
-  }, [trades, filter]);
+  }, [trades, filter, day]);
 
   const groups = useMemo(() => {
     const out: { label: string; trades: HistoricalTrade[] }[] = [];
@@ -306,7 +346,17 @@ export const LedgerBookTrades: React.FC<{
           <StatTile label="Lost" value={formatMoney(summary.lost, { decimals: 0 })} valueClassName="text-base text-loss" />
           <StatTile label="Fees" value={formatMoney(summary.fees, { decimals: 0 })} valueClassName="text-base" />
         </div>
+        <MoneyLine trades={trades} />
       </Card>
+
+      <DayCalendar
+        trades={trades}
+        picked={day}
+        onPick={(d) => {
+          setDay(d);
+          setShown(PAGE);
+        }}
+      />
 
       <div className="flex gap-2" role="group" aria-label="Filter trades">
         {chips.map((c) => {
@@ -328,6 +378,16 @@ export const LedgerBookTrades: React.FC<{
             </button>
           );
         })}
+        {day && (
+          <button
+            type="button"
+            aria-label="Show every day"
+            onClick={() => setDay(null)}
+            className="min-h-9 px-3.5 rounded-full border border-accent bg-accent-soft text-accent text-[13px] font-semibold cursor-pointer nx-badge-pop"
+          >
+            {new Date(`${day}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} ✕
+          </button>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -335,7 +395,7 @@ export const LedgerBookTrades: React.FC<{
           {trades.length === 0 ? "No closed trades yet. They'll appear here as positions close." : "No trades match this filter."}
         </p>
       ) : (
-        <section key={filter} aria-label="Closed trades" className="flex flex-col">
+        <section key={`${filter}-${day}`} aria-label="Closed trades" className="flex flex-col">
           {groups.map((g) => (
             <div key={g.label}>
               <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em] pt-2.5">{g.label}</div>
