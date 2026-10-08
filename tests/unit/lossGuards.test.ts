@@ -48,4 +48,17 @@ describe("lossStreak", () => {
   it("starts fresh from when the kill switch was turned off", () => {
     expect(lossStreak(closes, t0 + 25 * MIN)).toBe(2);
   });
+  it("counts only the 5-minute traders' trades: the slower strategies' neither count nor break the run", () => {
+    const slow = [
+      { isWin: false, closedAtMs: t0 + 50 * MIN, strategy: "breakout" },
+      { isWin: false, closedAtMs: t0 + 49 * MIN, strategy: "momentum" },
+      { isWin: false, closedAtMs: t0 + 48 * MIN, timeframe: "1d" },
+    ];
+    // Three slower losses alone are no streak.
+    expect(lossStreak(slow)).toBe(0);
+    // Nor do they add to the 5-minute run under them.
+    expect(lossStreak([...slow, ...closes.slice(1)])).toBe(2);
+    // And a slower win doesn't end it.
+    expect(lossStreak([closes[0], { isWin: true, closedAtMs: t0 + 35 * MIN, strategy: "breakout" }, ...closes.slice(1)])).toBe(3);
+  });
 });

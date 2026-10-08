@@ -2,8 +2,11 @@
 // the server guardian):
 // - A coin that just lost is left alone for 2 hours; after a win, for one
 //   5-minute candle, so a trade isn't reopened straight away.
-// - Three losses in a row stop autopilot until you've looked (the app trips
-//   the kill switch; the server pauses its autopilot).
+// - Three 5-minute trades lost in a row stop autopilot until you've looked
+//   (the app trips the kill switch; the server pauses its autopilot). The
+//   slower strategies' trades don't count (owner's call, 8 Oct): breakout and
+//   momentum win about one trade in three or four by design, so three losses
+//   in a row are routine for them, and their replays take every signal.
 // Shared by the app and the server so both apply the same rules.
 
 export const LOSS_COOLDOWN_MS = 120 * 60 * 1000;
@@ -14,6 +17,15 @@ export interface CloseRecord {
   symbol: string;
   isWin: boolean;
   closedAtMs?: number;
+  /** A slower strategy's trade (breakout, momentum): left out of the losing streak. */
+  strategy?: string;
+  /** "1d": a daily trader's trade, also left out of the losing streak. */
+  timeframe?: string;
+}
+
+/** Whether a close counts toward the losing streak: only the 5-minute traders' do. */
+export function countsTowardStreak(c: Pick<CloseRecord, "strategy" | "timeframe">): boolean {
+  return !c.strategy && c.timeframe !== "1d";
 }
 
 /** Until when a coin is left alone after this close. */
@@ -45,13 +57,15 @@ export function mergeQuarantines(
 }
 
 /**
- * Losses in a row at the start of `closes` (newest first), counting only
- * trades closed after `sinceMs` (when the kill switch was last turned off,
- * so a fresh start isn't stopped by the losses before it).
+ * The 5-minute traders' losses in a row at the start of `closes` (newest
+ * first; other trades are skipped, neither counting nor breaking the run),
+ * counting only trades closed after `sinceMs` (when the kill switch was last
+ * turned off, so a fresh start isn't stopped by the losses before it).
  */
-export function lossStreak(closes: Pick<CloseRecord, "isWin" | "closedAtMs">[], sinceMs: number = 0): number {
+export function lossStreak(closes: Pick<CloseRecord, "isWin" | "closedAtMs" | "strategy" | "timeframe">[], sinceMs: number = 0): number {
   let n = 0;
   for (const c of closes) {
+    if (!countsTowardStreak(c)) continue;
     if ((c.closedAtMs ?? 0) <= sinceMs || c.isWin) break;
     n++;
   }

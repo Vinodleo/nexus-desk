@@ -366,7 +366,8 @@ export default function App() {
   // When the kill switch was last turned off: losses before it don't count.
   const lossStreakSinceRef = useRef<number>(loadLossStreakSince());
 
-  // Three losses in a row in the book, however they closed: trip the kill
+  // Three 5-minute trades lost in a row in the book, however they closed
+  // (the slower strategies' trades don't count, lossGuards): trip the kill
   // switch and turn autopilot off. Checked whenever the book changes, so a
   // streak the server's closes built up while the app was shut is caught
   // when it opens.
@@ -377,7 +378,7 @@ export default function App() {
     setExecutionToast({
       id: `toast-killswitch-${Date.now()}`,
       title: "EMERGENCY SAFETY TRIP: 3 CONSECUTIVE LOSSES",
-      message: "Kill Switch activated. Self-approval autopilot turned OFF. Trading halted to preserve capital.",
+      message: "3 five-minute trades lost in a row. Kill Switch activated. Self-approval autopilot turned OFF. Trading halted to preserve capital.",
       type: "WARNING",
       timestamp: new Date().toLocaleTimeString(),
     });

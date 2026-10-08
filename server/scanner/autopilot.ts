@@ -8,7 +8,7 @@ import {
   selectAutopilotTrades,
 } from "../../src/services/autopilot";
 import { DEFAULT_TRAIL_PROFILE } from "../../src/shared/trailingStop";
-import { LOSS_STREAK_LIMIT, cooldownsFromCloses, lossStreak, mergeQuarantines } from "../../src/services/lossGuards";
+import { LOSS_STREAK_LIMIT, cooldownsFromCloses, countsTowardStreak, lossStreak, mergeQuarantines } from "../../src/services/lossGuards";
 import { closedTradesFor, daemonPositions, openServerPosition } from "../guardian";
 import type { DeskState } from "./deskState";
 import { loadLiveRiskConfig } from "../liveOrderGuard";
@@ -48,7 +48,7 @@ export interface ServerAutopilotDeps {
 
 /** This user's guardian closes, newest first, for the loss guards. */
 function serverCloses(uid: string) {
-  return closedTradesFor(uid).map((t) => ({ symbol: t.symbol, isWin: t.isWin, closedAtMs: Date.parse(t.closedAt) }));
+  return closedTradesFor(uid).map((t) => ({ symbol: t.symbol, isWin: t.isWin, closedAtMs: Date.parse(t.closedAt), strategy: t.strategy, timeframe: t.timeframe }));
 }
 
 /**
@@ -60,11 +60,12 @@ export function serverQuarantines(uid: string, desk: DeskState, now: number = Da
 }
 
 /**
- * Losses in a row: the guardian's closes since the app last sent its desk
- * settings, continuing the app's own count if every one of them lost.
+ * The 5-minute traders' losses in a row: the guardian's closes since the app
+ * last sent its desk settings, continuing the app's own count if every one
+ * of them lost.
  */
 export function serverLossStreak(uid: string, desk: DeskState): number {
-  const since = serverCloses(uid).filter((c) => c.closedAtMs > desk.updatedAt);
+  const since = serverCloses(uid).filter((c) => c.closedAtMs > desk.updatedAt && countsTowardStreak(c));
   const streak = lossStreak(since, desk.updatedAt);
   return streak === since.length ? streak + (desk.lossStreak ?? 0) : streak;
 }
@@ -107,10 +108,11 @@ export async function runServerAutopilot(
   const live = (desk.tradingMode ?? "PAPER") === "LIVE_COINDCX";
   const blocked = liveAutopilotBlock(desk);
   if (blocked) return proposals.map((p) => ({ ...p, status: "DEFERRED" as const, deferralReason: blocked }));
-  // Three losses in a row: stop until you've looked (the app trips its kill
-  // switch when it hears of them; turning it off starts a fresh count).
+  // Three 5-minute trades lost in a row: stop until you've looked (the app
+  // trips its kill switch when it hears of them; turning it off starts a
+  // fresh count).
   if (serverLossStreak(uid, desk) >= LOSS_STREAK_LIMIT) {
-    const reason = `${LOSS_STREAK_LIMIT} losses in a row — autopilot is paused until you review them in the app.`;
+    const reason = `${LOSS_STREAK_LIMIT} losses in a row on 5-minute trades — autopilot is paused until you review them in the app.`;
     return proposals.map((p) => ({ ...p, status: "DEFERRED" as const, deferralReason: reason }));
   }
   const mine = [...daemonPositions.values()].filter((p) => p.userId === uid);
