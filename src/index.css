@@ -409,6 +409,17 @@ html, body {
   .nx-gauge, .nx-needle { animation: none; }
   .nx-wf, .nx-gauge, .nx-needle { transition: none; }
 }
+/* The Book's risk rings draw themselves round in turn and glide as things change; the shield at their middle breathes. */
+.nx-risk-ring { animation: nx-ring-draw 1400ms cubic-bezier(0.3, 1, 0.3, 1) both; transition: --nx-ring 800ms cubic-bezier(0.3, 1.2, 0.4, 1); }
+@keyframes nx-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+.nx-breathe { animation: nx-breathe 3.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-risk-ring, .nx-breathe { animation: none; }
+  .nx-risk-ring { transition: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .nx-blob-squish, .nx-money-ring, .nx-ticket-unfold, .nx-ticket-stub, .nx-ticket-stamp, .nx-ticket-drain { animation: none; }
   .nx-money-ring, .nx-fold, .nx-chevron { transition: none; }

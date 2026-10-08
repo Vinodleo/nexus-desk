@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import type { CoinDcxServerStatus, FailureInjectionState, RiskCalculation } from "../../types";
+import type { CoinDcxServerStatus, FailureInjectionState, Position, RiskCalculation } from "../../types";
 import { apiFetch } from "../../services/apiClient";
 import { GrowBar } from "./motion";
-import { Card, Switch } from "./ui";
+import { Card, HoldButton, Switch } from "./ui";
+import { IfStopsHit, RiskGlance } from "./RiskGlance";
 import { formatMoney } from "./format";
 import { MARKET_KEYS, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
 
@@ -19,6 +20,8 @@ export interface LedgerRiskProps {
   onRefreshBalance?: () => Promise<unknown>;
   /** Each market's risk per trade (Settings); the most a trade can risk is the lower of it and the share of equity. */
   marketLimits?: MarketLimits;
+  /** The open trades, for what their stops would take. */
+  positions?: Position[];
 }
 
 const MARKET_SHORT: Record<MarketKey, string> = { coins: "Coins", stocks: "Indian", us: "US" };
@@ -111,6 +114,33 @@ export const LedgerRisk: React.FC<LedgerRiskProps> = (props) => {
         </span>
       </div>
 
+      <RiskGlance r={r} positions={props.positions ?? []} passing={passing && !props.stopped} />
+      <IfStopsHit positions={props.positions ?? []} limit={r.hardDailyLossLimit} />
+      {props.stopped ? (
+        <Card aria-label="Trading stopped" className="flex items-center justify-between gap-3 nx-pop-in">
+          <div>
+            <div className="text-[15px] font-bold text-loss">Trading stopped</div>
+            <div className="text-xs text-muted">No new trades. Open ones stay guarded.</div>
+          </div>
+          <button
+            type="button"
+            onClick={props.onToggleStop}
+            className="min-h-11 px-5 rounded-full bg-accent text-on-accent text-sm font-bold cursor-pointer"
+          >
+            Resume
+          </button>
+        </Card>
+      ) : (
+        // Held, so a stray tap can't stop the desk.
+        <HoldButton
+          label="Hold to stop all trading"
+          keepHoldingLabel="Keep holding to stop all trading"
+          onHold={props.onToggleStop}
+          className="w-full min-h-14 rounded-full border border-danger-line bg-danger-soft text-loss text-[15px] font-bold"
+          fillClassName="bg-loss/25"
+        />
+      )}
+
       <Heading>Limits</Heading>
       <Card className="flex flex-col gap-4">
         <Meter
@@ -183,13 +213,6 @@ export const LedgerRisk: React.FC<LedgerRiskProps> = (props) => {
         <p className="m-0 py-2.5 text-xs text-muted leading-relaxed border-b border-line">
           Each drill fakes a problem so you can see the safety checks block new trades. Nothing real changes.
         </p>
-        <div className="flex items-center justify-between gap-3 min-h-12 py-2 border-b border-line text-sm">
-          <div>
-            <div>Stop all trading</div>
-            <div className="text-xs text-muted mt-0.5">The same switch as Stop all on the Floor</div>
-          </div>
-          <Switch checked={props.stopped} onChange={props.onToggleStop} label="Stop all trading" />
-        </div>
         {DRILLS.map((d, i) => (
           <div
             key={d.key}
