@@ -71,12 +71,12 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     less ones the app is closing, plus ones opened there in the last 2 minutes, `PENDING_OPEN_MS`) and only marks their
     prices (`markTick`). A close by hand is asked of it (`/api/daemon/close`, `reportCloseToServer`, before a live
     trade's exit call), and the app closes the trade only once it has: one it can't reach stays open (a toast says
-    so); one it had closed already (`already`) is taken as its close. It closes and records it (`reportedByApp`, left out of the server's own daily P&L and losing streak, which the app's totals
-    hold already), so the server's closed trades hold every trade. A push that dropped the trade first is covered
-    (`droppedByApp`, kept 10 minutes). Each order the app sends to open a trade (`/api/execute-trade`) carries the
-    position, and the guardian takes it at once (`openAppPosition`; a live one at CoinDCX's fill and quantity); a paper
-    one in a symbol the user already holds is refused (409 `ALREADY_HELD`, one trade per symbol as the app's risk check
-    has it) and the app drops it. The app sends nothing else: the server is the only copy of the trades (owner's call,
+    so); one it had closed already (`already`) is taken as its close. It closes and records it (`reportedByApp`, left
+    out of the server's own daily P&L and losing streak, which the app's totals hold already), so the server's closed
+    trades hold every trade. Each order the app sends to open a trade (`/api/execute-trade`) carries the position,
+    and the guardian takes it at once (`openAppPosition`; a live one at CoinDCX's fill and quantity); a paper one in a
+    symbol the user already holds is refused (409 `ALREADY_HELD`, one trade per symbol as the app's risk check has it)
+    and the app drops it. The app sends nothing else: the server is the only copy of the trades (owner's call,
     9 Oct, done in steps: closes recorded, opens through it, the trade book, then the push of the app's open trades
     and its bookkeeping removed).
   - The trade book (`server/tradeBook.ts`): every closed trade per user, kept for good (`trade_book.json`, in the daily
