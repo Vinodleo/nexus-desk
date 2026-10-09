@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonCloseEvent } from "../../src/services/daemonEvents";
 import type { HistoricalTrade, Position } from "../../src/types";
+import { deskMoney } from "../../src/shared/deskMoney";
 
 const apiFetch = vi.fn();
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
@@ -44,25 +45,22 @@ const closeEvent = (over: Partial<DaemonCloseEvent> = {}): DaemonCloseEvent => (
 
 const position = (id: string) => ({ id, symbol: "BTC/INR" } as Position);
 
-// A minimal browser book wired to the handler, as App does it.
+// A minimal browser book wired to the handler, as App does it; the money
+// follows from the Book (useServerBook), from an anchor before these closes.
+const anchor = { at: Date.parse("2025-12-31T00:00:00Z"), equity: 100000, allTimeRealizedPnl: -100, start: 100000 };
 function useBook(initialTrades: HistoricalTrade[] = []) {
   const [activePositions, setActivePositions] = useState<Position[]>([position("pos-1"), position("pos-2")]);
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(initialTrades);
-  const [equity, setEquity] = useState(100000);
-  const [cash, setCash] = useState(99000);
-  const [dailyRealizedPnl, setDailyRealizedPnl] = useState(0);
-  const [allTimeRealizedPnl, setAllTimeRealizedPnl] = useState(-100);
   const closingPositionIds = useRef(new Set<string>());
   const closedTradesRef = useRef(closedTrades);
   closedTradesRef.current = closedTrades;
-  const apply = useServerCloseHandler(closingPositionIds, closedTradesRef, {
-    setActivePositions, setClosedTrades, setEquity, setCash, setDailyRealizedPnl, setAllTimeRealizedPnl,
-  });
-  return { apply, activePositions, closedTrades, equity, cash, dailyRealizedPnl, allTimeRealizedPnl, closingPositionIds };
+  const apply = useServerCloseHandler(closingPositionIds, closedTradesRef, { setActivePositions, setClosedTrades });
+  const { equity, allTimeRealizedPnl } = deskMoney(anchor, closedTrades, "2026-01-01");
+  return { apply, activePositions, closedTrades, equity, allTimeRealizedPnl, closingPositionIds };
 }
 
 describe("useServerCloseHandler", () => {
-  it("applies a guardian close once: removes the position, records the trade, credits P&L", () => {
+  it("applies a guardian close once: removes the position and records the trade, which the money counts", () => {
     const { result } = renderHook(() => useBook());
     let applied = false;
     act(() => { applied = result.current.apply(closeEvent()); });
@@ -70,39 +68,31 @@ describe("useServerCloseHandler", () => {
     expect(result.current.activePositions.map((p) => p.id)).toEqual(["pos-2"]);
     expect(result.current.closedTrades).toHaveLength(1);
     expect(result.current.equity).toBe(100009);
-    // Cash moves by realized P&L only, like the browser's own close; the
-    // position's notional (1000) was never debited, so it isn't credited back.
-    expect(result.current.cash).toBe(99009);
-    expect(result.current.dailyRealizedPnl).toBe(9);
     expect(result.current.allTimeRealizedPnl).toBe(-91);
   });
 
-  it("credits only once when the WebSocket and the poll both deliver the close", () => {
+  it("records it once when the WebSocket and the poll both deliver the close", () => {
     const { result } = renderHook(() => useBook());
     act(() => { result.current.apply(closeEvent()); });
     let second = true;
     act(() => { second = result.current.apply(closeEvent()); });
     expect(second).toBe(false);
-    expect(result.current.equity).toBe(100009);
-    expect(result.current.cash).toBe(99009);
-    expect(result.current.allTimeRealizedPnl).toBe(-91);
-    expect(result.current.dailyRealizedPnl).toBe(9);
     expect(result.current.closedTrades).toHaveLength(1);
+    expect(result.current.equity).toBe(100009);
   });
 
-  it("does not credit a close the browser is already making itself", () => {
+  it("leaves a close the browser is already making itself to the browser", () => {
     const { result } = renderHook(() => useBook());
     result.current.closingPositionIds.current.add("pos-1");
     act(() => { result.current.apply(closeEvent()); });
-    expect(result.current.equity).toBe(100000);
+    expect(result.current.closedTrades).toHaveLength(0);
     expect(result.current.activePositions.map((p) => p.id)).toEqual(["pos-2"]);
   });
 
-  it("does not re-credit a close already in the saved history (e.g. after reload)", () => {
+  it("doesn't record again a close already in the saved history (e.g. after reload)", () => {
     const saved = [{ id: "trade-x", positionId: "pos-1" } as HistoricalTrade];
     const { result } = renderHook(() => useBook(saved));
     act(() => { result.current.apply(closeEvent()); });
-    expect(result.current.equity).toBe(100000);
     expect(result.current.closedTrades).toHaveLength(1);
   });
 

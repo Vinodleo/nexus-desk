@@ -97,3 +97,39 @@ describe("the trade book", () => {
     expect(await book()).toHaveLength(200);
   });
 });
+
+describe("the money's anchor and what's new", () => {
+  const anchorOf = async () => (await (await fetch(`${base}/api/book`)).json()).anchor;
+  const setAnchor = (anchor: unknown, keep?: boolean) =>
+    fetch(`${base}/api/book/anchor`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ anchor, keep }) });
+  const first = { at: Date.parse("2026-10-09T05:00:00Z"), equity: 101_234.5, allTimeRealizedPnl: 1_234.5, start: 100_000 };
+
+  it("keeps the first phone's anchor, and a restart replaces it", async () => {
+    expect(await anchorOf()).toBeNull();
+    expect((await (await setAnchor(first, true)).json()).anchor).toEqual(first);
+    // A second device's first anchor: the one set stays, and it's told which.
+    const other = { ...first, at: first.at + 1000, equity: 100_000 };
+    expect((await (await setAnchor(other, true)).json()).anchor).toEqual(first);
+    // Paper money started again: replaced.
+    const restart = { at: first.at + 5000, equity: 500_000, allTimeRealizedPnl: 0, start: 500_000 };
+    expect((await (await setAnchor(restart)).json()).anchor).toEqual(restart);
+    expect(await anchorOf()).toEqual(restart);
+    expect((await setAnchor({ ...first, start: 0 })).status).toBe(400);
+    // Kept on disk.
+    tradeBook._resetTradeBook();
+    tradeBook.loadTradeBook();
+    expect(await anchorOf()).toEqual(restart);
+  });
+
+  it("answers with the closes taken in since the last look", async () => {
+    const before = await (await fetch(`${base}/api/book?since=${Date.now() - 1000}`)).json();
+    expect(before.bookedUntil).toBeGreaterThan(0);
+    const t0 = Date.parse("2026-09-01T10:00:00Z");
+    // Closed a month ago on another device, uploaded now: new to this look though old.
+    await upload([appTrade("late-1", t0)]);
+    const next = await (await fetch(`${base}/api/book?bookedSince=${before.bookedUntil}`)).json();
+    expect(next.trades.map((t: { positionId: string }) => t.positionId)).toEqual(["late-1"]);
+    const after = await (await fetch(`${base}/api/book?bookedSince=${next.bookedUntil + 1}`)).json();
+    expect(after.trades).toEqual([]);
+  });
+});

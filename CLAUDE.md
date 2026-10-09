@@ -71,14 +71,22 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     hold already), so the server's closed trades hold every trade. A push that dropped the trade first is covered
     (`droppedByApp`, kept 10 minutes). Each order the app sends to open a trade (`/api/execute-trade`) carries the
     position, and the guardian takes it at once (`openAppPosition`, sharing `takeAppPosition` with the push; a live one
-    at CoinDCX's fill), without waiting for the app's next push. Steps 1, 2 and 3a of making the server the only copy
-    of the trades (owner's call, 9 Oct): next, the Book and the money read from the trade book (3b), then the
-    phone/server syncing goes.
+    at CoinDCX's fill), without waiting for the app's next push. Steps 1 to 3 of making the server the only copy
+    of the trades (owner's call, 9 Oct): next, the phone/server syncing goes.
   - The trade book (`server/tradeBook.ts`): every closed trade per user, kept for good (`trade_book.json`, in the daily
     backup; `BOOK_MAX_TRADES`), one per position: the guardian's closes (`recordInBook`, its own and the app's) and the
     app's uploads of the closes it holds that the book may not (from before the book, or made while the server
     couldn't be reached: `/api/book/import`, `useBookUpload`, once a start, from a day before the last upload,
-    `nexus_book_uploaded_until`). Read by `/api/book`. Loaded before the guardian, which adds the closes it kept.
+    `nexus_book_uploaded_until`). Loaded before the guardian, which adds the closes it kept. The Book and the money
+    read it (`useServerBook`): on start (a month back, or to the anchor if older), every minute and when the app comes
+    back (`bookedSince`: the closes taken in since the last look, `bookedAtMs`, old ones uploaded late too), the closes
+    the Book lacks are taken in (`withBookTrades`; the phone's own close replaces a copy that came first,
+    `withOwnClose`). The money isn't a running total any more (`src/shared/deskMoney.ts`): each user's anchor on the
+    server (`/api/book/anchor`, where the money stood at a moment and the paper start) plus every close after it, each
+    once by position; today's P&L is the closes on India's day. A phone's first anchor is its old running total, set
+    10 minutes before its last guardian catch-up (`firstAnchor`, `anchorAt`: closes after that count on top) and sent
+    with `keep` (an anchor already there, another device's, stays and is taken); a paper restart replaces it
+    (`restartAnchor`), and is sent again until the server has it. Kept on the phone in `nexus_money_anchor_v1`.
   - Live coin trades (`server/liveExecution.ts`): the server sends every exit itself (idempotent, retried). Each live
     long also has a backup stop resting at CoinDCX (a `stop_limit` sell `BACKSTOP_GAP` 0.5% under the guardian's stop,
     `reconcileExchangeStops` every 15 s): moved up as the stop trails (by 0.5%+, cancel then replace), cancelled before
@@ -130,8 +138,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     can't keep them out. Their scheduled checks open past the autopilot's hourly cap (their slots bound them) but
     still count toward it. Positions of these slower strategies carry `strategy` (`SlowStrategy` in `types.ts`).
   - Paper money (Settings → Trading, paper only): the paper balance starts again at a picked amount
-    (`PAPER_MONEY_CHOICES`, `restartedPaperCapital`; the all-time P&L from zero, trades kept; the start in its own
-    localStorage key, not the capital state Firebase copies). The daily loss limit is 2.5% of the money, at least ₹2,500
+    (`PAPER_MONEY_CHOICES`, `restartAnchor`; the all-time P&L from zero, today's still counted, trades kept; the start
+    in the money's anchor on the server, so every device agrees). The daily loss limit is 2.5% of the money, at least ₹2,500
     (`dailyLossLimitFor`, on the phone and the server); amounts per trade go up to ₹2 lakh and risk to ₹10,000.
     A paper desk is a cash account (`src/shared/paperCash.ts`): open paper trades tie up what they cost and the fee
     paid to open them (`cashTiedUp`, `moneyInTrades`, `entryFee` in `tradeMath.ts`: CoinDCX's 0.59%, Alpaca's
