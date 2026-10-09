@@ -242,8 +242,8 @@ function marketOpenFor(symbol: string, now: number): boolean {
  * Stocks whose market closed within the last candle. The day's last candle
  * (3:55–4:00 in New York, 3:25–3:30 IST) only closes at the bell, so it's
  * fetched just after: otherwise it's never held (the next morning fetches
- * only recent candles), and yesterday's close, which the late-day momentum
- * trader measures from, is missing on every day but Monday.
+ * only recent candles), and yesterday's close is missing on every day but
+ * Monday.
  */
 function justClosedStocks(now: number): string[] {
   return [...stockUniverse(), ...usUniverse()].filter((s) => !marketOpenFor(s, now) && marketOpenFor(s, now - SIGNAL_INTERVAL_MS));

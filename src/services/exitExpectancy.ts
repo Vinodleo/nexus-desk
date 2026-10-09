@@ -72,6 +72,13 @@ export interface MeasuredTrade {
 export const RECORD_DAYS = 30;
 /** At most this many kept trades per trail profile (a few MB saved). */
 export const MAX_KEPT_TRADES = 60_000;
+/**
+ * Traders taken off the panel: their kept trades are dropped, so they leave
+ * "Traders with your exits" at once rather than after RECORD_DAYS days.
+ * (Ravi, late-day momentum on US index funds: −0.09R over 17 setups after
+ * 11 days, owner's call, 9 Oct.)
+ */
+export const RETIRED_TRADERS: ReadonlySet<string> = new Set(["Ravi Late-Day Momentum"]);
 
 /** Somewhere to keep each trail profile's finished trades between measures (the server's disk). */
 export interface TradeHistory {
@@ -170,10 +177,10 @@ export function oneAtATime(taken: MeasuredTrade[], fresh: MeasuredTrade[]): Meas
   return out;
 }
 
-/** The trades kept after adding `fresh`: finished ones from the last RECORD_DAYS days, one at a time, newest kept if over the cap. */
+/** The trades kept after adding `fresh`: finished ones from the last RECORD_DAYS days, one at a time, newest kept if over the cap; none of a retired trader's. */
 export function keepTrades(kept: MeasuredTrade[], fresh: MeasuredTrade[], now: number): MeasuredTrade[] {
   const cutoff = now - RECORD_DAYS * 24 * 60 * 60 * 1000;
-  const recent = kept.filter((t) => t.entryMs >= cutoff);
+  const recent = kept.filter((t) => t.entryMs >= cutoff && !RETIRED_TRADERS.has(t.trader));
   const added = oneAtATime(recent, fresh).filter((t) => !t.open && t.entryMs >= cutoff);
   const all = [...recent, ...added].sort((a, b) => a.entryMs - b.entryMs);
   return all.length > MAX_KEPT_TRADES ? all.slice(-MAX_KEPT_TRADES) : all;

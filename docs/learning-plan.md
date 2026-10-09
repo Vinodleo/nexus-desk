@@ -50,8 +50,8 @@ she stops trading on quiet mornings.
 
 The replay tries a few versions of each trader's settings on past data and switches to
 the best one. Each trader's settings are a tuning object in `src/services/personaEngine.ts`
-(the shapes are in `src/services/strategyEngine.ts`, e.g. `OpeningRangeTuning`,
-`LateMomentumTuning`), so the candidates are small changes to those numbers:
+(the shapes are in `src/services/strategyEngine.ts`, e.g. `OpeningRangeTuning`), so the
+candidates are small changes to those numbers:
 
 - stop distance (`stopAtrMult`, `stopPriceFloorPct`)
 - target size (`targetStopMult`)

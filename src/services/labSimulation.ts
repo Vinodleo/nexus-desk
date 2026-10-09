@@ -242,9 +242,8 @@ export function takesEntriesAt(symbol: string, ms: number): boolean {
  * trade (closed before the close) never is.
  *
  * The traders see every candle up to the one they're judging, as they do
- * live: most read only the last 15, but the opening range and late-day
- * momentum traders read the session itself (its opening candle, earlier
- * days' openings, yesterday's close). On long histories, `view` caps that at
+ * live: most read only the last 15, but the opening range trader reads the
+ * session itself (its opening candle, earlier days' openings). On long histories, `view` caps that at
  * the candles the server holds live, and `from`/`to` judge only part of
  * `bars` (the rest is warm-up before, and room for exits after).
  */

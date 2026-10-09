@@ -6,12 +6,10 @@ import {
   buildBreakoutSetup,
   buildMeanReversionSetup,
   buildOpeningRangeSetup,
-  buildLateMomentumSetup,
   buildVolatilitySuppressor,
   buildEventNewsSuppressor,
 } from "./strategyEngine";
 import { arbitrateConflictingSetups } from "./riskEngine";
-import { US_INDEX_FUNDS } from "../shared/usMarket";
 
 export interface TraderPersona {
   id: string;
@@ -196,26 +194,6 @@ export const TRADER_PERSONAS: TraderPersona[] = [
         stopPriceFloorPct: 0.003,
         targetStopMult: 3,
         baseProbability: 0.5,
-      }),
-  },
-  {
-    id: "ravi-late-momentum",
-    name: "Ravi — Late-Day Momentum",
-    family: "trend_following",
-    riskPosture: "conservative",
-    bio: "US index funds only, once a day: when the first half hour rose, buys at 3:25 New York time and holds into the close.",
-    weight: 1.0,
-    evaluate: (ctx) =>
-      buildLateMomentumSetup(ctx, {
-        idSuffix: "momentum-ravi",
-        name: "Ravi Late-Day Momentum",
-        symbols: US_INDEX_FUNDS,
-        measureCloseMinutes: 10 * 60,
-        entryCloseMinutes: 15 * 60 + 25,
-        stopAtrMult: 1.5,
-        stopPriceFloorPct: 0.003,
-        targetStopMult: 2,
-        baseProbability: 0.52,
       }),
   },
 ];
