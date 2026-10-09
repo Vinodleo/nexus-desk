@@ -5,7 +5,8 @@ import path from "path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dailyLossLimitFor } from "../../src/services/riskEngine";
 import { AMOUNT_CHOICES, cleanMarketLimits, PAPER_MONEY_CHOICES, RISK_CHOICES } from "../../src/shared/marketLimits";
-import { loadPaperStart, PAPER_START_INR, restartedPaperCapital, savePaperStart } from "../../src/services/storagePersistenceService";
+import { loadPaperStart, PAPER_START_INR, savePaperStart } from "../../src/services/storagePersistenceService";
+import { deskMoney, restartAnchor } from "../../src/shared/deskMoney";
 
 // Paper money (Settings): the paper balance can start again at a larger
 // amount, with trade sizes and a daily loss limit to match.
@@ -23,7 +24,10 @@ describe("paper money", () => {
     expect(loadPaperStart()).toBe(PAPER_START_INR);
     savePaperStart(1_000_000);
     expect(loadPaperStart()).toBe(1_000_000);
-    expect(restartedPaperCapital(1_000_000, -1200)).toEqual({ equity: 1_000_000, cash: 1_000_000, dailyRealizedPnl: -1200, allTimeRealizedPnl: 0 });
+    // Restarted at 9:00 India time, after a ₹1,200 loss at 8:00: today's loss still counts.
+    const at = Date.parse("2026-10-09T03:30:00Z");
+    const lost = { id: "t1", realizedPnl: -1200, closedAtMs: at - 3_600_000 };
+    expect(deskMoney(restartAnchor(1_000_000, at), [lost], "2026-10-09")).toEqual({ equity: 1_000_000, cash: 1_000_000, dailyRealizedPnl: -1200, allTimeRealizedPnl: 0 });
     expect(PAPER_MONEY_CHOICES).toContain(1_000_000);
   });
 

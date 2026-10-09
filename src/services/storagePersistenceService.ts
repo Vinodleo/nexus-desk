@@ -294,15 +294,6 @@ export function savePaperStart(amountInr: number): void {
 }
 
 /**
- * The paper balance started again at `amountInr` (Settings → Paper money):
- * the all-time P&L restarts from zero; today's stays (it counts toward
- * today's loss limit). Trades, records and open trades aren't touched.
- */
-export function restartedPaperCapital(amountInr: number, dailyRealizedPnl: number): AgentCapitalState {
-  return { equity: amountInr, cash: amountInr, dailyRealizedPnl, allTimeRealizedPnl: 0 };
-}
-
-/**
  * Persist capital state.
  */
 export function saveStoredCapital(capital: AgentCapitalState): void {

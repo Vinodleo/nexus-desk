@@ -7,10 +7,11 @@ import {
   type DailySampleTelemetry,
 } from "../services/storagePersistenceService";
 
+const nothing = () => {};
+
 // What the agents analysed, selected and rejected today. Scoped to the IST
-// day: at midnight IST the counters reset and onRollover fires (App uses it
-// to reset daily realized P&L).
-export function useDailyTelemetry(onRollover: () => void) {
+// day: at midnight IST the counters reset and onRollover fires.
+export function useDailyTelemetry(onRollover: () => void = nothing) {
   const [sampleTelemetry, setSampleTelemetry] = useState<DailySampleTelemetry>(() => loadDailySampleTelemetry());
 
   useEffect(() => {

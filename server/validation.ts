@@ -148,6 +148,17 @@ export const bookImportBody = z.object({
 
 export const bookQuery = z.object({
   since: z.coerce.number().finite().nonnegative().optional(),
+  bookedSince: z.coerce.number().finite().nonnegative().optional(),
+});
+
+export const bookAnchorBody = z.object({
+  anchor: z.object({
+    at: z.number().finite().positive(),
+    equity: z.number().finite(),
+    allTimeRealizedPnl: z.number().finite(),
+    start: z.number().finite().positive(),
+  }),
+  keep: z.boolean().optional(),
 });
 
 export const closedEventsQuery = z.object({

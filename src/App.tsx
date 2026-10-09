@@ -26,7 +26,6 @@ import {
   saveStoredCapital,
   loadPaperStart,
   savePaperStart,
-  restartedPaperCapital,
   loadStoredPositions,
   saveStoredPositions,
   resetStoredExperiencesToBaseline,
@@ -91,6 +90,7 @@ import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { adoptGuardianPositions, useGuardianSync } from "./hooks/useGuardianSync";
 import { reportCloseToServer } from "./services/serverClose";
 import { useBookUpload } from "./hooks/useBookUpload";
+import { useServerBook, withOwnClose } from "./hooks/useServerBook";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 import { useLiveFeed } from "./hooks/useLiveFeed";
 import {
@@ -145,24 +145,6 @@ export default function App() {
   const [selfApprovedWins, setSelfApprovedWins] = useState<number>(() => loadStoredStats().selfApprovedWins);
   const [selfApprovedLosses, setSelfApprovedLosses] = useState<number>(() => loadStoredStats().selfApprovedLosses);
 
-  // Capital & Portfolio State (Initialized from LocalStorage)
-  const [equity, setEquity] = useState<number>(() => loadStoredCapital().equity);
-  const [dailyRealizedPnl, setDailyRealizedPnl] = useState<number>(() => loadStoredCapital().dailyRealizedPnl);
-  const [allTimeRealizedPnl, setAllTimeRealizedPnl] = useState<number>(() => loadStoredCapital().allTimeRealizedPnl || 0);
-  const [cash, setCash] = useState<number>(() => loadStoredCapital().cash);
-  // What the paper balance last started at (Settings → Paper money).
-  const [paperStart, setPaperStart] = useState<number>(loadPaperStart);
-  const restartPaperMoney = useCallback(
-    (amountInr: number) => {
-      const fresh = restartedPaperCapital(amountInr, dailyRealizedPnl);
-      savePaperStart(amountInr);
-      setPaperStart(amountInr);
-      setEquity(fresh.equity);
-      setCash(fresh.cash);
-      setAllTimeRealizedPnl(fresh.allTimeRealizedPnl);
-    },
-    [dailyRealizedPnl]
-  );
   const [killSwitchActive, setKillSwitchActive] = useState<boolean>(savedControls?.killSwitch ?? false);
   // Known once saved here or read from the server; the server isn't sent
   // settings before then, so a default can't overwrite its copy.
@@ -205,15 +187,6 @@ export default function App() {
       lastUpdated: new Date().toISOString(),
     });
   }, [selfApprovedCount, selfApprovedWins, selfApprovedLosses]);
-
-  useEffect(() => {
-    saveStoredCapital({
-      equity,
-      cash,
-      dailyRealizedPnl,
-      allTimeRealizedPnl,
-    });
-  }, [equity, cash, dailyRealizedPnl, allTimeRealizedPnl]);
 
   // Core Market State
   const [currentSymbol, setCurrentSymbol] = useState<string>("BTC/INR");
@@ -319,6 +292,26 @@ export default function App() {
   const [closedTrades, setClosedTrades] = useState<HistoricalTrade[]>(() =>
     loadStoredClosedTrades()
   );
+  // The money, worked out from the closed trades (the server's book holds
+  // them all): where it stood at a moment plus every close after it.
+  const [savedCapital] = useState(loadStoredCapital);
+  const [savedPaperStart] = useState(loadPaperStart);
+  const {
+    money: { equity, cash, dailyRealizedPnl, allTimeRealizedPnl },
+    paperStart,
+    restart: restartMoney,
+  } = useServerBook(closedTrades, setClosedTrades, savedCapital, savedPaperStart);
+  const restartPaperMoney = useCallback(
+    (amountInr: number) => {
+      savePaperStart(amountInr);
+      restartMoney(amountInr);
+    },
+    [restartMoney]
+  );
+  // Kept as it was for the Settings copy to Firebase.
+  useEffect(() => {
+    saveStoredCapital({ equity, cash, dailyRealizedPnl, allTimeRealizedPnl });
+  }, [equity, cash, dailyRealizedPnl, allTimeRealizedPnl]);
   // Trailing-stop profile for new positions (chosen in the Lab's exit comparison).
   const { profile: trailProfileId, setProfile: setTrailProfileId } = useTrailProfile();
   const trailProfileRef = React.useRef(trailProfileId);
@@ -339,10 +332,6 @@ export default function App() {
   const applyServerClose = useServerCloseHandler(closingPositionIds, closedTradesRef, {
     setActivePositions,
     setClosedTrades,
-    setEquity,
-    setCash,
-    setDailyRealizedPnl,
-    setAllTimeRealizedPnl,
   });
 
   // After any close, in the app or by the server guardian, leave the coin
@@ -699,9 +688,8 @@ export default function App() {
     useState<boolean>(true);
 
   // Live Sample Telemetry: what agents analysed, selected and rejected today
-  // (IST day). At midnight IST the counters and daily realized P&L reset.
-  const resetDailyPnl = useCallback(() => setDailyRealizedPnl(0), []);
-  const [sampleTelemetry, setSampleTelemetry] = useDailyTelemetry(resetDailyPnl);
+  // (IST day). At midnight IST the counters reset (today's P&L counts the day's closes).
+  const [sampleTelemetry, setSampleTelemetry] = useDailyTelemetry();
 
   // Close Position with full agent trade autopsy & audio feedback
   const closePositionWithAutopsy = useCallback(
@@ -736,12 +724,8 @@ export default function App() {
         pos.symbol
       );
 
-      // Remove from active positions & update capital
+      // Out of the open trades (the money follows from the closed trade below).
       setActivePositions((prev) => prev.filter((p) => p.id !== pos.id));
-      setDailyRealizedPnl((prev) => Number((prev + finalPnl).toFixed(2)));
-      setAllTimeRealizedPnl((prev) => Number((prev + finalPnl).toFixed(2)));
-      setEquity((prev) => Number((prev + finalPnl).toFixed(2)));
-      setCash((prev) => Number((prev + finalPnl).toFixed(2)));
 
       // The server records every close (its closed trades hold every trade).
       // Told first: a live trade's exit below would take it out of the
@@ -889,7 +873,7 @@ export default function App() {
         lowestPrice: Math.min(pos.lowestPrice ?? pos.entryPrice, pos.entryPrice, exitPrice),
       };
 
-      setClosedTrades((prev) => [newHistoricalTrade, ...prev]);
+      setClosedTrades((prev) => withOwnClose(prev, newHistoricalTrade));
       // The same pop-up the server sends for its closes (same tag, so a close
       // both sides report shows once).
       if (tradePopupsOnRef.current) {
