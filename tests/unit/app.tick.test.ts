@@ -124,8 +124,8 @@ describe("App live ticks", () => {
     });
     const ticket = screen.getByRole("dialog", { name: "ETH/INR" });
     expect(ticket.textContent).toContain("Coin breakout 55/20 · by the server");
-    // A paper desk: the ticket shows the ₹10,000 it took from the free cash.
-    expect(screen.getByTestId("ticket-cash").textContent).toContain("₹10,000 is tied up in this trade until it closes.");
+    // A paper desk: the ticket shows what it took from the free cash, ₹10,000 and CoinDCX's ₹59 to open it.
+    expect(screen.getByTestId("ticket-cash").textContent).toContain("₹10,059 is tied up in this trade until it closes.");
     await act(async () => {
       screen.getByRole("button", { name: "Got it" }).click();
     });
