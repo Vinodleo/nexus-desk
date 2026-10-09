@@ -89,6 +89,7 @@ import { fetchServerDeskControls, loadDeskControls, saveDeskControls } from "./s
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { adoptGuardianPositions, useGuardianSync } from "./hooks/useGuardianSync";
+import { reportCloseToServer } from "./services/serverClose";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 import { useLiveFeed } from "./hooks/useLiveFeed";
 import {
@@ -739,14 +740,22 @@ export default function App() {
       setEquity((prev) => Number((prev + finalPnl).toFixed(2)));
       setCash((prev) => Number((prev + finalPnl).toFixed(2)));
 
+      // The server records every close (its closed trades hold every trade).
+      // Told first: a live trade's exit below would take it out of the
+      // guardian unrecorded.
+      const told = reportCloseToServer(pos.id, exitPrice, reason);
+
       // Live positions are exited by the server (idempotently, with retries),
       // so the exchange order goes out even if this tab closes right now.
       if (pos.isLiveOrder) {
-        apiFetch("/api/live/close-position", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ positionId: pos.id, reason }),
-        })
+        told
+          .then(() =>
+            apiFetch("/api/live/close-position", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ positionId: pos.id, reason }),
+            })
+          )
           .then((res) => res.json())
           .then((exitData) => {
             if (exitData.success) {

@@ -10,7 +10,7 @@ import { blendedExitPrice, riskAtOpen } from "../src/shared/exitRules";
 import { closeoutPrice, type Quote } from "../src/shared/quotes";
 import { notifyUser, tradeClosedMessage, tradeOpenedMessage } from "./push";
 
-import { validate, syncPositionsBody, closedEventsQuery } from "./validation";
+import { validate, syncPositionsBody, closedEventsQuery, daemonCloseBody } from "./validation";
 import { slowStrategyOf } from "../src/shared/marketLimits";
 import type { SlowStrategy } from "../src/types";
 
@@ -93,6 +93,8 @@ export interface DaemonClosedTrade {
   signalPrice?: number;
   timeframe?: "1d";
   strategy?: SlowStrategy;
+  /** Closed in the app, which counted it itself (in its daily P&L and losing streak). */
+  reportedByApp?: boolean;
 }
 
 interface DaemonPersistedState {
@@ -120,6 +122,12 @@ let daemonLastSavedAt: string = new Date().toISOString();
 const appClosedIds: Map<string, number> = new Map();
 const APP_CLOSED_KEEP_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_CLOSED_MAX = 2000;
+
+// Positions the app said it closed, kept a few minutes: its report of the
+// close (/api/daemon/close, with the price) may arrive just after the push
+// that dropped them, and is still recorded.
+const droppedByApp = new Map<string, { pos: DaemonPosition; at: number }>();
+const DROPPED_KEEP_MS = 10 * 60 * 1000;
 
 function pruneAppClosed(now: number): void {
   for (const [id, at] of appClosedIds) if (at < now - APP_CLOSED_KEEP_MS) appClosedIds.delete(id);
@@ -268,10 +276,14 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
     // be one it hasn't heard of yet (opened on another device, or by the
     // server's autopilot), so it stays guarded and the app takes it up.
     const now = Date.now();
+    for (const [id, d] of droppedByApp) if (now - d.at > DROPPED_KEEP_MS) droppedByApp.delete(id);
     for (const id of closedIds) {
       if (!appClosedIds.has(id)) appClosedIds.set(id, now);
       const pos = daemonPositions.get(id);
-      if (pos && pos.userId === uid && !isOpenLivePosition(id)) daemonPositions.delete(id);
+      if (pos && pos.userId === uid && !isOpenLivePosition(id)) {
+        daemonPositions.delete(id);
+        droppedByApp.set(id, { pos, at: now });
+      }
     }
   } else {
     // An app from before closedIds (an older version still cached): a
@@ -362,8 +374,35 @@ router.get("/api/daemon/closed-events", validate({ query: closedEventsQuery }), 
   });
 });
 
+type ExitReason = DaemonClosedTrade["exitReason"];
+
+// A close the app made (by hand, or on its own prices): the guardian closes
+// the position and records it, so its closed trades hold every trade (and a
+// live trade's exchange exit goes out from here). One already closed answers
+// with its record; one the guardian never held, 404.
+router.post("/api/daemon/close", validate({ body: daemonCloseBody }), (req: Request, res: Response) => {
+  const uid = (req as AuthedRequest).user!.uid;
+  const { positionId, price, reason } = req.body as { positionId: string; price: number; reason: ExitReason };
+  let pos = daemonPositions.get(positionId);
+  const dropped = droppedByApp.get(positionId);
+  droppedByApp.delete(positionId);
+  if (!pos && dropped && dropped.pos.userId === uid && Date.now() - dropped.at <= DROPPED_KEEP_MS) {
+    // Dropped by the push that beat this report here: back in, to be closed and recorded.
+    pos = dropped.pos;
+    daemonPositions.set(pos.id, pos);
+  }
+  if (pos && pos.userId === uid) {
+    pos.currentPrice = price;
+    const closed = executeDaemonExit(pos, price, reason, { byApp: true });
+    return res.json({ success: true, event: closed });
+  }
+  const earlier = daemonClosedTrades.find((t) => t.positionId === positionId && t.userId === uid);
+  if (earlier) return res.json({ success: true, already: true, event: earlier });
+  return res.status(404).json({ success: false, error: "The guardian isn't holding that position", code: "NOT_FOUND" });
+});
+
 // Process a server-side position exit
-function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME") {
+function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: ExitReason, opts: { byApp?: boolean } = {}): DaemonClosedTrade | undefined {
   if (!daemonPositions.has(pos.id)) return;
   daemonPositions.delete(pos.id);
 
@@ -420,6 +459,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
     ...(pos.signalPrice !== undefined ? { signalPrice: pos.signalPrice } : {}),
     ...(pos.timeframe === "1d" ? { timeframe: "1d" as const } : {}),
     ...(slowStrategyOf(pos.strategy) ? { strategy: slowStrategyOf(pos.strategy) } : {}),
+    ...(opts.byApp ? { reportedByApp: true } : {}),
   };
 
   daemonClosedTrades.unshift(closedRecord);
@@ -443,6 +483,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: "TAKE
   // Tell the owner's connected clients immediately, and pop up on their phones.
   broadcastToUser(pos.userId, { type: "DAEMON_POSITION_CLOSED", data: closedRecord });
   void notifyUser(pos.userId, tradeClosedMessage(closedRecord));
+  return closedRecord;
 }
 
 // The backup stops at CoinDCX (liveExecution.ts) follow this guardian's stop
@@ -473,11 +514,11 @@ setExchangeStopListener({
  * exchange exit too), as when its stop is hit: the breakout strategy's sale
  * on a close below the 20-day low. False if it's no longer held.
  */
-export function closeServerPosition(id: string, price: number, reason: "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME"): boolean {
+export function closeServerPosition(id: string, price: number, reason: ExitReason, opts: { byApp?: boolean } = {}): boolean {
   const pos = daemonPositions.get(id);
   if (!pos || !(price > 0)) return false;
   pos.currentPrice = price;
-  executeDaemonExit(pos, price, reason);
+  executeDaemonExit(pos, price, reason, opts);
   return true;
 }
 
@@ -504,6 +545,7 @@ export function _resetGuardian(): void {
   daemonPositions.clear();
   daemonClosedTrades.length = 0;
   appClosedIds.clear();
+  droppedByApp.clear();
 }
 
 /** What a restart would need to carry on guarding a position the same way. */

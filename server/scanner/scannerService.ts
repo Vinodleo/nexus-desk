@@ -257,7 +257,8 @@ function scanList(now: number): string[] {
 /**
  * Today's realised P&L for the daily loss limit: what the app last sent,
  * plus trades the guardian closed after that (the app counts those once it
- * hears of them and sends a new total, but it may be closed).
+ * hears of them and sends a new total, but it may be closed). Closes the app
+ * made itself are in its total already.
  */
 export function serverDailyPnl(uid: string, desk: DeskState, now: number = Date.now()): number {
   const today = istDay(now);
@@ -265,7 +266,7 @@ export function serverDailyPnl(uid: string, desk: DeskState, now: number = Date.
   const later = closedTradesFor(uid)
     .filter((t) => {
       const at = Date.parse(t.closedAt);
-      return at > since && istDay(at) === today;
+      return at > since && istDay(at) === today && !t.reportedByApp;
     })
     .reduce((sum, t) => sum + t.realizedPnl, 0);
   return Number((dailyPnlToday(desk, now) + later).toFixed(2));

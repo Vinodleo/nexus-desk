@@ -368,6 +368,27 @@ describe("server autopilot", () => {
     expect(serverDailyPnl("owner", { ...d, updatedAt: later - 1 }, later)).toBeCloseTo(-100 + closed[0].realizedPnl, 2);
     expect(serverDailyPnl("owner", { ...d, updatedAt: later }, later)).toBe(-100);
   });
+
+  it("leaves out closes the app made itself: they're in its own total and losing streak already", async () => {
+    const { serverDailyPnl } = await import("../../server/scanner/scannerService");
+    const { serverLossStreak } = await import("../../server/scanner/autopilot");
+    const { setDeskState } = await import("../../server/scanner/deskState");
+    const guardian = await import("../../server/guardian");
+    const d = setDeskState("owner", { ...desk, dailyRealizedPnl: -100, lossStreak: 1 }, now);
+    for (const id of ["m1", "m2"]) {
+      guardian.daemonPositions.set(id, {
+        id, userId: "owner", symbol: "SOL/INR", direction: "LONG", entryPrice: 100, currentPrice: 100,
+        quantity: 10, stopLoss: 95, takeProfit: 110, openTime: new Date(now - 10 * MIN).toISOString(),
+      });
+      // Closed by hand in the app, at a loss, and told to the guardian.
+      expect(guardian.closeServerPosition(id, 94, "MANUAL", { byApp: true })).toBe(true);
+    }
+    const closed = guardian.closedTradesFor("owner");
+    expect(closed.map((t) => t.reportedByApp)).toEqual([true, true]);
+    const after = { ...d, updatedAt: 0 };
+    expect(serverDailyPnl("owner", { ...after, pnlDay: d.pnlDay }, Date.parse(closed[0].closedAt))).toBe(-100);
+    expect(serverLossStreak("owner", after)).toBe(1);
+  });
 });
 
 describe("5-minute coin scanning, switched off (owner's call, 5 Oct 2026)", () => {

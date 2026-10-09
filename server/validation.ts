@@ -50,6 +50,13 @@ export const closePositionBody = z.object({
   reason: z.string().max(40).optional(),
 });
 
+/** A close the app made: the guardian records it (and sends a live trade's exit). */
+export const daemonCloseBody = z.object({
+  positionId,
+  price: z.number().finite().positive(),
+  reason: z.enum(["TAKE_PROFIT", "STOP_LOSS", "TRAILING_STOP", "EXPIRY_TIME", "MANUAL"]),
+});
+
 /** The live test order's coin: "BTCINR" or "BTC/INR". */
 export const liveTestBody = z.object({
   market: z.string().regex(/^[A-Za-z0-9]{2,16}\/?INR$/i, "must be a CoinDCX INR market, like BTCINR"),

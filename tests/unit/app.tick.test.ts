@@ -7,14 +7,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 // tick past its take-profit must close it and record the trade. Exercises
 // useLiveFeed -> applyTickToPosition -> closePositionWithAutopsy wiring.
 
-const apiFetch = vi.fn(async (url: string) => {
+const apiFetch = vi.fn(async (url: string, _init?: RequestInit) => {
   if (url === "/api/coindcx/status") {
     return new Response(JSON.stringify({ success: true, configured: false, keyMasked: null, liveRisk: {} }));
   }
   return new Response(JSON.stringify({ success: true, events: [], activePositions: [] }));
 });
 vi.mock("../../src/services/apiClient", () => ({
-  apiFetch: (url: string) => apiFetch(url),
+  apiFetch: (url: string, init?: RequestInit) => apiFetch(url, init),
   authenticateSocket: vi.fn(),
 }));
 
@@ -107,6 +107,9 @@ describe("App live ticks", () => {
     expect(trade).toMatchObject({ highestPrice: 1012, lowestPrice: 1000 });
     // And the signal's price, for what the entry cost.
     expect(trade.signalPrice).toBe(998);
+    // The server is told, so its closed trades hold every trade.
+    const told = apiFetch.mock.calls.find(([url]) => url === "/api/daemon/close");
+    expect(JSON.parse(String(told?.[1]?.body))).toEqual({ positionId: "pos-tp", price: 1012, reason: "TAKE_PROFIT" });
   }, 30000);
 
   it("unfolds a ticket when the server opens a trade, and puts it away on Got it", async () => {
