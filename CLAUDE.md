@@ -69,8 +69,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     own prices) is told to it (`/api/daemon/close`, `reportCloseToServer`, before a live trade's exit call): it closes
     and records it (`reportedByApp`, left out of the server's own daily P&L and losing streak, which the app's totals
     hold already), so the server's closed trades hold every trade. A push that dropped the trade first is covered
-    (`droppedByApp`, kept 10 minutes). Step 1 of making the server the only copy of the trades (owner's call, 9 Oct):
-    next, opens go through it, then the Book reads from it, then the phone/server syncing goes.
+    (`droppedByApp`, kept 10 minutes). Each order the app sends to open a trade (`/api/execute-trade`) carries the
+    position, and the guardian takes it at once (`openAppPosition`, sharing `takeAppPosition` with the push; a live one
+    at CoinDCX's fill), without waiting for the app's next push. Steps 1 and 2 of making the server the only copy of
+    the trades (owner's call, 9 Oct): next, the Book reads from it, then the phone/server syncing goes.
   - Live coin trades (`server/liveExecution.ts`): the server sends every exit itself (idempotent, retried). Each live
     long also has a backup stop resting at CoinDCX (a `stop_limit` sell `BACKSTOP_GAP` 0.5% under the guardian's stop,
     `reconcileExchangeStops` every 15 s): moved up as the stop trails (by 0.5%+, cancel then replace), cancelled before

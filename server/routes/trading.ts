@@ -3,7 +3,7 @@ import type { AuthedRequest } from "../auth";
 import { isLiveOrderRequest } from "../liveOrderGuard";
 import { getLivePosition, listLivePositions, requestLiveExit, setLiveExitListener } from "../liveExecution";
 import { placeLiveEntry } from "../liveEntry";
-import { daemonPositions, scheduleDaemonDiskSave } from "../guardian";
+import { daemonPositions, openAppPosition, scheduleDaemonDiskSave, type DaemonPosition } from "../guardian";
 import { broadcastToUser } from "../realtime";
 
 import { liveTestStatus, sellLiveTest, startLiveTest } from "../liveTest";
@@ -17,11 +17,15 @@ setLiveExitListener((rec) => broadcastToUser(rec.userId, { type: "LIVE_EXIT_UPDA
 // CoinDCX Authenticated Trade Execution Route
 router.post("/api/execute-trade", validate({ body: executeTradeBody }), async (req, res) => {
   const { symbol, side, quantity, price, positionId } = req.body;
+  // The position the app opens with this order: the guardian takes it at once.
+  const position = req.body.position as DaemonPosition | undefined;
+  const uid: string = (req as AuthedRequest).user!.uid;
 
   // Ambiguous input never resolves to "spend real money" (see isLiveOrderRequest).
   const wantsLiveOrder = isLiveOrderRequest(req.body);
 
   if (!wantsLiveOrder) {
+    if (position && position.symbol === symbol && (!positionId || position.id === positionId)) openAppPosition(uid, position);
     // Model realistic paper trading slippage (0.02% to 0.08%) against the order book
     const slippageFactor = (Math.random() * 0.0006) + 0.0002;
     const isBuy = side === "LONG" || side === "buy";
@@ -68,6 +72,11 @@ router.post("/api/execute-trade", validate({ body: executeTradeBody }), async (r
   if (result.duplicate) {
     // Same position submitted twice: never open it again.
     return res.json({ success: true, mode: "LIVE", orderId: result.orderId, duplicate: true, message: "Position already opened." });
+  }
+  // Guarded at once, at the price and size CoinDCX filled (the guardian takes the registry's quantity).
+  if (position && position.id === positionId) {
+    const filled = result.executedPrice && result.executedPrice > 0 ? result.executedPrice : position.entryPrice;
+    openAppPosition(uid, { ...position, entryPrice: filled, currentPrice: filled, quantity: result.quantity });
   }
   return res.json({
     success: true,

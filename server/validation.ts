@@ -43,6 +43,8 @@ export const executeTradeBody = z.object({
   isPaperTrade: z.unknown().optional(),
   confirmLiveOrder: z.unknown().optional(),
   positionId: positionId.optional(),
+  /** The position the app opens with this order: the guardian takes it at once (an older app sends none). */
+  position: z.lazy(() => syncedPosition).optional(),
 });
 
 export const closePositionBody = z.object({
