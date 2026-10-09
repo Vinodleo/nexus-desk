@@ -1,10 +1,7 @@
+import "./server/instrument";
 import express, { type Request, type Response } from "express";
 import compression from "compression";
 import path from "path";
-import dotenv from "dotenv";
-
-dotenv.config();
-
 import { requireAuth } from "./server/auth";
 import { attachWebSocketServer } from "./server/realtime";
 import { startCoinDcxRelay } from "./server/marketRelay";
@@ -41,6 +38,7 @@ import { backupStatus, restoreIfAsked, startBackups } from "./server/backup";
 import { coinDcxCheckStatus, startCoinDcxCheck } from "./server/coinDcxCheck";
 import { notifyEveryone, notifyUser } from "./server/push";
 import { startWeeklySummary } from "./server/weeklySummary";
+import { errorReportsOn, reportExpressErrors, reportStarted } from "./server/errorReports";
 
 // Entry point: builds the Express app, mounts the route modules behind
 // Firebase auth, and starts the WebSocket fan-out, the CoinDCX price relay and
@@ -83,7 +81,7 @@ app.use(tradeBookRouter);
 
 // Where the server runs and whether its saved state survives restarts.
 app.get("/api/server/status", (_req: Request, res: Response) => {
-  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus(), alpaca: alpacaStatus(), fx: fxStatus(), reviewer: reviewerStatus(), backup: backupStatus(), coinDcxCheck: coinDcxCheckStatus() });
+  res.json({ success: true, ...hostStatus(), scanner: scannerHeartbeat(), angelOne: angelStatus(), alpaca: alpacaStatus(), fx: fxStatus(), reviewer: reviewerStatus(), backup: backupStatus(), coinDcxCheck: coinDcxCheckStatus(), errorReports: { on: errorReportsOn() } });
 });
 
 // Unknown API paths get a JSON 404 instead of falling through to the SPA's
@@ -91,6 +89,9 @@ app.get("/api/server/status", (_req: Request, res: Response) => {
 app.use("/api", (_req: Request, res: Response) => {
   res.status(404).json({ success: false, error: "Not found", code: "NOT_FOUND" });
 });
+
+// Errors that reach Express go to Sentry (server/errorReports.ts), when on.
+reportExpressErrors(app);
 
 // Restore guardian state before anything can tick, and flush it on shutdown.
 // The trade book first: the guardian adds its kept closes to it.
@@ -145,6 +146,7 @@ async function startServer() {
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Self-Learning Trading Bot v2.0 Server running on port ${PORT}`);
+    reportStarted();
   });
 
   attachWebSocketServer(server);

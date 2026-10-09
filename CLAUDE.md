@@ -123,6 +123,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     sets the `AWS_*`/`BUCKET_NAME` secrets itself; `server/s3.ts` signs requests with SigV4, no SDK), 30 days kept,
     shown in Settings → Server → Backups, a pop-up once a day if failing. `RESTORE_BACKUP=YYYY-MM-DD` restores a day at
     start-up (once, `.restored` marker; replaced files kept in `before-restore-…`) and restarts (docs/hosting.md).
+  - Error reports (`server/errorReports.ts`, loaded first by `server/instrument.ts`): with `SENTRY_DSN` set (a Fly
+    secret; docs/hosting.md), the server's crashes, route errors and every `console.error` go to Sentry (org and
+    project `nexus-desk`), errors only. No request headers, cookies or bodies; tokens, keys, secrets and emails
+    masked (`scrubText`); one message at most 5 times an hour, 100 reports a day (`underCap`). An unhandled
+    rejection still stops the server once reported (`mode: "strict"`), as before. Settings → Server → Error reports.
 - **Shared rules:** `src/shared/` and `src/services/`, used by both the app and the server.
   - Exit rules, trailing stops and trade maths. Coin fees are CoinDCX's INR spot ones, from the test order's
     screens (4 Oct): 0.5% of each order plus 18% GST, 0.59% a side in rupees (`COIN_FEE_PER_SIDE`,
