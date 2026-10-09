@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { applyTickToPosition, priceForPosition, type SuspectTick } from "../../src/services/positionTick";
+import { applyTickToPosition, markTick, priceForPosition, type SuspectTick } from "../../src/services/positionTick";
 import type { Position } from "../../src/types";
 import { legacyTick } from "./legacyPositionTick";
 import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
@@ -155,5 +155,29 @@ describe("applyTickToPosition", () => {
       expect(out.position.unrealizedPnl).toBe(10);
       expect(out.position.unrealizedPnlPercent).toBeCloseTo(0.5, 6);
     }
+  });
+});
+
+describe("markTick: the app's view of a new price", () => {
+  const pos = {
+    id: "m", symbol: "SOL/INR", direction: "LONG", setupName: "t", entryPrice: 1000, currentPrice: 1000, quantity: 2,
+    stopLoss: 990, takeProfit: 1020, initialTakeProfit: 1020, unrealizedPnl: 0, unrealizedPnlPercent: 0,
+    openTime: new Date().toISOString(), expectedHoldingTimeMinutes: 30, metaConfidence: 0.6, atrAtEntry: 5,
+    highestPrice: 1000, lowestPrice: 1000, trailActive: false, trailMode: "TREND_RUNNER",
+  } as Position;
+
+  it("shows the price and the open P&L it makes; past the target or stop it closes nothing and moves no stop (the guardian does)", () => {
+    const up = markTick(pos, 1030, new Map(), 1);
+    expect(up).toMatchObject({ currentPrice: 1030, unrealizedPnl: 60, stopLoss: 990, takeProfit: 1020, trailActive: false, highestPrice: 1000 });
+    expect(markTick(pos, 980, new Map(), 2)).toMatchObject({ currentPrice: 980, unrealizedPnl: -40, stopLoss: 990 });
+    // Nothing moved: the same position back.
+    expect(markTick(up, 1030, new Map(), 3)).toBe(up);
+    expect(markTick(up, undefined, new Map(), 4)).toBe(up);
+  });
+
+  it("holds an implausible jump until a second tick confirms it", () => {
+    const pending = new Map<string, SuspectTick>();
+    expect(markTick(pos, 2000, pending, 1)).toBe(pos);
+    expect(markTick(pos, 2010, pending, 2).currentPrice).toBe(2010);
   });
 });

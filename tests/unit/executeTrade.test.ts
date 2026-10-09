@@ -7,7 +7,7 @@ import express from "express";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // An order the app sends to open a trade carries the position: the guardian
-// guards it from then on, without waiting for the app's next push.
+// holds it from then on (the only copy of the open trades).
 
 const placeLiveEntry = vi.fn();
 vi.mock("../../server/liveEntry", () => ({ placeLiveEntry: (...a: unknown[]) => placeLiveEntry(...a) }));
@@ -44,7 +44,7 @@ afterAll(() => {
 const position = (id: string, symbol = "SOL/INR") => ({
   id,
   symbol,
-  direction: "LONG",
+  direction: "LONG" as const,
   entryPrice: 100,
   currentPrice: 100,
   quantity: 1,
@@ -76,6 +76,22 @@ describe("opening a trade from the app", () => {
     guardian.closeServerPosition("o-1", 104, "MANUAL");
     await paper(position("o-1"));
     expect(guardian.daemonPositions.has("o-1")).toBe(false);
+  });
+
+  it("refuses a paper trade in a symbol the guardian already holds: one trade per symbol, as the app's risk check has it", async () => {
+    // The server's autopilot took ADA moments before the app saw it.
+    guardian.daemonPositions.set("srv-ada", { ...position("srv-ada", "ADA/INR"), userId: "u1", openedByServer: true });
+    const res = await paper(position("o-ada", "ADA/INR"), { symbol: "ADA/INR" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ success: false, code: "ALREADY_HELD" });
+    expect(guardian.daemonPositions.has("o-ada")).toBe(false);
+    expect(guardian.daemonPositions.has("srv-ada")).toBe(true);
+    // Another user's ADA doesn't count.
+    guardian.daemonPositions.set("srv-ada", { ...position("srv-ada", "ADA/INR"), userId: "u2" });
+    expect((await paper(position("o-ada", "ADA/INR"), { symbol: "ADA/INR" })).status).toBe(200);
+    expect(guardian.daemonPositions.get("o-ada")).toMatchObject({ userId: "u1" });
+    guardian.daemonPositions.delete("srv-ada");
+    guardian.daemonPositions.delete("o-ada");
   });
 
   it("puts a live trade in at the price and size CoinDCX filled", async () => {

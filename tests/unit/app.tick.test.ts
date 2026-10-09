@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-// End-to-end through the real App: an open paper position plus a WebSocket
-// tick past its take-profit must close it and record the trade. Exercises
-// useLiveFeed -> applyTickToPosition -> closePositionWithAutopsy wiring.
+// End-to-end through the real App: a WebSocket tick past an open paper
+// position's take-profit shows its price (the guardian on the server makes the
+// exit), and the guardian's close records the trade. Exercises useLiveFeed ->
+// markTick and the server-close wiring.
 
 const apiFetch = vi.fn(async (url: string, _init?: RequestInit) => {
   if (url === "/api/coindcx/status") {
@@ -72,7 +73,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 describe("App live ticks", () => {
-  it("closes a paper position when a tick crosses its take-profit", async () => {
+  it("shows a tick's price on an open trade but leaves its exit to the server's guardian, whose close records it", async () => {
     const opened = new Date().toISOString();
     localStorage.setItem(
       "nexus_agent_positions_inr_v5",
@@ -93,23 +94,87 @@ describe("App live ticks", () => {
     await act(async () => {
       for (const ws of sockets) ws.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "TICK", data: { "BTC/INR": 1012 } }) }));
     });
-    // The tick's state update schedules the close; let it run and render.
     await act(async () => {
       await new Promise((r) => setTimeout(r, 200));
     });
 
-    const positions = JSON.parse(localStorage.getItem("nexus_agent_positions_inr_v5") || "[]");
+    // Past its target on this phone's price: shown, not closed here.
+    let positions = JSON.parse(localStorage.getItem("nexus_agent_positions_inr_v5") || "[]");
+    expect(positions.find((p: { id: string }) => p.id === "pos-tp")).toMatchObject({ currentPrice: 1012, unrealizedPnl: 12, takeProfit: 1010 });
+    expect(apiFetch.mock.calls.some(([url]) => url === "/api/daemon/close")).toBe(false);
+
+    // The guardian closes it.
+    const closed = {
+      id: "daemon-closed-pos-tp", positionId: "pos-tp", symbol: "BTC/INR", direction: "LONG", entryPrice: 1000, exitPrice: 1012,
+      quantity: 1, moneyPlaced: 1000, grossPnl: 12, feesPaid: 11.8, realizedPnl: 0.2, realizedPnlPercent: 0.02, isWin: true,
+      exitReason: "TAKE_PROFIT", closedAt: new Date().toISOString(), openedAt: opened, highestPrice: 1012, lowestPrice: 1000, signalPrice: 998,
+    };
+    await act(async () => {
+      for (const ws of sockets) ws.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "DAEMON_POSITION_CLOSED", data: closed }) }));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    positions = JSON.parse(localStorage.getItem("nexus_agent_positions_inr_v5") || "[]");
     const trades = JSON.parse(localStorage.getItem("nexus_agent_closed_trades_inr_v4") || "[]");
     expect(positions.find((p: { id: string }) => p.id === "pos-tp")).toBeUndefined();
     const trade = trades.find((t: { positionId: string }) => t.positionId === "pos-tp");
-    expect(trade).toMatchObject({ exitReason: "TAKE_PROFIT", exitPrice: 1012 });
-    // How far it went each way while open, for "How trades moved".
-    expect(trade).toMatchObject({ highestPrice: 1012, lowestPrice: 1000 });
-    // And the signal's price, for what the entry cost.
-    expect(trade.signalPrice).toBe(998);
-    // The server is told, so its closed trades hold every trade.
-    const told = apiFetch.mock.calls.find(([url]) => url === "/api/daemon/close");
-    expect(JSON.parse(String(told?.[1]?.body))).toEqual({ positionId: "pos-tp", price: 1012, reason: "TAKE_PROFIT" });
+    expect(trade).toMatchObject({ exitReason: "TAKE_PROFIT", exitPrice: 1012, highestPrice: 1012, lowestPrice: 1000, signalPrice: 998 });
+  }, 30000);
+
+  it("closes a trade by hand only once the server has: one it can't reach stays open", async () => {
+    const opened = new Date().toISOString();
+    localStorage.setItem(
+      "nexus_agent_positions_inr_v5",
+      JSON.stringify([
+        {
+          id: "pos-hand", symbol: "ETH/INR", direction: "LONG", setupName: "Test", entryPrice: 1000, currentPrice: 1005,
+          quantity: 1, stopLoss: 990, takeProfit: 1100, initialTakeProfit: 1100, unrealizedPnl: 5,
+          unrealizedPnlPercent: 0.5, openTime: opened, expectedHoldingTimeMinutes: 30, metaConfidence: 0.6,
+        },
+      ])
+    );
+    const usual = apiFetch.getMockImplementation()!;
+    let reachable = false;
+    apiFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url !== "/api/daemon/close") return usual(url, init);
+      if (!reachable) throw new Error("offline");
+      return new Response(JSON.stringify({ success: true, event: {
+        id: "daemon-closed-pos-hand", positionId: "pos-hand", symbol: "ETH/INR", direction: "LONG", entryPrice: 1000, exitPrice: 1005,
+        quantity: 1, moneyPlaced: 1000, grossPnl: 5, feesPaid: 11.8, realizedPnl: -6.8, realizedPnlPercent: -0.68, isWin: false,
+        exitReason: "MANUAL", closedAt: new Date().toISOString(), openedAt: opened, reportedByApp: true,
+      } }));
+    });
+    try {
+      const { default: App } = await import("../../src/App");
+      await act(async () => {
+        render(createElement(App));
+      });
+      const hold = async () => {
+        await act(async () => {
+          fireEvent.keyDown(screen.getByRole("button", { name: /Hold to close/ }), { key: "Enter" });
+          await new Promise((r) => setTimeout(r, 900));
+        });
+      };
+      const stored = () => JSON.parse(localStorage.getItem("nexus_agent_positions_inr_v5") || "[]") as { id: string }[];
+      const recorded = () =>
+        (JSON.parse(localStorage.getItem("nexus_agent_closed_trades_inr_v4") || "[]") as { positionId: string }[]).filter((t) => t.positionId === "pos-hand");
+
+      // The server can't be reached: still open, nothing recorded.
+      await hold();
+      expect(stored().map((p) => p.id)).toContain("pos-hand");
+      expect(recorded()).toHaveLength(0);
+      expect(document.body.textContent).toContain("ETH/INR not closed");
+
+      // It answers: closed and recorded once.
+      reachable = true;
+      await hold();
+      expect(stored().map((p) => p.id)).not.toContain("pos-hand");
+      expect(recorded()).toHaveLength(1);
+      expect(recorded()[0]).toMatchObject({ exitReason: "MANUAL", exitPrice: 1005 });
+    } finally {
+      apiFetch.mockImplementation(usual);
+    }
   }, 30000);
 
   it("unfolds a ticket when the server opens a trade, and puts it away on Got it", async () => {

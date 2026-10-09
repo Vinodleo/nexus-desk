@@ -72,7 +72,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 describe("App smoke test", () => {
-  it("renders the desk and reaches the server for guardian sync and CoinDCX status", async () => {
+  it("renders the desk and reaches the server for the guardian's trades and CoinDCX status", async () => {
     const errors: unknown[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation((...a) => { errors.push(a); });
     const { default: App } = await import("../../src/App");
@@ -105,7 +105,8 @@ describe("App smoke test", () => {
     expect(document.body.textContent).toContain("Paper equity");
     const called = apiFetch.mock.calls.map(([u]) => u);
     expect(called).toContain("/api/coindcx/status");
-    expect(called).toContain("/api/daemon/sync-positions");
+    // It reads the guardian's open trades; it pushes none (the server holds the only copy).
+    expect(called).not.toContain("/api/daemon/sync-positions");
     expect(called.some((u) => u.startsWith("/api/daemon/closed-events"))).toBe(true);
     // React reports render crashes and bad hook usage via console.error.
     const reactErrors = errors.filter((a) => String((a as unknown[])[0]).match(/Error|Warning: (Invalid hook|Rendered (more|fewer) hooks)/));

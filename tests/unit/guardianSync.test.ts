@@ -119,11 +119,13 @@ describe("positions the server's autopilot opened", () => {
     expect(guardian.daemonPositions.has("srv-1")).toBe(false);
   });
 
-  it("are dropped when the app opened the same coin itself (the same signal, twice)", async () => {
+  it("are kept when an app opened the same coin itself (the same signal, twice): one trade per symbol, the app's is refused", async () => {
     guardian.openServerPosition("u2", { ...opened, id: "srv-dup" });
-    await syncAs([{ ...opened, id: "app-own" }]);
-    expect(guardian.daemonPositions.has("srv-dup")).toBe(false);
-    expect(guardian.daemonPositions.has("app-own")).toBe(true);
+    const res = await (await syncAs([{ ...opened, id: "app-own" }])).json();
+    expect(res.rejectedResurrections).toEqual(["app-own"]);
+    expect(guardian.daemonPositions.has("srv-dup")).toBe(true);
+    expect(guardian.daemonPositions.has("app-own")).toBe(false);
+    guardian.daemonPositions.delete("srv-dup");
     await syncAs([]);
   });
 

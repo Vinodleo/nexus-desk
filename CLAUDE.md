@@ -65,14 +65,19 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     keeps their typical spreads current from the quotes it reads (`recordSpread`). It still scans when no market is
     open, so the app (which scans by itself only while the server doesn't) stays out of it.
   - The server autopilot is in `server/scanner/autopilot.ts`.
-  - The guardian (`server/guardian.ts`) manages stops and exits 24/7. Every close the app makes (by hand or on its
-    own prices) is told to it (`/api/daemon/close`, `reportCloseToServer`, before a live trade's exit call): it closes
-    and records it (`reportedByApp`, left out of the server's own daily P&L and losing streak, which the app's totals
+  - The guardian (`server/guardian.ts`) manages stops and exits 24/7, and is the only copy of the open trades: it
+    trails every stop, banks every half and makes every stop, target and time exit; the app shows its trades
+    (`fromGuardian`, every 10 s and on focus: its list, at the app's own prices for coins and its prices for stocks,
+    less ones the app is closing, plus ones opened there in the last 2 minutes, `PENDING_OPEN_MS`) and only marks their
+    prices (`markTick`). A close by hand is asked of it (`/api/daemon/close`, `reportCloseToServer`, before a live
+    trade's exit call), and the app closes the trade only once it has: one it can't reach stays open (a toast says
+    so); one it had closed already (`already`) is taken as its close. It closes and records it (`reportedByApp`, left out of the server's own daily P&L and losing streak, which the app's totals
     hold already), so the server's closed trades hold every trade. A push that dropped the trade first is covered
     (`droppedByApp`, kept 10 minutes). Each order the app sends to open a trade (`/api/execute-trade`) carries the
     position, and the guardian takes it at once (`openAppPosition`, sharing `takeAppPosition` with the push; a live one
-    at CoinDCX's fill), without waiting for the app's next push. Steps 1 to 3 of making the server the only copy
-    of the trades (owner's call, 9 Oct): next, the phone/server syncing goes.
+    at CoinDCX's fill); a paper one in a symbol the user already holds is refused (409 `ALREADY_HELD`, one trade per
+    symbol as the app's risk check has it) and the app drops it. Steps 1 to 4a of making the server the only copy of
+    the trades (owner's call, 9 Oct): the app no longer pushes its open trades; next (4b), the push route goes.
   - The trade book (`server/tradeBook.ts`): every closed trade per user, kept for good (`trade_book.json`, in the daily
     backup; `BOOK_MAX_TRADES`), one per position: the guardian's closes (`recordInBook`, its own and the app's) and the
     app's uploads of the closes it holds that the book may not (from before the book, or made while the server
@@ -330,9 +335,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - Don't unregister the service worker anywhere. That broke Trade pop-ups before.
 - Vitest can't load `virtual:pwa-register`. Only `src/services/registerApp.ts` (from `main.tsx`) imports it.
 - Trades labelled "autopilot (server)" were opened by the server. Plain "autopilot" means the phone opened them.
-- The app's push of its open trades (`useGuardianSync`) tells which ones left its book in the last week (`closedIds`,
-  `noteGone`, kept per device): only those leave the guardian, which remembers them two weeks (`appClosedIds`, on
-  disk) and refuses them from another device's older book. A trade missing from a push stays guarded, and each
-  catch-up poll takes up any trade the guardian holds that the book lacks (`adoptGuardianPositions`), so two devices
-  agree. An app from before `closedIds` still has a missing trade taken as closed. The app pushes nothing until the
-  guardian has answered once, so an empty book (a new install, cleared storage) takes up the guardian's trades first.
+- The app no longer pushes its open trades (`useGuardianSync` only reads them, `fromGuardian`). The server's push route
+  (`/api/daemon/sync-positions`) stays for app versions from before that until 4b: it removes only the trades a push
+  says left its book (`closedIds`), remembers them two weeks (`appClosedIds`, on disk) and refuses them from another
+  device's older book; an app from before `closedIds` still has a missing trade taken as closed.
