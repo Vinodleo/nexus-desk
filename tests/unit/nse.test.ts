@@ -74,17 +74,21 @@ describe("Angel One intraday costs", () => {
   it("keep a stock's break-even and trailing stops further past entry", () => {
     const pos = { direction: "LONG" as const, entryPrice: 100, stopLoss: 99, quantity: 10, openTime: "", partialQuantity: 5 };
     expect(bankPartial({ ...pos, symbol: "SBIN" }, 101).stopLoss).toBeCloseTo(100.3, 6);
-    expect(bankPartial({ ...pos, symbol: "BTC/INR" }, 101).stopLoss).toBeCloseTo(100.18, 6);
+    // Coins: past CoinDCX's 1.18% round trip and a spread (101.26), or at entry while the price isn't past it.
+    expect(bankPartial({ ...pos, symbol: "BTC/INR" }, 101).stopLoss).toBe(100);
+    expect(bankPartial({ ...pos, symbol: "BTC/INR" }, 102).stopLoss).toBeCloseTo(101.26, 6);
     expect(stopLocksProfit({ symbol: "SBIN", direction: "LONG", entryPrice: 100, stopLoss: 100.2 })).toBe(false);
-    expect(stopLocksProfit({ symbol: "BTC/INR", direction: "LONG", entryPrice: 100, stopLoss: 100.2 })).toBe(true);
+    expect(stopLocksProfit({ symbol: "BTC/INR", direction: "LONG", entryPrice: 100, stopLoss: 100.2 })).toBe(false);
+    expect(stopLocksProfit({ symbol: "BTC/INR", direction: "LONG", entryPrice: 100, stopLoss: 101.3 })).toBe(true);
 
     const trail = (symbol: string) => {
       const p = { symbol, direction: "LONG" as const, entryPrice: 100, stopLoss: 99, takeProfit: 102, atrAtEntry: 1, trailMode: "SCALP_TIGHT" as const };
       updateTrailingStop(p, 100.65);
       return p.stopLoss;
     };
-    // Trailing starts at +0.6%; before any lock-in, the stop sits at the cost floor.
+    // Trailing starts at +0.6%; before any lock-in, the stop sits at the cost floor once the price is past it.
     expect(trail("SBIN")).toBeCloseTo(100.3, 6);
-    expect(trail("BTC/INR")).toBeCloseTo(100.18, 6);
+    // A coin's floor (101.26) is above the price: the stop stays put rather than sell at once.
+    expect(trail("BTC/INR")).toBe(99);
   });
 });

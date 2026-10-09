@@ -2,9 +2,10 @@
 // position is handled the same way whichever side sees the price first.
 //
 // - Banking half at +1R: when a paper position first gains as much as it
-//   risked, half of it is closed and the stop moves past break-even, so the
-//   rest runs for free. Live CoinDCX positions don't do this (it would need a
-//   real exchange order).
+//   risked, half of it is closed and the stop moves past break-even after
+//   costs (or to entry, when the price isn't past that yet), so the rest runs
+//   for free. Live CoinDCX positions don't do this (it would need a real
+//   exchange order).
 // - The time limit cuts trades that haven't worked, not winners: past its
 //   limit a position whose stop already locks in profit keeps running on that
 //   stop, up to HOLD_EXTENSION_MULTIPLE times the limit. Daily-candle trades
@@ -14,17 +15,23 @@
 import { isUsSymbol, usSquareOffDue, US_BREAKEVEN_BUFFER } from "./usMarket";
 import { floorToStep, type MarketRule } from "./marketRules";
 import { isNseSymbol, nseSquareOffDue } from "./nse";
+import { COIN_ROUND_TRIP_FEE, roundTripFeeRate } from "./tradeCosts";
 
 /** Gain, in multiples of the initial risk, at which half the position is banked. */
 export const PARTIAL_AT_R = 1;
-/** Fees both ways (0.10%) plus a typical spread: the least a "locked" stop must be past entry. */
-export const BREAKEVEN_BUFFER = 0.0018;
+/** A typical coin spread, on top of the fees, in what a "locked" coin stop must clear. */
+export const COIN_SPREAD_ALLOWANCE = 0.0008;
+/** Coins: CoinDCX's fees both ways (1.18%) plus a typical spread, the least a "locked" stop must be past entry. */
+export const BREAKEVEN_BUFFER = Number((COIN_ROUND_TRIP_FEE + COIN_SPREAD_ALLOWANCE).toFixed(6));
 /** The same for Indian stocks, whose costs are higher (brokerage per order, STT, GST). */
 export const NSE_BREAKEVEN_BUFFER = 0.003;
 
 /** The least a "locked" stop must be past entry for this symbol. */
 export function breakevenBuffer(symbol?: string): number {
-  return isUsSymbol(symbol) ? US_BREAKEVEN_BUFFER : isNseSymbol(symbol) ? NSE_BREAKEVEN_BUFFER : BREAKEVEN_BUFFER;
+  if (isUsSymbol(symbol)) return US_BREAKEVEN_BUFFER;
+  if (isNseSymbol(symbol)) return NSE_BREAKEVEN_BUFFER;
+  // The coin round trip in use (tests of 5-minute coin setups charge a cheaper one).
+  return Number((roundTripFeeRate("BTC/INR") + COIN_SPREAD_ALLOWANCE).toFixed(6));
 }
 /** A winner may run to this many times its time limit before it's closed regardless. */
 export const HOLD_EXTENSION_MULTIPLE = 3;
@@ -101,10 +108,16 @@ export function partialDue(p: ExitState, price: number): boolean {
   return p.direction === "LONG" ? price >= p.entryPrice + risk * PARTIAL_AT_R : price <= p.entryPrice - risk * PARTIAL_AT_R;
 }
 
-/** The fields that change when half is banked at `price`: the banked part, and a stop past break-even. */
+/**
+ * The fields that change when half is banked at `price`: the banked part,
+ * and a stop past break-even after costs, or at entry when the price isn't
+ * past that yet (a stop at or past the price would sell the rest at once).
+ */
 export function bankPartial(p: ExitState, price: number): Pick<ExitState, "bankedQuantity" | "bankedPrice" | "stopLoss"> {
   const buffer = breakevenBuffer(p.symbol);
-  const lock = p.direction === "LONG" ? p.entryPrice * (1 + buffer) : p.entryPrice * (1 - buffer);
+  const dir = p.direction === "LONG" ? 1 : -1;
+  const afterCosts = p.entryPrice * (1 + dir * buffer);
+  const lock = (price - afterCosts) * dir > 0 ? afterCosts : p.entryPrice;
   return {
     bankedQuantity: p.partialQuantity,
     bankedPrice: price,

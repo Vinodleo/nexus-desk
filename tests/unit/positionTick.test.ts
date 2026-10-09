@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { applyTickToPosition, priceForPosition, type SuspectTick } from "../../src/services/positionTick";
 import type { Position } from "../../src/types";
 import { legacyTick } from "./legacyPositionTick";
+import { _setCoinRoundTripFee } from "../../src/shared/tradeCosts";
 
 beforeAll(() => {
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -53,6 +54,9 @@ const FIELDS = ["stopLoss", "takeProfit", "highestPrice", "lowestPrice", "trailA
 
 describe("applyTickToPosition matches the original inline logic", () => {
   it("across 2,000 random price paths", () => {
+    // The legacy logic was written for CoinDCX's old 0.1% round trip (its 0.18% break-even).
+    _setCoinRoundTripFee(0.001);
+    try {
     const r = rng(42);
     let exitsCompared = 0;
     let stepsCompared = 0;
@@ -103,6 +107,9 @@ describe("applyTickToPosition matches the original inline logic", () => {
     // Make sure the paths actually exercised both outcomes.
     expect(exitsCompared).toBeGreaterThan(300);
     expect(stepsCompared).toBeGreaterThan(10000);
+    } finally {
+      _setCoinRoundTripFee();
+    }
   });
 });
 

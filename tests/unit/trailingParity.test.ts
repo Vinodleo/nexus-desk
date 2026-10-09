@@ -50,11 +50,14 @@ describe("the app and the server guardian trail the same way", () => {
     expect(r.srvExit).toBe("TRAILING_STOP@1019");
   });
 
-  it("starts trailing a trend trade at a 0.8% gain on both sides", () => {
-    const r = bothSides(position({ atrAtEntry: 10, takeProfit: 1040, initialTakeProfit: 1040 }), [1004, 1008, 1009, 1005, 1001]);
-    expect(r.steps[1].srv).toEqual([1002, 1040]);
-    expect(r.appExit).toBe("TRAILING_STOP@1001");
-    expect(r.srvExit).toBe("TRAILING_STOP@1001");
+  it("starts trailing a trend trade at a 0.8% gain on both sides, past CoinDCX's fees only once the price is", () => {
+    const r = bothSides(position({ atrAtEntry: 10, takeProfit: 1040, initialTakeProfit: 1040 }), [1004, 1008, 1013, 1014, 1010]);
+    // Trailing at +0.8%: 1.5 ATR behind; break-even after a coin's costs (1012.6) is still above the price.
+    expect(r.steps[1].srv).toEqual([993, 1040]);
+    // Past it, the stop locks it in.
+    expect(r.steps[2].srv![0]).toBeCloseTo(1012.6, 6);
+    expect(r.appExit).toBe("TRAILING_STOP@1010");
+    expect(r.srvExit).toBe("TRAILING_STOP@1010");
   });
 
   it("agrees on every tick across random paths, both directions, both modes", () => {

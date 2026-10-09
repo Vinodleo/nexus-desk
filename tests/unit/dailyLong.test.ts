@@ -273,7 +273,8 @@ describe("the long daily replay", () => {
     };
     const luna = rows("LUNA/INR");
     expect(luna.length).toBe(run.markets["LUNA/INR"].setups);
-    expect(luna.length).toBeGreaterThan(run.markets["LUNA/INR"].totals!.tight!.trades);
+    // More than were traded (one at a time).
+    expect(luna.length).toBeGreaterThan(run.markets["LUNA/INR"].totals!.fixed!.trades);
     // Only 2022's, LUNA's one year on the list.
     expect(luna.every((row) => new Date(Number(row.entryMs)).getUTCFullYear() === 2022)).toBe(true);
     // Each with Bitcoin's move over the 30 days before, and its result under each trailing stop.
