@@ -6,7 +6,6 @@ vi.mock("../../src/services/apiClient", () => ({ apiFetch: (...a: unknown[]) => 
 
 import { applyTickToPosition } from "../../src/services/positionTick";
 import { applyGuardianTick } from "../../server/guardianLogic";
-import { mergeGuardState } from "../../src/shared/trailingStop";
 import { fromGuardian, withGuardianPosition } from "../../src/hooks/useGuardianSync";
 import type { Position } from "../../src/types";
 
@@ -90,18 +89,7 @@ describe("the app and the server guardian trail the same way", () => {
   });
 });
 
-describe("keeping the two copies in step", () => {
-  it("a sync from the app can't pull back an extended target or loosen the stop", () => {
-    const server = { stopLoss: 1020, takeProfit: 1050, highestPrice: 1030, trailActive: true };
-    const app = { stopLoss: 1002, takeProfit: 1020, highestPrice: 1015, trailActive: true };
-    expect(mergeGuardState("LONG", 1000, server, app)).toMatchObject({ stopLoss: 1020, takeProfit: 1050, highestPrice: 1030 });
-    // Mirror for a short.
-    expect(mergeGuardState("SHORT", 1000, { stopLoss: 980, takeProfit: 950 }, { stopLoss: 998, takeProfit: 980 })).toMatchObject({
-      stopLoss: 980,
-      takeProfit: 950,
-    });
-  });
-
+describe("the app shows the guardian's copy", () => {
   it("the reopened app shows what the guardian moved while it slept", () => {
     const stale = position({ stopLoss: 1002, takeProfit: 1020, highestPrice: 1015, trailActive: true });
     const other = position({ id: "q" });

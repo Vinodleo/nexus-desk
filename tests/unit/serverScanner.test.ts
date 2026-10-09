@@ -223,7 +223,6 @@ describe("server autopilot", () => {
       isSelfApproved: true,
       isLiveOrder: false,
       openedByServer: true,
-      clientSeen: false,
       trailProfile: "balanced",
     });
     // Bought at the ask of the order book the scan read (bids 11,598, asks 11,600), sized within limits.

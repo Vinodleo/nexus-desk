@@ -4,7 +4,7 @@ import {
   coinDcxCandlesQuery,
   deskStateBody,
   executeTradeBody,
-  syncPositionsBody,
+  appPosition,
   tradeAutopsyBody,
   validate,
 } from "../../server/validation";
@@ -34,28 +34,27 @@ describe("executeTradeBody", () => {
   });
 });
 
-describe("syncPositionsBody", () => {
+describe("appPosition (the position sent with an order)", () => {
   const pos = { id: "pos-1", symbol: "BTC/INR", direction: "LONG", entryPrice: 1000, quantity: 1, stopLoss: 990, takeProfit: 1100, openTime: "2026-01-01T00:00:00Z" };
 
   it("keeps display fields the guardian doesn't read", () => {
-    const r = syncPositionsBody.parse({ positions: [{ ...pos, unrealizedPnl: 5, metaConfidence: 0.7 }] });
-    expect(r.positions[0]).toMatchObject({ unrealizedPnl: 5, metaConfidence: 0.7 });
+    expect(appPosition.parse({ ...pos, unrealizedPnl: 5, metaConfidence: 0.7 })).toMatchObject({ unrealizedPnl: 5, metaConfidence: 0.7 });
   });
 
-  it("drops a bad non-critical field instead of failing the whole sync", () => {
-    const r = syncPositionsBody.parse({ positions: [{ ...pos, trailMode: "DYNAMIC_RATIO", atrAtEntry: -3 }] });
-    expect(r.positions[0].trailMode).toBeUndefined();
-    expect(r.positions[0].atrAtEntry).toBeUndefined();
+  it("drops a bad non-critical field instead of failing the whole order", () => {
+    const r = appPosition.parse({ ...pos, trailMode: "DYNAMIC_RATIO", atrAtEntry: -3 });
+    expect(r.trailMode).toBeUndefined();
+    expect(r.atrAtEntry).toBeUndefined();
   });
 
   it("keeps the signal's price for the entry slippage, dropping a bad one", () => {
-    expect(syncPositionsBody.parse({ positions: [{ ...pos, signalPrice: 998 }] }).positions[0].signalPrice).toBe(998);
-    expect(syncPositionsBody.parse({ positions: [{ ...pos, signalPrice: -1 }] }).positions[0].signalPrice).toBeUndefined();
+    expect(appPosition.parse({ ...pos, signalPrice: 998 }).signalPrice).toBe(998);
+    expect(appPosition.parse({ ...pos, signalPrice: -1 }).signalPrice).toBeUndefined();
   });
 
   it("keeps a slower strategy's mark (breakout, momentum), dropping one it doesn't know", () => {
-    for (const strategy of ["breakout", "momentum"]) expect(syncPositionsBody.parse({ positions: [{ ...pos, strategy }] }).positions[0].strategy).toBe(strategy);
-    expect(syncPositionsBody.parse({ positions: [{ ...pos, strategy: "martingale" }] }).positions[0].strategy).toBeUndefined();
+    for (const strategy of ["breakout", "momentum"]) expect(appPosition.parse({ ...pos, strategy }).strategy).toBe(strategy);
+    expect(appPosition.parse({ ...pos, strategy: "martingale" }).strategy).toBeUndefined();
   });
 
   it.each([
@@ -63,13 +62,9 @@ describe("syncPositionsBody", () => {
     ["zero entry price", { ...pos, entryPrice: 0 }],
     ["bad direction", { ...pos, direction: "SIDEWAYS" }],
   ])("rejects a position with %s", (_n, p) => {
-    expect(syncPositionsBody.safeParse({ positions: [p] }).success).toBe(false);
+    expect(appPosition.safeParse(p).success).toBe(false);
   });
 
-  it("caps the batch size", () => {
-    const many = Array.from({ length: 51 }, (_, i) => ({ ...pos, id: `pos-${i}` }));
-    expect(syncPositionsBody.safeParse({ positions: many }).success).toBe(false);
-  });
 });
 
 describe("other schemas", () => {

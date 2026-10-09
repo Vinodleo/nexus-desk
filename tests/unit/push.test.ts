@@ -152,11 +152,11 @@ describe("when a trade opens", () => {
 
   it("pops up once for a position the app just opened, not for old ones re-sent", async () => {
     push.addSubscription("u1", sub(5));
-    await post("/api/daemon/sync-positions", { positions: [position()] });
-    await post("/api/daemon/sync-positions", { positions: [position()] });
+    guardian.openAppPosition("u1", position() as any);
+    guardian.openAppPosition("u1", position() as any);
     await vi.waitFor(() => expect(sent.filter((s) => s.payload.tag === "open-app-1" && s.endpoint === sub(5).endpoint)).toHaveLength(1));
     sent.length = 0;
-    await post("/api/daemon/sync-positions", { positions: [position({ id: "old-1", openTime: new Date(Date.now() - 60 * 60_000).toISOString() })] });
+    guardian.openAppPosition("u1", position({ id: "old-1", symbol: "ADA/INR", openTime: new Date(Date.now() - 60 * 60_000).toISOString() }) as any);
     await new Promise((r) => setTimeout(r, 20));
     expect(sent).toEqual([]);
   });

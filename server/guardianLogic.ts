@@ -3,7 +3,7 @@
 // and ratcheted stop — kept separate from server.ts so it can be unit-tested.
 
 import { bankPartial, holdingDecision, partialDue } from "../src/shared/exitRules";
-import { exitAt, mergeGuardState, updateTrailingStop } from "../src/shared/trailingStop";
+import { exitAt, updateTrailingStop } from "../src/shared/trailingStop";
 
 export type GuardianExitReason = "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME";
 
@@ -57,19 +57,4 @@ export function applyGuardianTick(pos: GuardedPosition, currentPrice: number): G
 // past the extended limit a winner may run to.
 export function isPastHoldingTime(pos: GuardedPosition, nowMs: number = Date.now()): boolean {
   return holdingDecision(pos, nowMs) === "expire";
-}
-
-type MergedField = "stopLoss" | "takeProfit" | "highestPrice" | "lowestPrice" | "trailActive" | "bankedQuantity" | "bankedPrice";
-
-// Merge the browser's copy of a position into the guardian's on sync: both
-// sides trail independently, so keep whichever is further along (see
-// mergeGuardState): the more protective stop, the further target, wider
-// price extremes, trailing once either started, and the first banked fill.
-export function mergeSyncedGuardState(
-  direction: "LONG" | "SHORT",
-  entryPrice: number,
-  existing: Pick<GuardedPosition, MergedField> | undefined,
-  incoming: Pick<GuardedPosition, MergedField>
-): Pick<GuardedPosition, MergedField> {
-  return mergeGuardState(direction, entryPrice, existing, incoming) as Pick<GuardedPosition, MergedField>;
 }

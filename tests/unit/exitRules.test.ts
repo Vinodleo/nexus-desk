@@ -11,7 +11,7 @@ import {
 } from "../../src/shared/exitRules";
 import { MAKER_FEE_RATE, TAKER_FEE_RATE, computeClosedTradePnl } from "../../src/shared/tradeMath";
 import { applyTickToPosition } from "../../src/services/positionTick";
-import { applyGuardianTick, isPastHoldingTime, mergeSyncedGuardState } from "../../server/guardianLogic";
+import { applyGuardianTick, isPastHoldingTime } from "../../server/guardianLogic";
 import type { Position } from "../../src/types";
 
 const MIN = 60_000;
@@ -140,12 +140,4 @@ describe("server guardian", () => {
     expect(isPastHoldingTime(guarded({ openTime: opened(40) }))).toBe(true);
   });
 
-  it("keeps the first banked fill when the browser syncs", () => {
-    const existing = { stopLoss: 1002, takeProfit: 1030, bankedQuantity: 1, bankedPrice: 1010 };
-    const merged = mergeSyncedGuardState("LONG", 1000, existing, { stopLoss: 990, takeProfit: 1030, bankedQuantity: 1, bankedPrice: 1011 });
-    expect(merged).toMatchObject({ bankedQuantity: 1, bankedPrice: 1010, stopLoss: 1002 });
-    expect(mergeSyncedGuardState("LONG", 1000, { stopLoss: 990, takeProfit: 1030 }, { stopLoss: 1002, takeProfit: 1030, bankedQuantity: 1, bankedPrice: 1011 })).toMatchObject({
-      bankedPrice: 1011,
-    });
-  });
 });
