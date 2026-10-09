@@ -12,6 +12,7 @@ import { notifyUser, tradeClosedMessage, tradeOpenedMessage } from "./push";
 
 import { validate, syncPositionsBody, closedEventsQuery, daemonCloseBody } from "./validation";
 import { slowStrategyOf } from "../src/shared/marketLimits";
+import { addToBook, recordInBook } from "./tradeBook";
 import type { SlowStrategy } from "../src/types";
 
 export const router = Router();
@@ -198,6 +199,10 @@ export function loadDaemonStateFromDisk(): void {
               daemonClosedTrades.push(trade);
             }
           }
+          // The trade book holds every close; ones from before it was kept go in (load it first).
+          const byUser = new Map<string, DaemonClosedTrade[]>();
+          for (const t of daemonClosedTrades) if (t.userId) byUser.set(t.userId, [...(byUser.get(t.userId) ?? []), t]);
+          for (const [uid, trades] of byUser) addToBook(uid, trades);
         }
         if (Array.isArray(state.appClosed)) {
           for (const entry of state.appClosed) {
@@ -483,6 +488,7 @@ function executeDaemonExit(pos: DaemonPosition, exitPrice: number, reason: ExitR
 
   daemonClosedTrades.unshift(closedRecord);
   if (daemonClosedTrades.length > 200) daemonClosedTrades.pop();
+  recordInBook(closedRecord);
 
   // Save to disk immediately upon any trade exit
   saveDaemonStateToDisk();
