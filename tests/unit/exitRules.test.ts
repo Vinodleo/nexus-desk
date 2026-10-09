@@ -63,7 +63,9 @@ describe("banking half at +1R", () => {
   });
 
   it("moves the stop past break-even, never backwards", () => {
-    expect(bankPartial(state(), 1010)).toEqual({ bankedQuantity: 1, bankedPrice: 1010, stopLoss: 1000 * (1 + BREAKEVEN_BUFFER) });
+    // Not yet past break-even after CoinDCX's fees (1012.6): the stop goes to entry, below the price.
+    expect(bankPartial(state(), 1010)).toEqual({ bankedQuantity: 1, bankedPrice: 1010, stopLoss: 1000 });
+    expect(bankPartial(state(), 1020)).toEqual({ bankedQuantity: 1, bankedPrice: 1020, stopLoss: 1000 * (1 + BREAKEVEN_BUFFER) });
     expect(bankPartial(state({ stopLoss: 1005 }), 1010).stopLoss).toBe(1005);
   });
 
@@ -107,7 +109,9 @@ describe("browser tick", () => {
     if (out.kind !== "updated") return;
     expect(out.banked).toBe(true);
     expect(out.position).toMatchObject({ bankedQuantity: 1, bankedPrice: 1010 });
-    expect(out.position.stopLoss).toBeGreaterThanOrEqual(1000 * (1 + BREAKEVEN_BUFFER));
+    // Past entry, below the price: +1R (1%) isn't yet past CoinDCX's fees, so the rest keeps running.
+    expect(out.position.stopLoss).toBeGreaterThanOrEqual(1000);
+    expect(out.position.stopLoss).toBeLessThan(1010);
     const later = applyTickToPosition(out.position, 1020, new Map(), 2);
     expect(later.kind === "updated" && later.banked).toBeFalsy(); // only once
     expect(later.kind === "updated" && later.position.unrealizedPnl).toBe(30); // +10 banked, +20 open
@@ -125,11 +129,14 @@ describe("server guardian", () => {
     const pos = guarded();
     expect(applyGuardianTick(pos, 1010)).toBeNull();
     expect(pos).toMatchObject({ bankedQuantity: 1, bankedPrice: 1010 });
-    expect(pos.stopLoss).toBeGreaterThanOrEqual(1000 * (1 + BREAKEVEN_BUFFER));
+    expect(pos.stopLoss).toBeGreaterThanOrEqual(1000);
+    expect(pos.stopLoss).toBeLessThan(1010);
   });
 
   it("lets a locked-in winner run past the time limit", () => {
-    expect(isPastHoldingTime(guarded({ openTime: opened(40), stopLoss: 1005 }))).toBe(false);
+    expect(isPastHoldingTime(guarded({ openTime: opened(40), stopLoss: 1013 }))).toBe(false);
+    // +0.5% isn't locked in on a coin: CoinDCX's fees are 1.18% a round trip.
+    expect(isPastHoldingTime(guarded({ openTime: opened(40), stopLoss: 1005 }))).toBe(true);
     expect(isPastHoldingTime(guarded({ openTime: opened(40) }))).toBe(true);
   });
 

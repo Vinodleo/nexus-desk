@@ -1,6 +1,4 @@
-import { isUsSymbol, US_BREAKEVEN_BUFFER } from "./usMarket";
-import { isNseSymbol } from "./nse";
-import { NSE_BREAKEVEN_BUFFER } from "./exitRules";
+import { breakevenBuffer } from "./exitRules";
 
 // Trailing stops, shared by the browser book (positionTick) and the server
 // guardian (guardianLogic), so a position is trailed the same way whichever
@@ -16,6 +14,10 @@ import { NSE_BREAKEVEN_BUFFER } from "./exitRules";
 //   half way, the stop follows 1.5 ATR behind the best price, never below
 //   break-even. Past the first target, the stop locks at that target and the
 //   target extends 1.5x further, so a strong move keeps running.
+// "Past break-even plus fees" is at least the market's costs a round trip
+// (breakevenBuffer: coins 1.26%, Indian stocks 0.3%, US 0.1%), and the stop
+// moves there only once the price is past it: a stop at or past the price
+// would sell at once.
 
 export interface TrailState {
   /** NSE stocks cost more to trade, so their trailing stops sit further past entry. */
@@ -139,11 +141,9 @@ export function isTrendRunner(p: Pick<TrailState, "trailMode" | "family" | "expe
  */
 export function updateTrailingStop(p: TrailState, price: number): boolean {
   const base = trailProfile(p.trailProfile);
-  // Stocks (Indian or US): a trailing stop never sits closer to entry than their costs.
-  const stockBuffer = isNseSymbol(p.symbol) ? NSE_BREAKEVEN_BUFFER : isUsSymbol(p.symbol) ? US_BREAKEVEN_BUFFER : null;
-  const cfg = stockBuffer !== null && !base.fixed
-    ? { ...base, scalpFloor: Math.max(base.scalpFloor, stockBuffer), runnerFloor: Math.max(base.runnerFloor, stockBuffer) }
-    : base;
+  // A trailing stop never sits closer to entry than the market's costs a round trip.
+  const costs = breakevenBuffer(p.symbol);
+  const cfg = base.fixed ? base : { ...base, scalpFloor: Math.max(base.scalpFloor, costs), runnerFloor: Math.max(base.runnerFloor, costs) };
   const isLong = p.direction === "LONG";
   const entry = p.entryPrice;
   const atr = p.atrAtEntry || entry * 0.005;
@@ -173,6 +173,11 @@ export function updateTrailingStop(p: TrailState, price: number): boolean {
       changed = true;
     }
   };
+  // The level past break-even after costs, once the price is past it (else none).
+  const floorStop = (floor: number): number | undefined => {
+    const at = entry * (1 + dir * floor);
+    return (price - at) * dir > 0 ? at : undefined;
+  };
 
   if (runner) {
     if (!p.trailActive && started(cfg.runnerStart)) p.trailActive = true;
@@ -189,17 +194,19 @@ export function updateTrailingStop(p: TrailState, price: number): boolean {
       }
       moveStop(better(initialTP, trail));
     } else {
-      moveStop(better(entry * (1 + dir * cfg.runnerFloor), trail));
+      const floor = floorStop(cfg.runnerFloor);
+      moveStop(floor === undefined ? trail : better(floor, trail));
     }
     return changed;
   }
 
   if (!p.trailActive && started(cfg.scalpStart)) p.trailActive = true;
   if (!p.trailActive) return changed;
-  let lockedGain = entry * cfg.scalpFloor;
   const lock = cfg.scalpLocks.find((l) => profitInATR >= l.atr || targetProgress >= l.progress);
-  if (lock) lockedGain = Math.max(lockedGain, peakGain * lock.share);
-  moveStop(better(entry * (1 + dir * cfg.scalpFloor), entry + dir * lockedGain));
+  const locked = lock ? entry + dir * peakGain * lock.share : undefined;
+  const floor = floorStop(cfg.scalpFloor);
+  const candidates = [locked, floor].filter((v): v is number => v !== undefined);
+  if (candidates.length > 0) moveStop(candidates.reduce(better));
   return changed;
 }
 

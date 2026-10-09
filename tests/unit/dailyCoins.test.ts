@@ -47,8 +47,8 @@ const head = (s: CandleSeries, n: number): CandleSeries => ({ t: s.t.slice(0, n)
 describe("daily trades' exits", () => {
   it("close a daily trade at 30 days exactly, where a shorter trade that locked in profit runs on", () => {
     const openMs = Date.parse("2026-10-03T00:15:00Z");
-    // The stop already locks in profit.
-    const p = { symbol: "SOL/INR", direction: "LONG" as const, entryPrice: 100, stopLoss: 101, quantity: 1, openTime: new Date(openMs).toISOString(), expectedHoldingTimeMinutes: DAILY_HOLD_MINUTES };
+    // The stop already locks in profit (past CoinDCX's 1.18% round trip and a spread).
+    const p = { symbol: "SOL/INR", direction: "LONG" as const, entryPrice: 100, stopLoss: 102, quantity: 1, openTime: new Date(openMs).toISOString(), expectedHoldingTimeMinutes: DAILY_HOLD_MINUTES };
     const at = (days: number) => openMs + days * DAY;
     expect(DAILY_HOLD_MINUTES).toBe(30 * 24 * 60);
     expect(holdingDecision({ ...p, timeframe: "1d" }, at(30) - MIN)).toBe("hold");

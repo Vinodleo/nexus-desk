@@ -103,6 +103,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     cost (reclaimed when filing). Tests that follow 5-minute coin setups through later steps charge a cheaper 0.1%
     (`_setCoinRoundTripFee`). Kept trader records and the long replays measured under other coin costs aren't used
     (`COIN_COSTS_VERSION`, `DAILY_LONG_VERSION` 3, `SLOW_VERSION` 5).
+    A stop "past break-even" (trailing floors, the stop after banking half, `stopLocksProfit`) clears the market's
+    costs a round trip (`breakevenBuffer`: coins the round trip plus `COIN_SPREAD_ALLOWANCE`, 1.26%; Indian stocks
+    0.3%; US 0.1%), and a stop moves there only once the price is past it (else trailing leaves it, banking moves it
+    to entry): a stop at or past the price would sell at once.
   - Market sessions: `nse.ts`, `usMarket.ts`.
   - Per-market limits: `marketLimits.ts`, the amount per trade, risk per trade and trades at once for each market,
     and at most 2 open trades in one stock sector (`sectorOf`). Breakout 55/20 has slots of its own in coins and US
