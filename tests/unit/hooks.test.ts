@@ -10,7 +10,7 @@ const apiFetch = vi.fn();
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 const { useServerCloseHandler } = await import("../../src/hooks/useServerCloseHandler");
-const { noteGone, useGuardianSync } = await import("../../src/hooks/useGuardianSync");
+const { useGuardianSync } = await import("../../src/hooks/useGuardianSync");
 const { useDailyTelemetry } = await import("../../src/hooks/useDailyTelemetry");
 const { useCoinDcxAccount } = await import("../../src/hooks/useCoinDcxAccount");
 
@@ -104,20 +104,28 @@ describe("useServerCloseHandler", () => {
 });
 
 describe("useGuardianSync", () => {
-  it("pushes positions and drops ones the guardian already closed", async () => {
+  const opened = (id: string, minutesAgo: number, over: Partial<Position> = {}) =>
+    ({ ...position(id), entryPrice: 1000, currentPrice: 1000, quantity: 1, stopLoss: 990, takeProfit: 1020, direction: "LONG",
+      openTime: new Date(Date.now() - minutesAgo * 60_000).toISOString(), unrealizedPnl: 0, unrealizedPnlPercent: 0, ...over }) as Position;
+  function useBookOf(initial: Position[], applyServerClose: (ev: DaemonCloseEvent) => void = () => false, isClosed?: (id: string) => boolean) {
+    const [positions, setPositions] = useState<Position[]>(initial);
+    const online = useGuardianSync(setPositions, applyServerClose, isClosed);
+    return { positions, setPositions, online };
+  }
+
+  it("shows the guardian's open trades: a trade it no longer holds has closed, and one opened here moments ago waits for it", async () => {
     apiFetch.mockImplementation((url: string) =>
-      url.startsWith("/api/daemon/sync-positions")
-        ? json({ rejectedResurrections: ["pos-1"] })
-        : json({ events: [], activePositions: [] })
+      url.startsWith("/api/daemon/closed-events")
+        ? json({ events: [], activePositions: [opened("held", 30, { stopLoss: 1005 }), opened("other-device", 5)] })
+        : json({})
     );
-    const { result } = renderHook(() => {
-      const [positions, setPositions] = useState<Position[]>([position("pos-1"), position("pos-2")]);
-      useGuardianSync(positions, setPositions, () => false);
-      return positions;
-    });
-    await waitFor(() => expect(result.current.map((p) => p.id)).toEqual(["pos-2"]));
-    const syncCall = apiFetch.mock.calls.find(([u]) => u === "/api/daemon/sync-positions");
-    expect(JSON.parse(syncCall![1].body).positions.map((p: Position) => p.id)).toEqual(["pos-1", "pos-2"]);
+    const { result } = renderHook(() => useBookOf([opened("held", 30), opened("closed-there", 30), opened("just-opened", 0)]));
+    await waitFor(() => expect(result.current.positions.map((p) => p.id)).toEqual(["other-device", "held", "just-opened"]));
+    // Its stop is the guardian's.
+    expect(result.current.positions[1].stopLoss).toBe(1005);
+    expect(result.current.online).toBe(true);
+    // It sends nothing: the guardian holds the trades.
+    expect(apiFetch.mock.calls.every(([u]) => String(u).startsWith("/api/daemon/closed-events"))).toBe(true);
   });
 
   it("applies closes from the catch-up poll and remembers when it last polled", async () => {
@@ -125,121 +133,36 @@ describe("useGuardianSync", () => {
     apiFetch.mockImplementation((url: string) =>
       url.startsWith("/api/daemon/closed-events") ? json({ events: [closeEvent()], activePositions: [] }) : json({})
     );
-    renderHook(() => {
-      const [positions, setPositions] = useState<Position[]>([]);
-      useGuardianSync(positions, setPositions, applyServerClose);
-    });
+    renderHook(() => useBookOf([], applyServerClose));
     await waitFor(() => expect(applyServerClose).toHaveBeenCalledWith(expect.objectContaining({ positionId: "pos-1" })));
     expect(Number(localStorage.getItem("nexus_last_daemon_poll"))).toBeGreaterThan(0);
   });
 
-  it("restores guardian positions into an empty book only", async () => {
+  it("leaves out a trade this app is closing (its close is on its way)", async () => {
     apiFetch.mockImplementation((url: string) =>
-      url.startsWith("/api/daemon/closed-events") ? json({ events: [], activePositions: [position("srv-1")] }) : json({})
+      url.startsWith("/api/daemon/closed-events") ? json({ events: [], activePositions: [opened("closing", 30), opened("held", 30)] }) : json({})
     );
-    const { result } = renderHook(() => {
-      const [positions, setPositions] = useState<Position[]>([]);
-      useGuardianSync(positions, setPositions, () => false);
-      return positions;
-    });
-    await waitFor(() => expect(result.current.map((p) => p.id)).toEqual(["srv-1"]));
+    const { result } = renderHook(() => useBookOf([opened("held", 30)], () => false, (id) => id === "closing"));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current.positions.map((p) => p.id)).toEqual(["held"]);
   });
 
-  it("pushes nothing until the guardian has answered, so an empty book can't wipe its positions", async () => {
-    // A new install or cleared storage: the book starts empty while the guardian holds a trade.
-    apiFetch.mockImplementation((url: string) =>
-      url.startsWith("/api/daemon/closed-events") ? json({ events: [], activePositions: [position("srv-1")] }) : json({})
-    );
-    renderHook(() => {
-      const [positions, setPositions] = useState<Position[]>([]);
-      useGuardianSync(positions, setPositions, () => false);
-    });
-    await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => u === "/api/daemon/sync-positions")).toBe(true));
-    const urls = apiFetch.mock.calls.map(([u]) => u as string);
-    const firstSync = urls.indexOf("/api/daemon/sync-positions");
-    expect(urls.findIndex((u) => u.startsWith("/api/daemon/closed-events"))).toBeLessThan(firstSync);
-    // Every push carries the guardian's trade: none is empty.
-    for (const [u, init] of apiFetch.mock.calls) {
-      if (u === "/api/daemon/sync-positions") expect(JSON.parse(init.body).positions.map((p: Position) => p.id)).toEqual(["srv-1"]);
-    }
-  });
-
-  it("tells the guardian which positions left the book, and remembers them", async () => {
-    apiFetch.mockImplementation((url: string) =>
-      url.startsWith("/api/daemon/closed-events") ? json({ events: [], activePositions: [] }) : json({})
-    );
-    const { result } = renderHook(() => {
-      const [positions, setPositions] = useState<Position[]>([position("pos-1"), position("pos-2")]);
-      useGuardianSync(positions, setPositions, () => false);
-      return setPositions;
-    });
-    await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => u === "/api/daemon/sync-positions")).toBe(true));
-    const first = JSON.parse(apiFetch.mock.calls.find(([u]) => u === "/api/daemon/sync-positions")![1].body);
-    expect(first.closedIds).toEqual([]);
-    act(() => result.current((prev) => prev.filter((p) => p.id !== "pos-2"))); // closed in the app
-    await waitFor(() => {
-      const last = JSON.parse(apiFetch.mock.calls.filter(([u]) => u === "/api/daemon/sync-positions").at(-1)![1].body);
-      expect(last.positions.map((p: Position) => p.id)).toEqual(["pos-1"]);
-      expect(last.closedIds).toEqual(["pos-2"]);
-    });
-    expect(JSON.parse(localStorage.getItem("nexus_gone_positions")!).map(([id]: [string]) => id)).toEqual(["pos-2"]);
-  });
-
-  it("takes up a trade another device opened, but not one this book closed", async () => {
-    localStorage.setItem("nexus_gone_positions", JSON.stringify([["closed-here", Date.now()]]));
-    apiFetch.mockImplementation((url: string) =>
-      url.startsWith("/api/daemon/closed-events")
-        ? json({
-            events: [],
-            activePositions: [
-              position("pos-1"),
-              { ...position("other-device"), openedByServer: true, clientSeen: true },
-              position("closed-here"),
-            ],
-          })
-        : json({})
-    );
-    const { result } = renderHook(() => {
-      const [positions, setPositions] = useState<Position[]>([position("pos-1")]);
-      useGuardianSync(positions, setPositions, () => false);
-      return positions;
-    });
-    await waitFor(() => expect(result.current.map((p) => p.id).sort()).toEqual(["other-device", "pos-1"]));
-  });
-
-  it("pushes nothing while the guardian can't be reached", async () => {
+  it("keeps the trades shown while the guardian can't be reached", async () => {
     apiFetch.mockImplementation(() => json({ error: "down" }, 503));
-    renderHook(() => {
-      const [positions, setPositions] = useState<Position[]>([position("pos-1")]);
-      useGuardianSync(positions, setPositions, () => false);
-    });
-    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/daemon\/closed-events/)));
-    await new Promise((r) => setTimeout(r, 50));
-    expect(apiFetch.mock.calls.some(([u]) => u === "/api/daemon/sync-positions")).toBe(false);
+    const { result } = renderHook(() => useBookOf([opened("held", 30)]));
+    await waitFor(() => expect(result.current.online).toBe(false));
+    expect(result.current.positions.map((p) => p.id)).toEqual(["held"]);
   });
 
   it("removes its focus and visibility listeners on unmount", () => {
     apiFetch.mockImplementation(() => json({}));
     const addDoc = vi.spyOn(document, "addEventListener");
     const removeDoc = vi.spyOn(document, "removeEventListener");
-    const { unmount } = renderHook(() => {
-      const [positions, setPositions] = useState<Position[]>([]);
-      useGuardianSync(positions, setPositions, () => false);
-    });
+    const { unmount } = renderHook(() => useBookOf([]));
     const added = addDoc.mock.calls.find(([type]) => type === "visibilitychange")![1];
     unmount();
     expect(removeDoc).toHaveBeenCalledWith("visibilitychange", added);
-  });
-});
-
-describe("noteGone", () => {
-  const DAY = 24 * 60 * 60 * 1000;
-  it("notes positions that left the book, forgets ones back in it or older than a week", () => {
-    const gone = new Map<string, number>([["old", 0], ["back", 5 * DAY]]);
-    const at = 8 * DAY;
-    expect(noteGone(gone, new Set(["a", "b"]), new Set(["a", "back"]), at)).toBe(true);
-    expect([...gone]).toEqual([["b", at]]);
-    expect(noteGone(gone, new Set(["a"]), new Set(["a"]), at)).toBe(false);
   });
 });
 

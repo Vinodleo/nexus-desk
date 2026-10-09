@@ -25,7 +25,10 @@ router.post("/api/execute-trade", validate({ body: executeTradeBody }), async (r
   const wantsLiveOrder = isLiveOrderRequest(req.body);
 
   if (!wantsLiveOrder) {
-    if (position && position.symbol === symbol && (!positionId || position.id === positionId)) openAppPosition(uid, position);
+    // The guardian holds the open trades: one in a symbol already held isn't opened.
+    if (position && position.symbol === symbol && (!positionId || position.id === positionId) && openAppPosition(uid, position) === "held") {
+      return res.status(409).json({ success: false, error: `Already holding ${symbol}: one trade per symbol.`, code: "ALREADY_HELD" });
+    }
     // Model realistic paper trading slippage (0.02% to 0.08%) against the order book
     const slippageFactor = (Math.random() * 0.0006) + 0.0002;
     const isBuy = side === "LONG" || side === "buy";

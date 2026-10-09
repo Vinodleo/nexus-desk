@@ -303,15 +303,19 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
   }
 
   // Update or insert current positions
+  const taken: DaemonPosition[] = [];
   for (const p of positions) {
     if (!p || typeof p.id !== "string") continue;
-    if (takeAppPosition(uid, p, closedPositionIds) === "refused") rejectedResurrections.push(p.id);
+    const outcome = takeAppPosition(uid, p, closedPositionIds);
+    if (outcome === "refused" || outcome === "held") rejectedResurrections.push(p.id);
+    else if (outcome === "taken") taken.push(p);
   }
 
   // The server's autopilot and the app's opened the same coin from the same
   // candle (each before it saw the other's): the app keeps its own, and the
-  // server drops the copy the app hasn't taken.
-  const appSymbols = new Map(positions.map((p: DaemonPosition) => [p.symbol, p.id]));
+  // server drops the copy the app hasn't taken. (A paper one the app opened
+  // after the server's is refused above: one trade per symbol.)
+  const appSymbols = new Map(taken.map((p) => [p.symbol, p.id]));
   for (const [id, pos] of daemonPositions) {
     if (pos.userId !== uid || !pos.openedByServer || pos.clientSeen || incomingIds.has(id)) continue;
     if (appSymbols.has(pos.symbol)) {
@@ -332,13 +336,18 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
   });
 });
 
+export type AppPositionOutcome = "taken" | "refused" | "skipped" | "held";
+
 /**
  * Takes a position from the app (opened there, or in its push of open
  * trades), merging it with the guardian's copy. Refused if the guardian or
  * an app closed it ("refused": another device's older book can't bring it
- * back); skipped if the id is someone else's.
+ * back); skipped if the id is someone else's; "held" for a new paper trade
+ * in a symbol this user already holds (one trade per symbol, as the app's
+ * risk check has it: the server's autopilot took it before the app saw it).
+ * A live one is taken all the same: its coins are bought.
  */
-function takeAppPosition(uid: string, p: DaemonPosition, closedPositionIds: Set<string>): "taken" | "refused" | "skipped" {
+function takeAppPosition(uid: string, p: DaemonPosition, closedPositionIds: Set<string>): AppPositionOutcome {
   // Closed by the guardian, or by an app: another device's older book can't bring it back.
   if (closedPositionIds.has(p.id) || (appClosedIds.has(p.id) && !daemonPositions.has(p.id))) return "refused";
 
@@ -355,6 +364,9 @@ function takeAppPosition(uid: string, p: DaemonPosition, closedPositionIds: Set<
   // open, and on the server's own quantity — never the client's claim.
   const live = getLivePosition(p.id);
   const isLive = !!live && live.status === "OPEN" && live.userId === uid;
+  if (!existing && !isLive) {
+    for (const held of daemonPositions.values()) if (held.userId === uid && held.symbol === p.symbol) return "held";
+  }
   daemonPositions.set(p.id, {
     ...p,
     userId: uid,
@@ -374,11 +386,11 @@ function takeAppPosition(uid: string, p: DaemonPosition, closedPositionIds: Set<
  * A position the app just opened (with its order, /api/execute-trade): the
  * guardian guards it from now on, without waiting for the app's next push.
  */
-export function openAppPosition(uid: string, position: DaemonPosition): boolean {
+export function openAppPosition(uid: string, position: DaemonPosition): AppPositionOutcome {
   const closedPositionIds = new Set(daemonClosedTrades.map((t) => t.positionId));
-  const taken = takeAppPosition(uid, position, closedPositionIds) === "taken";
-  if (taken) saveDaemonStateToDisk();
-  return taken;
+  const outcome = takeAppPosition(uid, position, closedPositionIds);
+  if (outcome === "taken") saveDaemonStateToDisk();
+  return outcome;
 }
 
 // Client pulls closed events that occurred server-side while client was asleep

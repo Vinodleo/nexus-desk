@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TradeProposal } from "../../src/types";
 import { DEFAULT_RISK_POLICY } from "../../src/services/riskEngine";
 import { autopilotOpeningsLastHour, autopilotQueue, PHONE_SCAN_HOLD_REASON, positionFromProposal, selectAutopilotTrades } from "../../src/services/autopilot";
-import { adoptGuardianPositions } from "../../src/hooks/useGuardianSync";
+import { withGuardianPosition } from "../../src/hooks/useGuardianSync";
 
 // Self-Approve's rules, shared by the app and the server scanner.
 
@@ -123,29 +123,12 @@ describe("positionFromProposal", () => {
   });
 });
 
-describe("adoptGuardianPositions", () => {
+describe("withGuardianPosition", () => {
   const base = positionFromProposal({ proposal: proposal("SOL/INR"), entryPrice: 1000, units: 1 }, { id: "a", atr: 5, trailProfile: "tight" });
-  it("adds the guardian's positions the book lacks, server-opened or from another device, unless it closed them", () => {
-    const server = [
-      { ...base, id: "s1", symbol: "ETH/INR", openedByServer: true, clientSeen: false },
-      { ...base, id: "s2", symbol: "BTC/INR", openedByServer: true, clientSeen: false },
-      // Seen by another device, and opened on another device.
-      { ...base, id: "s3", symbol: "XRP/INR", openedByServer: true, clientSeen: true },
-      { ...base, id: "s4", symbol: "ADA/INR" },
-    ];
-    const next = adoptGuardianPositions([base], server, (id) => id === "s2");
-    expect(next.map((p) => p.id)).toEqual(["s1", "s3", "s4", "a"]);
-    const prev = [base];
-    expect(adoptGuardianPositions(prev, [{ ...base, id: "a", symbol: "ETH/INR", openedByServer: true, clientSeen: false }], () => false)).toBe(prev);
-  });
-
-  it("never adds the server's unseen copy of a coin the book already holds", () => {
-    const prev = [base];
-    const dup = { ...base, id: "srv-dup", openedByServer: true, clientSeen: false };
-    expect(adoptGuardianPositions(prev, [dup], () => false)).toBe(prev);
-    // Nor two copies from the server in one go.
-    const other = { ...base, symbol: "ETH/INR", openedByServer: true, clientSeen: false };
-    expect(adoptGuardianPositions([], [{ ...other, id: "e1" }, { ...other, id: "e2" }], () => false).map((p) => p.id)).toEqual(["e1"]);
+  it("adds a trade the server's autopilot opened, once", () => {
+    const next = withGuardianPosition([base], { ...base, id: "s1", symbol: "ETH/INR", openedByServer: true });
+    expect(next.map((p) => p.id)).toEqual(["s1", "a"]);
+    expect(withGuardianPosition(next, { ...base, id: "s1", symbol: "ETH/INR", openedByServer: true })).toBe(next);
   });
 });
 

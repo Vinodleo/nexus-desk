@@ -3,11 +3,12 @@ import { bankPartial, blendedExitPrice, partialDue } from "../shared/exitRules";
 import { exitAt, updateTrailingStop, type TrailExitReason } from "../shared/trailingStop";
 import { closeoutPrice, isFreshQuote, type Quote } from "../shared/quotes";
 
-// The browser book's per-tick position logic: price-sanity guard, trailing
-// stop / profit lock (scalp and trend-runner modes, long and short), and
-// stop / target exit detection. Pure: it returns an updated copy and never
-// mutates the position it's given. (It used to run inline in App's WebSocket
-// handler, mutating React state in place.)
+// A position's per-tick logic: price-sanity guard, trailing stop / profit
+// lock (scalp and trend-runner modes, long and short), and stop / target exit
+// detection. Pure: it returns an updated copy and never mutates the position
+// it's given. The server's guardian applies the same shared rules
+// (server/guardianLogic.ts) and makes every exit; the app only shows its
+// prices on the open trades (markTick).
 
 export type TickExitReason = TrailExitReason;
 
@@ -68,17 +69,13 @@ export interface SuspectTick {
  *   batch can confirm a suspect price, so re-applying the same batch (React
  *   runs state updaters twice in development) can't confirm itself.
  */
-export function applyTickToPosition(
-  original: Position,
-  price: number | undefined,
-  pendingSuspect: Map<string, SuspectTick>,
-  tickSeq: number
-): TickOutcome {
-  if (!price) return { kind: "unchanged", position: original };
-
-  // Price sanity guard: a real market essentially never moves >25% between
-  // consecutive ticks, so such a tick is most likely bad data. Hold it until
-  // a second tick lands within 3% of it; act on nothing until then.
+/**
+ * Price sanity guard: a real market essentially never moves >25% between
+ * consecutive ticks, so such a tick is most likely bad data. Hold it until a
+ * second tick lands within 3% of it; act on nothing until then. True if the
+ * price can be used.
+ */
+function passesPriceGuard(original: Position, price: number, pendingSuspect: Map<string, SuspectTick>, tickSeq: number): boolean {
   const referencePrice = original.currentPrice || original.entryPrice;
   const tickDeviation = referencePrice > 0 ? Math.abs(price - referencePrice) / referencePrice : 0;
   if (tickDeviation > SUSPECT_TICK_DEVIATION) {
@@ -95,12 +92,35 @@ export function applyTickToPosition(
         `[PriceGuard] Rejected implausible tick for ${original.symbol}: ${referencePrice} -> ${price} (${(tickDeviation * 100).toFixed(0)}% single-tick move). Awaiting confirmation. Position left unchanged.`
       );
       pendingSuspect.set(original.id, { price, tickSeq });
-      return { kind: "rejected", position: original };
+      return false;
     }
   } else if (pendingSuspect.has(original.id)) {
     // Back within normal range on its own: drop what we were waiting to confirm.
     pendingSuspect.delete(original.id);
   }
+  return true;
+}
+
+/**
+ * The app's view of a new price on an open trade: the price and the open P&L
+ * it makes, past the same sanity guard. Its stop, target and exit are the
+ * guardian's (the app takes them from the server). The same position back
+ * when nothing moved or the price is held for confirmation.
+ */
+export function markTick(original: Position, price: number | undefined, pendingSuspect: Map<string, SuspectTick>, tickSeq: number): Position {
+  if (!price || !passesPriceGuard(original, price, pendingSuspect, tickSeq)) return original;
+  if (Math.abs(price - original.currentPrice) <= 0.0001 && Number.isFinite(original.unrealizedPnl)) return original;
+  return markedPosition(original, price);
+}
+
+export function applyTickToPosition(
+  original: Position,
+  price: number | undefined,
+  pendingSuspect: Map<string, SuspectTick>,
+  tickSeq: number
+): TickOutcome {
+  if (!price) return { kind: "unchanged", position: original };
+  if (!passesPriceGuard(original, price, pendingSuspect, tickSeq)) return { kind: "rejected", position: original };
 
   const pos: Position = { ...original };
   let changed = false;

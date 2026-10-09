@@ -33,6 +33,8 @@ export interface DaemonCloseEvent {
   strategy?: SlowStrategy;
   /** A real order, not paper. */
   isLiveOrder?: boolean;
+  /** Closed at the app's request (/api/daemon/close), not by the guardian on its own. */
+  reportedByApp?: boolean;
 }
 
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });

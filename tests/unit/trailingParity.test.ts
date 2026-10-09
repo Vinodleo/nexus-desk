@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
-import { act, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const apiFetch = vi.fn();
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a), authenticateSocket: vi.fn() }));
@@ -8,7 +7,7 @@ vi.mock("../../src/services/apiClient", () => ({ apiFetch: (...a: unknown[]) => 
 import { applyTickToPosition } from "../../src/services/positionTick";
 import { applyGuardianTick } from "../../server/guardianLogic";
 import { mergeGuardState } from "../../src/shared/trailingStop";
-import { adoptGuardianState, adoptGuardianPositions, useGuardianSync } from "../../src/hooks/useGuardianSync";
+import { fromGuardian, withGuardianPosition } from "../../src/hooks/useGuardianSync";
 import type { Position } from "../../src/types";
 
 const position = (over: Partial<Position> = {}): Position => ({
@@ -103,14 +102,17 @@ describe("keeping the two copies in step", () => {
     });
   });
 
-  it("the reopened app takes up what the guardian moved while it slept", () => {
+  it("the reopened app shows what the guardian moved while it slept", () => {
     const stale = position({ stopLoss: 1002, takeProfit: 1020, highestPrice: 1015, trailActive: true });
     const other = position({ id: "q" });
-    const next = adoptGuardianState([stale, other], [{ id: "p", stopLoss: 1020, takeProfit: 1050, highestPrice: 1030, lowestPrice: 1000, trailActive: true }]);
+    const guardian = [
+      { ...stale, stopLoss: 1020, takeProfit: 1050, highestPrice: 1030, trailActive: true },
+      other,
+    ];
+    const next = fromGuardian([stale, other], guardian, () => false);
     expect(next[0]).toMatchObject({ stopLoss: 1020, takeProfit: 1050, highestPrice: 1030 });
-    expect(next[1]).toBe(other);
     // Nothing new: the same array back, so React doesn't re-render.
-    expect(adoptGuardianState(next, [{ id: "p", stopLoss: 1010, takeProfit: 1050, highestPrice: 1030, lowestPrice: 1000, trailActive: true }])).toBe(next);
+    expect(fromGuardian(next, guardian, () => false)).toBe(next);
   });
 
   it("takes the guardian's price for stocks the app has no prices for, with the open P&L it makes; coins keep the app's own", () => {
@@ -118,54 +120,19 @@ describe("keeping the two copies in step", () => {
     const guard = { stopLoss: 22034, takeProfit: 0, highestPrice: 23073, lowestPrice: 22993, trailActive: false };
     const nvda = position({ id: "n", symbol: "NVDA.US", entryPrice: 23073, currentPrice: 23073, quantity: 4.3339, stopLoss: 22034, takeProfit: 0, highestPrice: 23073, lowestPrice: 23073 });
     const sol = position({ id: "s", currentPrice: 1010 });
-    const next = adoptGuardianState([nvda, sol], [
-      { id: "n", currentPrice: 22993, ...guard },
-      { id: "s", currentPrice: 1005, stopLoss: 990, takeProfit: 1020, highestPrice: 1000, lowestPrice: 1000, trailActive: false },
-    ]);
+    const next = fromGuardian([nvda, sol], [
+      { ...nvda, currentPrice: 22993, ...guard },
+      { ...sol, currentPrice: 1005 },
+    ], () => false);
     expect(next[0].currentPrice).toBe(22993);
     expect(next[0].unrealizedPnl).toBeCloseTo(-80 * 4.3339, 6);
     expect(next[0].unrealizedPnlPercent).toBeCloseTo((-80 / 23073) * 100, 6);
-    expect(next[1]).toBe(sol);
-    // The same price again: nothing to do.
-    expect(adoptGuardianState(next, [{ id: "n", currentPrice: 22993, ...guard }])).toBe(next);
-    // Kept from before with the guardian's price already but no P&L (the market closed, so the price doesn't move): worked out.
-    const kept = { ...nvda, currentPrice: 22993, unrealizedPnl: 0, unrealizedPnlPercent: 0 };
-    const fixed = adoptGuardianState([kept], [{ id: "n", currentPrice: 22993, ...guard }]);
-    expect(fixed[0].unrealizedPnl).toBeCloseTo(-80 * 4.3339, 6);
+    expect(next[1].currentPrice).toBe(1010);
+    expect(next[1].unrealizedPnl).toBeCloseTo(20, 6);
 
     // A trade the server opened arrives with its open P&L worked out (the guardian keeps none).
-    const opened = adoptGuardianPositions([], [{ ...nvda, id: "m", symbol: "MSFT.US", entryPrice: 50824, currentPrice: 50558, quantity: 1.9675, openedByServer: true }], () => false);
+    const opened = withGuardianPosition([], { ...nvda, id: "m", symbol: "MSFT.US", entryPrice: 50824, currentPrice: 50558, quantity: 1.9675, openedByServer: true } as Position);
     expect(opened[0].unrealizedPnl).toBeCloseTo(-266 * 1.9675, 6);
-  });
-});
-
-describe("syncing to the guardian", () => {
-  afterEach(() => vi.useRealTimers());
-
-  it("sends at once when positions open or close, and at most every 1.5s for price moves", async () => {
-    vi.useFakeTimers();
-    apiFetch.mockImplementation(async () => new Response(JSON.stringify({ success: true, events: [] })));
-    const syncs = () => apiFetch.mock.calls.filter(([u]) => u === "/api/daemon/sync-positions").length;
-    let positions = [position()];
-    const { rerender } = renderHook(() => useGuardianSync(positions, vi.fn(), vi.fn()));
-    expect(syncs()).toBe(0); // nothing before the guardian has answered once
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(syncs()).toBe(1); // then at once
-    for (let i = 1; i <= 10; i++) {
-      positions = [position({ currentPrice: 1000 + i })]; // ten price ticks
-      rerender();
-    }
-    expect(syncs()).toBe(1);
-    await act(async () => {
-      vi.advanceTimersByTime(1600);
-    });
-    expect(syncs()).toBe(2); // one sync for all ten
-    const last = JSON.parse(apiFetch.mock.calls.filter(([u]) => u === "/api/daemon/sync-positions").at(-1)![1].body);
-    expect(last.positions[0].currentPrice).toBe(1010); // with the latest prices
-    positions = []; // closed
-    rerender();
-    expect(syncs()).toBe(3);
+    expect(withGuardianPosition(opened, opened[0])).toBe(opened);
   });
 });

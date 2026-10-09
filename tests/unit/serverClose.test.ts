@@ -6,7 +6,7 @@ const { reportCloseToServer } = await import("../../src/services/serverClose");
 
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }));
 
-// The app tells the guardian of each close it makes, so the server's closed trades hold every trade.
+// The app asks the guardian to close a trade by hand: it holds the trades, closes it and records it.
 
 describe("reportCloseToServer", () => {
   beforeEach(() => apiFetch.mockReset());
@@ -19,8 +19,15 @@ describe("reportCloseToServer", () => {
     expect(JSON.parse(init.body)).toEqual({ positionId: "p1", price: 110, reason: "MANUAL" });
   });
 
-  it("is null when the guardian wasn't holding it, can't be reached, or there's no price", async () => {
+  it("says when the guardian had closed it already (its own exit, or another device's)", async () => {
+    apiFetch.mockImplementation(() => json({ success: true, already: true, event: { positionId: "p1", exitPrice: 104, exitReason: "STOP_LOSS" } }));
+    expect(await reportCloseToServer("p1", 110, "MANUAL")).toEqual({ positionId: "p1", exitPrice: 104, exitReason: "STOP_LOSS", already: true });
+  });
+
+  it("says when the guardian isn't holding it, and is null when it can't be reached or there's no price", async () => {
     apiFetch.mockImplementation(() => json({ success: false }, 404));
+    expect(await reportCloseToServer("p1", 110, "STOP_LOSS")).toBe("not-held");
+    apiFetch.mockImplementation(() => json({ success: false }, 500));
     expect(await reportCloseToServer("p1", 110, "STOP_LOSS")).toBeNull();
     apiFetch.mockImplementation(() => Promise.reject(new Error("offline")));
     expect(await reportCloseToServer("p1", 110, "STOP_LOSS")).toBeNull();

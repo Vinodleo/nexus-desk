@@ -77,7 +77,7 @@ import {
 } from "./utils/audioFeedback";
 import { apiFetch } from "./services/apiClient";
 import { computeClosedTradePnl } from "./shared/tradeMath";
-import { blendedExitPrice, holdingDecision, openQuantity, planPartialQuantity, riskAtOpen } from "./shared/exitRules";
+import { blendedExitPrice, openQuantity, planPartialQuantity, riskAtOpen } from "./shared/exitRules";
 import { ruleFor } from "./services/marketRulesStore";
 import { daemonEventToTrade, type DaemonCloseEvent } from "./services/daemonEvents";
 import type { Quote } from "./shared/quotes";
@@ -87,18 +87,13 @@ import { getExpectancyTable, marketTrendFrom } from "./services/exitExpectancy";
 import { fetchServerDeskControls, loadDeskControls, saveDeskControls } from "./services/deskControls";
 import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
-import { adoptGuardianPositions, useGuardianSync } from "./hooks/useGuardianSync";
+import { useGuardianSync, withGuardianPosition } from "./hooks/useGuardianSync";
 import { reportCloseToServer } from "./services/serverClose";
 import { useBookUpload } from "./hooks/useBookUpload";
 import { useServerBook, withOwnClose } from "./hooks/useServerBook";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 import { useLiveFeed } from "./hooks/useLiveFeed";
-import {
-  applyTickToPosition,
-  markPriceFor,
-  type SuspectTick,
-  type TickExitReason,
-} from "./services/positionTick";
+import { markPriceFor, markTick, type SuspectTick } from "./services/positionTick";
 import { isBuiltOnSyntheticPrices } from "./services/dataProvenance";
 import { fetchLiveOrderBook } from "./services/orderBookService";
 import { useServerScanner, type ServerScanReport } from "./hooks/useServerScanner";
@@ -382,11 +377,19 @@ export default function App() {
     });
   }, [closedTrades, killSwitchActive, logSecurityAudit]);
 
-  // A close the server guardian made: credited once, then the same guards.
+  // A close the server guardian made (it makes every stop, target and time
+  // exit): recorded once, then the same guards, and the autopilot's record.
   const handleServerClose = useCallback(
     (ev: DaemonCloseEvent): boolean => {
+      const pos = activePositionsRef.current.find((p) => p.id === ev.positionId);
       const applied = applyServerClose(ev);
-      if (applied) lossGuardsRef.current(daemonEventToTrade(ev));
+      if (applied) {
+        lossGuardsRef.current(daemonEventToTrade(ev));
+        if (pos?.isSelfApproved) {
+          if (ev.isWin) setSelfApprovedWins((prev) => prev + 1);
+          else setSelfApprovedLosses((prev) => prev + 1);
+        }
+      }
       return applied;
     },
     [applyServerClose]
@@ -405,7 +408,7 @@ export default function App() {
       // Already have it, closed it, or hold that coin (the same signal opened here too).
       if (activePositionsRef.current.some((p) => p.id === pos.id || p.symbol === pos.symbol) || isClosedLocally(pos.id)) return;
       const ticket = ticketFor(pos, "server", paperCashRef.current());
-      setActivePositions((prev) => adoptGuardianPositions(prev, [pos], isClosedLocally));
+      setActivePositions((prev) => withGuardianPosition(prev, pos));
       setSelfApprovedCount((prev) => prev + 1);
       playTradeExecutionSound();
       setTickets((prev) => [...prev, ticket]);
@@ -415,11 +418,6 @@ export default function App() {
 
   // Live feed: prices, guardian closes and live-exit updates from the server.
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
-  // closePositionWithAutopsy is defined further down; the feed reaches it
-  // through this ref so it always calls the current version.
-  const closePositionRef = useRef<(pos: Position, exitPrice: number, reason: TickExitReason | "EXPIRY_TIME") => void>(
-    () => {}
-  );
   const tickSeq = useRef(0);
 
   // Server scan reports pushed over the socket; wired up below, once the
@@ -431,42 +429,40 @@ export default function App() {
   // which jump between the bid and the ask.
   const quotesRef = useRef<Map<string, Quote>>(new Map());
 
-  // New prices for the open positions: stops, trailing, targets and banking.
+  // New prices for the open positions: the price and open P&L shown. Their
+  // stops, trailing, targets, banking and exits are the server guardian's.
   const applyMarks = (prices: Record<string, number>) => {
     const seq = ++tickSeq.current;
     setActivePositions((prev) => {
-      if (prev.length === 0) return prev;
       let changed = false;
-      const next: Position[] = [];
-      for (const pos of prev) {
-        const out = applyTickToPosition(pos, markPriceFor(pos, prices, quotesRef.current), pendingSuspectPrices.current, seq);
-        if (out.kind === "exit") {
-          const { position, price, reason } = out;
-          // closePositionWithAutopsy de-duplicates, so a repeated updater run is harmless.
-          setTimeout(() => closePositionRef.current(position, price, reason), 10);
-          changed = true;
-          continue;
-        }
-        if (out.kind === "updated" && out.changed) changed = true;
-        if (out.kind === "updated" && out.banked) {
-          const p = out.position;
-          setTimeout(
-            () =>
-              setExecutionToast({
-                id: `toast-banked-${p.id}`,
-                title: `Banked half of ${p.symbol}`,
-                message: `${p.bankedQuantity} closed at ₹${p.bankedPrice} (+1R). The stop is past break-even; the rest runs on the trailing stop.`,
-                type: "SUCCESS",
-                timestamp: new Date().toLocaleTimeString(),
-              }),
-            10
-          );
-        }
-        next.push(out.position);
-      }
+      const next = prev.map((pos) => {
+        const marked = markTick(pos, markPriceFor(pos, prices, quotesRef.current), pendingSuspectPrices.current, seq);
+        if (marked !== pos) changed = true;
+        return marked;
+      });
       return changed ? next : prev;
     });
   };
+
+  // The guardian banked half of a trade at +1R: say so once (not for one
+  // that first shows up here already banked).
+  const bankedSeenRef = useRef<Map<string, boolean> | null>(null);
+  useEffect(() => {
+    const before = bankedSeenRef.current;
+    const isBanked = (p: Position) => (p.bankedQuantity ?? 0) > 0;
+    bankedSeenRef.current = new Map(activePositions.map((p) => [p.id, isBanked(p)]));
+    if (!before) return;
+    for (const p of activePositions) {
+      if (!isBanked(p) || before.get(p.id) !== false) continue;
+      setExecutionToast({
+        id: `toast-banked-${p.id}`,
+        title: `Banked half of ${p.symbol}`,
+        message: `${p.bankedQuantity} closed at ₹${p.bankedPrice} (+1R). The stop is past break-even; the rest runs on the trailing stop.`,
+        type: "SUCCESS",
+        timestamp: new Date().toLocaleTimeString(),
+      });
+    }
+  }, [activePositions]);
 
   useLiveFeed({
     onScanReport: (r) => liveScanReportRef.current(r),
@@ -484,6 +480,8 @@ export default function App() {
     onServerClose: (ev) => {
       console.log("[Daemon Position Guardian] Server closed trade event received:", ev);
       if (handleServerClose(ev)) {
+        if (ev.isWin) playProfitTargetSound();
+        else playStopLossSound();
         setExecutionToast({
           id: `toast-daemon-${Date.now()}`,
           title: `■ [24/7 DAEMON GUARDIAN] ${ev.symbol} Auto-Closed`,
@@ -511,22 +509,6 @@ export default function App() {
     },
   });
 
-  // Enforce each position's holding time: every 30s, close anything past its
-  // limit that hasn't locked in profit (winners run on their trailing stop,
-  // up to the extended limit), at the best known price.
-  useEffect(() => {
-    const checkHoldingTimeExpiry = () => {
-      const now = Date.now();
-      for (const pos of activePositionsRef.current) {
-        if (holdingDecision(pos, now) === "expire") {
-          closePositionRef.current(pos, pos.currentPrice || pos.entryPrice, "EXPIRY_TIME");
-        }
-      }
-    };
-    const interval = setInterval(checkHoldingTimeExpiry, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
   // Persist closed trades to LocalStorage
   useEffect(() => {
     saveStoredClosedTrades(closedTrades);
@@ -536,8 +518,8 @@ export default function App() {
   // SERVER DAEMON SYNC & WEB WORKER BACKGROUND TIMER
   // ==========================================
 
-  // 1-2. Push position changes to the guardian; pull closes it made while asleep.
-  const guardianOnline = useGuardianSync(activePositions, setActivePositions, handleServerClose, isClosedLocally);
+  // 1-2. The open trades and the closes come from the guardian (the only copy).
+  const guardianOnline = useGuardianSync(setActivePositions, handleServerClose, isClosedLocally);
   // The server's trade book gets the closes it may not hold (from before it was kept, or made offline).
   useBookUpload(closedTradesRef);
   const zerodha = useZerodhaConnection();
@@ -707,6 +689,31 @@ export default function App() {
       }
       closingPositionIds.current.add(pos.id);
 
+      // The guardian holds the trade (the only copy): it closes and records
+      // it, and only then is it closed here. (Told first for a live trade too:
+      // its exchange exit below would take it out of the guardian unrecorded.)
+      const told = await reportCloseToServer(pos.id, exitPrice, reason);
+      if (!told || told === "not-held") {
+        closingPositionIds.current.delete(pos.id);
+        setExecutionToast({
+          id: `toast-not-closed-${pos.id}`,
+          title: `${pos.symbol} not closed`,
+          message:
+            told === "not-held"
+              ? "The server isn't holding this trade yet. Try again in a moment."
+              : "The server couldn't be reached, so the trade is still open. Try again.",
+          type: "WARNING",
+          timestamp: new Date().toLocaleTimeString(),
+        });
+        return;
+      }
+      if (told.already || !told.reportedByApp) {
+        // Closed before this ask (the guardian's stop or target, or another device): that close is the one.
+        closingPositionIds.current.delete(pos.id);
+        handleServerClose(told);
+        return;
+      }
+
       const {
         grossPnl: rawGrossPnl,
         feesPaid: totalFeesPaid,
@@ -727,22 +734,14 @@ export default function App() {
       // Out of the open trades (the money follows from the closed trade below).
       setActivePositions((prev) => prev.filter((p) => p.id !== pos.id));
 
-      // The server records every close (its closed trades hold every trade).
-      // Told first: a live trade's exit below would take it out of the
-      // guardian unrecorded.
-      const told = reportCloseToServer(pos.id, exitPrice, reason);
-
       // Live positions are exited by the server (idempotently, with retries),
       // so the exchange order goes out even if this tab closes right now.
       if (pos.isLiveOrder) {
-        told
-          .then(() =>
-            apiFetch("/api/live/close-position", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ positionId: pos.id, reason }),
-            })
-          )
+        apiFetch("/api/live/close-position", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ positionId: pos.id, reason }),
+        })
           .then((res) => res.json())
           .then((exitData) => {
             if (exitData.success) {
@@ -920,9 +919,8 @@ export default function App() {
         // Graceful fail-closed handling
       }
     },
-    [logSecurityAudit, sendAlertNotification]
+    [logSecurityAudit, sendAlertNotification, handleServerClose]
   );
-  closePositionRef.current = closePositionWithAutopsy;
 
   const handleClosePosition = useCallback(
     (pos: Position) => {
@@ -1129,9 +1127,20 @@ export default function App() {
                 timestamp: new Date().toLocaleTimeString(),
               });
             }
+          } else if (!tradeData.success) {
+            // The server holds the open trades: one it refused isn't open.
+            setActivePositions((prev) => prev.filter((p) => p.id !== newPosition.id));
+            setExecutionToast({
+              id: `toast-${Date.now()}`,
+              title: `${proposal.symbol} not opened`,
+              message: tradeData.error || "The server didn't take the trade.",
+              type: "WARNING",
+              timestamp: new Date().toLocaleTimeString(),
+            });
           }
         })
         .catch((err) => {
+          // Not answered: the next look at the server's open trades keeps it if the order got there.
           console.error("Order dispatch error:", err);
         });
 
