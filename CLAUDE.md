@@ -298,3 +298,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - Don't unregister the service worker anywhere. That broke Trade pop-ups before.
 - Vitest can't load `virtual:pwa-register`. Only `src/services/registerApp.ts` (from `main.tsx`) imports it.
 - Trades labelled "autopilot (server)" were opened by the server. Plain "autopilot" means the phone opened them.
+- The app's push of its open trades (`useGuardianSync`) tells which ones left its book in the last week (`closedIds`,
+  `noteGone`, kept per device): only those leave the guardian, which remembers them two weeks (`appClosedIds`, on
+  disk) and refuses them from another device's older book. A trade missing from a push stays guarded, and each
+  catch-up poll takes up any trade the guardian holds that the book lacks (`adoptGuardianPositions`), so two devices
+  agree. An app from before `closedIds` still has a missing trade taken as closed. The app pushes nothing until the
+  guardian has answered once, so an empty book (a new install, cleared storage) takes up the guardian's trades first.

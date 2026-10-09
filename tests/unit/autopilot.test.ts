@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TradeProposal } from "../../src/types";
 import { DEFAULT_RISK_POLICY } from "../../src/services/riskEngine";
 import { autopilotOpeningsLastHour, autopilotQueue, PHONE_SCAN_HOLD_REASON, positionFromProposal, selectAutopilotTrades } from "../../src/services/autopilot";
-import { adoptServerOpened } from "../../src/hooks/useGuardianSync";
+import { adoptGuardianPositions } from "../../src/hooks/useGuardianSync";
 
 // Self-Approve's rules, shared by the app and the server scanner.
 
@@ -119,28 +119,29 @@ describe("positionFromProposal", () => {
   });
 });
 
-describe("adoptServerOpened", () => {
+describe("adoptGuardianPositions", () => {
   const base = positionFromProposal({ proposal: proposal("SOL/INR"), entryPrice: 1000, units: 1 }, { id: "a", atr: 5, trailProfile: "tight" });
-  it("adds server-opened positions the app hasn't seen, unless it closed them", () => {
+  it("adds the guardian's positions the book lacks, server-opened or from another device, unless it closed them", () => {
     const server = [
       { ...base, id: "s1", symbol: "ETH/INR", openedByServer: true, clientSeen: false },
       { ...base, id: "s2", symbol: "BTC/INR", openedByServer: true, clientSeen: false },
+      // Seen by another device, and opened on another device.
       { ...base, id: "s3", symbol: "XRP/INR", openedByServer: true, clientSeen: true },
       { ...base, id: "s4", symbol: "ADA/INR" },
     ];
-    const next = adoptServerOpened([base], server, (id) => id === "s2");
-    expect(next.map((p) => p.id)).toEqual(["s1", "a"]);
+    const next = adoptGuardianPositions([base], server, (id) => id === "s2");
+    expect(next.map((p) => p.id)).toEqual(["s1", "s3", "s4", "a"]);
     const prev = [base];
-    expect(adoptServerOpened(prev, [{ ...base, id: "a", symbol: "ETH/INR", openedByServer: true, clientSeen: false }], () => false)).toBe(prev);
+    expect(adoptGuardianPositions(prev, [{ ...base, id: "a", symbol: "ETH/INR", openedByServer: true, clientSeen: false }], () => false)).toBe(prev);
   });
 
-  it("never adds a second position in a coin the book already holds", () => {
+  it("never adds the server's unseen copy of a coin the book already holds", () => {
     const prev = [base];
     const dup = { ...base, id: "srv-dup", openedByServer: true, clientSeen: false };
-    expect(adoptServerOpened(prev, [dup], () => false)).toBe(prev);
+    expect(adoptGuardianPositions(prev, [dup], () => false)).toBe(prev);
     // Nor two copies from the server in one go.
     const other = { ...base, symbol: "ETH/INR", openedByServer: true, clientSeen: false };
-    expect(adoptServerOpened([], [{ ...other, id: "e1" }, { ...other, id: "e2" }], () => false).map((p) => p.id)).toEqual(["e1"]);
+    expect(adoptGuardianPositions([], [{ ...other, id: "e1" }, { ...other, id: "e2" }], () => false).map((p) => p.id)).toEqual(["e1"]);
   });
 });
 

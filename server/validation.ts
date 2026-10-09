@@ -95,6 +95,8 @@ const syncedPosition = z
 
 export const syncPositionsBody = z.object({
   positions: z.array(syncedPosition).max(50),
+  /** Positions this app closed or dropped lately: only these leave the guardian (an older app sends none). */
+  closedIds: z.array(z.string().min(1).max(128)).max(500).optional(),
 });
 
 export const closedEventsQuery = z.object({

@@ -148,3 +148,55 @@ describe("positions the server's autopilot opened", () => {
     expect(guardian.daemonPositions.has("fake-1")).toBe(false);
   });
 });
+
+describe("two devices", () => {
+  // The app tells which positions it closed (closedIds); only those leave the guardian.
+  const push = (positions: unknown[], closedIds?: string[], uid = "u3") =>
+    fetch(`${base}/api/daemon/sync-positions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-uid": uid },
+      body: JSON.stringify(closedIds ? { positions, closedIds } : { positions }),
+    });
+  const trade = (id: string, symbol: string) => ({
+    id,
+    symbol,
+    direction: "LONG" as const,
+    entryPrice: 100,
+    currentPrice: 100,
+    quantity: 1,
+    stopLoss: 90,
+    takeProfit: 100_000,
+    openTime: new Date().toISOString(),
+    expectedHoldingTimeMinutes: 525_600,
+  });
+
+  it("keeps a trade missing from another device's older book", async () => {
+    // The phone opened two trades; an older book on another device knows only one.
+    await push([trade("d-1", "SOL/INR"), trade("d-2", "ETH/INR")], []);
+    await push([trade("d-1", "SOL/INR")], []);
+    expect(guardian.daemonPositions.has("d-2")).toBe(true);
+  });
+
+  it("drops a trade the app says it closed, and an older book can't bring it back", async () => {
+    await push([trade("d-1", "SOL/INR")], ["d-2"]);
+    expect(guardian.daemonPositions.has("d-2")).toBe(false);
+    // The other device still holds it: refused, so it drops it too.
+    const res = await (await push([trade("d-1", "SOL/INR"), trade("d-2", "ETH/INR")], [])).json();
+    expect(res.rejectedResurrections).toEqual(["d-2"]);
+    expect(guardian.daemonPositions.has("d-2")).toBe(false);
+    expect(guardian.daemonPositions.has("d-1")).toBe(true);
+  });
+
+  it("remembers the app's closes across a restart", async () => {
+    guardian.saveDaemonStateToDisk();
+    guardian._resetGuardian();
+    guardian.loadDaemonStateFromDisk();
+    const res = await (await push([trade("d-1", "SOL/INR"), trade("d-2", "ETH/INR")], [])).json();
+    expect(res.rejectedResurrections).toEqual(["d-2"]);
+  });
+
+  it("still takes a missing trade as closed from an older app that tells nothing", async () => {
+    await push([]);
+    expect(guardian.daemonPositions.has("d-1")).toBe(false);
+  });
+});

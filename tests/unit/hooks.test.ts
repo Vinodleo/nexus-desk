@@ -9,7 +9,7 @@ const apiFetch = vi.fn();
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 const { useServerCloseHandler } = await import("../../src/hooks/useServerCloseHandler");
-const { useGuardianSync } = await import("../../src/hooks/useGuardianSync");
+const { noteGone, useGuardianSync } = await import("../../src/hooks/useGuardianSync");
 const { useDailyTelemetry } = await import("../../src/hooks/useDailyTelemetry");
 const { useCoinDcxAccount } = await import("../../src/hooks/useCoinDcxAccount");
 
@@ -155,6 +155,79 @@ describe("useGuardianSync", () => {
     await waitFor(() => expect(result.current.map((p) => p.id)).toEqual(["srv-1"]));
   });
 
+  it("pushes nothing until the guardian has answered, so an empty book can't wipe its positions", async () => {
+    // A new install or cleared storage: the book starts empty while the guardian holds a trade.
+    apiFetch.mockImplementation((url: string) =>
+      url.startsWith("/api/daemon/closed-events") ? json({ events: [], activePositions: [position("srv-1")] }) : json({})
+    );
+    renderHook(() => {
+      const [positions, setPositions] = useState<Position[]>([]);
+      useGuardianSync(positions, setPositions, () => false);
+    });
+    await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => u === "/api/daemon/sync-positions")).toBe(true));
+    const urls = apiFetch.mock.calls.map(([u]) => u as string);
+    const firstSync = urls.indexOf("/api/daemon/sync-positions");
+    expect(urls.findIndex((u) => u.startsWith("/api/daemon/closed-events"))).toBeLessThan(firstSync);
+    // Every push carries the guardian's trade: none is empty.
+    for (const [u, init] of apiFetch.mock.calls) {
+      if (u === "/api/daemon/sync-positions") expect(JSON.parse(init.body).positions.map((p: Position) => p.id)).toEqual(["srv-1"]);
+    }
+  });
+
+  it("tells the guardian which positions left the book, and remembers them", async () => {
+    apiFetch.mockImplementation((url: string) =>
+      url.startsWith("/api/daemon/closed-events") ? json({ events: [], activePositions: [] }) : json({})
+    );
+    const { result } = renderHook(() => {
+      const [positions, setPositions] = useState<Position[]>([position("pos-1"), position("pos-2")]);
+      useGuardianSync(positions, setPositions, () => false);
+      return setPositions;
+    });
+    await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => u === "/api/daemon/sync-positions")).toBe(true));
+    const first = JSON.parse(apiFetch.mock.calls.find(([u]) => u === "/api/daemon/sync-positions")![1].body);
+    expect(first.closedIds).toEqual([]);
+    act(() => result.current((prev) => prev.filter((p) => p.id !== "pos-2"))); // closed in the app
+    await waitFor(() => {
+      const last = JSON.parse(apiFetch.mock.calls.filter(([u]) => u === "/api/daemon/sync-positions").at(-1)![1].body);
+      expect(last.positions.map((p: Position) => p.id)).toEqual(["pos-1"]);
+      expect(last.closedIds).toEqual(["pos-2"]);
+    });
+    expect(JSON.parse(localStorage.getItem("nexus_gone_positions")!).map(([id]: [string]) => id)).toEqual(["pos-2"]);
+  });
+
+  it("takes up a trade another device opened, but not one this book closed", async () => {
+    localStorage.setItem("nexus_gone_positions", JSON.stringify([["closed-here", Date.now()]]));
+    apiFetch.mockImplementation((url: string) =>
+      url.startsWith("/api/daemon/closed-events")
+        ? json({
+            events: [],
+            activePositions: [
+              position("pos-1"),
+              { ...position("other-device"), openedByServer: true, clientSeen: true },
+              position("closed-here"),
+            ],
+          })
+        : json({})
+    );
+    const { result } = renderHook(() => {
+      const [positions, setPositions] = useState<Position[]>([position("pos-1")]);
+      useGuardianSync(positions, setPositions, () => false);
+      return positions;
+    });
+    await waitFor(() => expect(result.current.map((p) => p.id).sort()).toEqual(["other-device", "pos-1"]));
+  });
+
+  it("pushes nothing while the guardian can't be reached", async () => {
+    apiFetch.mockImplementation(() => json({ error: "down" }, 503));
+    renderHook(() => {
+      const [positions, setPositions] = useState<Position[]>([position("pos-1")]);
+      useGuardianSync(positions, setPositions, () => false);
+    });
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/daemon\/closed-events/)));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(apiFetch.mock.calls.some(([u]) => u === "/api/daemon/sync-positions")).toBe(false);
+  });
+
   it("removes its focus and visibility listeners on unmount", () => {
     apiFetch.mockImplementation(() => json({}));
     const addDoc = vi.spyOn(document, "addEventListener");
@@ -166,6 +239,17 @@ describe("useGuardianSync", () => {
     const added = addDoc.mock.calls.find(([type]) => type === "visibilitychange")![1];
     unmount();
     expect(removeDoc).toHaveBeenCalledWith("visibilitychange", added);
+  });
+});
+
+describe("noteGone", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  it("notes positions that left the book, forgets ones back in it or older than a week", () => {
+    const gone = new Map<string, number>([["old", 0], ["back", 5 * DAY]]);
+    const at = 8 * DAY;
+    expect(noteGone(gone, new Set(["a", "b"]), new Set(["a", "back"]), at)).toBe(true);
+    expect([...gone]).toEqual([["b", at]]);
+    expect(noteGone(gone, new Set(["a"]), new Set(["a"]), at)).toBe(false);
   });
 });
 
