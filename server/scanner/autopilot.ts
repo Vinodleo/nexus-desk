@@ -48,7 +48,14 @@ export interface ServerAutopilotDeps {
 
 /** This user's guardian closes, newest first, for the loss guards. */
 function serverCloses(uid: string) {
-  return closedTradesFor(uid).map((t) => ({ symbol: t.symbol, isWin: t.isWin, closedAtMs: Date.parse(t.closedAt), strategy: t.strategy, timeframe: t.timeframe }));
+  return closedTradesFor(uid).map((t) => ({
+    symbol: t.symbol,
+    isWin: t.isWin,
+    closedAtMs: Date.parse(t.closedAt),
+    strategy: t.strategy,
+    timeframe: t.timeframe,
+    reportedByApp: t.reportedByApp,
+  }));
 }
 
 /**
@@ -62,10 +69,10 @@ export function serverQuarantines(uid: string, desk: DeskState, now: number = Da
 /**
  * The 5-minute traders' losses in a row: the guardian's closes since the app
  * last sent its desk settings, continuing the app's own count if every one
- * of them lost.
+ * of them lost. Closes the app made itself are in its count already.
  */
 export function serverLossStreak(uid: string, desk: DeskState): number {
-  const since = serverCloses(uid).filter((c) => c.closedAtMs > desk.updatedAt && countsTowardStreak(c));
+  const since = serverCloses(uid).filter((c) => c.closedAtMs > desk.updatedAt && countsTowardStreak(c) && !c.reportedByApp);
   const streak = lossStreak(since, desk.updatedAt);
   return streak === since.length ? streak + (desk.lossStreak ?? 0) : streak;
 }

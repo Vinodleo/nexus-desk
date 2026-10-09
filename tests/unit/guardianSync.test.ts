@@ -200,3 +200,59 @@ describe("two devices", () => {
     expect(guardian.daemonPositions.has("d-1")).toBe(false);
   });
 });
+
+describe("closes the app makes", () => {
+  // The app tells the guardian of each close it makes, so the server's closed trades hold every trade.
+  const close = (positionId: string, price: number, reason = "MANUAL", uid = "u4") =>
+    fetch(`${base}/api/daemon/close`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-uid": uid },
+      body: JSON.stringify({ positionId, price, reason }),
+    });
+  const push = (positions: unknown[], closedIds: string[]) =>
+    fetch(`${base}/api/daemon/sync-positions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-uid": "u4" },
+      body: JSON.stringify({ positions, closedIds }),
+    });
+  const trade = (id: string) => ({
+    id,
+    symbol: "SOL/INR",
+    direction: "LONG" as const,
+    entryPrice: 100,
+    currentPrice: 100,
+    quantity: 2,
+    stopLoss: 90,
+    takeProfit: 100_000,
+    openTime: new Date().toISOString(),
+    expectedHoldingTimeMinutes: 525_600,
+  });
+
+  it("closes the position at the app's price and records it, once", async () => {
+    await push([trade("c-1")], []);
+    const res = await (await close("c-1", 110)).json();
+    expect(res).toMatchObject({ success: true, event: { positionId: "c-1", exitPrice: 110, exitReason: "MANUAL", reportedByApp: true } });
+    expect(guardian.daemonPositions.has("c-1")).toBe(false);
+    expect(guardian.closedTradesFor("u4").filter((t) => t.positionId === "c-1")).toHaveLength(1);
+    // Told again: the same record, not a second one.
+    const again = await (await close("c-1", 111)).json();
+    expect(again).toMatchObject({ success: true, already: true, event: { exitPrice: 110 } });
+    expect(guardian.closedTradesFor("u4").filter((t) => t.positionId === "c-1")).toHaveLength(1);
+  });
+
+  it("still records it when the push dropping it got there first", async () => {
+    await push([trade("c-2")], []);
+    await push([], ["c-2"]);
+    expect(guardian.daemonPositions.has("c-2")).toBe(false);
+    const res = await (await close("c-2", 95, "STOP_LOSS")).json();
+    expect(res).toMatchObject({ success: true, event: { positionId: "c-2", exitPrice: 95, exitReason: "STOP_LOSS" } });
+    expect(guardian.daemonPositions.has("c-2")).toBe(false);
+  });
+
+  it("answers 404 for a position it never held, or someone else's", async () => {
+    expect((await close("nope", 100)).status).toBe(404);
+    await push([trade("c-3")], []);
+    expect((await close("c-3", 100, "MANUAL", "someone-else")).status).toBe(404);
+    expect(guardian.daemonPositions.has("c-3")).toBe(true);
+  });
+});

@@ -65,7 +65,12 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     keeps their typical spreads current from the quotes it reads (`recordSpread`). It still scans when no market is
     open, so the app (which scans by itself only while the server doesn't) stays out of it.
   - The server autopilot is in `server/scanner/autopilot.ts`.
-  - The guardian (`server/guardian.ts`) manages stops and exits 24/7.
+  - The guardian (`server/guardian.ts`) manages stops and exits 24/7. Every close the app makes (by hand or on its
+    own prices) is told to it (`/api/daemon/close`, `reportCloseToServer`, before a live trade's exit call): it closes
+    and records it (`reportedByApp`, left out of the server's own daily P&L and losing streak, which the app's totals
+    hold already), so the server's closed trades hold every trade. A push that dropped the trade first is covered
+    (`droppedByApp`, kept 10 minutes). Step 1 of making the server the only copy of the trades (owner's call, 9 Oct):
+    next, opens go through it, then the Book reads from it, then the phone/server syncing goes.
   - Live coin trades (`server/liveExecution.ts`): the server sends every exit itself (idempotent, retried). Each live
     long also has a backup stop resting at CoinDCX (a `stop_limit` sell `BACKSTOP_GAP` 0.5% under the guardian's stop,
     `reconcileExchangeStops` every 15 s): moved up as the stop trails (by 0.5%+, cancel then replace), cancelled before
@@ -88,7 +93,7 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     in the last 5 minutes and ones being closed aren't compared. Settings → Server → CoinDCX check.
   - Web Push sends the trade pop-ups.
   - The weekly summary (`server/weeklySummary.ts`): a pop-up each Sunday at 10 am India time per desk, from the trades
-    the server closed: the week's closed, won, still open and what they made, and each slower strategy's paper trades
+    the server recorded (its own closes and the app's): the week's closed, won, still open and what they made, and each slower strategy's paper trades
     so far against its replay (`paperScore`, a strategy clearly behind named first). Sent late after a restart until
     Tuesday; nothing on an empty week; "on paper" dropped once a trade is live.
   - Daily backups (`server/backup.ts`): every top-level file in the data folder (not the rebuildable folders, not
