@@ -20,6 +20,7 @@ import { router as tradingRouter } from "./server/routes/trading";
 import { router as agentsRouter } from "./server/routes/agents";
 import { router as scannerRouter } from "./server/routes/scanner";
 import { router as pushRouter } from "./server/routes/push";
+import { router as tradeBookRouter, loadTradeBook } from "./server/tradeBook";
 import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
 import { startHistoryJob } from "./server/history/historyJob";
@@ -78,6 +79,7 @@ app.use(guardianRouter);
 app.use(agentsRouter);
 app.use(scannerRouter);
 app.use(pushRouter);
+app.use(tradeBookRouter);
 
 // Where the server runs and whether its saved state survives restarts.
 app.get("/api/server/status", (_req: Request, res: Response) => {
@@ -91,6 +93,8 @@ app.use("/api", (_req: Request, res: Response) => {
 });
 
 // Restore guardian state before anything can tick, and flush it on shutdown.
+// The trade book first: the guardian adds its kept closes to it.
+loadTradeBook();
 loadDaemonStateFromDisk();
 loadDeskStates();
 warnIfStateIsTemporary();

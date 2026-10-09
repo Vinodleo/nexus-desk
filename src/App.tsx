@@ -90,6 +90,7 @@ import { useServerCloseHandler } from "./hooks/useServerCloseHandler";
 import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { adoptGuardianPositions, useGuardianSync } from "./hooks/useGuardianSync";
 import { reportCloseToServer } from "./services/serverClose";
+import { useBookUpload } from "./hooks/useBookUpload";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 import { useLiveFeed } from "./hooks/useLiveFeed";
 import {
@@ -548,6 +549,8 @@ export default function App() {
 
   // 1-2. Push position changes to the guardian; pull closes it made while asleep.
   const guardianOnline = useGuardianSync(activePositions, setActivePositions, handleServerClose, isClosedLocally);
+  // The server's trade book gets the closes it may not hold (from before it was kept, or made offline).
+  useBookUpload(closedTradesRef);
   const zerodha = useZerodhaConnection();
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   // Where the gear was when Settings was opened: it opens from there.

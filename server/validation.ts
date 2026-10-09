@@ -108,6 +108,48 @@ export const syncPositionsBody = z.object({
   closedIds: z.array(z.string().min(1).max(128)).max(500).optional(),
 });
 
+/** A closed trade as the app keeps it (HistoricalTrade): the fields the book keeps. */
+const appClosedTrade = z.object({
+  id: z.string().min(1).max(128),
+  positionId: z.string().min(1).max(128).optional().catch(undefined),
+  symbol,
+  direction: z.enum(["LONG", "SHORT"]),
+  entryPrice: positiveNumber,
+  exitPrice: positiveNumber,
+  quantity: positiveNumber,
+  realizedPnl: z.number().finite(),
+  closedAtMs: z.number().finite().positive(),
+  exitReason: z.enum(["TAKE_PROFIT", "STOP_LOSS", "TRAILING_STOP", "EXPIRY_TIME", "MANUAL"]).catch("MANUAL"),
+  openedAtMs: z.number().finite().positive().optional().catch(undefined),
+  moneyPlaced: z.number().finite().nonnegative().optional().catch(undefined),
+  grossPnl: z.number().finite().optional().catch(undefined),
+  feesPaid: z.number().finite().nonnegative().optional().catch(undefined),
+  realizedPnlPercent: z.number().finite().optional().catch(undefined),
+  isWin: z.boolean().optional().catch(undefined),
+  setupName: z.string().max(200).optional().catch(undefined),
+  holdingDurationMinutes: z.number().finite().nonnegative().optional().catch(undefined),
+  isLiveOrder: z.boolean().optional().catch(undefined),
+  isSelfApproved: z.boolean().optional().catch(undefined),
+  openedByServer: z.boolean().optional().catch(undefined),
+  riskAtOpen: positiveNumber.optional().catch(undefined),
+  stopAtExit: z.number().finite().optional().catch(undefined),
+  fillAtExit: positiveNumber.optional().catch(undefined),
+  highestPrice: positiveNumber.optional().catch(undefined),
+  lowestPrice: positiveNumber.optional().catch(undefined),
+  signalPrice: positiveNumber.optional().catch(undefined),
+  timeframe: z.enum(["1d"]).optional().catch(undefined),
+  strategy: z.enum(["breakout", "momentum"]).optional().catch(undefined),
+});
+
+/** The app's closes for the trade book (a batch at a time). */
+export const bookImportBody = z.object({
+  trades: z.array(appClosedTrade).max(1000),
+});
+
+export const bookQuery = z.object({
+  since: z.coerce.number().finite().nonnegative().optional(),
+});
+
 export const closedEventsQuery = z.object({
   since: z.coerce.number().finite().nonnegative().optional(),
 });
