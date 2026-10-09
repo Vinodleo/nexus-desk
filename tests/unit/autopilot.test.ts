@@ -70,10 +70,14 @@ describe("selectAutopilotTrades", () => {
   });
 
   it("on a paper desk, spends only the free cash: each trade taken counts against it, one that costs more waits", () => {
-    // ₹5,000 trades (₹100 at risk, the stop ₹20 below ₹1,000: 5 units); ₹7,000 free: the first opens, the second waits.
+    // ₹5,000 trades (₹100 at risk, the stop ₹20 below ₹1,000: 5 units) and CoinDCX's 0.59% to open each, ₹29.50;
+    // ₹7,000 free: the first opens, the second waits.
     const { accepted, deferred } = selectAutopilotTrades([proposal("A/INR"), proposal("B/INR")], { ...empty, freeCash: 7000 }, policy, at(1000), now);
     expect(accepted.map((a) => [a.proposal.symbol, a.units * a.entryPrice])).toEqual([["A/INR", 5000]]);
-    expect(deferred[0].reason).toBe("not enough free cash: ₹2,000 left for a ₹5,000 trade");
+    expect(deferred[0].reason).toBe("not enough free cash: ₹1,971 left for a ₹5,030 trade with its fee");
+    // Exactly its cost free isn't enough: the fee to open it is paid too.
+    expect(selectAutopilotTrades([proposal("A/INR")], { ...empty, freeCash: 5000 }, policy, at(1000), now).accepted).toEqual([]);
+    expect(selectAutopilotTrades([proposal("A/INR")], { ...empty, freeCash: 5030 }, policy, at(1000), now).accepted).toHaveLength(1);
     // A live desk (no free cash given) isn't held to it.
     expect(selectAutopilotTrades([proposal("A/INR"), proposal("B/INR")], empty, policy, at(1000), now).accepted).toHaveLength(2);
   });

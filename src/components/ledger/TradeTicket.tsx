@@ -4,6 +4,7 @@ import { marketOf } from "../../shared/marketLimits";
 import { isFundSymbol } from "../../shared/funds";
 import { formatMoney, formatPrice } from "./format";
 import { atStop, moneyIn } from "./LedgerFloor";
+import { cashTiedUp } from "../../shared/paperCash";
 
 // When a trade opens with the app on screen, a ticket unfolds over it: what
 // was bought, at what price, where its stop is and why it was taken, and on
@@ -21,7 +22,7 @@ export interface TicketTrade {
 /** The ticket for a newly opened trade; on paper, the free cash it takes from what was free before. */
 export function ticketFor(position: Position, by: TicketTrade["by"], paper?: { money: number; freeBefore: number }): TicketTrade {
   if (!paper || position.isLiveOrder) return { position, by };
-  const after = Math.max(0, paper.freeBefore - moneyIn(position));
+  const after = Math.max(0, paper.freeBefore - cashTiedUp(position));
   return { position, by, cash: { money: paper.money, before: paper.freeBefore, after } };
 }
 

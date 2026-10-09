@@ -53,12 +53,12 @@ describe("LedgerFloor", () => {
     // Paper equity: the paper money and the open trade's profit (₹94,483.96 + ₹23.04).
     expect(text).toContain("Paper equity₹94,507.00");
     expect(text).toContain("−₹5,688.13");
-    // The money ring: free cash is the paper money less what the open trade cost (0.0012 BTC at ₹58,42,100 is
-    // ₹7,010.52), and the ring is filled to the share in trades (7.4%).
-    expect(screen.getByTestId("free-cash").textContent).toBe("Free cash₹87,473.44");
-    expect(screen.getByTestId("in-trades").textContent).toBe("In 1 trade₹7,011");
+    // The money ring: free cash is the paper money less what the open trade took (0.0012 BTC at ₹58,42,100 is
+    // ₹7,010.52, and CoinDCX's 0.59% to open it ₹41.36), and the ring is filled to the share in trades (7.5%).
+    expect(screen.getByTestId("free-cash").textContent).toBe("Free cash₹87,432.08");
+    expect(screen.getByTestId("in-trades").textContent).toBe("In 1 trade₹7,052");
     expect(screen.getByTestId("money-ring").textContent).toBe("7%in trades");
-    expect(screen.getByTestId("money-ring").style.getPropertyValue("--nx-ring")).toBe("7.4");
+    expect(screen.getByTestId("money-ring").style.getPropertyValue("--nx-ring")).toBe("7.5");
     // The ring says what's in trades, so the autopilot card doesn't repeat it on paper.
     expect(text).not.toContain("9.9%");
     expect(text).toContain("₹2,500");

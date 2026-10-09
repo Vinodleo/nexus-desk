@@ -120,9 +120,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     (`PAPER_MONEY_CHOICES`, `restartedPaperCapital`; the all-time P&L from zero, trades kept; the start in its own
     localStorage key, not the capital state Firebase copies). The daily loss limit is 2.5% of the money, at least ₹2,500
     (`dailyLossLimitFor`, on the phone and the server); amounts per trade go up to ₹2 lakh and risk to ₹10,000.
-    A paper desk is a cash account (`src/shared/paperCash.ts`): open paper trades tie up what they cost (`moneyInTrades`),
-    and the autopilot, on the server and the phone, defers a trade costing more than the free cash left (`freeCash`,
-    `AutopilotBook.freeCash`, "not enough free cash"); live desks aren't held to it (CoinDCX's balance is). The Floor's
+    A paper desk is a cash account (`src/shared/paperCash.ts`): open paper trades tie up what they cost and the fee
+    paid to open them (`cashTiedUp`, `moneyInTrades`, `entryFee` in `tradeMath.ts`: CoinDCX's 0.59%, Alpaca's
+    regulatory fees, Angel One's charges on the opening order), and the autopilot, on the server and the phone, defers
+    a trade whose cost and opening fee are more than the free cash left (`freeCash`, `AutopilotBook.freeCash`, "not
+    enough free cash"); live desks aren't held to it (CoinDCX's balance is). The Floor's
     paper equity includes the open trades' profit; under it a ring shows the free cash against what's in trades (`MoneyRing`).
     Breakout and momentum trades (no target) sit on a line in R (`riskLadder`), every trade shows where it is in R, and
     tapping one folds its numbers open.

@@ -25,6 +25,18 @@ export const COIN_SALE_TDS = 0.01;
 
 export type ExitReason = "TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_STOP" | "EXPIRY_TIME" | "MANUAL";
 
+/**
+ * The fee paid to open a trade of this value, as the close counts it in
+ * computeClosedTradePnl: Alpaca's regulatory fees for a US stock, Angel One's
+ * charges for the opening order on an Indian one, CoinDCX's fee for a coin.
+ */
+export function entryFee(symbol: string | undefined, direction: "LONG" | "SHORT", notional: number): number {
+  if (!(notional > 0)) return 0;
+  if (isUsSymbol(symbol)) return notional * US_FEE_RATE_PER_SIDE;
+  if (isNseSymbol(symbol)) return nseTradeCosts([{ side: direction === "LONG" ? "BUY" : "SELL", value: notional }]);
+  return notional * TAKER_FEE_RATE;
+}
+
 export interface ClosedTradePnl {
   grossPnl: number;
   feesPaid: number;

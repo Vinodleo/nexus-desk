@@ -4,6 +4,7 @@ import { priceEntry } from "./entryPricing";
 import { ruleFor } from "./marketRulesStore";
 import { isBuiltOnSyntheticPrices } from "./dataProvenance";
 import { openQuantity, planPartialQuantity } from "../shared/exitRules";
+import { entryFee } from "../shared/tradeMath";
 import { atrForExits, holdMinutesFor, trailsAsRunner } from "../shared/coinHolds";
 import { MARKET_LABEL, marketOf, sectorOf, slotKindOf, slotsFor, slotTradesLabel, slowStrategyOf, type MarketKey, type SlotKind } from "../shared/marketLimits";
 
@@ -139,6 +140,8 @@ export function selectAutopilotTrades(
       continue;
     }
     const added = priced.units * priced.entryPrice;
+    // What it takes from the free cash: its cost and the fee to open it.
+    const cost = added + entryFee(proposal.symbol, proposal.setup.direction, added);
 
     // Per market when set in Settings (amount per trade × trades at once bounds exposure then).
     const market = marketOf(proposal.symbol);
@@ -162,7 +165,7 @@ export function selectAutopilotTrades(
     const votes = proposal.personaVotesCast ?? 1;
     const lacksConsensus = agreement < policy.autopilotMinConsensus || votes < policy.autopilotMinPersonaVotes;
     // A paper desk can't spend money it doesn't have.
-    const shortOfCash = cashLeft !== undefined && added > cashLeft + 0.01;
+    const shortOfCash = cashLeft !== undefined && cost > cashLeft + 0.01;
 
     if (tooMany || tooExposed || sectorFull || alreadyHeld || overHourly || lacksConsensus || shortOfCash) {
       const reasons: string[] = [];
@@ -176,7 +179,7 @@ export function selectAutopilotTrades(
       if (sectorFull) reasons.push(`would exceed ${policy.maxCorrelatedPositionsPerGroup} open trades in ${sector!.label}`);
       if (alreadyHeld) reasons.push(`already holding a ${proposal.symbol} position`);
       if (overHourly) reasons.push(`would exceed ${policy.autopilotMaxApprovalsPerHour} autonomous approvals/hour`);
-      if (shortOfCash) reasons.push(`not enough free cash: ₹${Math.round(cashLeft!).toLocaleString("en-IN")} left for a ₹${Math.round(added).toLocaleString("en-IN")} trade`);
+      if (shortOfCash) reasons.push(`not enough free cash: ₹${Math.round(cashLeft!).toLocaleString("en-IN")} left for a ₹${Math.round(cost).toLocaleString("en-IN")} trade with its fee`);
       if (lacksConsensus)
         reasons.push(
           `panel consensus ${(agreement * 100).toFixed(0)}% with ${votes} vote(s) — needs ${(policy.autopilotMinConsensus * 100).toFixed(0)}%/${policy.autopilotMinPersonaVotes}`
@@ -190,7 +193,7 @@ export function selectAutopilotTrades(
     slots[market] += 1;
     if (sector) openBySector.set(sector.key, (openBySector.get(sector.key) ?? 0) + 1);
     exposure += added;
-    if (cashLeft !== undefined) cashLeft -= added;
+    if (cashLeft !== undefined) cashLeft -= cost;
     hourly += 1;
     held.add(proposal.symbol);
   }

@@ -106,8 +106,8 @@ describe("money in open positions", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("Long · 0.5 · ₹7,000 in");
     expect(text).toContain("Long · 100 · ₹5,000 in");
-    // On paper the money ring has the total; live, the autopilot card's tile does.
-    expect(text).toContain("In 2 trades₹12,000");
+    // On paper the money ring has the total, with CoinDCX's 0.59% to open each; live, the autopilot card's tile does.
+    expect(text).toContain("In 2 trades₹12,071");
     cleanup();
     expect(render(createElement(LedgerFloor, { ...props, isLive: true })).container.textContent).toContain("In trades · 12.0%₹12,000");
   });

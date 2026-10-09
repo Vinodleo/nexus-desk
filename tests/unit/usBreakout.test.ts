@@ -187,7 +187,7 @@ describe("a paper desk's free cash", () => {
     await us.runUsBreakout(await deps(monday, { desks: () => [["u", poor]] }));
     const picks = us._usBreakoutState().runs.u.picks;
     expect(picks.filter((p) => p.outcome === "opened")).toHaveLength(1);
-    expect(picks.find((p) => p.outcome === "waiting")?.reason).toMatch(/^not enough free cash: ₹\d[\d,]* left for a ₹[\d,]+ trade$/);
+    expect(picks.find((p) => p.outcome === "waiting")?.reason).toMatch(/^not enough free cash: ₹\d[\d,]* left for a ₹[\d,]+ trade with its fee$/);
   });
 });
 

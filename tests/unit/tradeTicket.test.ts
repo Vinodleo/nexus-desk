@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Position } from "../../src/types";
 import { TradeTicket, ticketFor, ticketKind, ticketWhy } from "../../src/components/ledger/TradeTicket";
+import { US_FEE_RATE_PER_SIDE } from "../../src/shared/usMarket";
 
 // The ticket a newly opened trade unfolds into: what was bought and why, and
 // on paper the free cash it took.
@@ -20,9 +21,9 @@ const sol: Position = { ...qqq, id: "s1", symbol: "SOL/INR", entryPrice: 14000, 
 
 describe("a trade's ticket", () => {
   it("takes the trade's cost from the free cash on paper, and has none live", () => {
-    // ₹72,812 × 1.3732 = ₹99,985.44.
+    // ₹72,812 × 1.3732 = ₹99,985.44, and Alpaca's fees to open it.
     expect(ticketFor(qqq, "server", { money: 1_000_000, freeBefore: 800_008 }).cash).toEqual({
-      money: 1_000_000, before: 800_008, after: 800_008 - 72812 * 1.3732,
+      money: 1_000_000, before: 800_008, after: 800_008 - 72812 * 1.3732 * (1 + US_FEE_RATE_PER_SIDE),
     });
     expect(ticketFor(qqq, "server", { money: 1_000_000, freeBefore: 50_000 }).cash?.after).toBe(0);
     expect(ticketFor(sol, "server", { money: 1_000_000, freeBefore: 800_000 }).cash).toBeUndefined();
@@ -57,8 +58,8 @@ describe("a trade's ticket", () => {
     expect(ticket.textContent).toContain("Stop₹71,029");
     // 1.3732 × ₹1,783 = ₹2,448 lost at the stop.
     expect(ticket.textContent).toContain("At the stop, before fees−₹2,448");
-    expect(screen.getByTestId("ticket-cash").textContent).toContain("Free cash₹8,00,008 → ₹7,00,023");
-    expect(screen.getByTestId("ticket-cash").textContent).toContain("₹99,985 is tied up in this trade until it closes.");
+    expect(screen.getByTestId("ticket-cash").textContent).toContain("Free cash₹8,00,008 → ₹7,00,018");
+    expect(screen.getByTestId("ticket-cash").textContent).toContain("₹99,990 is tied up in this trade until it closes.");
     // The bar drains from 80% free to 70%.
     const drain = ticket.querySelector(".nx-ticket-drain") as HTMLElement;
     expect(drain.style.width).toBe("70%");
