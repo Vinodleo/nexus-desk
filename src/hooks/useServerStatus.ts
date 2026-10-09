@@ -17,6 +17,8 @@ export interface ServerStatus {
   backup?: { configured: boolean; /** The bucket settings the server can't see (names; absent from older servers). */ missing?: string[]; keepDays: number; lastAt: number | null; files: number; lastBytes: number; lastError: string | null; lastErrorAt: number | null };
   /** The check that the coins at CoinDCX match the live trades (server/coinDcxCheck.ts); missing on an older server. */
   coinDcxCheck?: CoinDcxCheckReport;
+  /** Whether the server sends its errors to Sentry (server/errorReports.ts, SENTRY_DSN); missing on an older server. */
+  errorReports?: { on: boolean };
   /** Gemini reviewing the server autopilot's trades, today (India time); missing on an older server. */
   reviewer?: {
     configured: boolean;

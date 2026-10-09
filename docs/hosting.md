@@ -225,6 +225,28 @@ A restore brings back that day's open positions. With live trades, check
 them against CoinDCX afterwards: Settings → Server → **CoinDCX check** does it
 about 10 minutes after the restart.
 
+### Error reports (Sentry)
+
+With `SENTRY_DSN` set, the server sends its errors to Sentry (the
+`nexus-desk` project): crashes, errors in its routes and every
+`console.error` (a failed check, backup or scan), so a problem shows up there
+without a screenshot of the logs (`server/errorReports.ts`). Errors only, no
+tracing. Request headers, cookies and bodies aren't sent, and tokens, keys and
+email addresses are masked in every message. One message is sent at most 5
+times an hour, and 100 reports a day in all, well inside Sentry's free plan.
+
+**Set it up once:** in Sentry, **Settings → Projects → nexus-desk → Client
+Keys (DSN)**, copy the DSN (it starts `https://` and ends in a number), then
+in Cloud Shell:
+
+```
+fly secrets set SENTRY_DSN="https://…" -a nexus-desk-vinodleo
+```
+
+The app restarts. **Settings → Server → Error reports** says **On**, and
+Sentry shows "Nexus Desk server started (error reports on)" within a minute.
+To stop it: `fly secrets unset SENTRY_DSN -a nexus-desk-vinodleo`.
+
 ## Checking it works
 
 - **In the app, Settings → Server:**

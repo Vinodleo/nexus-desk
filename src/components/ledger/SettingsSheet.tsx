@@ -102,6 +102,14 @@ export function coinDcxCheckSummary(status: ServerStatus | null, now: number = D
   return { sub: `Checked ${formatSpan(now - c.lastAt)} ago: ${what}${extra}`, badge: "OK", tone: "text-gain" };
 }
 
+/** The Error reports row: whether the server's errors go to Sentry. */
+export function errorReportsSummary(status: ServerStatus | null): { sub: string; badge: string; tone: string } {
+  const e = status?.errorReports;
+  if (!status || !e) return { sub: "The server's errors, sent to Sentry", badge: "—", tone: "text-muted" };
+  if (!e.on) return { sub: "Off: set SENTRY_DSN on the server to send its errors to Sentry (docs/hosting.md)", badge: "Off", tone: "text-muted" };
+  return { sub: "The server's errors go to Sentry (nexus-desk), without keys, tokens or emails", badge: "On", tone: "text-gain" };
+}
+
 /** "45 sec", "12 min", "3 h", "2 days". */
 export function formatSpan(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000));
@@ -736,6 +744,12 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
           <Row label="CoinDCX check" sub={coinDcxCheckSummary(props.serverStatus ?? null).sub}>
             {(() => {
               const { badge, tone } = coinDcxCheckSummary(props.serverStatus ?? null);
+              return <span className={tone}>{badge}</span>;
+            })()}
+          </Row>
+          <Row label="Error reports" sub={errorReportsSummary(props.serverStatus ?? null).sub}>
+            {(() => {
+              const { badge, tone } = errorReportsSummary(props.serverStatus ?? null);
               return <span className={tone}>{badge}</span>;
             })()}
           </Row>

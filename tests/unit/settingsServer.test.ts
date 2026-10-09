@@ -8,7 +8,7 @@ vi.mock("../../src/context/AuthContext", () => ({
 }));
 vi.mock("../../src/hooks/usePWAInstall", () => ({ usePWAInstall: () => ({ isInstallable: false, isInstalled: false, install: vi.fn() }) }));
 
-import { SettingsSheet, backupSummary, coinDcxCheckSummary, formatSpan, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
+import { SettingsSheet, backupSummary, coinDcxCheckSummary, errorReportsSummary, formatSpan, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
 
 import { cleanMarketLimits } from "../../src/shared/marketLimits";
 afterEach(cleanup);
@@ -339,6 +339,26 @@ describe("Settings: the CoinDCX check", () => {
     render(createElement(SettingsSheet, props({ serverStatus: status({ ...on, configured: false }) })));
     expect(screen.getByText("CoinDCX check")).toBeTruthy();
     expect(screen.getByText("No CoinDCX keys on the server: needed only for live trading")).toBeTruthy();
+  });
+});
+
+describe("Settings: error reports", () => {
+  const status = (errorReports?: object) =>
+    ({ startedAt: 0, uptimeSec: 60, cloudRun: null, storage: { dir: "/data", kept: true, note: "" }, scanner: { lastTickAt: 0, lastCycleDoneAt: 0, stalled: false }, errorReports }) as any;
+
+  it("say whether the server's errors go to Sentry", () => {
+    expect(errorReportsSummary(null)).toMatchObject({ badge: "—" });
+    expect(errorReportsSummary(status())).toMatchObject({ badge: "—" });
+    expect(errorReportsSummary(status({ on: false }))).toEqual({
+      sub: "Off: set SENTRY_DSN on the server to send its errors to Sentry (docs/hosting.md)", badge: "Off", tone: "text-muted",
+    });
+    expect(errorReportsSummary(status({ on: true }))).toMatchObject({ badge: "On", tone: "text-gain" });
+  });
+
+  it("show in the Server section", () => {
+    render(createElement(SettingsSheet, props({ serverStatus: status({ on: true }) })));
+    expect(screen.getByText("Error reports")).toBeTruthy();
+    expect(screen.getByText("The server's errors go to Sentry (nexus-desk), without keys, tokens or emails")).toBeTruthy();
   });
 });
 
