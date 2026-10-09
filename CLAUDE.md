@@ -122,6 +122,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     paper equity includes the open trades' profit; under it a ring shows the free cash against what's in trades (`MoneyRing`).
     Breakout and momentum trades (no target) sit on a line in R (`riskLadder`), every trade shows where it is in R, and
     tapping one folds its numbers open.
+  - Three 5-minute trades lost in a row stop autopilot until the owner looks (the app's kill switch, the server's
+    pause; `lossStreak`, `LOSS_STREAK_LIMIT`). The slower strategies' and daily trades neither count nor break the run
+    (owner's call, 8 Oct, `countsTowardStreak`): breakout and momentum win about one trade in three or four by design.
 - **Tax report (Book → Breakdown, owner's ask):** `src/services/taxReport.ts`, `TaxReportCard`. An Indian financial year's
   closed trades (1 April to 31 March, India time), live and paper apart (`isLiveOrder` on closed trades; only live are
   taxed): coins as crypto (30% plus cess on each winner's gain before fees, losses offset nothing, 1% TDS on each sale),

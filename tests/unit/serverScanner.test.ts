@@ -298,11 +298,12 @@ describe("server autopilot", () => {
   });
 
   /** The guardian closes a SOL position at a loss, as it would with the app closed. */
-  async function guardianLoss(id: string, symbol = "SOL/INR") {
+  async function guardianLoss(id: string, symbol = "SOL/INR", strategy?: "breakout") {
     const guardian = await import("../../server/guardian");
     guardian.daemonPositions.set(id, {
       id, userId: "owner", symbol, direction: "LONG", entryPrice: 11700, currentPrice: 11700, isSelfApproved: true,
       quantity: 0.5, stopLoss: 11650, takeProfit: 12000, openTime: new Date(Date.now() - 10 * MIN).toISOString(),
+      ...(strategy ? { strategy } : {}),
     });
     guardian.evaluateDaemonPositions(symbol, 11600);
     expect(guardian.daemonPositions.has(id)).toBe(false);
@@ -337,6 +338,17 @@ describe("server autopilot", () => {
     await post("/api/desk/state", { ...on, lossStreak: 0 });
     await runScanCycle(now + 5 * MIN);
     expect(reportsSince("owner", now).at(-1)!.newProposals[0].status).toBe("APPROVED");
+  });
+
+  it("doesn't pause for the slower strategies' losses: only 5-minute trades count", async () => {
+    await post("/api/desk/state", { ...on, lossStreak: 1 });
+    await new Promise((r) => setTimeout(r, 5));
+    // Two breakout trades stopped out while the app is closed.
+    await guardianLoss("b1", "ETH/INR", "breakout");
+    await guardianLoss("b2", "BTC/INR", "breakout");
+    const { runScanCycle, reportsSince } = await import("../../server/scanner/scannerService");
+    await runScanCycle(now);
+    expect(reportsSince("owner", 0)[0].newProposals[0].status).toBe("APPROVED");
   });
 
   it("counts the guardian's closes since the app's last update against the daily loss limit", async () => {
