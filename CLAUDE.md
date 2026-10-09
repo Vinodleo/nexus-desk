@@ -270,9 +270,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   3. More money for proven traders: size each trade by the trader's record, within the owner's limits.
 - **Watch the US traders' records:** check them after the session-hours fix. If losses are still well past −1R,
   look at IEX bid/ask spreads next.
-- **Two new traders (added 28 Sept):** Nora Opening Range (US and Nifty stocks trading 2x their usual
-  opening volume) and Ravi Late-Day Momentum (SPY, QQQ, IWM). They trade only once their records are positive over 10+ setups.
-  Check "Traders with your exits" after a week or two; if either stays negative, remove it.
+- **Two new traders (added 28 Sept), checked 9 Oct:** Nora Opening Range (US and Nifty stocks trading 2x their usual
+  opening volume) stays: US +0.13R over 15 setups (trading, judged +0.05R), India −0.12R over 36 (paused by her
+  record). Ravi Late-Day Momentum (SPY, QQQ, IWM) was removed (owner's call, 9 Oct): −0.09R over 17 setups, 35% won,
+  wins smaller than losses. His kept trades are dropped from the records (`RETIRED_TRADERS` in `exitExpectancy.ts`);
+  the Lab's replays drop him on their next run.
 - **Trading slower (owner's call, 2 Oct):** two years of replays and the machine-learning test showed every 5-minute
   trader losing about its costs. (The coin figures below were measured at 0.05% a side; CoinDCX's real 0.59% came in
   on 4 Oct, and the replays rerun with it: their new records decide.) Step 1: the same traders on 1-hour and 1-day candles (the Lab's timeframe switch).
