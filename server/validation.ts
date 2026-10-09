@@ -44,7 +44,7 @@ export const executeTradeBody = z.object({
   confirmLiveOrder: z.unknown().optional(),
   positionId: positionId.optional(),
   /** The position the app opens with this order: the guardian takes it at once (an older app sends none). */
-  position: z.lazy(() => syncedPosition).optional(),
+  position: z.lazy(() => appPosition).optional(),
 });
 
 export const closePositionBody = z.object({
@@ -66,7 +66,8 @@ export const liveTestBody = z.object({
 
 // ---------- guardian ----------
 
-const syncedPosition = z
+/** A position the app opens, sent with its order (/api/execute-trade). */
+export const appPosition = z
   .object({
     id: positionId,
     symbol,
@@ -77,7 +78,7 @@ const syncedPosition = z
     takeProfit: z.number().finite(),
     openTime: z.string().max(64),
     // Non-critical fields: a bad value is dropped rather than failing the
-    // whole sync, which would stop the guardian updating every position.
+    // whole order.
     currentPrice: positiveNumber.optional().catch(undefined),
     highestPrice: positiveNumber.optional().catch(undefined),
     lowestPrice: positiveNumber.optional().catch(undefined),
@@ -98,15 +99,9 @@ const syncedPosition = z
     timeframe: z.enum(["1d"]).optional().catch(undefined),
     strategy: z.enum(["breakout", "momentum"]).optional().catch(undefined),
   })
-  // The client restores its book from what it synced, so keep its other
-  // display fields; the guardian only reads the ones validated above.
+  // The app shows the guardian's copy, so keep its other display fields; the
+  // guardian only reads the ones validated above.
   .passthrough();
-
-export const syncPositionsBody = z.object({
-  positions: z.array(syncedPosition).max(50),
-  /** Positions this app closed or dropped lately: only these leave the guardian (an older app sends none). */
-  closedIds: z.array(z.string().min(1).max(128)).max(500).optional(),
-});
 
 /** A closed trade as the app keeps it (HistoricalTrade): the fields the book keeps. */
 const appClosedTrade = z.object({

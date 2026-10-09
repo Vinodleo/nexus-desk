@@ -1091,7 +1091,7 @@ export default function App() {
           isPaperTrade: !isLiveExecution,
           confirmLiveOrder: isLiveExecution,
           positionId: newPosition.id,
-          // The guardian takes the position with its order, without waiting for the next push.
+          // The guardian holds the position from its order on (the only copy).
           position: newPosition,
         }),
       })
