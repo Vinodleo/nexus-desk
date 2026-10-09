@@ -300,37 +300,7 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
   // Update or insert current positions
   for (const p of positions) {
     if (!p || typeof p.id !== "string") continue;
-    // Closed by the guardian, or by an app: another device's older book can't bring it back.
-    if (closedPositionIds.has(p.id) || (appClosedIds.has(p.id) && !daemonPositions.has(p.id))) {
-      rejectedResurrections.push(p.id);
-      continue;
-    }
-
-    const existing = daemonPositions.get(p.id);
-    if (existing && existing.userId && existing.userId !== uid) continue; // someone else's position id
-    // A position the app just opened: tell the user's devices. (Only a
-    // fresh one: an old position re-sent after the server lost its state
-    // isn't news.)
-    if (!existing && Date.now() - Date.parse(p.openTime) < NEW_POSITION_NOTIFY_MS) {
-      void notifyUser(uid, tradeOpenedMessage(p, "app"));
-    }
-
-    // A live position is guarded only while the server's registry says it's
-    // open, and on the server's own quantity — never the client's claim.
-    const live = getLivePosition(p.id);
-    const isLive = !!live && live.status === "OPEN" && live.userId === uid;
-    daemonPositions.set(p.id, {
-      ...p,
-      userId: uid,
-      isLiveOrder: isLive,
-      ...(isLive ? { quantity: live!.quantity } : {}),
-      ...mergeSyncedGuardState(p.direction, p.entryPrice, existing, p),
-      openedByServer: existing?.openedByServer,
-      clientSeen: existing?.openedByServer ? true : undefined,
-      // Set by the server when it opened a daily trade: an app that doesn't know the fields keeps them.
-      ...(existing?.timeframe ? { timeframe: existing.timeframe } : {}),
-      ...(existing?.strategy ? { strategy: existing.strategy } : {}),
-    });
+    if (takeAppPosition(uid, p, closedPositionIds) === "refused") rejectedResurrections.push(p.id);
   }
 
   // The server's autopilot and the app's opened the same coin from the same
@@ -356,6 +326,55 @@ router.post("/api/daemon/sync-positions", validate({ body: syncPositionsBody }),
     lastSavedAt: daemonLastSavedAt,
   });
 });
+
+/**
+ * Takes a position from the app (opened there, or in its push of open
+ * trades), merging it with the guardian's copy. Refused if the guardian or
+ * an app closed it ("refused": another device's older book can't bring it
+ * back); skipped if the id is someone else's.
+ */
+function takeAppPosition(uid: string, p: DaemonPosition, closedPositionIds: Set<string>): "taken" | "refused" | "skipped" {
+  // Closed by the guardian, or by an app: another device's older book can't bring it back.
+  if (closedPositionIds.has(p.id) || (appClosedIds.has(p.id) && !daemonPositions.has(p.id))) return "refused";
+
+  const existing = daemonPositions.get(p.id);
+  if (existing && existing.userId && existing.userId !== uid) return "skipped"; // someone else's position id
+  // A position the app just opened: tell the user's devices. (Only a
+  // fresh one: an old position re-sent after the server lost its state
+  // isn't news.)
+  if (!existing && Date.now() - Date.parse(p.openTime) < NEW_POSITION_NOTIFY_MS) {
+    void notifyUser(uid, tradeOpenedMessage(p, "app"));
+  }
+
+  // A live position is guarded only while the server's registry says it's
+  // open, and on the server's own quantity — never the client's claim.
+  const live = getLivePosition(p.id);
+  const isLive = !!live && live.status === "OPEN" && live.userId === uid;
+  daemonPositions.set(p.id, {
+    ...p,
+    userId: uid,
+    isLiveOrder: isLive,
+    ...(isLive ? { quantity: live!.quantity } : {}),
+    ...mergeSyncedGuardState(p.direction, p.entryPrice, existing, p),
+    openedByServer: existing?.openedByServer,
+    clientSeen: existing?.openedByServer ? true : undefined,
+    // Set by the server when it opened a daily trade: an app that doesn't know the fields keeps them.
+    ...(existing?.timeframe ? { timeframe: existing.timeframe } : {}),
+    ...(existing?.strategy ? { strategy: existing.strategy } : {}),
+  });
+  return "taken";
+}
+
+/**
+ * A position the app just opened (with its order, /api/execute-trade): the
+ * guardian guards it from now on, without waiting for the app's next push.
+ */
+export function openAppPosition(uid: string, position: DaemonPosition): boolean {
+  const closedPositionIds = new Set(daemonClosedTrades.map((t) => t.positionId));
+  const taken = takeAppPosition(uid, position, closedPositionIds) === "taken";
+  if (taken) saveDaemonStateToDisk();
+  return taken;
+}
 
 // Client pulls closed events that occurred server-side while client was asleep
 router.get("/api/daemon/closed-events", validate({ query: closedEventsQuery }), (req: Request, res: Response) => {

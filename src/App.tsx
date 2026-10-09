@@ -1106,6 +1106,8 @@ export default function App() {
           isPaperTrade: !isLiveExecution,
           confirmLiveOrder: isLiveExecution,
           positionId: newPosition.id,
+          // The guardian takes the position with its order, without waiting for the next push.
+          position: newPosition,
         }),
       })
         .then((res) => res.json())
