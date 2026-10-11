@@ -68,29 +68,26 @@ describe("the countdown", () => {
 });
 
 describe("the heartbeat on screen", () => {
-  it("shows the countdown and the hour, pulses when a newer scan comes in, and grows its bar in", () => {
+  it("shows the countdown and the hour, and pulses when a newer scan comes in", () => {
     const scans = [...hour, beat(T + DUE)];
     const { rerender } = render(createElement(ScanHeartbeat, { lastScanAt: T + DUE, scans, now: T + 68_000 }));
     expect(screen.getByText("Next scan in 4:00")).toBeTruthy();
-    expect(screen.getByRole("img").getAttribute("aria-label")).toBe("Last hour: 12 of 12 scans ran, 2 found trades");
-    // Four of the five minutes left: the ring is four-fifths full.
-    expect(Number(screen.getByTestId("scan-ring").getAttribute("stroke-dashoffset"))).toBeCloseTo(2 * Math.PI * 15 * 0.2, 1);
-    // No pulse for the scan already there when shown, and no bar grows in.
+    expect(screen.getByTestId("scan-hour").textContent).toBe("Last hour: 12 of 12 scans ran, 2 found trades");
+    // The beat travels along the line at its resting pace; no ring for the scan already there when shown.
+    expect(screen.getByTestId("scan-line").getAttribute("class")).toContain("nx-ecg");
+    expect(screen.getByTestId("scan-line").getAttribute("class")).not.toContain("nx-ecg-fast");
     expect(screen.queryByTestId("scan-pulse")).toBeNull();
-    expect(screen.getAllByTestId("scan-beat").some((b) => b.className.includes("nx-beat-in"))).toBe(false);
 
     const next = T + 5 * MIN + DUE;
     rerender(createElement(ScanHeartbeat, { lastScanAt: next, scans: [...scans, beat(next, 1)], now: next + 12_000 }));
     expect(screen.getByTestId("scan-pulse")).toBeTruthy();
-    const beats = screen.getAllByTestId("scan-beat");
-    expect(beats[11].className).toContain("nx-beat-in");
-    expect(beats[11].className).toContain("bg-accent");
-    expect(beats[10].className).not.toContain("nx-beat-in");
+    // The new scan found a trade: three in the hour now.
+    expect(screen.getByTestId("scan-hour").textContent).toBe("Last hour: 12 of 12 scans ran, 3 found trades");
   });
 
-  it("says when the scan is running", () => {
+  it("beats faster while the scan is running", () => {
     render(createElement(ScanHeartbeat, { lastScanAt: T - 5 * MIN + DUE, scans: hour, now: T + 20_000 }));
     expect(screen.getByText("Scanning now…")).toBeTruthy();
-    expect(screen.getByTestId("scan-ring").getAttribute("class")).toContain("nx-pulse-slow");
+    expect(screen.getByTestId("scan-line").getAttribute("class")).toContain("nx-ecg-fast");
   });
 });

@@ -396,6 +396,17 @@ describe("next on the desk", () => {
 });
 
 describe("stopping from the Floor", () => {
+  it("says whether the autopilot is on, with a dot that breathes while it works", () => {
+    const { rerender } = render(createElement(LedgerFloor, props()));
+    const card = () => screen.getByRole("region", { name: "Autopilot" });
+    expect(card().textContent).toContain("Autopilot on");
+    expect(card().querySelector(".nx-fold")!.className).not.toContain("nx-fold-open");
+    expect(card().querySelector(".nx-ring")).toBeTruthy();
+    rerender(createElement(LedgerFloor, props({ autopilotOn: false })));
+    expect(card().textContent).toContain("Autopilot offOff · you approve every trade");
+    expect(card().querySelector(".nx-ring")).toBeNull();
+  });
+
   it("stops all trading only when held, and resumes with a tap", () => {
     vi.useFakeTimers();
     try {
@@ -408,6 +419,11 @@ describe("stopping from the Floor", () => {
       act(() => vi.advanceTimersByTime(HOLD_MS));
       expect(p.onToggleStop).toHaveBeenCalledTimes(1);
       rerender(createElement(LedgerFloor, { ...p, stopped: true }));
+      // The card says it's stopped, and a note unfolds saying the stops are still watched.
+      const card = screen.getByRole("region", { name: "Autopilot" });
+      expect(card.textContent).toContain("StoppedNo new trades until you resume");
+      expect(card.querySelector(".nx-fold")!.className).toContain("nx-fold-open");
+      expect(card.textContent).toContain("The guardian still watches every stop on the server");
       fireEvent.click(screen.getByRole("button", { name: /Resume/ }));
       expect(p.onToggleStop).toHaveBeenCalledTimes(2);
     } finally {

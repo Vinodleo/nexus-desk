@@ -56,9 +56,9 @@ export const Switch: React.FC<{
       checked ? "bg-accent" : "bg-line"
     }`}
   >
-    {/* The knob stretches while pressed and slides when let go, like a phone's own switches. */}
+    {/* The knob stretches while pressed and springs across when let go, like a phone's own switches. */}
     <span
-      className={`absolute top-1 w-6 h-6 rounded-full shadow-sm transition-all duration-200 group-active:w-[30px] ${
+      className={`absolute top-1 w-6 h-6 rounded-full shadow-sm transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-active:w-[30px] ${
         checked ? "left-[24px] group-active:left-[18px] bg-on-accent" : "left-1 bg-surface"
       }`}
     />

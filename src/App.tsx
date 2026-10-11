@@ -1688,7 +1688,7 @@ export default function App() {
   ).length;
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col pb-20 bg-canvas text-ink font-ui">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col pb-28 bg-canvas text-ink font-ui">
 
       <AwayNotice notice={away.notice} onDismiss={away.dismiss} onOpenBook={() => setActiveTab("book")} />
       <TradeTicket

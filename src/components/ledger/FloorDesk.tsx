@@ -202,7 +202,7 @@ export const StrategyTabs: React.FC<{
           role="tab"
           aria-selected={i === at}
           onClick={() => onChange(t.id)}
-          className={`relative min-h-9 px-1 text-xs font-semibold truncate cursor-pointer transition-colors ${i === at ? "text-ink" : "text-muted"}`}
+          className={`relative min-h-9 px-0 text-xs font-semibold tracking-tight truncate cursor-pointer transition-colors ${i === at ? "text-ink" : "text-muted"}`}
         >
           {t.short}
         </button>

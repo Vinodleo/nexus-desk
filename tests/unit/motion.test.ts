@@ -234,6 +234,18 @@ describe("the tabs", () => {
     expect(getByRole("button", { name: "Queue, 2 waiting" }).querySelector(".nx-badge-pop")?.textContent).toBe("2");
   });
 
+  it("the bar floats as a pill above the bottom edge, rising in when the app opens", async () => {
+    const { BottomNavBar } = await import("../../src/components/BottomNavBar");
+    const { getByRole, getByTestId } = render(createElement(BottomNavBar, { activeTab: "floor", onTabChange: () => {}, pendingQueueCount: 0 }));
+    const nav = getByRole("navigation", { name: "Main" });
+    expect(nav.className).toContain("left-3 right-3");
+    expect(nav.className).not.toContain("border-t");
+    const pill = nav.firstElementChild as HTMLElement;
+    expect(pill.className).toContain("rounded-full");
+    expect(pill.className).toContain("nx-dock-in");
+    expect(getByTestId("tab-blob").className).toContain("rounded-full");
+  });
+
   it("the indicator's blob stretches as it moves to a new tab, each time, but not when the app opens", async () => {
     const { BottomNavBar } = await import("../../src/components/BottomNavBar");
     const bar = (activeTab: any) => createElement(BottomNavBar, { activeTab, onTabChange: () => {}, pendingQueueCount: 0 });

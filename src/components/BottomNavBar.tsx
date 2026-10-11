@@ -35,22 +35,23 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onTabChan
   const moved = activeTab !== firstTab.current || firstTab.current === null;
   if (moved) firstTab.current = null;
   return (
+    // A pill floating above the bottom edge (clear of the phone's home bar), rising in when the app opens.
     <nav
       aria-label="Main"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-surface border-t border-line pt-1 px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] select-none font-ui"
+      className="fixed left-3 right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 select-none font-ui pointer-events-none"
     >
-      <div className="relative max-w-lg mx-auto grid grid-cols-5">
+      <div className="nx-dock-in pointer-events-auto relative max-w-md mx-auto grid grid-cols-5 p-1.5 rounded-full bg-surface/90 backdrop-blur-md border border-line shadow-[0_10px_30px_rgba(0,0,0,0.16)]">
         {/* A soft blob behind the active tab that slides to the new one, stretching as it goes (not on first show). */}
         <span
           aria-hidden="true"
           data-testid="tab-indicator"
-          className="nx-tab-indicator absolute inset-y-1 left-0 w-1/5 px-1.5 pointer-events-none"
+          className="nx-tab-indicator absolute top-1.5 bottom-1.5 left-1.5 w-[calc((100%-0.75rem)/5)] pointer-events-none"
           style={{ transform: `translateX(${activeIndex * 100}%)` }}
         >
           <span
             key={activeIndex}
             data-testid="tab-blob"
-            className={`block w-full h-full rounded-2xl bg-accent-soft${moved ? " nx-blob-squish" : ""}`}
+            className={`block w-full h-full rounded-full bg-accent-soft${moved ? " nx-blob-squish" : ""}`}
           />
         </span>
         {TABS.map(({ id, label, icon: Icon }) => {
@@ -63,7 +64,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({ activeTab, onTabChan
               onClick={() => onTabChange(id)}
               aria-current={isActive ? "page" : undefined}
               aria-label={badge ? `${label}, ${pendingQueueCount} waiting` : label}
-              className={`relative min-h-14 flex flex-col items-center justify-center gap-1 text-[11px] cursor-pointer transition-colors ${
+              className={`relative min-h-12 flex flex-col items-center justify-center gap-0.5 rounded-full text-[11px] cursor-pointer transition-colors ${
                 isActive ? "text-accent font-bold" : "text-muted font-medium hover:text-ink"
               }`}
             >
