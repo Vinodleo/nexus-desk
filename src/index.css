@@ -687,3 +687,25 @@ button:not(:disabled):active {
 @media (prefers-reduced-motion: reduce) {
   button:not(:disabled):active { scale: none; }
 }
+
+/* The Floor: the strategy tabs' pill, the money ring's segments sweeping round,
+   the desk's next steps coming in, and a strategy's slot filling. */
+.nx-strategy-pill { transition: transform 500ms cubic-bezier(0.34, 1.4, 0.64, 1); }
+.nx-ring-seg {
+  transition: stroke-dasharray 1100ms cubic-bezier(0.2, 0.8, 0.2, 1), stroke-dashoffset 1100ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 400ms ease;
+}
+@keyframes nx-step-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.nx-step-in { animation: nx-step-in 600ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes nx-slot-pop {
+  0% { transform: scale(0.3); }
+  60% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+.nx-slot-pop { animation: nx-slot-pop 550ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-strategy-pill, .nx-ring-seg { transition: none; }
+  .nx-step-in, .nx-slot-pop { animation: none; }
+}

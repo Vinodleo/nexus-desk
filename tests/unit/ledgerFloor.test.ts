@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LedgerFloor, riskLadder, rMultiple, type LedgerFloorProps } from "../../src/components/ledger/LedgerFloor";
+import { NextOnDesk, floorGroups, istClock, nextOnDesk, untilText } from "../../src/components/ledger/FloorDesk";
+import { DEFAULT_MARKET_LIMITS } from "../../src/shared/marketLimits";
 import { formatMoney, formatPct, formatPrice } from "../../src/components/ledger/format";
 import { HOLD_MS } from "../../src/components/ledger/ui";
 import type { Position } from "../../src/types";
@@ -54,11 +56,11 @@ describe("LedgerFloor", () => {
     expect(text).toContain("Paper equity₹94,507.00");
     expect(text).toContain("−₹5,688.13");
     // The money ring: free cash is the paper money less what the open trade took (0.0012 BTC at ₹58,42,100 is
-    // ₹7,010.52, and CoinDCX's 0.59% to open it ₹41.36), and the ring is filled to the share in trades (7.5%).
+    // ₹7,010.52, and CoinDCX's 0.59% to open it ₹41.36), and the ring has one segment, the trade's group.
     expect(screen.getByTestId("free-cash").textContent).toBe("Free cash₹87,432.08");
     expect(screen.getByTestId("in-trades").textContent).toBe("In 1 trade₹7,052");
     expect(screen.getByTestId("money-ring").textContent).toBe("7%in trades");
-    expect(screen.getByTestId("money-ring").style.getPropertyValue("--nx-ring")).toBe("7.5");
+    expect(screen.getAllByTestId("ring-seg")).toHaveLength(1);
     // The ring says what's in trades, so the autopilot card doesn't repeat it on paper.
     expect(text).not.toContain("9.9%");
     expect(text).toContain("₹2,500");
@@ -93,7 +95,7 @@ describe("LedgerFloor", () => {
     try {
       const p = props();
       render(createElement(LedgerFloor, p));
-      const button = () => screen.getByRole("button", { name: /hold/i });
+      const button = () => screen.getByRole("button", { name: /to close/i });
       expect(button().textContent).toBe("Hold to close");
       fireEvent.click(button());
       fireEvent.pointerDown(button());
@@ -107,7 +109,7 @@ describe("LedgerFloor", () => {
       expect(button().textContent).toBe("Hold to close");
 
       fireEvent.pointerDown(button());
-      expect((screen.getByTestId("hold-fill") as HTMLElement).style.transform).toBe("scaleX(1)");
+      expect((button().querySelector("[data-testid=hold-fill]") as HTMLElement).style.transform).toBe("scaleX(1)");
       act(() => vi.advanceTimersByTime(HOLD_MS));
       expect(p.onClosePosition).toHaveBeenCalledTimes(1);
       expect(p.onClosePosition).toHaveBeenCalledWith(btc);
@@ -281,5 +283,135 @@ describe("a trade's line in R (breakout and momentum have no target)", () => {
   it("says what a stop above the entry locks in", () => {
     render(createElement(LedgerFloor, props({ positions: [{ ...breakout, stopLoss: 105 }] })));
     expect(screen.getByTestId("position-numbers").textContent).toContain("At the stop, before fees+₹20 locked in");
+  });
+});
+
+const t0 = Date.parse("2026-10-12T00:09:52Z"); // Monday 5:39:52 am in India
+const usBreakout: Position = { ...breakout, id: "u1" };
+const goldFund: Position = { ...breakout, id: "f1", symbol: "GLD.US" };
+const momentum: Position = { ...breakout, id: "m1", symbol: "AVGO.US", strategy: "momentum" };
+const coinBreakout: Position = { ...btc, id: "c1", symbol: "SOL/INR", strategy: "breakout", stopLoss: 5700000, initialStopLoss: 5700000 };
+
+describe("the open trades by strategy", () => {
+  it("puts each trade with its strategy, on that strategy's own slots, and the rest together", () => {
+    const groups = floorGroups([usBreakout, goldFund, momentum, coinBreakout, btc]);
+    expect(groups.map((g) => [g.id, g.positions.map((p) => p.id), g.slots])).toEqual([
+      ["us-breakout", ["u1"], 3],
+      ["funds", ["f1"], 3],
+      ["us-momentum", ["m1"], 3],
+      ["coin-breakout", ["c1"], 3],
+      ["other", ["p1"], null],
+    ]);
+    // A strategy switched off (no slots) with nothing open isn't shown; one with a trade still open is.
+    const limits = { ...DEFAULT_MARKET_LIMITS, coins: { ...DEFAULT_MARKET_LIMITS.coins, breakoutTrades: 0 }, us: { ...DEFAULT_MARKET_LIMITS.us, fundsTrades: 0 } };
+    expect(floorGroups([goldFund], limits).map((g) => g.id)).toEqual(["us-breakout", "funds", "us-momentum"]);
+    expect(floorGroups([], limits).map((g) => g.id)).toEqual(["us-breakout", "us-momentum"]);
+  });
+
+  it("shows each group with its slots in use, and what an empty one waits for", () => {
+    render(createElement(LedgerFloor, props({ positions: [usBreakout, goldFund], marketLimits: DEFAULT_MARKET_LIMITS })));
+    const us = screen.getByTestId("group-us-breakout");
+    expect(us.textContent).toContain("US breakout1 of 3");
+    expect(Array.from(us.querySelectorAll("[data-testid=slot]")).map((e) => e.getAttribute("data-used"))).toEqual(["true", "false", "false"]);
+    expect(screen.getByTestId("group-funds").textContent).toContain("GLD.US");
+    expect(screen.getByTestId("group-coin-breakout").textContent).toContain("No coin trade. It buys one that closes above its 55-day high; next check");
+    expect(screen.queryByTestId("group-other")).toBeNull();
+  });
+
+  it("shows one strategy from its tab or the ring's legend, and all again", () => {
+    render(createElement(LedgerFloor, props({ positions: [usBreakout, goldFund, btc] })));
+    expect(screen.getByTestId("group-us-breakout")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Funds" }));
+    expect(screen.queryByTestId("group-us-breakout")).toBeNull();
+    expect(screen.getByTestId("group-funds")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Funds" }).getAttribute("aria-selected")).toBe("true");
+    // The pill slides under the tab picked (All, Breakout, Funds, …: the third).
+    expect(screen.getByTestId("strategy-pill").style.transform).toBe("translateX(200%)");
+    fireEvent.click(screen.getByRole("tab", { name: "All" }));
+    expect(screen.getByTestId("group-us-breakout")).toBeTruthy();
+    // The legend picks a group too, and picking it again shows all.
+    fireEvent.click(screen.getByRole("button", { name: /5-minute and daily trades/ }));
+    expect(screen.queryByTestId("group-funds")).toBeNull();
+    expect(screen.getByTestId("group-other")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /5-minute and daily trades/ }));
+    expect(screen.getByTestId("group-funds")).toBeTruthy();
+  });
+
+  it("goes back to all when the group shown closes its last trade, once it has slid away", () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(createElement(LedgerFloor, props({ positions: [usBreakout, btc] })));
+      fireEvent.click(screen.getByRole("tab", { name: "Others" }));
+      expect(screen.queryByTestId("group-us-breakout")).toBeNull();
+      rerender(createElement(LedgerFloor, props({ positions: [usBreakout] })));
+      act(() => vi.advanceTimersByTime(1400));
+      expect(screen.getByTestId("group-us-breakout")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a group on screen while its last trade slides away", () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(createElement(LedgerFloor, props({ positions: [usBreakout, btc] })));
+      rerender(createElement(LedgerFloor, props({ positions: [usBreakout] })));
+      expect(screen.getByTestId("group-other").textContent).toContain("Closed");
+      act(() => vi.advanceTimersByTime(1400));
+      expect(screen.queryByTestId("group-other")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rolls each trade's P&L and R digit by digit", () => {
+    render(createElement(LedgerFloor, props({ positions: [usBreakout] })));
+    const pnl = screen.getByTestId("position-pnl");
+    expect(pnl.textContent).toBe("+₹60.00");
+    expect(pnl.querySelectorAll(".nx-odo-digit")).toHaveLength(4);
+    expect(screen.getByTestId("r-pill").querySelectorAll(".nx-odo-digit")).toHaveLength(3);
+  });
+});
+
+describe("next on the desk", () => {
+  it("lists the next checks and openings in India time, soonest first, the first counting down", () => {
+    expect(nextOnDesk(t0).map((s) => [s.id, istClock(s.at).time, istClock(s.at).half, istClock(s.at).day])).toEqual([
+      ["coin-check", "5:40", "am", "Mon"],
+      ["nse", "9:15", "am", "Mon"],
+      ["us", "7:00", "pm", "Mon"],
+    ]);
+    expect(untilText(t0 + 8000, t0)).toBe("in 0:08");
+    expect(untilText(t0 + 42 * 60_000, t0)).toBe("in 42 m");
+    expect(untilText(t0 + (3 * 60 + 35) * 60_000, t0)).toBe("in 3 h 35 m");
+    render(createElement(NextOnDesk, { now: t0 }));
+    const steps = screen.getAllByTestId("desk-step");
+    expect(steps[0].textContent).toBe("5:40Mon amCoin breakout checkThe day's close on this year's 20 biggest coins: buys any above its 55-day highin 0:08");
+    expect(steps[1].textContent).toContain("India opens");
+  });
+
+  it("leaves out a market that's open now", () => {
+    const duringNse = Date.parse("2026-10-12T05:00:00Z"); // 10:30 am in India, Monday
+    expect(nextOnDesk(duringNse).map((s) => s.id)).not.toContain("nse");
+  });
+});
+
+describe("stopping from the Floor", () => {
+  it("stops all trading only when held, and resumes with a tap", () => {
+    vi.useFakeTimers();
+    try {
+      const p = props();
+      const { rerender } = render(createElement(LedgerFloor, p));
+      const stop = () => screen.getByRole("button", { name: /to stop/i });
+      fireEvent.click(stop());
+      expect(p.onToggleStop).not.toHaveBeenCalled();
+      fireEvent.pointerDown(stop());
+      act(() => vi.advanceTimersByTime(HOLD_MS));
+      expect(p.onToggleStop).toHaveBeenCalledTimes(1);
+      rerender(createElement(LedgerFloor, { ...p, stopped: true }));
+      fireEvent.click(screen.getByRole("button", { name: /Resume/ }));
+      expect(p.onToggleStop).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

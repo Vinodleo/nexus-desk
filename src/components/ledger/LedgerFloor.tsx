@@ -14,7 +14,9 @@ import { openQuantity } from "../../shared/exitRules";
 import { roundTripFeeRate } from "../../shared/tradeCosts";
 import type { ScanBeat } from "../../shared/scanHeartbeat";
 import { ScanHeartbeat } from "./ScanHeartbeat";
-import { freeCash, moneyInTrades } from "../../shared/paperCash";
+import { DEFAULT_MARKET_LIMITS, type MarketLimits } from "../../shared/marketLimits";
+import { Fold } from "./labUi";
+import { MoneyByStrategy, NextOnDesk, SlotSquares, StrategyTabs, emptyGroupText, floorGroupOf, floorGroups, useNow, type FloorGroupId } from "./FloorDesk";
 
 /** The most common skip reasons, largest first, with their share of all skips. */
 export function topSkipReasons(counts: SkipCounts | undefined, limit = 3): { reason: SkipReason; label: string; pct: number }[] {
@@ -94,6 +96,8 @@ export interface LedgerFloorProps {
   onOpenSettings: (from?: DOMRect) => void;
   /** Settings is open (the gear turns away while it is). */
   settingsOpen?: boolean;
+  /** Each market's limits: the slower strategies' slots for the trade groups. */
+  marketLimits?: MarketLimits;
 }
 
 function positionNote(p: Position): string {
@@ -542,53 +546,9 @@ const RPill: React.FC<{ r: number }> = ({ r }) => (
       Math.abs(r) < 0.005 ? "bg-inset text-muted" : r > 0 ? "bg-gain/15 text-gain" : "bg-loss/15 text-loss"
     }`}
   >
-    {signedR(r)}
+    <RollingDigits text={signedR(r)} />
   </span>
 );
-
-/**
- * Paper money as a ring: the share tied up in open trades draws itself round,
- * beside the free cash and what's in the trades. It glides as trades open and close.
- */
-export const MoneyRing: React.FC<{ money: number; positions: Position[] }> = ({ money, positions }) => {
-  const inTrades = moneyInTrades(positions);
-  const share = money > 0 ? Math.max(0, Math.min(100, (inTrades / money) * 100)) : 0;
-  const open = positions.filter((p) => !p.isLiveOrder).length;
-  return (
-    <Card aria-label="Paper money" className="flex items-center gap-4">
-      <div
-        data-testid="money-ring"
-        className="nx-money-ring relative shrink-0 w-[88px] h-[88px] rounded-full grid place-items-center"
-        style={{ "--nx-ring": share.toFixed(1) } as React.CSSProperties}
-      >
-        <div className="w-[70%] h-[70%] rounded-full bg-surface flex flex-col items-center justify-center">
-          <span className="font-display text-lg leading-none tabular-nums">{Math.round(share)}%</span>
-          <span className="text-[10px] text-muted mt-0.5">in trades</span>
-        </div>
-      </div>
-      <div className="flex flex-col gap-2 min-w-0">
-        <div data-testid="free-cash">
-          <div className="text-xs text-muted flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-[3px] bg-accent-soft ring-1 ring-accent" />
-            Free cash
-          </div>
-          <div className="font-display text-xl tabular-nums">
-            <Rolling value={freeCash(money, positions)} format={(n) => formatMoney(n)} />
-          </div>
-        </div>
-        <div data-testid="in-trades">
-          <div className="text-xs text-muted flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-[3px] bg-accent" />
-            {open === 0 ? "Nothing in trades" : `In ${open} ${open === 1 ? "trade" : "trades"}`}
-          </div>
-          <div className="text-[15px] font-semibold tabular-nums">
-            <Rolling value={inTrades} format={(n) => formatMoney(n, { decimals: 0 })} />
-          </div>
-        </div>
-      </div>
-    </Card>
-  );
-};
 
 const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void; state?: ListItemState }> = ({
   position: p,
@@ -666,9 +626,9 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
             )}
           </div>
           <span className="flex flex-col items-end gap-1 shrink-0">
-            <Flash value={p.currentPrice} className={`font-display text-xl tabular-nums whitespace-nowrap px-1 -mx-1 ${tone}`}>
-              <Rolling value={p.unrealizedPnl} format={(n) => formatMoney(n, { signed: true })} />
-            </Flash>
+            <span data-testid="position-pnl" className={`font-display text-xl tabular-nums whitespace-nowrap transition-colors ${tone}`}>
+              <RollingDigits text={formatMoney(p.unrealizedPnl, { signed: true })} />
+            </span>
             <span className="flex items-center gap-1.5">
               {r !== null && <RPill r={r} />}
               <ChevronDown className={`w-3.5 h-3.5 text-muted nx-chevron${open ? " nx-chevron-open" : ""}`} strokeWidth={2} />
@@ -747,6 +707,18 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
   // A closed trade holds its result for a moment, then slides away (nx-item-close).
   const rows = usePresenceList(positions, (p) => p.id, CLOSE_ANIMATION_MS);
   const signedMoney = (n: number) => formatMoney(n, { signed: true });
+  // The open trades by the strategy holding them, each slower strategy on its own slots; the tabs (and the ring's
+  // legend) show one group. A group that empties out (its last trade closed, its slots switched off) falls back to all.
+  const limits = props.marketLimits ?? DEFAULT_MARKET_LIMITS;
+  const groups = floorGroups(positions, limits);
+  // The list's groups also hold a trade still sliding away, so its group stays until it has gone.
+  const listGroups = floorGroups(
+    rows.map((r) => r.item),
+    limits
+  );
+  const [filter, setFilter] = useState<FloorGroupId | "all">("all");
+  const shownFilter = filter !== "all" && listGroups.some((g) => g.id === filter) ? filter : "all";
+  const now = useNow(60_000);
 
   const guardianText =
     props.guardianOnline === null ? "Guardian connecting" : props.guardianOnline ? "Guardian online" : "Guardian unreachable";
@@ -790,12 +762,19 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
           <span>
             All time <strong className={pnlTone(allTimePnl)}><Rolling value={allTimePnl} format={signedMoney} /></strong>
           </span>
+          {positions.length > 0 && (
+            <span>
+              Open <strong className={pnlTone(openPnl)}><Rolling value={openPnl} format={signedMoney} /></strong>
+            </span>
+          )}
         </div>
         {props.todayCloses && <TodayLine closes={props.todayCloses} openPnl={openPnl} />}
       </section>
 
       {/* On paper: the money free to trade against what the open trades tie up. Live, CoinDCX's balance says it. */}
-      {!isLive && <MoneyRing money={equity} positions={positions} />}
+      {!isLive && <MoneyByStrategy money={equity} positions={positions} groups={groups} filter={shownFilter} onPick={setFilter} />}
+
+      <NextOnDesk />
 
       <Card aria-label="Autopilot" className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
@@ -846,19 +825,26 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
               </div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={props.onToggleStop}
-            aria-pressed={props.stopped}
-            className={`flex-1 basis-0 min-h-11 rounded-[10px] border text-[13px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-              props.stopped
-                ? "bg-accent text-on-accent border-accent"
-                : "bg-danger-soft text-loss border-danger-line hover:brightness-95"
-            }`}
-          >
-            <Power className="w-4 h-4" strokeWidth={1.8} />
-            {props.stopped ? "Resume" : "Stop all"}
-          </button>
+          {props.stopped ? (
+            <button
+              type="button"
+              onClick={props.onToggleStop}
+              aria-pressed
+              className="flex-1 basis-0 min-h-11 rounded-[10px] border text-[13px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors bg-accent text-on-accent border-accent"
+            >
+              <Power className="w-4 h-4" strokeWidth={1.8} />
+              Resume
+            </button>
+          ) : (
+            // Held, so a stray tap can't stop the desk (as on Book → Risk); Resume is a tap.
+            <HoldButton
+              label="Hold to stop all"
+              keepHoldingLabel="Keep holding to stop"
+              onHold={props.onToggleStop}
+              className="flex-1 basis-0 min-h-11 rounded-[10px] border border-danger-line bg-danger-soft text-loss text-[13px] font-semibold"
+              fillClassName="bg-loss/25"
+            />
+          )}
         </div>
       </Card>
 
@@ -875,7 +861,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         </button>
       )}
 
-      <section aria-label="Open positions" className="flex flex-col">
+      <section aria-label="Open positions" className="flex flex-col gap-3">
         <SectionHeading
           title="Open positions"
           right={
@@ -884,17 +870,44 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
             ) : undefined
           }
         />
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted py-4 m-0 border-b border-line">
+        {positions.length === 0 && (
+          <p className="text-sm text-muted m-0">
             No open positions. {props.autopilotOn ? "Autopilot will open trades that pass every check." : "Approved proposals appear here."}
           </p>
-        ) : (
-          <ul className="list-none m-0 p-0">
-            {rows.map(({ item: p, key, state }) => (
-              <PositionRow key={key} position={p} onClose={props.onClosePosition} state={state} />
-            ))}
-          </ul>
         )}
+        {listGroups.length > 1 && <StrategyTabs groups={listGroups} value={shownFilter} onChange={setFilter} />}
+        {listGroups
+          .filter((g) => shownFilter === "all" || g.id === shownFilter)
+          .map((g, gi) => {
+            const groupRows = rows.filter((r) => floorGroupOf(r.item) === g.id);
+            return (
+              <div
+                key={`${shownFilter}-${g.id}`}
+                data-testid={`group-${g.id}`}
+                className="bg-surface border border-line rounded-2xl overflow-hidden nx-step-in"
+                style={{ animationDelay: `${gi * 80}ms` }}
+              >
+                <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-inset text-xs">
+                  <span className="font-semibold">{g.title ?? g.label}</span>
+                  {g.slots !== null && g.slots > 0 && (
+                    <span className="flex items-center gap-1.5 text-muted tabular-nums">
+                      {g.positions.length} of {g.slots}
+                      <SlotSquares used={g.positions.length} slots={g.slots} tone={g.id.startsWith("coin") ? "bg-warn" : "bg-accent"} />
+                    </span>
+                  )}
+                </div>
+                {groupRows.length === 0 ? (
+                  <p className="m-0 px-4 py-3 text-[13px] text-muted leading-relaxed">{emptyGroupText(g.id, now)}</p>
+                ) : (
+                  <ul className="list-none m-0 px-4 p-0 [&>li:last-child>div]:border-b-0">
+                    {groupRows.map(({ item: p, key, state }) => (
+                      <PositionRow key={key} position={p} onClose={props.onClosePosition} state={state} />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
       </section>
 
       <div className="flex items-start gap-2.5 text-xs text-muted leading-relaxed">
@@ -911,32 +924,34 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
         </span>
       </div>
 
-      {props.market !== undefined ? <MarketLine tickers={props.market} /> : <LiveMarketLine />}
-
       {props.candleStatus !== undefined ? <CandleWarning status={props.candleStatus} /> : <LiveCandleWarning />}
 
       {props.eventWindow && <NewsPause window={props.eventWindow} />}
 
-      <section aria-label="Scanner today" className="flex flex-col gap-1.5 text-xs text-muted tabular-nums">
-        {props.watching !== undefined ? (
-          <Coverage watching={props.watching} scanLocation={props.scanLocation} />
-        ) : (
-          <LiveCoverage scanLocation={props.scanLocation} />
-        )}
-        <div>
-          Scanner today: {props.scan.analyzed} checked · {props.scan.selected} proposed · {props.scan.rejected} skipped
-        </div>
-        {topSkipReasons(props.scan.skipReasons).map((r) => (
-          <div key={r.reason} className="flex items-center gap-2">
-            <div className="w-16 h-1 rounded-full bg-line overflow-hidden shrink-0" aria-hidden="true">
-              <div className="h-full bg-muted" style={{ width: `${r.pct}%` }} />
-            </div>
-            <span>
-              {r.label} · {r.pct}%
-            </span>
+      {/* The 5-minute scanner's day and the coin prices: there when wanted, folded away otherwise. */}
+      <Fold title="Scanner and prices">
+        <section aria-label="Scanner today" className="flex flex-col gap-1.5 text-xs text-muted tabular-nums">
+          {props.market !== undefined ? <MarketLine tickers={props.market} /> : <LiveMarketLine />}
+          {props.watching !== undefined ? (
+            <Coverage watching={props.watching} scanLocation={props.scanLocation} />
+          ) : (
+            <LiveCoverage scanLocation={props.scanLocation} />
+          )}
+          <div>
+            Scanner today: {props.scan.analyzed} checked · {props.scan.selected} proposed · {props.scan.rejected} skipped
           </div>
-        ))}
-      </section>
+          {topSkipReasons(props.scan.skipReasons).map((r) => (
+            <div key={r.reason} className="flex items-center gap-2">
+              <div className="w-16 h-1 rounded-full bg-line overflow-hidden shrink-0" aria-hidden="true">
+                <div className="h-full bg-muted" style={{ width: `${r.pct}%` }} />
+              </div>
+              <span>
+                {r.label} · {r.pct}%
+              </span>
+            </div>
+          ))}
+        </section>
+      </Fold>
     </div>
   );
 };
