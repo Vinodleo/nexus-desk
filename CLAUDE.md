@@ -164,8 +164,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     use ("2 of 3") and, when empty, what it waits for; the rest are "5-minute and daily trades" (`floorGroups`,
     `floorGroupOf`); tabs (All and each group) show one. Each trade's P&L and R roll digit by digit (`RollingDigits`).
     Breakout and momentum trades (no target) sit on a line in R (`riskLadder`), every trade shows where it is in R, and
-    tapping one folds its numbers open. "Stop all" is held there too (Resume is a tap); the scanner's day and the coin
-    prices are folded at the bottom ("Scanner and prices").
+    tapping one folds its numbers open. "Stop all" is held there too (Resume is a tap), and stopping unfolds a note
+    that the stops are still watched; the autopilot card's dot breathes while it works, and its pulse line beats with the
+    server's scans (faster while one runs; `ScanHeartbeat`: the next scan's countdown and the last hour). The scanner's
+    day and the coin prices are folded at the bottom ("Scanner and prices"). The tab bar floats as a pill above the
+    bottom edge (`BottomNavBar`).
   - Three 5-minute trades lost in a row stop autopilot until the owner looks (the app's kill switch, the server's
     pause; `lossStreak`, `LOSS_STREAK_LIMIT`). The slower strategies' and daily trades neither count nor break the run
     (owner's call, 8 Oct, `countsTowardStreak`): breakout and momentum win about one trade in three or four by design.

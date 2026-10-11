@@ -2,17 +2,17 @@ import React, { useEffect, useRef, useState } from "react";
 import { BEAT_SLOT_MS, beatSlots, type ScanBeat } from "../../shared/scanHeartbeat";
 import { nextCandleFetchAt } from "../../services/liveMarketStreamService";
 
-// The autopilot's heartbeat on the Floor: a ring that counts down to the
-// server's next scan (just after each 5-minute candle closes) and pulses when
-// a scan comes in, and the last hour of scans as bars, tall where a scan
-// found a trade and flat where none ran. It re-renders itself each second,
-// not the Floor.
+// The autopilot's heartbeat on the Floor: a pulse line that beats while the
+// server scans for you (faster while a scan is running, with a ring each time
+// a new scan comes in), the countdown to the next scan (just after each
+// 5-minute candle closes) and how the last hour went. It re-renders itself
+// each second, not the Floor.
 
 /** A scan not in this long after it was due is shown as missed rather than running. */
 export const SCANNING_GRACE_MS = 90_000;
 
-const RING_R = 15;
-const RING_C = 2 * Math.PI * RING_R;
+/** A heartbeat's trace: flat, one beat, flat. */
+const TRACE = "M0 12 H40 L45 5 L51 20 L57 3 L62 12 H120";
 
 /**
  * What the heartbeat shows at `now`: when the next scan is due, whether this
@@ -35,8 +35,6 @@ const mmss = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
-const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
 export const ScanHeartbeat: React.FC<{ lastScanAt: number; scans: ScanBeat[]; now?: number }> = ({ lastScanAt, scans, now: fixedNow }) => {
   const [tick, setTick] = useState(() => fixedNow ?? Date.now());
   useEffect(() => {
@@ -55,52 +53,34 @@ export const ScanHeartbeat: React.FC<{ lastScanAt: number; scans: ScanBeat[]; no
   }, [lastScanAt]);
 
   const { next, scanning, slots } = heartbeatView(scans, lastScanAt, now);
-  // Bars there when the scans are first known stay put; each new one grows in.
-  const firstShown = useRef<Set<number> | null>(null);
-  if (firstShown.current === null && scans.length > 0) firstShown.current = new Set(slots.filter((s) => s.beat).map((s) => s.start));
   const ran = slots.filter((s) => s.beat).length;
   const found = slots.filter((s) => (s.beat?.proposed ?? 0) > 0).length;
-  const left = Math.min(1, Math.max(0, (next - now) / BEAT_SLOT_MS));
 
   return (
     <div className="flex items-center gap-3" data-testid="scan-heartbeat">
-      <div className="relative w-9 h-9 shrink-0" aria-hidden="true">
-        <svg viewBox="0 0 36 36" className="block w-full h-full -rotate-90">
-          <circle cx="18" cy="18" r={RING_R} fill="none" strokeWidth="3.5" className="stroke-line" />
-          <circle
-            data-testid="scan-ring"
-            cx="18"
-            cy="18"
-            r={RING_R}
+      <div className="relative shrink-0 w-[120px] h-6" aria-hidden="true">
+        <svg viewBox="0 0 120 24" className="block w-full h-full overflow-visible">
+          <path d={TRACE} fill="none" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="stroke-line" />
+          <path
+            key={pulse}
+            data-testid="scan-line"
+            d={TRACE}
             fill="none"
-            strokeWidth="3.5"
+            strokeWidth="1.9"
             strokeLinecap="round"
-            strokeDasharray={RING_C.toFixed(2)}
-            strokeDashoffset={(RING_C * (1 - left)).toFixed(2)}
-            className={`stroke-accent nx-countdown-ring${scanning ? " nx-pulse-slow" : ""}`}
+            strokeLinejoin="round"
+            strokeDasharray="34 226"
+            className={`stroke-gain nx-ecg${scanning ? " nx-ecg-fast" : ""}`}
           />
         </svg>
-        {pulse > 0 && <span key={pulse} data-testid="scan-pulse" className="absolute inset-0 rounded-full border-2 border-accent nx-beat-pulse" />}
+        {pulse > 0 && (
+          <span key={`ring-${pulse}`} data-testid="scan-pulse" className="absolute left-[44%] top-1/2 -mt-1.5 w-3 h-3 rounded-full border-2 border-gain nx-beat-pulse" />
+        )}
       </div>
-      <div className="min-w-0 flex-1 flex flex-col gap-1.5">
+      <div className="min-w-0 flex-1">
         <div className="text-xs font-semibold tabular-nums">{scanning ? "Scanning now…" : `Next scan in ${mmss(next - now)}`}</div>
-        <div
-          role="img"
-          aria-label={`Last hour: ${ran} of ${slots.length} scans ran, ${found} found ${found === 1 ? "a trade" : "trades"}`}
-          className="flex items-end gap-[3px] h-5"
-        >
-          {slots.map(({ start, beat }) => {
-            const size = !beat ? "h-1 bg-line" : beat.proposed === 0 ? "h-2 bg-muted/40" : beat.proposed === 1 ? "h-4 bg-accent" : "h-5 bg-accent";
-            const fresh = beat && firstShown.current !== null && !firstShown.current.has(start);
-            return (
-              <span
-                key={start}
-                data-testid="scan-beat"
-                title={beat ? `${clock(beat.at)} · ${beat.checked} checked · ${beat.proposed} proposed` : `${clock(start)} · no scan`}
-                className={`flex-1 max-w-3 rounded-sm ${size}${fresh ? " nx-beat-in" : ""}`}
-              />
-            );
-          })}
+        <div data-testid="scan-hour" className="text-[11px] text-muted">
+          Last hour: {ran} of {slots.length} scans ran, {found} found {found === 1 ? "a trade" : "trades"}
         </div>
       </div>
     </div>

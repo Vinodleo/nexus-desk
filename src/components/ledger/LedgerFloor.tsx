@@ -776,13 +776,20 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
 
       <NextOnDesk />
 
-      <Card aria-label="Autopilot" className="flex flex-col gap-3">
+      <Card aria-label="Autopilot" className={`flex flex-col gap-3 transition-colors ${props.stopped ? "border-danger-line" : ""}`}>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-semibold">Autopilot</div>
-            <div className="text-xs text-muted">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              {/* A dot that breathes while the autopilot works: green, grey when off, red when stopped. */}
+              <span className="relative w-2 h-2 shrink-0" aria-hidden="true">
+                {props.autopilotOn && !props.stopped && <span className="absolute inset-0 rounded-full bg-gain nx-ring" />}
+                <span className={`absolute inset-0 rounded-full transition-colors ${props.stopped ? "bg-loss" : props.autopilotOn ? "bg-gain" : "bg-muted"}`} />
+              </span>
+              {props.stopped ? "Stopped" : props.autopilotOn ? "Autopilot on" : "Autopilot off"}
+            </div>
+            <div className="text-xs text-muted mt-0.5">
               {props.stopped
-                ? "Stopped · no new trades until you resume"
+                ? "No new trades until you resume"
                 : props.autopilotOn && props.isLive
                 ? props.liveTradingEnabled
                   ? "Live · places real CoinDCX orders from the server within your limits, even with the app closed. Coins only: stock trades wait for you."
@@ -793,16 +800,26 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
                   : "Approves trades within your limits"
                 : "Off · you approve every trade"}
             </div>
-            {serverAutopilot && (
-              <div className="text-xs text-muted tabular-nums" aria-label="Server autopilot">
-                Server: last scan {props.lastServerScanAt ? agoText(props.lastServerScanAt) : "pending"} · last trade{" "}
-                {props.lastServerOpenAt ? clockText(props.lastServerOpenAt) : "none yet"}
-              </div>
-            )}
           </div>
           <Switch checked={props.autopilotOn} onChange={props.onAutopilotChange} label="Autopilot" disabled={props.stopped} />
         </div>
-        {serverAutopilot && <ScanHeartbeat lastScanAt={props.lastServerScanAt ?? 0} scans={props.serverScans ?? []} />}
+        {serverAutopilot && (
+          <div className="flex flex-col gap-1.5">
+            <ScanHeartbeat lastScanAt={props.lastServerScanAt ?? 0} scans={props.serverScans ?? []} />
+            <div className="text-xs text-muted tabular-nums" aria-label="Server autopilot">
+              Server: last scan {props.lastServerScanAt ? agoText(props.lastServerScanAt) : "pending"} · last trade{" "}
+              {props.lastServerOpenAt ? clockText(props.lastServerOpenAt) : "none yet"}
+            </div>
+          </div>
+        )}
+        {/* Stopping unfolds a note saying what still runs. */}
+        <div className={`nx-fold${props.stopped ? " nx-fold-open" : ""}`} aria-hidden={!props.stopped}>
+          <div>
+            <div className="px-3 py-2.5 rounded-xl bg-warn-soft text-warn-ink text-[13px] leading-relaxed">
+              The guardian still watches every stop on the server, so the open trades stay protected.
+            </div>
+          </div>
+        </div>
         <div className="flex gap-2">
           {/* On paper the money ring shows what's in trades. */}
           {isLive && (
