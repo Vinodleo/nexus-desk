@@ -1784,6 +1784,7 @@ export default function App() {
                 setIsSettingsOpen(true);
               }}
               settingsOpen={isSettingsOpen}
+              marketLimits={riskLimits.marketLimits}
             />
           )}
 

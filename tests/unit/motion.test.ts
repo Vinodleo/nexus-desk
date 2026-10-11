@@ -100,7 +100,7 @@ describe("the Floor", () => {
   it("holds a closed position in its place with its result, tinted, then slides it away", () => {
     const { container, rerender } = render(createElement(LedgerFloor, floor({ positions: [pos("sol"), pos("zec", { unrealizedPnl: -3 }), pos("eth")] })));
     rerender(createElement(LedgerFloor, floor({ positions: [pos("sol"), pos("eth")] })));
-    const symbols = () => [...container.querySelectorAll("li")].map((li) => li.textContent?.match(/^(\w+)\/INR/)?.[1]);
+    const symbols = () => [...container.querySelectorAll("li.nx-item")].map((li) => li.textContent?.match(/^(\w+)\/INR/)?.[1]);
     expect(symbols()).toEqual(["SOL", "ZEC", "ETH"]);
     const zec = rowOf(container, "ZEC/INR")!;
     expect(zec.className).toContain("nx-item-close");

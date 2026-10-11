@@ -157,9 +157,15 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     regulatory fees, Angel One's charges on the opening order), and the autopilot, on the server and the phone, defers
     a trade whose cost and opening fee are more than the free cash left (`freeCash`, `AutopilotBook.freeCash`, "not
     enough free cash"); live desks aren't held to it (CoinDCX's balance is). The Floor's
-    paper equity includes the open trades' profit; under it a ring shows the free cash against what's in trades (`MoneyRing`).
+    paper equity includes the open trades' profit (and shows it, "Open"); under it a ring split by strategy shows the free
+    cash against what each strategy holds (`MoneyByStrategy`, `FloorDesk.tsx`; its legend picks a strategy), then "Next on
+    the desk": the next checks and market openings in India time, the first counting down (`nextOnDesk`, from
+    `src/shared/deskDay.ts`). The open trades are grouped by the strategy holding them, each slower one with its slots in
+    use ("2 of 3") and, when empty, what it waits for; the rest are "5-minute and daily trades" (`floorGroups`,
+    `floorGroupOf`); tabs (All and each group) show one. Each trade's P&L and R roll digit by digit (`RollingDigits`).
     Breakout and momentum trades (no target) sit on a line in R (`riskLadder`), every trade shows where it is in R, and
-    tapping one folds its numbers open.
+    tapping one folds its numbers open. "Stop all" is held there too (Resume is a tap); the scanner's day and the coin
+    prices are folded at the bottom ("Scanner and prices").
   - Three 5-minute trades lost in a row stop autopilot until the owner looks (the app's kill switch, the server's
     pause; `lossStreak`, `LOSS_STREAK_LIMIT`). The slower strategies' and daily trades neither count nor break the run
     (owner's call, 8 Oct, `countsTowardStreak`): breakout and momentum win about one trade in three or four by design.
