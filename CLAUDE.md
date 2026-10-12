@@ -28,20 +28,24 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
 - **App:** React 19 + Vite + Tailwind v4 in `src/`. Screens are in `src/components/ledger/`.
   Colours are tokens in `src/index.css`. Themes are Ivory (default), Graphite (dark) and Blush (pink),
   set per device (`src/services/theme.ts`). Use the tokens, never fixed colours.
-  The Lab (`LedgerLab.tsx`) has four tabs, the last one picked remembered per device:
+  The Lab (`LedgerLab.tsx`) says Paper or Live by its title and has four tabs, the last one picked remembered per device:
   - **Today:** the slower strategies as a deck of cards to swipe (`StrategyLineup`: each one trading or paused, its
     replay's average a trade and trades, each replayed year up or down, its rules), the other traders and the tests
     (`LabSummary`), the desk's day (`DeskDayCard`: a 24-hour dial in India time of the
     market sessions and the server's scheduled checks with their next times; the check times live in `src/shared/deskDay.ts`
-    and the server reads them there), the daily coin check with its coin slots (`DailyCoinsCard`),
-    the US breakout check (`UsBreakoutCard`), the funds' breakout check (`FundsBreakoutCard`) and the weekly US
-    momentum check (`UsMomentumCard`).
+    and the server reads them there), what each check did last as one timeline, newest first, with chips for what it
+    bought, sold, kept or left waiting (`ChecksTimeline`, `checkTags`, `LabDesk.tsx`), and folded under it ("Each check in
+    full", `CheckDetails`) the daily coin check with its coin slots (`DailyCoinsCard`), the US breakout check
+    (`UsBreakoutCard`), the funds' breakout check (`FundsBreakoutCard`) and the weekly US momentum check (`UsMomentumCard`).
   - **Records:** the scorecard first (`PaperScorecard`, `services/paperScorecard.ts`): coin breakout's, US breakout's,
-    the funds' breakout's, US momentum's and the daily coin traders' real paper trades from the Book against their replays (R, share won, average win and loss,
-    exits, stops that gapped; "in line", "behind" or "ahead" once 10+ trades, by two standard errors). Then every coin
-    strategy side by side against `MIN_EDGE_R` (`StrategyRanking`), year by year (`YearByYear`), the classic strategies
-    on stocks (`StocksLongCard`, US and India), and the replays' details.
-  - **Tests:** the machine-learning tests (daily coins, breakout trades, 5-minute) and the coin check (`CoinCheckCard`).
+    the funds' breakout's, US momentum's and the daily coin traders' real paper trades from the Book against their replays,
+    each on one line in R (the replay a ring, paper a dot gliding there from it when the tab shows, luck's reach shaded once
+    10+ trades); tap one for its numbers (share won, average win and loss, exits, stops that gapped; "in line", "behind" or
+    "ahead" once 10+ trades, by two standard errors). Then every strategy side by side in one market at a time (Coins, US,
+    Funds, India) against `MIN_EDGE_R`, with whether each trades, and the one tapped year by year (`StrategyRecords`,
+    `LabDesk.tsx`), the classic strategies on stocks (`StocksLongCard`), and the replays' details.
+  - **Tests:** the machine-learning tests, a card each (daily coin setups, breakout trades and momentum trades with a
+    Coins/US/Funds switch, 5-minute setups; `MlTestCard`), how they ran, and the coin check (`CoinCheckCard`).
   - **Tools:** the older hands-on training tools.
   A trade that opens with the app on screen (the server's, the phone's autopilot, or approved in the Queue) unfolds a
   ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it

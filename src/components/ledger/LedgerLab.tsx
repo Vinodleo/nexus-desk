@@ -24,7 +24,8 @@ import { StocksLongCard } from "./StocksLongCard";
 import { FundsBreakoutCard, UsBreakoutCard } from "./UsBreakoutCard";
 import { UsMomentumCard } from "./UsMomentumCard";
 import { PaperScorecard } from "./PaperScorecard";
-import { LabSummary, StrategyRanking, YearByYear, type LabTab } from "./LabSummary";
+import { LabSummary, type LabTab } from "./LabSummary";
+import { ChecksTimeline, CheckDetails, StrategyRecords } from "./LabDesk";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
 
@@ -38,6 +39,8 @@ export interface LedgerLabProps {
   /** Closed trades and open positions, for the paper trades' scorecard. */
   closedTrades?: HistoricalTrade[];
   positions?: Position[];
+  /** A live desk's Lab says Live by its title, a paper one's Paper. */
+  isLive?: boolean;
 }
 
 const MARKETS = ["BTCINR", "ETHINR", "SOLINR", "XRPINR", "AVAXINR", "NEARINR", "BNBINR", "DOGEINR"];
@@ -151,6 +154,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({
   onTrailProfileChange,
   closedTrades = [],
   positions = [],
+  isLive = false,
 }) => {
   const [source, setSource] = useState<HistoricalSource>("BINANCE");
   const [market, setMarket] = useState("BTCINR");
@@ -244,16 +248,19 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({
 
   return (
     <div className="font-ui text-ink flex flex-col gap-4 pb-4 select-none">
-      <header className="pt-1">
+      <header className="pt-1 flex items-center justify-between gap-3 nx-fade-in">
         <h1 className="m-0 font-display text-[26px] font-semibold">Lab</h1>
-        <div className="text-[13px] text-muted">Paper trading, and the tests behind it</div>
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${isLive ? "bg-warn-soft text-warn" : "bg-accent-soft text-accent"}`}>
+          {isLive ? "Live" : "Paper"}
+        </span>
       </header>
 
-      <div role="tablist" aria-label="Lab" className="relative grid grid-cols-4 p-0.5 rounded-full bg-inset border border-line">
+      <div role="tablist" aria-label="Lab" className="relative grid grid-cols-4 p-1 rounded-full bg-surface border border-line">
         <span
           aria-hidden="true"
-          className="nx-segment-pill absolute inset-y-0.5 left-0.5 rounded-full bg-accent"
-          style={{ width: "calc((100% - 4px) / 4)", transform: `translateX(${LAB_TABS.findIndex((t) => t.id === tab) * 100}%)` }}
+          data-testid="lab-tab-pill"
+          className="nx-strategy-pill absolute inset-y-1 left-1 rounded-full bg-accent"
+          style={{ width: "calc((100% - 8px) / 4)", transform: `translateX(${LAB_TABS.findIndex((t) => t.id === tab) * 100}%)` }}
         />
         {LAB_TABS.map((t) => (
           <button
@@ -264,7 +271,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({
             aria-selected={tab === t.id}
             aria-controls={`lab-${t.id}`}
             onClick={() => setTab(t.id)}
-            className={`relative min-h-9 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${tab === t.id ? "text-on-accent" : "text-muted"}`}
+            className={`relative min-h-10 rounded-full text-[13px] font-semibold cursor-pointer transition-colors ${tab === t.id ? "text-on-accent" : "text-muted"}`}
           >
             {t.label}
           </button>
@@ -275,16 +282,18 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({
         <StrategyLineup onOpen={setTab} />
         <LabSummary onOpen={setTab} />
         <DeskDayCard />
-        <DailyCoinsCard />
-        <UsBreakoutCard />
-        <FundsBreakoutCard />
-        <UsMomentumCard />
+        <ChecksTimeline />
+        <CheckDetails>
+          <DailyCoinsCard />
+          <UsBreakoutCard />
+          <FundsBreakoutCard />
+          <UsMomentumCard />
+        </CheckDetails>
       </section>
 
       <section {...panel("records")}>
-        <PaperScorecard trades={closedTrades} positions={positions} />
-        <StrategyRanking trailProfile={trailProfile} />
-        <YearByYear trailProfile={trailProfile} />
+        <PaperScorecard trades={closedTrades} positions={positions} active={tab === "records"} />
+        <StrategyRecords trailProfile={trailProfile} />
         <StocksLongCard />
         <DailyLongCard trailProfile={trailProfile} />
         <HistoryCard trailProfile={trailProfile} />

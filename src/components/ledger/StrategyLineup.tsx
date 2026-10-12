@@ -105,6 +105,7 @@ const Card: React.FC<{ card: LineupCard; shown: boolean; rolled: boolean; n: num
   onOpen,
 }) => {
   const up = card.years.filter((y) => y.r > 0).length;
+  const most = Math.max(0.01, ...card.years.map((y) => Math.abs(y.r)));
   // The average rolls up from zero each time the card comes to the front.
   const avg = rSigned(card.avgR);
   return (
@@ -130,15 +131,26 @@ const Card: React.FC<{ card: LineupCard; shown: boolean; rolled: boolean; n: num
       </div>
       {card.years.length > 0 && (
         <div className="mt-4" data-testid="lineup-years">
-          <div className="flex gap-1 items-end h-6" aria-hidden="true">
-            {card.years.map((y, i) => (
-              <span
-                key={y.year}
-                title={`${y.year}: ${rSigned(y.r)}`}
-                className={`flex-1 rounded-[4px] ${y.r > 0 ? "bg-gain h-6" : "bg-loss/70 h-3"} ${shown ? "nx-rise" : ""}`}
-                style={{ animationDelay: `${200 + i * 60}ms` }}
-              />
-            ))}
+          {/* Each year up from the middle or down from it, as far as its average went against the card's biggest year. */}
+          <div className="relative flex gap-1 h-16" aria-hidden="true">
+            <span className="absolute inset-x-0 top-1/2 h-px bg-line" />
+            {card.years.map((y, i) => {
+              const h = (Math.abs(y.r) / most) * 46;
+              return (
+                <span key={y.year} className="relative flex-1 h-full" title={`${y.year}: ${rSigned(y.r)}`}>
+                  <span
+                    data-testid="lineup-year"
+                    className={`absolute left-[12%] right-[12%] rounded-[3px] ${y.r > 0 ? "bg-gain" : "bg-loss"} ${shown ? "nx-rise" : ""}`}
+                    style={{
+                      top: y.r > 0 ? `${(50 - h).toFixed(1)}%` : "50%",
+                      height: `${h.toFixed(1)}%`,
+                      transformOrigin: y.r > 0 ? "bottom" : "top",
+                      animationDelay: `${200 + i * 60}ms`,
+                    }}
+                  />
+                </span>
+              );
+            })}
           </div>
           <div className="flex justify-between text-[10px] text-muted mt-1 tabular-nums">
             <span>{card.years[0].year}</span>
@@ -149,11 +161,11 @@ const Card: React.FC<{ card: LineupCard; shown: boolean; rolled: boolean; n: num
           </div>
         </div>
       )}
-      <dl className="m-0 mt-4 flex flex-col gap-2">
+      <dl className="m-0 mt-4 pt-3 border-t border-line flex flex-col gap-2">
         {card.rules.map(([k, v], i) => (
           <div key={k} className={`flex gap-3 text-[13px] leading-snug ${shown ? "nx-row-in" : ""}`} style={{ animationDelay: `${350 + i * 80}ms` }}>
-            <dt className="w-14 shrink-0 font-semibold text-muted">{k}</dt>
-            <dd className="m-0">{v}</dd>
+            <dt className="w-14 shrink-0 font-bold">{k}</dt>
+            <dd className="m-0 text-muted">{v}</dd>
           </div>
         ))}
       </dl>
@@ -189,7 +201,7 @@ export const StrategyLineup: React.FC<{ onOpen?: (tab: LabTab) => void; cards?: 
   return (
     <section aria-label="The strategies" aria-roledescription="carousel" className="flex flex-col gap-3 -mx-1 px-1 overflow-hidden">
       <div className="flex items-baseline justify-between gap-2 px-1">
-        <div className="text-[11px] font-semibold text-muted uppercase tracking-[0.08em]">The strategies</div>
+        <h2 className="m-0 text-[15px] font-semibold">What trades now</h2>
         <div className="text-xs text-muted tabular-nums" aria-live="polite">
           {shown + 1} of {cards.length}
         </div>

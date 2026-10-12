@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
-const { LabSummary, StrategyRanking, YearByYear } = await import("../../src/components/ledger/LabSummary");
+const { LabSummary } = await import("../../src/components/ledger/LabSummary");
+const { StrategyRecords } = await import("../../src/components/ledger/LabDesk");
 const { StrategyLineup, yearsOf } = await import("../../src/components/ledger/StrategyLineup");
 const { labGet } = await import("../../src/components/ledger/labFeed");
 
@@ -129,18 +130,35 @@ describe("What's trading", () => {
   });
 });
 
-describe("Coin strategies, side by side", () => {
-  it("ranks every coin strategy by its average a trade, with whether it trades now", async () => {
-    render(createElement(StrategyRanking, { trailProfile: "tight" }));
-    const list = await screen.findByTestId("lab-ranking");
-    await within(list).findByText("5-minute traders, all together");
-    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+describe("every strategy, side by side", () => {
+  const rows = () => within(screen.getByTestId("lab-ranking")).getAllByRole("listitem").map((li) => li.textContent);
+
+  it("ranks each market's strategies by their average a trade, with whether each trades now", async () => {
+    render(createElement(StrategyRecords, { trailProfile: "tight" }));
+    await within(await screen.findByTestId("lab-ranking")).findByText("5-minute traders, all together");
+    expect(rows()).toEqual([
       "Moving averages 50/200+1.00Rsince 2018 · 2 trades · 50% won–Not traded",
       "Breakout 55/20+0.10Rsince 2018 · 10 trades · 30% won●Trading",
       "Momentum, top 3+0.00Rsince 2018 · 3 trades · 33% won–Not traded",
       "Daily traders, all together−0.15Rsince 2018 · 20 setups · 25% won●1 of 2 trading",
-      "5-minute traders, all together−0.20Rtwo years · 20 setups · 25% won●1 of 2 trading",
+      // Coins aren't scanned on 5-minute candles.
+      "5-minute traders, all together−0.20Rtwo years · 20 setups · 25% won–Not traded",
     ]);
+    // The markets with records, a switch between them: India has none here.
+    const market = screen.getByRole("group", { name: "Market" });
+    expect(within(market).getAllByRole("button").map((b) => b.textContent)).toEqual(["Coins", "US", "Funds"]);
+    fireEvent.click(within(market).getByRole("button", { name: "US" }));
+    expect(rows()).toEqual([
+      "Breakout 55/20+0.33Rsince 2016 · 15 trades · 47% won●Trading",
+      "Momentum, top 3+0.13Rsince 2016 · 8 trades · 38% won●Trading",
+    ]);
+    fireEvent.click(within(market).getByRole("button", { name: "Funds" }));
+    expect(rows()).toEqual(["Breakout 55/20+0.67Rsince 2016 · 6 trades · 50% won●Trading"]);
+    // Each bar runs from zero: the funds' +0.67R, on a scale from −0.26R to +0.70R.
+    const bar = screen.getByTestId("ranking-bar");
+    const lo = -0.25 * 1.05;
+    const hi = (4 / 6) * 1.05;
+    expect(bar.style.left).toBe(`${((-lo / (hi - lo)) * 100).toFixed(2)}%`);
   });
 
   it("says when the coin records are from the old fee, with breakout and the daily traders paused until they replay", async () => {
@@ -150,15 +168,13 @@ describe("Coin strategies, side by side", () => {
       "/api/daily-long": { ...(routes["/api/daily-long"] as object), stale: true },
     };
     vi.mocked(apiFetch).mockImplementation(async (path: string) => new Response(JSON.stringify(waiting[path] ?? null), { status: waiting[path] ? 200 : 404 }));
-    render(createElement(StrategyRanking, { trailProfile: "tight" }));
-    const list = await screen.findByTestId("lab-ranking");
-    await within(list).findByText("5-minute traders, all together");
+    render(createElement(StrategyRecords, { trailProfile: "tight" }));
+    await within(await screen.findByTestId("lab-ranking")).findByText("5-minute traders, all together");
     expect(screen.getByTestId("lab-ranking-stale").textContent).toBe(
       "Since 2018: From the old 0.05% coin fee: it replays with CoinDCX's real 0.59% once the other background work is done. Nothing trades on these meanwhile."
     );
-    const rows = within(list).getAllByRole("listitem").map((li) => li.textContent);
-    expect(rows).toContain("Breakout 55/20+0.10Rsince 2018 · 10 trades · 30% won‖Paused");
-    expect(rows).toContain("Daily traders, all together−0.15Rsince 2018 · 20 setups · 25% won‖Paused");
+    expect(rows()).toContain("Breakout 55/20+0.10Rsince 2018 · 10 trades · 30% won‖Paused");
+    expect(rows()).toContain("Daily traders, all together−0.15Rsince 2018 · 20 setups · 25% won‖Paused");
     cleanup();
     render(createElement(LabSummary));
     const summary = await screen.findByTestId("lab-summary");
@@ -177,10 +193,9 @@ describe("Coin strategies, side by side", () => {
       },
     };
     vi.mocked(apiFetch).mockImplementation(async (path: string) => new Response(JSON.stringify(off[path] ?? null), { status: off[path] ? 200 : 404 }));
-    render(createElement(StrategyRanking, { trailProfile: "tight" }));
-    const list = await screen.findByTestId("lab-ranking");
-    await within(list).findByText("5-minute traders, all together");
-    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toContain("Daily traders, all together−0.15Rsince 2018 · 20 setups · 25% won–Switched off");
+    render(createElement(StrategyRecords, { trailProfile: "tight" }));
+    await within(await screen.findByTestId("lab-ranking")).findByText("5-minute traders, all together");
+    expect(rows()).toContain("Daily traders, all together−0.15Rsince 2018 · 20 setups · 25% won–Switched off");
     cleanup();
     render(createElement(LabSummary));
     const summary = await screen.findByTestId("lab-summary");
@@ -189,19 +204,33 @@ describe("Coin strategies, side by side", () => {
     expect(summary.textContent).not.toContain("Coin breakout 55/20");
   });
 
-  it("draws breakout's and the daily traders' years, and gives a year's numbers on a tap", async () => {
-    render(createElement(YearByYear, { trailProfile: "tight" }));
-    const breakout = await screen.findByTestId("years-breakout");
-    expect(breakout.textContent).toContain("Breakout 55/201 of 2 years up");
-    const traders = screen.getByTestId("years-traders");
-    expect(traders.textContent).toContain("Daily traders, all together1 of 2 years up");
-    fireEvent.click(within(breakout).getByRole("button", { name: "2022: −0.33R a trade over 6 trades" }));
-    expect(breakout.textContent).toContain("2022 · 6 trades · 33% won · −0.33R");
-    fireEvent.click(within(traders).getByRole("button", { name: "2018: +0.10R a setup over 10 setups" }));
-    expect(traders.textContent).toContain("2018 · 10 setups · 30% won · +0.10R");
+  it("draws the picked strategy year by year, and gives a year's figure on a tap", async () => {
+    render(createElement(StrategyRecords, { trailProfile: "tight" }));
+    await within(await screen.findByTestId("lab-ranking")).findByText("5-minute traders, all together");
+    // The best first: moving averages, only in 2022.
+    const years = () => screen.getByRole("region", { name: "Year by year" });
+    expect(years().textContent).toContain("Coins · Moving averages 50/200");
+    expect(screen.getByTestId("years-up").textContent).toBe("1 of 1 years up · tap a year for its average");
+    expect(screen.getByTestId("ranking-maTrend").getAttribute("aria-pressed")).toBe("true");
+    // Breakout: +0.75R in 2018, −0.33R in 2022; each column against the bigger year.
+    fireEvent.click(screen.getByTestId("ranking-breakout"));
+    expect(screen.getByTestId("ranking-breakout").getAttribute("aria-pressed")).toBe("true");
+    expect(years().textContent).toContain("Coins · Breakout 55/20");
+    expect(screen.getByTestId("years-up").textContent).toBe("1 of 2 years up · tap a year for its average");
+    const cols = screen.getAllByTestId("year-column");
+    expect([cols[0].style.top, cols[0].style.height]).toEqual(["4%", "46%"]);
+    expect([cols[1].style.top, cols[1].style.height]).toEqual(["50%", `${((1 / 3 / 0.75) * 46).toFixed(1)}%`]);
+    const y2022 = within(years()).getByRole("button", { name: "2022: −0.33R a trade over 6 trades" });
+    fireEvent.click(y2022);
+    expect(screen.getByTestId("year-tip").textContent).toBe("−0.33R");
+    expect(cols[0].style.opacity).toBe("0.35");
     // A second tap puts it away.
-    fireEvent.click(within(traders).getByRole("button", { name: "2018: +0.10R a setup over 10 setups" }));
-    expect(traders.textContent).toContain("Tap a year for its numbers.");
+    fireEvent.click(y2022);
+    expect(screen.queryByTestId("year-tip")).toBeNull();
+    // Another market starts on its best strategy.
+    fireEvent.click(within(screen.getByRole("group", { name: "Market" })).getByRole("button", { name: "US" }));
+    expect(years().textContent).toContain("US · Breakout 55/20");
+    expect(screen.getByTestId("years-up").textContent).toBe("2 of 3 years up · tap a year for its average");
   });
 });
 
