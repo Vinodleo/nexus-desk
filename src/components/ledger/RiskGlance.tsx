@@ -1,13 +1,12 @@
 import React from "react";
-import { ShieldCheck, ShieldX } from "lucide-react";
 import type { Position, RiskCalculation } from "../../types";
 import { Card } from "./ui";
 import { formatMoney, formatPrice } from "./format";
 import { atStop } from "./LedgerFloor";
 
-// Book → Risk, first: three rings (today's loss limit left, what every open
-// stop hitting would take of it, and the money in trades), then each open
-// trade's loss at its stop.
+// Book → Risk, first: three rings side by side (today's loss limit left, what
+// every open stop hitting would take of it, and the money in trades), then
+// each open trade's loss at its stop.
 
 const money = (n: number) => formatMoney(n, { decimals: 0 });
 
@@ -17,76 +16,87 @@ export function allStops(positions: Position[], limit: number): { net: number; s
   return { net, share: limit > 0 ? Math.min(100, (Math.max(0, -net) / limit) * 100) : 0 };
 }
 
-// Radii in px of the three rings in their 168 px box, outside in.
-const RING_SIZES = [
-  { inner: 71, outer: 84 },
-  { inner: 54, outer: 67 },
-  { inner: 37, outer: 50 },
-];
+const RING_R = 36;
+const RING_C = 2 * Math.PI * RING_R;
 
-const Ring: React.FC<{ pct: number; color: string; size: number; delayMs: number; testId: string }> = ({ pct, color, size, delayMs, testId }) => {
-  const { inner, outer } = RING_SIZES[size];
-  const mask = `radial-gradient(circle, transparent ${inner - 0.5}px, #000 ${inner}px, #000 ${outer}px, transparent ${outer + 0.5}px)`;
+/** One ring: it sweeps round to `pct` when shown and glides when it changes; the figure sits in its middle. */
+const Ring: React.FC<{ pct: number; color: string; label: string; value: string; delayMs: number; testId: string }> = ({
+  pct,
+  color,
+  label,
+  value,
+  delayMs,
+  testId,
+}) => {
+  const f = Math.max(0, Math.min(100, pct)) / 100;
   return (
-    <span
-      data-testid={testId}
-      className="absolute inset-0 rounded-full nx-risk-ring"
-      style={
-        {
-          "--nx-ring": Math.max(0, Math.min(100, pct)).toFixed(1),
-          background: `conic-gradient(${color} calc(var(--nx-ring) * 1%), color-mix(in srgb, ${color} 14%, transparent) 0)`,
-          WebkitMaskImage: mask,
-          maskImage: mask,
-          animationDelay: `${delayMs}ms`,
-        } as React.CSSProperties
-      }
-    />
+    <div className="flex flex-col items-center gap-1.5 text-center min-w-0" data-testid={`${testId}-cell`}>
+      <div className="relative w-[92px] h-[92px]">
+        <svg width="92" height="92" viewBox="0 0 92 92" aria-hidden="true" className="-rotate-90">
+          <circle cx="46" cy="46" r={RING_R} fill="none" className="stroke-inset" strokeWidth="9" />
+          <circle
+            data-testid={testId}
+            data-pct={(f * 100).toFixed(1)}
+            cx="46"
+            cy="46"
+            r={RING_R}
+            fill="none"
+            stroke={color}
+            strokeWidth="9"
+            strokeLinecap="round"
+            className="nx-ring-sweep"
+            style={
+              {
+                "--nx-c": RING_C.toFixed(1),
+                strokeDasharray: RING_C.toFixed(1),
+                strokeDashoffset: (RING_C * (1 - f)).toFixed(1),
+                animationDelay: `${delayMs}ms`,
+                opacity: f > 0 ? 1 : 0,
+              } as React.CSSProperties
+            }
+          />
+        </svg>
+        <span className="absolute inset-0 grid place-items-center font-display text-lg tabular-nums">{Math.round(f * 100)}%</span>
+      </div>
+      <div className="text-xs font-semibold leading-tight">{label}</div>
+      <div className="text-[11px] text-muted tabular-nums truncate max-w-full">{value}</div>
+    </div>
   );
 };
 
-export const RiskGlance: React.FC<{ r: RiskCalculation; positions: Position[]; passing: boolean }> = ({ r, positions, passing }) => {
+/** Three rings side by side: today's loss limit left, what every open stop hitting would take of it, and the money in trades. */
+export const RiskGlance: React.FC<{ r: RiskCalculation; positions: Position[] }> = ({ r, positions }) => {
   const limit = r.hardDailyLossLimit;
   const left = Math.max(0, limit - r.currentDailyLoss);
   const stops = allStops(positions, limit);
-  const inTrades = r.portfolioExposureFraction * 100;
-  const Shield = passing ? ShieldCheck : ShieldX;
+  const inTrades = Math.max(0, r.portfolioExposureFraction) * 100;
   return (
-    <Card aria-label="Risk at a glance" className="flex items-center gap-3.5">
-      <div className="relative w-[168px] h-[168px] shrink-0" aria-hidden="true">
-        <Ring testId="ring-loss-left" pct={limit > 0 ? (left / limit) * 100 : 0} color="var(--nx-gain)" size={0} delayMs={150} />
-        {positions.length > 0 && <Ring testId="ring-all-stops" pct={stops.share} color="var(--nx-warn)" size={1} delayMs={300} />}
-        <Ring testId="ring-in-trades" pct={inTrades} color="var(--nx-accent)" size={2} delayMs={450} />
-        <span
-          className={`absolute left-1/2 top-1/2 w-11 h-11 -ml-[22px] -mt-[22px] rounded-full grid place-items-center nx-breathe ${
-            passing ? "bg-gain/15 text-gain" : "bg-loss/15 text-loss"
-          }`}
-        >
-          <Shield className="w-6 h-6" strokeWidth={1.8} />
-        </span>
-      </div>
-      <div className="flex flex-col gap-3 min-w-0 text-xs leading-snug">
-        <div className="flex gap-2" data-testid="glance-loss-left">
-          <span className="w-2.5 h-2.5 mt-0.5 rounded-[3px] shrink-0 bg-gain" />
-          <span>
-            <b>{money(left)}</b> of today's {money(limit)} loss limit left
-          </span>
-        </div>
-        {positions.length > 0 && (
-          <div className="flex gap-2" data-testid="glance-all-stops">
-            <span className="w-2.5 h-2.5 mt-0.5 rounded-[3px] shrink-0 bg-warn" />
-            <span>
-              <b>{Math.round(stops.share)}%</b> of the limit if every stop hit
-            </span>
-          </div>
-        )}
-        <div className="flex gap-2" data-testid="glance-in-trades">
-          <span className="w-2.5 h-2.5 mt-0.5 rounded-[3px] shrink-0 bg-accent" />
-          <span>
-            <b>{inTrades.toFixed(0)}%</b> of the money in trades
-          </span>
-        </div>
-      </div>
-    </Card>
+    <section aria-label="Risk at a glance" className="bg-surface border border-line rounded-2xl px-2.5 py-4 grid grid-cols-3 gap-1">
+      <Ring
+        testId="ring-loss-left"
+        pct={limit > 0 ? (left / limit) * 100 : 0}
+        color="var(--nx-gain)"
+        label="Loss limit left"
+        value={`${money(left)} of ${money(limit)}`}
+        delayMs={0}
+      />
+      <Ring
+        testId="ring-all-stops"
+        pct={stops.share}
+        color="var(--nx-warn)"
+        label="If every stop hit"
+        value={positions.length === 0 ? "Nothing open" : formatMoney(stops.net, { signed: true, decimals: 0 })}
+        delayMs={180}
+      />
+      <Ring
+        testId="ring-in-trades"
+        pct={inTrades}
+        color="var(--nx-accent)"
+        label="Money in trades"
+        value={money(r.equity * Math.max(0, r.portfolioExposureFraction))}
+        delayMs={360}
+      />
+    </section>
   );
 };
 
@@ -97,35 +107,34 @@ export const IfStopsHit: React.FC<{ positions: Position[]; limit: number }> = ({
   const biggest = Math.max(1, ...rows.map((x) => Math.max(0, -x.v)));
   const stops = allStops(positions, limit);
   return (
-    <Card aria-label="If every stop hit now" className="flex flex-col gap-3">
+    <Card aria-label="If every stop hit now" className="flex flex-col gap-2.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-semibold">If every stop hit now</span>
-        <span className={`font-display text-xl tabular-nums ${stops.net < 0 ? "text-loss" : "text-gain"}`} data-testid="stops-total">
+        <h2 className="m-0 text-sm font-semibold">If every stop hit now</h2>
+        <span className={`text-sm font-bold tabular-nums ${stops.net < 0 ? "text-loss" : "text-gain"}`} data-testid="stops-total">
           {formatMoney(stops.net, { signed: true, decimals: 0 })}
         </span>
       </div>
+      <p className="m-0 text-xs text-muted leading-relaxed" data-testid="stops-note">
+        Each open trade at its stop, before fees{limit > 0 && stops.net < 0 ? `: ${Math.round(stops.share)}% of today's loss limit` : ""}. Stops
+        seldom all hit on one day.
+      </p>
       {rows.map(({ p, v }, i) => (
-        <div key={p.id} data-testid="stop-row">
-          <div className="flex justify-between gap-3 text-[13px] mb-1">
-            <span>
-              <b>{p.symbol}</b> <span className="text-muted">stop {formatPrice(p.stopLoss)}</span>
-            </span>
-            <span className={`font-bold tabular-nums ${v < 0 ? "text-loss" : "text-gain"}`}>
-              {formatMoney(v, { signed: true, decimals: 0 })}
-              {v >= 0 ? " locked in" : ""}
-            </span>
-          </div>
-          {v < 0 && (
-            <div className="h-2 rounded-full bg-inset" aria-hidden="true">
-              <div className="h-full rounded-full bg-loss/75 nx-grow" style={{ width: `${((-v / biggest) * 100).toFixed(1)}%`, animationDelay: `${300 + i * 90}ms` }} />
-            </div>
-          )}
+        <div key={p.id} data-testid="stop-row" className="flex items-center gap-2.5" title={`Stop ${formatPrice(p.stopLoss)}`}>
+          <span className="w-[72px] shrink-0 text-[13px] font-bold truncate">{p.symbol.replace(/\.US$/, "").replace(/\/INR$/, "")}</span>
+          <span className="flex-1 h-2 rounded-full bg-inset overflow-hidden" aria-hidden="true">
+            {v < 0 && (
+              <span
+                className="block h-full rounded-full bg-loss/75 nx-grow"
+                style={{ width: `${((-v / biggest) * 100).toFixed(1)}%`, animationDelay: `${300 + i * 70}ms` }}
+              />
+            )}
+          </span>
+          <span className={`w-[84px] shrink-0 text-right text-xs font-semibold tabular-nums ${v < 0 ? "text-loss" : "text-gain"}`}>
+            {formatMoney(v, { signed: true, decimals: 0 })}
+            {v >= 0 && <span className="block text-[10px] font-normal text-muted">locked in</span>}
+          </span>
         </div>
       ))}
-      <div className="text-xs text-muted leading-relaxed">
-        Before fees. Stops seldom all hit on one day; this is the most today could cost from what's open
-        {limit > 0 && stops.net < 0 ? `, ${Math.round(stops.share)}% of today's loss limit` : ""}.
-      </div>
     </Card>
   );
 };

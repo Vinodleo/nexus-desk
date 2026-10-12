@@ -77,7 +77,7 @@ describe("repairing saved trades", () => {
 
   it("label a momentum trade", () => {
     const { container } = render(createElement(LedgerBookTrades, { trades: [trade({ symbol: "NVDA.US", strategy: "momentum", timeframe: "1d", exitReason: "TRAILING_STOP" })] }));
-    expect(container.textContent).toContain(" · momentum");
+    expect(container.textContent).toContain(" · US momentum · Left the top 3");
   });
 });
 

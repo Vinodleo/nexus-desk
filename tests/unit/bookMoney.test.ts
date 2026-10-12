@@ -7,7 +7,7 @@ import type { HistoricalTrade } from "../../src/types";
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
 const { LedgerBreakdown, tradesIn } = await import("../../src/components/ledger/LedgerBreakdown");
-const { moneyFlow, strategyOf } = await import("../../src/components/ledger/BookMoney");
+const { exitWords, moneyFlow, strategyBadge, strategyOf } = await import("../../src/components/ledger/BookMoney");
 
 // Book → Breakdown: where the money went, each strategy's result, and the win rate against break-even.
 
@@ -51,6 +51,15 @@ describe("where the money went", () => {
     ]);
     expect(strategyOf(trade("x", "SOL/INR", 1, 0, 0, { strategy: undefined, timeframe: "1d" }))).toBe("Daily traders");
     expect(strategyOf(trade("y", "SOL/INR", 1, 0, 0, { strategy: undefined }))).toBe("5-minute traders");
+    expect(trades.map(strategyBadge)).toEqual(["BO", "FD", "CB", "T3", "CB", "CB", "BO", "FD"]);
+  });
+
+  it("says how a trade ended: the slower strategies' own sales by their rule", () => {
+    // Breakout sells below its 20-day low and momentum when out of the top 3; both are recorded as trailing-stop exits.
+    expect(exitWords(trade("x", "NVDA.US", 1, 0, 0, { exitReason: "TRAILING_STOP" }))).toBe("Below its 20-day low");
+    expect(exitWords(trade("x", "NVDA.US", 1, 0, 0, { strategy: "momentum", exitReason: "TRAILING_STOP" }))).toBe("Left the top 3");
+    expect(exitWords(trade("x", "NVDA.US", -1, 0, 0))).toBe("Stop loss");
+    expect(exitWords(trade("x", "SOL/INR", 1, 0, 0, { strategy: undefined, exitReason: "TRAILING_STOP" }))).toBe("Trailing stop");
   });
 
   it("takes the last 7 days, this month, or all", () => {
@@ -64,9 +73,12 @@ describe("where the money went", () => {
   it("draws the waterfall and says it in words, with what coin fees took", () => {
     render(createElement(LedgerBreakdown, { trades, now: NOW }));
     fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByTestId("wf-kept-total").textContent).toBe("+₹8,295");
+    expect(screen.getByLabelText("Where the money went").textContent).toContain(
+      "+₹21,849Won before fees−₹9,764Lost before fees−₹3,790Fees+₹8,295Kept"
+    );
     expect(screen.getByTestId("waterfall-words").textContent).toBe(
-      "Winners made ₹21,849 before fees, losers lost ₹9,764, fees took ₹3,790 (17% of what the winners made): kept ₹8,295." +
-        " Coin trades paid ₹3,598 of the fees: CoinDCX takes 0.59% each way."
+      "Fees took ₹3,790, 17% of what the winners made before fees. Coin trades paid ₹3,598 of them: CoinDCX takes 0.59% each way."
     );
     // Won reaches the top (4% to 88%); Lost steps down from it; Kept stands from zero.
     const col = (k: string) => screen.getByTestId(`wf-${k}`).style;
@@ -87,12 +99,20 @@ describe("where the money went", () => {
       "US momentum · 1 trade+₹2,140",
       "US breakout · 2 trades−₹5,785",
     ]);
-    expect((rows[0].querySelector(".bg-gain") as HTMLElement).style.width).toBe("100%");
-    expect((rows[3].querySelector(".bg-loss\\/75") as HTMLElement).style.width).toBe(`${((5785 / 7370) * 100).toFixed(2)}%`);
+    // Half the track either side of the middle: the best fills the right half, US breakout reaches left from it.
+    const bars = screen.getAllByTestId("strategy-bar").map((b) => (b as HTMLElement).style);
+    expect([bars[0].left, bars[0].width]).toEqual(["50%", "50%"]);
+    const w = (5785 / 7370) * 50;
+    expect([bars[3].left, bars[3].width]).toEqual([`${(50 - w).toFixed(2)}%`, `${w.toFixed(2)}%`]);
+    expect(screen.getAllByTestId("strategy-bar")[3].className).toContain("bg-loss");
     // 4 of 8 won; break-even from the average win and loss in rupees.
     const meter = screen.getByRole("meter", { name: "Win rate against break-even" });
     expect(meter.getAttribute("aria-valuenow")).toBe("50");
     expect(screen.getByTestId("gauge-needle").style.transform).toBe("rotate(0.0deg)");
+    expect(screen.getByTestId("win-rate").textContent).toBe("50% won");
+    // Break-even from the average win (₹4,835) and loss (₹2,761): 36%, the mark left of the top.
+    expect(screen.getByTestId("gauge-break-even").style.transform).toBe("rotate(-25.2deg)");
+    expect(screen.getByTestId("gauge-arc").style.strokeDasharray).toBe(`${(0.5 * Math.PI * 90).toFixed(1)} 400`);
     // A shorter period, the needle swings: the last 7 days won 3 of 5 (60%).
     fireEvent.click(screen.getByRole("button", { name: "Last 7 days" }));
     expect(screen.getByTestId("gauge-needle").style.transform).toBe("rotate(18.0deg)");

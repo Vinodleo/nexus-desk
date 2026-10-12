@@ -1818,6 +1818,7 @@ export default function App() {
           {activeTab === "book" && (
             <LedgerBook
               trades={closedTrades}
+              isLive={tradingMode === "LIVE_COINDCX"}
               onUpdateTrade={(updatedTrade) => {
                 setClosedTrades((prev) =>
                   prev.map((t) => (t.id === updatedTrade.id ? updatedTrade : t))

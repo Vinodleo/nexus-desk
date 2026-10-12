@@ -157,6 +157,53 @@ export const HoldButton: React.FC<{
   );
 };
 
+/**
+ * A few choices on an inset track, a raised thumb sliding to the one picked
+ * (the Book's trade filter and periods). Each choice is a button that says
+ * whether it's pressed.
+ */
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  label,
+  className = "",
+}: {
+  options: readonly { id: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  label: string;
+  className?: string;
+}) {
+  const at = Math.max(0, options.findIndex((o) => o.id === value));
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className={`relative grid p-[3px] rounded-full bg-inset border border-line ${className}`}
+      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+    >
+      <span
+        aria-hidden="true"
+        data-testid="segment-thumb"
+        className="absolute top-[3px] bottom-[3px] left-[3px] rounded-full bg-surface shadow-sm nx-strategy-pill"
+        style={{ width: `calc((100% - 6px) / ${options.length})`, transform: `translateX(${at * 100}%)` }}
+      />
+      {options.map((o, i) => (
+        <button
+          key={o.id}
+          type="button"
+          aria-pressed={i === at}
+          onClick={() => onChange(o.id)}
+          className={`relative min-h-9 px-1 rounded-full text-xs font-semibold truncate cursor-pointer transition-colors ${i === at ? "text-ink" : "text-muted"}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export const SectionHeading: React.FC<{ title: string; right?: React.ReactNode }> = ({ title, right }) => (
   <div className="flex items-baseline justify-between gap-3">
     <h2 className="m-0 font-display text-xl font-semibold text-ink">{title}</h2>

@@ -2,14 +2,14 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import type { HistoricalTrade } from "../../types";
 import { apiFetch } from "../../services/apiClient";
 import { MIN_EDGE_R, MIN_TRADER_TRADES, traderHeldBack } from "../../services/calibration";
-import { Card, StatTile } from "./ui";
-import { EXIT_LABEL, entrySlip, formatMoney, pnlTone, stopSlip } from "./format";
+import { Card, Segmented, StatTile } from "./ui";
+import { entrySlip, formatMoney, pnlTone, stopSlip } from "./format";
 import { marketOf } from "../../shared/marketLimits";
 import { GrowBar, prefersReducedMotion, useSlideFrom } from "./motion";
 import { ChevronDown } from "lucide-react";
 import { MIN_CONDITION_SETUPS, type ConditionBreakdown } from "../../services/conditionStats";
 import { TaxReportCard } from "./TaxReportCard";
-import { ByStrategy, MoneyWaterfall, WinGauge } from "./BookMoney";
+import { ByStrategy, MoneyWaterfall, WinRate, exitWords } from "./BookMoney";
 
 // Where the book's money goes: average win against average loss, and the
 // same by trader, coin and exit. Plus the scanner's own record of each
@@ -799,6 +799,12 @@ export function tradesIn(trades: HistoricalTrade[], range: Range, now: number): 
   return trades.filter((t) => (t.closedAtMs ?? 0) >= from);
 }
 
+const PERIODS = [
+  { id: "week", label: "Last 7 days" },
+  { id: "month", label: "This month" },
+  { id: "all", label: "All" },
+] as const;
+
 export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number }> = ({ trades, now = Date.now() }) => {
   const [range, setRange] = useState<Range>("week");
   const inRange = useMemo(() => tradesIn(trades, range, now), [trades, range, now]);
@@ -806,65 +812,29 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
   const byTrader = useMemo(() => breakdown(inRange, (t) => t.setupName || "Unknown"), [inRange]);
   const byMarket = useMemo(() => breakdown(inRange, (t) => MARKET_TITLE_BY_KEY[marketOf(t.symbol)]), [inRange]);
   const byCoin = useMemo(() => breakdown(inRange, (t) => t.symbol), [inRange]);
-  const byExit = useMemo(() => breakdown(inRange, (t) => EXIT_LABEL[t.exitReason] ?? t.exitReason), [inRange]);
+  const byExit = useMemo(() => breakdown(inRange, exitWords), [inRange]);
   const measures = useScannerMeasures();
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-2" role="group" aria-label="Period">
-        {(
-          [
-            ["week", "Last 7 days"],
-            ["month", "This month"],
-            ["all", "All"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={range === id}
-            onClick={() => setRange(id)}
-            className={`min-h-9 px-3.5 rounded-full border text-[13px] font-semibold cursor-pointer ${
-              range === id ? "bg-accent-soft border-accent text-accent" : "border-line text-ink"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        label="Period"
+        options={PERIODS}
+        value={range}
+        onChange={setRange}
+      />
 
-      <MoneyWaterfall trades={inRange} />
-
-      {summary ? (
-        <Card aria-label="Wins against losses" className="flex flex-col gap-3">
-          <div className="text-sm">
-            Winners average <b className="text-gain">{formatMoney(summary.avgWin, { decimals: 0 })}</b> and losers{" "}
-            <b className="text-loss">{formatMoney(summary.avgLoss, { decimals: 0 })}</b>
-            {summary.breakEvenWinPct !== null && (
-              <>
-                , so breaking even takes winning <b>{summary.breakEvenWinPct}%</b> of trades. You won <b>{summary.winPct}%</b>
-                {summary.winPct >= summary.breakEvenWinPct ? "." : ": wins are too small for the losses."}
-              </>
-            )}
-          </div>
-          {summary.breakEvenWinPct !== null && <WinGauge winPct={summary.winPct} breakEvenPct={summary.breakEvenWinPct} />}
-          <div className="flex gap-2">
-            <StatTile label="Avg win" value={formatMoney(summary.avgWin, { decimals: 0 })} valueClassName="text-base text-gain" />
-            <StatTile label="Avg loss" value={formatMoney(summary.avgLoss, { decimals: 0 })} valueClassName="text-base text-loss" />
-            <StatTile
-              label="Per trade"
-              value={summary.avgR !== null ? rSigned(summary.avgR) : "—"}
-              valueClassName={`text-base ${summary.avgR !== null ? pnlTone(summary.avgR) : ""}`}
-            />
-          </div>
-        </Card>
-      ) : (
+      {!summary && (
         <Card>
           <div className="text-sm text-muted">No closed trades in this period.</div>
         </Card>
       )}
-
+      <MoneyWaterfall trades={inRange} />
       <ByStrategy trades={inRange} />
+      {summary && (
+        <WinRate winPct={summary.winPct} breakEvenPct={summary.breakEvenWinPct} avgWin={summary.avgWin} avgLoss={summary.avgLoss} avgR={summary.avgR} />
+      )}
+      <Rows title="How trades ended" rows={byExit} />
       <HowTradesMoved trades={inRange} />
       <TraderRecord table={measures.table} trades={trades} />
       <WhenSetupsWin data={measures.conditions} />
@@ -872,7 +842,6 @@ export const LedgerBreakdown: React.FC<{ trades: HistoricalTrade[]; now?: number
       <Rows title="By trader" rows={byTrader} />
       <Rows title="By coin" rows={byCoin} limit={8} />
       <CoinCosts activity={measures.activity} />
-      <Rows title="By exit" rows={byExit} />
       <TaxReportCard trades={trades} />
     </div>
   );

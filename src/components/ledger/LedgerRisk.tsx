@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { XCircle, Loader2 } from "lucide-react";
 import type { CoinDcxServerStatus, FailureInjectionState, Position, RiskCalculation } from "../../types";
 import { apiFetch } from "../../services/apiClient";
 import { GrowBar } from "./motion";
@@ -7,6 +7,7 @@ import { Card, HoldButton, Switch } from "./ui";
 import { IfStopsHit, RiskGlance } from "./RiskGlance";
 import { formatMoney } from "./format";
 import { MARKET_KEYS, type MarketKey, type MarketLimits } from "../../shared/marketLimits";
+import { floorGroups } from "./FloorDesk";
 
 export interface LedgerRiskProps {
   riskCalc: RiskCalculation;
@@ -35,9 +36,14 @@ export function mostATradeCanRisk(r: Pick<RiskCalculation, "equity" | "maxRiskPe
   return MARKET_KEYS.map((k, i) => `${MARKET_SHORT[k]} ${formatMoney(each[i], { decimals: 0 })}`).join(" · ");
 }
 
-const Meter: React.FC<{ label: string; value: string; fraction: number }> = ({ label, value, fraction }) => {
+/**
+ * A limit as a bar filling toward it. Near the limit it turns amber and
+ * pulses a few times, at it red and pulses slowly; a `calm` one (a strategy's
+ * slots, which are meant to fill) stays in the accent colour.
+ */
+const Meter: React.FC<{ label: string; value: string; fraction: number; calm?: boolean }> = ({ label, value, fraction, calm }) => {
   const f = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
-  const tone = f >= 1 ? "bg-loss" : f >= 0.8 ? "bg-warn" : "bg-accent";
+  const tone = calm || f < 0.8 ? "bg-accent" : f >= 1 ? "bg-loss" : "bg-warn";
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex justify-between gap-3 text-[13px] tabular-nums">
@@ -45,7 +51,7 @@ const Meter: React.FC<{ label: string; value: string; fraction: number }> = ({ l
         <span className="text-muted">{value}</span>
       </div>
       <div
-        className={`h-1.5 rounded-full bg-inset overflow-hidden${f >= 1 ? " nx-pulse-slow" : f >= 0.8 ? " nx-pulse-few" : ""}`}
+        className={`h-1.5 rounded-full bg-inset overflow-hidden${calm ? "" : f >= 1 ? " nx-pulse-slow" : f >= 0.8 ? " nx-pulse-few" : ""}`}
         role="meter"
         aria-label={label}
         aria-valuemin={0}
@@ -98,53 +104,22 @@ export const LedgerRisk: React.FC<LedgerRiskProps> = (props) => {
 
   return (
     <div className="flex flex-col gap-4">
-      <div
-        className={`flex items-start gap-2.5 p-3.5 rounded-2xl text-sm ${
-          passing ? "bg-accent-soft text-accent" : "bg-danger-soft text-loss border border-danger-line"
-        }`}
-      >
-        {passing ? (
-          <CheckCircle2 className="w-5 h-5 shrink-0" strokeWidth={1.8} />
-        ) : (
+      {!passing && (
+        <div className="flex items-start gap-2.5 p-3.5 rounded-2xl text-sm bg-danger-soft text-loss border border-danger-line nx-pop-in">
           <XCircle className="w-5 h-5 shrink-0" strokeWidth={1.8} />
-        )}
-        <span>
-          <strong>{passing ? "All checks passing." : "New trades blocked."}</strong>{" "}
-          {passing ? "New trades can open within the limits below." : blockedReason}
-        </span>
-      </div>
-
-      <RiskGlance r={r} positions={props.positions ?? []} passing={passing && !props.stopped} />
-      <IfStopsHit positions={props.positions ?? []} limit={r.hardDailyLossLimit} />
-      {props.stopped ? (
-        <Card aria-label="Trading stopped" className="flex items-center justify-between gap-3 nx-pop-in">
-          <div>
-            <div className="text-[15px] font-bold text-loss">Trading stopped</div>
-            <div className="text-xs text-muted">No new trades. Open ones stay guarded.</div>
-          </div>
-          <button
-            type="button"
-            onClick={props.onToggleStop}
-            className="min-h-11 px-5 rounded-full bg-accent text-on-accent text-sm font-bold cursor-pointer"
-          >
-            Resume
-          </button>
-        </Card>
-      ) : (
-        // Held, so a stray tap can't stop the desk.
-        <HoldButton
-          label="Hold to stop all trading"
-          keepHoldingLabel="Keep holding to stop all trading"
-          onHold={props.onToggleStop}
-          className="w-full min-h-14 rounded-full border border-danger-line bg-danger-soft text-loss text-[15px] font-bold"
-          fillClassName="bg-loss/25"
-        />
+          <span>
+            <strong>New trades blocked.</strong> {blockedReason}
+          </span>
+        </div>
       )}
 
-      <Heading>Limits</Heading>
-      <Card className="flex flex-col gap-4">
+      <RiskGlance r={r} positions={props.positions ?? []} />
+      <IfStopsHit positions={props.positions ?? []} limit={r.hardDailyLossLimit} />
+
+      <Card aria-label="Limits" className="flex flex-col gap-3.5">
+        <h2 className="m-0 text-sm font-semibold">Limits</h2>
         <Meter
-          label="Daily loss"
+          label="Lost today"
           value={`${formatMoney(r.currentDailyLoss, { decimals: 0 })} of ${formatMoney(r.hardDailyLossLimit, { decimals: 0 })}`}
           fraction={r.hardDailyLossLimit > 0 ? r.currentDailyLoss / r.hardDailyLossLimit : 0}
         />
@@ -158,11 +133,50 @@ export const LedgerRisk: React.FC<LedgerRiskProps> = (props) => {
           value={`${r.openPositionCount} of ${r.maxSimultaneousPositions}`}
           fraction={r.maxSimultaneousPositions > 0 ? r.openPositionCount / r.maxSimultaneousPositions : 0}
         />
+        {/* The slower strategies' own slots, apart from the trades at once above. */}
+        {floorGroups(props.positions ?? [], props.marketLimits)
+          .filter((g) => (g.slots ?? 0) > 0)
+          .map((g) => (
+            <Meter
+              key={g.id}
+              calm
+              label={`${g.label} slots`}
+              value={`${g.positions.length} of ${g.slots}`}
+              fraction={g.positions.length / g.slots!}
+            />
+          ))}
         <div className="flex justify-between gap-3 text-[13px] tabular-nums">
           <span>Most a trade can risk</span>
           <span className="text-muted">{mostATradeCanRisk(r, props.marketLimits)}</span>
         </div>
       </Card>
+
+      {/* Stopping unfolds a note that the open trades stay guarded; Resume is a tap. */}
+      <div className={`nx-fold${props.stopped ? " nx-fold-open" : ""}`} aria-hidden={!props.stopped}>
+        <div>
+          <div aria-label="Trading stopped" role="status" className="p-3.5 rounded-2xl bg-warn-soft text-warn-ink text-[13px] leading-relaxed">
+            <strong>Trading stopped.</strong> No new trades open. The guardian still watches every stop on the server.
+          </div>
+        </div>
+      </div>
+      {props.stopped ? (
+        <button
+          type="button"
+          onClick={props.onToggleStop}
+          className="w-full min-h-14 rounded-full bg-accent text-on-accent text-[15px] font-bold cursor-pointer nx-pop-in"
+        >
+          Resume trading
+        </button>
+      ) : (
+        // Held, so a stray tap can't stop the desk.
+        <HoldButton
+          label="Hold to stop all trading"
+          keepHoldingLabel="Keep holding to stop all trading"
+          onHold={props.onToggleStop}
+          className="w-full min-h-14 rounded-full border border-danger-line bg-danger-soft text-loss text-[15px] font-bold"
+          fillClassName="bg-loss/25"
+        />
+      )}
 
       <Heading>Live orders on CoinDCX</Heading>
       <Card className="flex flex-col gap-4">
