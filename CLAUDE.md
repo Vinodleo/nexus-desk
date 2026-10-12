@@ -46,15 +46,23 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   A trade that opens with the app on screen (the server's, the phone's autopilot, or approved in the Queue) unfolds a
   ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it
   took; several queue up.
-  Book → Trades: the running total of closed trades as a line that draws itself (`MoneyLine`), a month of days tinted
-  by what each made or lost, opening on this month with its total, the arrows or a swipe going to any month (tap a day
-  for only its trades; `DayCalendar`, `BookCalendar.tsx`), and each row's result in R
-  after fees (`resultR`) with a slim line of how it moved. Book → Breakdown (last 7 days, this month or all, `tradesIn`):
-  where the money went (`MoneyWaterfall`, `moneyFlow`: won and lost before fees, the fees, what was kept; what coin
-  fees took), each strategy's result either side of zero (`ByStrategy`, `strategyOf`), and the win rate on a half dial
-  against the rate that breaks even (`WinGauge`), in `BookMoney.tsx`. Book → Risk opens on three rings (today's loss
-  limit left, what every open stop hitting would take of it, the money in trades; `RiskGlance`), each open trade's loss
-  at its stop (`IfStopsHit`, `allStops`, before fees) and "Hold to stop all trading" (held, like Close; Resume is a tap).
+  The Book says Paper or Live by its title. Book → Trades is one month at a time, opening on this one: its total
+  rolling digit by digit between the arrows (back to any month, forward to this one; a swipe on the days too), its
+  running total as a line that draws itself and shows the total at any close under a finger (`MonthLine`, `monthLine`),
+  its days tinted by what each made with the amount under the date (tap a day for only its trades; `DayCalendar`,
+  `shortAmount`, `BookCalendar.tsx`), All/Wins/Losses (`Segmented` in `ui.tsx`), and its trades in a card per day with
+  the day's total. Each row has its strategy's badge (`strategyBadge`), how it ended (`exitWords`: a breakout's own sale
+  reads "Below its 20-day low", momentum's "Left the top 3"; both are recorded as trailing-stop exits) and its result in
+  R after fees (`resultR`); tapping one opens how it moved in R, bought and sold, held, before fees, fees and kept. An
+  empty month offers the last one with trades. Book → Breakdown (last 7 days, this month or all, `tradesIn`):
+  where the money went (`MoneyWaterfall`, `moneyFlow`: what was kept, then won and lost before fees, the fees; what
+  coin fees took), each strategy's result either side of the middle (`ByStrategy`, `strategyOf`), the win rate on a
+  half dial against the rate that breaks even (`WinRate`, `WinGauge`), all in `BookMoney.tsx` and gliding when the
+  period changes, then how trades ended and the rest. Book → Risk opens on three rings side by side (today's loss limit
+  left, what every open stop hitting would take of it, the money in trades; `RiskGlance`), each open trade's loss at
+  its stop (`IfStopsHit`, `allStops`, before fees), the limits with each slower strategy's slots (`floorGroups`), and
+  "Hold to stop all trading" (held, like Close; stopping unfolds a note that the stops are still watched, and "Resume
+  trading" is a tap). A block on new trades is said above the rings.
   Explanations and long lists fold away (`Fold`); chips, bars and year columns are in `labUi.tsx`. The cards read
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume

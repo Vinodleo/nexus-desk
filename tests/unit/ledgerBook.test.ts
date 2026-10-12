@@ -13,7 +13,8 @@ import { cleanMarketLimits } from "../../src/shared/marketLimits";
 
 afterEach(cleanup);
 
-const NOW = Date.now();
+// Mid-month, so yesterday's trades are in this month's Book.
+const NOW = new Date(2026, 9, 15, 12).getTime();
 function trade(id: string, pnl: number, closedAtMs: number | undefined, over: Partial<HistoricalTrade> = {}): HistoricalTrade {
   return {
     id, symbol: "ETH/INR", direction: "LONG", setupName: "Breakout", entryPrice: 265000, exitPrice: 266000, quantity: 0.035,
@@ -46,7 +47,7 @@ describe("LedgerBook", () => {
   const trades = [trade("old", -210.55, NOW - 86400000), trade("win", 142.1, NOW), trade("loss", -88.4, NOW - 1000)];
 
   it("groups closed trades by day, newest first, and filters them", () => {
-    const { container } = render(createElement(LedgerBook, { trades, risk: null }));
+    const { container } = render(createElement(LedgerBook, { trades, risk: null, now: NOW }));
     const text = container.textContent ?? "";
     expect(text.indexOf("Today")).toBeLessThan(text.indexOf("Yesterday"));
     expect(text).toContain("3 trades");
@@ -58,9 +59,9 @@ describe("LedgerBook", () => {
   });
 
   it("expands a trade to show its details", () => {
-    const { container } = render(createElement(LedgerBook, { trades: [trade("win", 142.1, NOW)], risk: null }));
+    const { container } = render(createElement(LedgerBook, { trades: [trade("win", 142.1, NOW)], risk: null, now: NOW }));
     fireEvent.click(screen.getByRole("button", { expanded: false }));
-    expect(container.textContent).toContain("Held for42 min");
+    expect(container.textContent).toContain("Held42 min");
     expect(container.textContent).toContain("Explain this trade");
   });
 
@@ -79,7 +80,7 @@ describe("a trade that opens into a card", () => {
   it("lifts the row into a card and grows its details open, then folds them away before setting it down", () => {
     vi.useFakeTimers();
     try {
-      render(createElement(LedgerBook, { trades: [measured()], risk: null }));
+      render(createElement(LedgerBook, { trades: [measured()], risk: null, now: NOW }));
       const row = () => screen.getByRole("region", { name: "Closed trades" }).querySelector("li")!;
       expect(row().className).not.toContain("nx-trade-open");
       fireEvent.click(screen.getByRole("button", { expanded: false }));
@@ -100,7 +101,7 @@ describe("a trade that opens into a card", () => {
     expect(moveLine(measured())).toEqual({ bestR: near(1), worstR: near(0.5), exitR: near(0.5), lo: -1, hi: near(1) });
     // A trade that ran past 1R widens the line to fit.
     expect(moveLine(measured({ highestPrice: 270000, exitPrice: 269000 }))).toMatchObject({ bestR: near(2.5), exitR: near(2), hi: near(2.5) });
-    render(createElement(LedgerBook, { trades: [measured()], risk: null }));
+    render(createElement(LedgerBook, { trades: [measured()], risk: null, now: NOW }));
     fireEvent.click(screen.getByRole("button", { expanded: false }));
     const line = screen.getByTestId("how-it-moved");
     expect(line.textContent).toContain("Went +1.0R your way at best and −0.5R against at worst; closed at +0.5R before fees.");
@@ -110,10 +111,10 @@ describe("a trade that opens into a card", () => {
 
   it("leaves the line out for older trades without the record", () => {
     expect(moveLine(trade("old", 10, NOW))).toBeNull();
-    render(createElement(LedgerBook, { trades: [trade("old", 10, NOW)], risk: null }));
+    render(createElement(LedgerBook, { trades: [trade("old", 10, NOW)], risk: null, now: NOW }));
     fireEvent.click(screen.getByRole("button", { expanded: false }));
     expect(screen.queryByTestId("how-it-moved")).toBeNull();
-    expect(screen.getByTestId("trade-details").textContent).toContain("Held for");
+    expect(screen.getByTestId("trade-details").textContent).toContain("Held");
   });
 });
 
@@ -135,8 +136,9 @@ describe("LedgerRisk", () => {
 
   it("shows limits as meters", () => {
     const { container } = render(createElement(LedgerRisk, base));
-    expect(container.textContent).toContain("All checks passing.");
-    expect(screen.getByRole("meter", { name: "Daily loss" }).getAttribute("aria-valuenow")).toBe("20");
+    // Nothing to say while every check passes; a block is said first (below).
+    expect(container.textContent).not.toContain("New trades blocked");
+    expect(screen.getByRole("meter", { name: "Lost today" }).getAttribute("aria-valuenow")).toBe("20");
     expect(container.textContent).toContain("2 of 3");
   });
 
@@ -201,10 +203,14 @@ describe("the Book's breakdown tab", () => {
       createElement(LedgerBook, {
         trades: [trade("a", 36, NOW, { riskAtOpen: 60 }), trade("b", 36, NOW, { riskAtOpen: 60 }), trade("c", -64, NOW, { setupName: "Chen", riskAtOpen: 60 })],
         risk: null,
+        now: NOW,
       })
     );
     fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
-    expect(screen.getByText(/breaking even takes winning/).textContent).toMatch(/64%.*You won 67%/);
+    expect(screen.getByTestId("win-rate").textContent).toBe("67% won");
+    expect(screen.getByTestId("win-rate-note").textContent).toBe(
+      "Breaks even at 64% with these wins and losses (the mark on the dial). Average win ₹36, average loss ₹64; +0.04R a trade."
+    );
     expect(await screen.findByText("Traders with your exits")).toBeTruthy();
     expect(screen.getByText("Paused")).toBeTruthy();
     expect(screen.getByText("Trading")).toBeTruthy();
@@ -226,7 +232,7 @@ describe("trades the server opened", () => {
       closedAt: new Date(NOW).toISOString(), openedAt: new Date(NOW - 600000).toISOString(), openedByServer: true,
     });
     expect(t.openedByServer).toBe(true);
-    render(createElement(LedgerBook, { trades: [t], risk: null }));
+    render(createElement(LedgerBook, { trades: [t], risk: null, now: NOW }));
     expect(screen.getByText(/autopilot \(server\)/)).toBeTruthy();
   });
 });
@@ -249,18 +255,18 @@ describe("Book, Breakdown and Risk motion", () => {
     });
 
   it("slides the section pill across and the section in from its side", () => {
-    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: risk() }));
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: risk(), now: NOW }));
     const pill = screen.getByTestId("book-section-pill");
     expect(pill.style.transform).toBe("translateX(0%)");
     fireEvent.click(screen.getByRole("tab", { name: "Risk" }));
     expect(pill.style.transform).toBe("translateX(200%)");
-    expect(screen.getByRole("meter", { name: "Daily loss" }).closest(".nx-tab-from-right")).not.toBeNull();
+    expect(screen.getByRole("meter", { name: "Lost today" }).closest(".nx-tab-from-right")).not.toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: "Trades" }));
     expect(screen.getByRole("region", { name: "Closed trades" }).closest(".nx-tab-from-left")).not.toBeNull();
   });
 
   it("staggers the closed trades in", () => {
-    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW), trade("b", -5, NOW - 1000), trade("c", 3, NOW - 2000)], risk: null }));
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW), trade("b", -5, NOW - 1000), trade("c", 3, NOW - 2000)], risk: null, now: NOW }));
     const rows = screen.getByRole("region", { name: "Closed trades" }).querySelectorAll("li");
     expect([...rows].map((li) => (li as HTMLElement).style.animationDelay)).toEqual(["0ms", "35ms", "70ms"]);
     expect(rows[0].className).toContain("nx-row-in");
@@ -272,12 +278,13 @@ describe("Book, Breakdown and Risk motion", () => {
       createElement(LedgerBook, {
         trades: [trade("a", 100, NOW, { setupName: "Chen" }), trade("b", -300, NOW, { setupName: "Ito" }), trade("c", -50, NOW, { setupName: "Chen" })],
         risk: null,
+        now: NOW,
       })
     );
     fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
     const meter = screen.getByRole("meter", { name: "Win rate against break-even" });
     expect(meter.getAttribute("aria-valuenow")).toBe("33");
-    expect(meter.parentElement!.textContent).toMatch(/won 33%.*break-even 64%/);
+    expect(screen.getByTestId("win-rate-note").textContent).toMatch(/^Breaks even at 64% .*: the wins are too small for the losses\. /);
     const byTrader = screen.getByLabelText("By trader");
     const widths = [...byTrader.querySelectorAll("[data-testid=breakdown-bar] > div")].map((b) => (b as HTMLElement).style.width);
     // Ito lost ₹300, the most; Chen made +₹50 net.
@@ -286,7 +293,7 @@ describe("Book, Breakdown and Risk motion", () => {
 
   it("pulses a meter near its limit a few times, and one at its limit for good", () => {
     const { rerender } = render(risk({ currentDailyLoss: 500 }));
-    const track = () => screen.getByRole("meter", { name: "Daily loss" });
+    const track = () => screen.getByRole("meter", { name: "Lost today" });
     expect(track().className).not.toMatch(/nx-pulse/);
     rerender(risk({ currentDailyLoss: 2100 }));
     expect(track().className).toContain("nx-pulse-few");
@@ -358,7 +365,7 @@ describe("linked stops", () => {
   });
 
   it("fold into one card in the Book that fans out when tapped", () => {
-    const now = Date.now();
+    const now = NOW;
     render(
       createElement(LedgerBook, {
         trades: [
@@ -367,6 +374,7 @@ describe("linked stops", () => {
           trade("shib", -285.08, now - 180_000, { symbol: "SHIB/INR" }),
         ],
         risk: null,
+        now: NOW,
       })
     );
     const card = screen.getByRole("button", { name: /Market dip · 3 stops/ });
@@ -395,7 +403,7 @@ describe("traders with your exits, by market", () => {
   };
   const open = async () => {
     vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify({ success: true, table, activity: null, conditions: null })));
-    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: null }));
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: null, now: NOW }));
     fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
     await screen.findByText("Traders with your exits");
   };
@@ -415,7 +423,7 @@ describe("traders with your exits, by market", () => {
   it("holds back a trader whose good start is under ten setups, and says how many more it needs", async () => {
     const ravi = { ...row("us", "Ravi Late-Day Momentum", 0.24, 0.07), trades: 3, winPct: 100 };
     vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify({ success: true, table: { ...table, rows: [...table.rows, ravi] }, activity: null, conditions: null })));
-    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: null }));
+    render(createElement(LedgerBook, { trades: [trade("a", 10, NOW)], risk: null, now: NOW }));
     fireEvent.click(screen.getByRole("tab", { name: "Breakdown" }));
     await screen.findByText("Traders with your exits");
     // Judged above +0.05R, but only three setups: still one of two trading in the US, not two of three.

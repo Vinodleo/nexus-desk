@@ -1,12 +1,13 @@
-import React, { useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import React, { useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import type { HistoricalTrade } from "../../types";
 import { TradeAutopsyCard } from "../TradeAutopsyCard";
-import { Card, StatTile } from "./ui";
-import { EXIT_LABEL, formatMoney, formatPct, formatPrice, pnlTone, stopSlip } from "./format";
+import { Segmented } from "./ui";
+import { formatMoney, formatPct, formatPrice, pnlTone, stopSlip } from "./format";
 import { LedgerBreakdown, tradeExcursion } from "./LedgerBreakdown";
-import { Rolling, staggerDelay, usePresence, useSlideFrom } from "./motion";
-import { DayCalendar, MoneyLine, localDay } from "./BookCalendar";
+import { RollingDigits, staggerDelay, usePresence, useSlideFrom } from "./motion";
+import { DayCalendar, MonthLine, localDay, monthName, monthOf, weekdayDay } from "./BookCalendar";
+import { exitWords, strategyBadge, strategyOf } from "./BookMoney";
 
 export type BookFilter = "all" | "wins" | "losses";
 
@@ -30,6 +31,7 @@ export function summarizeTrades(trades: HistoricalTrade[]) {
   }
   return {
     count: trades.length,
+    wins,
     net: won - lost,
     won,
     lost,
@@ -43,12 +45,12 @@ function dayKey(ms: number): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
-/** "Today", "Yesterday" or "23 Sep"; trades without a timestamp go under "Earlier". */
+/** "Today", "Yesterday" or "Wed 23 Sep"; trades without a timestamp go under "Earlier". */
 export function dayLabel(ms: number | undefined, now = Date.now()): string {
   if (!ms) return "Earlier";
   if (dayKey(ms) === dayKey(now)) return "Today";
   if (dayKey(ms) === dayKey(now - 86400000)) return "Yesterday";
-  return new Date(ms).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  return weekdayDay(ms);
 }
 
 /** Stops this close together, in one market, count as one market dip. */
@@ -155,26 +157,12 @@ const HowItMoved: React.FC<{ trade: HistoricalTrade }> = ({ trade: t }) => {
 /** The result in R after fees (what the trade made over what it risked); null without the risk recorded. */
 export const resultR = (t: HistoricalTrade): number | null => ((t.riskAtOpen ?? 0) > 0 ? t.realizedPnl / t.riskAtOpen! : null);
 
-/** The row's slim move line: the stop, the entry, how far it went each way and where it closed. */
-const RowMoveBar: React.FC<{ trade: HistoricalTrade }> = ({ trade: t }) => {
-  const m = moveLine(t);
-  if (!m) return null;
-  const f = (r: number) => ((r - m.lo) / (m.hi - m.lo)) * 100;
-  const x = (r: number) => `${f(r).toFixed(2)}%`;
-  return (
-    <span className="relative block h-3 mt-1" aria-hidden="true" data-testid="row-move">
-      <span className="absolute inset-x-0 top-[5px] h-0.5 rounded-full bg-line" />
-      <span className="absolute top-1 h-1 rounded-full bg-muted/30 nx-grow" style={{ left: x(-m.worstR), width: `${(f(m.bestR) - f(-m.worstR)).toFixed(2)}%` }} />
-      <span className="absolute top-0 w-0.5 h-3 -ml-px rounded-full bg-loss" style={{ left: x(-1) }} />
-      <span className="absolute top-0 w-0.5 h-3 -ml-px rounded-full bg-muted" style={{ left: x(0) }} />
-      <span
-        data-testid="row-move-exit"
-        className={`absolute top-[1px] w-2.5 h-2.5 -ml-[5px] rounded-full border-2 border-surface nx-exit-pop ${t.realizedPnl > 0 ? "bg-gain" : "bg-loss"}`}
-        style={{ left: x(m.exitR) }}
-      />
-    </span>
-  );
-};
+const Fact: React.FC<{ label: string; children: React.ReactNode; className?: string; wide?: boolean }> = ({ label, children, className = "", wide }) => (
+  <div className={wide ? "col-span-3" : ""}>
+    <dt className="text-[11px] text-muted">{label}</dt>
+    <dd className={`m-0 text-[13px] font-semibold ${className}`}>{children}</dd>
+  </div>
+);
 
 const TradeRow: React.FC<{
   trade: HistoricalTrade;
@@ -183,87 +171,81 @@ const TradeRow: React.FC<{
   onUpdateTrade?: (t: HistoricalTrade) => void;
   /** Place in the list as it shows, for the stagger. */
   index?: number;
-}> = ({ trade: t, open, onToggle, onUpdateTrade, index = 0 }) => {
+  /** The first row of its card has no rule above it. */
+  first?: boolean;
+}> = ({ trade: t, open, onToggle, onUpdateTrade, index = 0, first = false }) => {
+  const won = t.realizedPnl > 0;
   const tone = pnlTone(t.realizedPnl);
-  const reason = EXIT_LABEL[t.exitReason] ?? t.exitReason;
   const r = resultR(t);
-  // Opening lifts the row into a card and grows its details open; closing folds them away first.
+  const fees = t.feesPaid || 0;
+  const trader = t.setupName || strategyOf(t);
+  const who = t.strategy ? strategyOf(t) : t.timeframe === "1d" ? `${trader} · daily` : trader;
+  // Opening tints the row and grows its details open; closing folds them away first.
   const details = usePresence(open, 260);
   return (
-    <li className={`border-b border-line nx-row-in nx-trade${open ? " nx-trade-open" : ""}`} style={{ animationDelay: staggerDelay(index) }}>
+    <li className={`nx-row-in nx-trade${first ? "" : " border-t border-line"}${open ? " nx-trade-open" : ""}`} style={{ animationDelay: staggerDelay(index) }}>
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="w-full flex items-center justify-between gap-3 py-3 text-left cursor-pointer"
+        className="w-full flex items-center justify-between gap-2.5 px-3.5 py-3 text-left cursor-pointer"
       >
-        <span className="min-w-0 flex-1 flex flex-col gap-0.5">
-          <span>
-            <span className="font-semibold">{t.symbol}</span>{" "}
-            <span className="text-xs text-muted">
-              {t.direction === "LONG" ? "Long" : "Short"} · {t.quantity}
+        <span className="min-w-0 flex items-center gap-2.5">
+          <span
+            aria-hidden="true"
+            data-testid="row-badge"
+            className={`w-[34px] h-[34px] shrink-0 rounded-[11px] grid place-items-center text-[11px] font-bold ${won ? "bg-gain/15 text-gain" : "bg-loss/15 text-loss"}`}
+          >
+            {strategyBadge(t)}
+          </span>
+          <span className="min-w-0 flex flex-col gap-px">
+            <span className="text-[15px] font-bold truncate">{t.symbol}</span>
+            <span className="text-xs text-muted leading-snug tabular-nums">
+              {timeOf(t)} · {who} · {exitWords(t)}
+              {t.isSelfApproved ? (t.openedByServer ? " · autopilot (server)" : " · autopilot") : ""}
             </span>
+            {!open && t.autopsy && <span className="text-xs font-semibold text-accent">Read autopsy</span>}
           </span>
-          <span className="text-xs text-muted tabular-nums">
-            {timeOf(t)} · {reason}
-            {t.isSelfApproved ? (t.openedByServer ? " · autopilot (server)" : " · autopilot") : ""}
-            {t.strategy ? ` · ${t.strategy}` : t.timeframe === "1d" ? " · daily" : ""}
-          </span>
-          {!open && t.autopsy && <span className="text-xs font-semibold text-accent">Read autopsy</span>}
-          <RowMoveBar trade={t} />
         </span>
-        <span className="shrink-0 flex items-center gap-1.5">
-          <span className="flex flex-col items-end gap-1">
-            <span className={`font-display text-[19px] tabular-nums whitespace-nowrap ${tone}`}>
-              {formatMoney(t.realizedPnl, { signed: true })}
-            </span>
+        <span className="shrink-0 flex flex-col items-end gap-1">
+          <span className={`font-display text-lg tabular-nums whitespace-nowrap ${tone}`}>{formatMoney(t.realizedPnl, { signed: true })}</span>
+          <span className="flex items-center gap-1.5">
             {r !== null && (
               <span
                 data-testid="row-r"
-                className={`text-[11px] font-bold px-2 py-px rounded-full tabular-nums ${r > 0 ? "bg-gain/15 text-gain" : r < 0 ? "bg-loss/15 text-loss" : "bg-inset text-muted"}`}
+                className={`text-[11px] font-bold px-[7px] py-px rounded-full tabular-nums ${r > 0 ? "bg-gain/15 text-gain" : r < 0 ? "bg-loss/15 text-loss" : "bg-inset text-muted"}`}
               >
                 {`${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`}
               </span>
             )}
+            <ChevronDown className={`w-3.5 h-3.5 text-muted nx-chevron${open ? " nx-chevron-open" : ""}`} />
           </span>
-          <ChevronDown className={`w-4 h-4 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
         </span>
       </button>
       {details.mounted && (
         <div data-testid="trade-details" className={`nx-trade-body ${details.leaving ? "nx-trade-body-out" : "nx-trade-body-in"}`}>
-          <div className="pb-4 flex flex-col gap-3">
-            <HowItMoved trade={t} />
-            <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-2 text-xs tabular-nums">
-              <div>
-                <dt className="text-muted">Entry → exit</dt>
-                <dd className="m-0 font-semibold">
-                  {formatPrice(t.entryPrice)} → {formatPrice(t.exitPrice)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted">Return</dt>
-                <dd className={`m-0 font-semibold ${tone}`}>{formatPct(t.realizedPnlPercent)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted">Money placed</dt>
-                <dd className="m-0 font-semibold">{formatMoney(t.moneyPlaced)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted">Fees</dt>
-                <dd className="m-0 font-semibold">{formatMoney(t.feesPaid || 0)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted">Held for</dt>
-                <dd className="m-0 font-semibold">{heldFor(t)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted">Setup</dt>
-                <dd className="m-0 font-semibold truncate">{t.setupName}</dd>
-              </div>
-              {stopSlip(t) && (
-                <div className="col-span-2">
-                  <dt className="text-muted">Stop → sold at</dt>
-                  <dd className="m-0 font-semibold">
+          <div>
+            <div className="mx-3.5 mb-3.5 p-3 rounded-[14px] bg-inset flex flex-col gap-3">
+              <HowItMoved trade={t} />
+              <dl className="m-0 grid grid-cols-3 gap-x-2 gap-y-2.5 tabular-nums">
+                <Fact label="Bought at">{formatPrice(t.direction === "LONG" ? t.entryPrice : t.exitPrice)}</Fact>
+                <Fact label="Sold at">{formatPrice(t.direction === "LONG" ? t.exitPrice : t.entryPrice)}</Fact>
+                <Fact label="Held">{heldFor(t)}</Fact>
+                <Fact label="Before fees">{formatMoney(t.realizedPnl + fees, { signed: true, decimals: 0 })}</Fact>
+                <Fact label="Fees">{formatMoney(fees, { decimals: 0 })}</Fact>
+                <Fact label="Kept" className={tone}>
+                  {formatMoney(t.realizedPnl, { signed: true, decimals: 0 })}
+                </Fact>
+                <Fact label="Money placed">{formatMoney(t.moneyPlaced, { decimals: 0 })}</Fact>
+                <Fact label="Return" className={tone}>
+                  {formatPct(t.realizedPnlPercent)}
+                </Fact>
+                <Fact label={t.direction === "LONG" ? "Long" : "Short"}>{t.quantity}</Fact>
+                <Fact label="Setup" wide>
+                  {t.setupName}
+                </Fact>
+                {stopSlip(t) && (
+                  <Fact label="Stop → sold at" wide>
                     {formatPrice(t.stopAtExit!)} → {formatPrice(t.fillAtExit!)}
                     {stopSlip(t)!.pct >= 0.05 && (
                       <span className="text-loss font-normal">
@@ -271,11 +253,11 @@ const TradeRow: React.FC<{
                         · {stopSlip(t)!.pct.toFixed(2)}% past the stop: the price moved through it between checks
                       </span>
                     )}
-                  </dd>
-                </div>
-              )}
-            </dl>
-            <TradeAutopsyCard trade={t} onUpdateTrade={onUpdateTrade} />
+                  </Fact>
+                )}
+              </dl>
+              <TradeAutopsyCard trade={t} onUpdateTrade={onUpdateTrade} />
+            </div>
           </div>
         </div>
       )}
@@ -284,150 +266,220 @@ const TradeRow: React.FC<{
 };
 
 const PAGE = 30;
+const FILTERS = [
+  { id: "all", label: "All" },
+  { id: "wins", label: "Wins" },
+  { id: "losses", label: "Losses" },
+] as const;
+
+/** The month a closed trade is filed under: its close's, or this month's for the few without one. */
+const fileMonth = (t: HistoricalTrade, thisMonth: number) => (t.closedAtMs !== undefined ? monthOf(t.closedAtMs) : thisMonth);
 
 export const LedgerBookTrades: React.FC<{
   trades: HistoricalTrade[];
   onUpdateTrade?: (t: HistoricalTrade) => void;
-}> = ({ trades, onUpdateTrade }) => {
+  now?: number;
+}> = ({ trades, onUpdateTrade, now: fixedNow }) => {
+  const now = fixedNow ?? Date.now();
+  const thisMonth = monthOf(now);
+  // Opens on this month; the arrows or a swipe on the days go back to any month, and forward to this one.
+  const [month, setMonth] = useState(thisMonth);
   const [filter, setFilter] = useState<BookFilter>("all");
   // A day picked on the calendar: only its trades show.
   const [day, setDay] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [shown, setShown] = useState(PAGE);
-  const summary = useMemo(() => summarizeTrades(trades), [trades]);
+  const go = (m: number) => {
+    const to = Math.min(thisMonth, m);
+    if (to === month) return;
+    setMonth(to);
+    setDay(null);
+    setShown(PAGE);
+  };
+  // The month's name slides in from the side it came from; its total rolls to the new figure.
+  const slide = useRef({ month, cls: "" });
+  if (slide.current.month !== month) slide.current = { month, cls: month > slide.current.month ? "nx-tab-from-right" : "nx-tab-from-left" };
+
+  const inMonth = useMemo(() => trades.filter((t) => fileMonth(t, thisMonth) === month), [trades, month, thisMonth]);
+  const summary = summarizeTrades(inMonth);
+  // The latest earlier month with trades, offered when this one has none.
+  const earlier = useMemo(
+    () => trades.reduce<number | null>((best, t) => {
+      const m = fileMonth(t, thisMonth);
+      return m < month && (best === null || m > best) ? m : best;
+    }, null),
+    [trades, month, thisMonth]
+  );
 
   const filtered = useMemo(() => {
-    const list = (
-      filter === "wins" ? trades.filter((t) => t.realizedPnl > 0) : filter === "losses" ? trades.filter((t) => t.realizedPnl <= 0) : trades
-    ).filter((t) => !day || (t.closedAtMs !== undefined && localDay(t.closedAtMs) === day));
+    const list = inMonth
+      .filter((t) => (filter === "wins" ? t.realizedPnl > 0 : filter === "losses" ? t.realizedPnl <= 0 : true))
+      .filter((t) => !day || (t.closedAtMs !== undefined && localDay(t.closedAtMs) === day));
     // Newest first.
     return [...list].sort((a, b) => (b.closedAtMs ?? 0) - (a.closedAtMs ?? 0));
-  }, [trades, filter, day]);
+  }, [inMonth, filter, day]);
 
-  const groups = useMemo(() => {
-    const out: { label: string; trades: HistoricalTrade[] }[] = [];
-    for (const t of filtered.slice(0, shown)) {
-      const label = dayLabel(t.closedAtMs);
-      const last = out[out.length - 1];
-      if (last && last.label === label) last.trades.push(t);
-      else out.push({ label, trades: [t] });
-    }
-    return out;
-  }, [filtered, shown]);
+  const groups: { label: string; trades: HistoricalTrade[] }[] = [];
+  for (const t of filtered.slice(0, shown)) {
+    const label = dayLabel(t.closedAtMs, now);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.trades.push(t);
+    else groups.push({ label, trades: [t] });
+  }
 
-  const chips: { id: BookFilter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "wins", label: "Wins" },
-    { id: "losses", label: "Losses" },
-  ];
-
+  const totalText = formatMoney(summary.net, { signed: true, decimals: 0 });
   return (
     <div className="flex flex-col gap-4">
-      <Card className="flex flex-col gap-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-xs text-muted">Net P&amp;L, closed trades</div>
-            <div className={`font-display text-[34px] leading-tight tabular-nums ${pnlTone(summary.net)}`}>
-              <Rolling value={summary.net} format={(n) => formatMoney(n, { signed: true })} from={0} ms={700} />
+      <section aria-label="The month" className="flex flex-col gap-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            aria-label="Earlier month"
+            onClick={() => go(month - 1)}
+            className="w-11 h-11 shrink-0 rounded-full border border-line bg-surface grid place-items-center text-ink cursor-pointer"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <div className="min-w-0 flex flex-col items-center text-center">
+            <div key={month} className={`text-[13px] text-muted ${slide.current.cls}`} data-testid="calendar-month">
+              {monthName(month)}
+            </div>
+            <div
+              data-testid="month-total"
+              className={`font-display text-[40px] leading-[1.1] tabular-nums ${summary.count === 0 ? "text-muted" : pnlTone(summary.net)}`}
+            >
+              <RollingDigits text={totalText} />
+            </div>
+            <div className="text-xs text-muted tabular-nums" data-testid="month-sub">
+              {summary.count === 0
+                ? "No closed trades"
+                : `${summary.count} ${summary.count === 1 ? "trade" : "trades"} · ${summary.wins} won · after fees`}
             </div>
           </div>
-          <div className="text-right text-xs text-muted tabular-nums">
-            {summary.count} {summary.count === 1 ? "trade" : "trades"}
-            {summary.winPct !== null && (
-              <>
-                <br />
-                {summary.winPct}% won
-              </>
-            )}
-          </div>
+          <button
+            type="button"
+            aria-label="Later month"
+            onClick={() => go(month + 1)}
+            disabled={month >= thisMonth}
+            className="w-11 h-11 shrink-0 rounded-full border border-line bg-surface grid place-items-center text-ink cursor-pointer disabled:text-line disabled:cursor-default"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
         </div>
-        <div className="flex gap-2">
-          <StatTile label="Won" value={formatMoney(summary.won, { decimals: 0 })} valueClassName="text-base text-gain" />
-          <StatTile label="Lost" value={formatMoney(summary.lost, { decimals: 0 })} valueClassName="text-base text-loss" />
-          <StatTile label="Fees" value={formatMoney(summary.fees, { decimals: 0 })} valueClassName="text-base" />
-        </div>
-        <MoneyLine trades={trades} />
-      </Card>
+        {month < thisMonth && (
+          <button
+            type="button"
+            onClick={() => go(thisMonth)}
+            className="self-center min-h-8 px-3 rounded-full border border-line text-xs font-semibold text-accent cursor-pointer nx-badge-pop"
+          >
+            Back to this month
+          </button>
+        )}
+        <MonthLine key={month} trades={trades} month={month} now={now} />
+      </section>
 
-      <DayCalendar
-        trades={trades}
-        picked={day}
-        onPick={(d) => {
-          setDay(d);
-          setShown(PAGE);
-        }}
-      />
+      {trades.length > 0 && (
+        <DayCalendar
+          trades={trades}
+          month={month}
+          picked={day}
+          now={now}
+          onSwipe={(dir) => go(month + dir)}
+          onPick={(d) => {
+            setDay(d);
+            setShown(PAGE);
+          }}
+        />
+      )}
 
-      <div className="flex gap-2" role="group" aria-label="Filter trades">
-        {chips.map((c) => {
-          const on = filter === c.id;
-          return (
-            <button
-              key={c.id}
-              type="button"
-              aria-pressed={on}
-              onClick={() => {
-                setFilter(c.id);
-                setShown(PAGE);
-              }}
-              className={`min-h-9 px-3.5 rounded-full border text-[13px] font-semibold cursor-pointer ${
-                on ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface text-ink"
-              }`}
-            >
-              {c.label}
-            </button>
-          );
-        })}
+      <div className="flex items-center gap-2.5">
+        <Segmented
+          label="Filter trades"
+          className="flex-1"
+          options={FILTERS}
+          value={filter}
+          onChange={(f) => {
+            setFilter(f);
+            setShown(PAGE);
+          }}
+        />
         {day && (
           <button
             type="button"
             aria-label="Show every day"
             onClick={() => setDay(null)}
-            className="min-h-9 px-3.5 rounded-full border border-accent bg-accent-soft text-accent text-[13px] font-semibold cursor-pointer nx-badge-pop"
+            className="min-h-9 px-3 rounded-full border border-accent bg-accent-soft text-accent text-xs font-semibold cursor-pointer flex items-center gap-1.5 nx-badge-pop"
           >
-            {new Date(`${day}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} ✕
+            {new Date(`${day}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+            <X className="w-3 h-3" strokeWidth={2.4} aria-hidden="true" />
           </button>
         )}
       </div>
 
       {filtered.length === 0 ? (
-        <p className="m-0 py-6 text-sm text-muted text-center">
-          {trades.length === 0 ? "No closed trades yet. They'll appear here as positions close." : "No trades match this filter."}
-        </p>
+        <div className="py-6 flex flex-col items-center gap-3 text-sm text-muted text-center">
+          <p className="m-0">
+            {trades.length === 0
+              ? "No closed trades yet. They'll appear here as positions close."
+              : inMonth.length === 0
+              ? `No closed trades in ${monthName(month)}.`
+              : "No trades match this filter."}
+          </p>
+          {inMonth.length === 0 && earlier !== null && (
+            <button
+              type="button"
+              onClick={() => go(earlier)}
+              className="min-h-9 px-3.5 rounded-full border border-line bg-surface text-xs font-semibold text-accent cursor-pointer"
+            >
+              Go to {monthName(earlier)}
+            </button>
+          )}
+        </div>
       ) : (
-        <section key={`${filter}-${day}`} aria-label="Closed trades" className="flex flex-col">
-          {groups.map((g) => (
-            <div key={g.label}>
-              <div className="text-xs font-semibold text-muted uppercase tracking-[0.08em] pt-2.5">{g.label}</div>
-              <ul className="list-none m-0 p-0">
-                {groupLinkedStops(g.trades).map((item) =>
-                  item.kind === "dip" ? (
-                    <DipGroup
-                      key={`dip-${item.trades[0].id}`}
-                      trades={item.trades}
-                      openId={openId}
-                      onToggle={(id) => setOpenId(openId === id ? null : id)}
-                      onUpdateTrade={onUpdateTrade}
-                    />
-                  ) : (
-                    <TradeRow
-                      key={item.trade.id}
-                      index={filtered.indexOf(item.trade) % PAGE}
-                      trade={item.trade}
-                      open={openId === item.trade.id}
-                      onToggle={() => setOpenId(openId === item.trade.id ? null : item.trade.id)}
-                      onUpdateTrade={onUpdateTrade}
-                    />
-                  )
-                )}
-              </ul>
-            </div>
-          ))}
+        <section key={`${month}-${filter}-${day}`} aria-label="Closed trades" className="flex flex-col gap-4">
+          {groups.map((g, gi) => {
+            const net = g.trades.reduce((a, t) => a + t.realizedPnl, 0);
+            const items = groupLinkedStops(g.trades);
+            return (
+              <div key={g.label} className="flex flex-col gap-1.5 nx-step-in" style={{ animationDelay: `${Math.min(gi, 6) * 70}ms` }}>
+                <div className="flex items-baseline justify-between px-1 text-xs">
+                  <span className="font-semibold text-muted">{g.label}</span>
+                  <span className={`font-semibold tabular-nums ${pnlTone(net)}`} data-testid="day-total">
+                    {formatMoney(net, { signed: true, decimals: 0 })}
+                  </span>
+                </div>
+                <ul className="list-none m-0 p-0 bg-surface border border-line rounded-[18px] overflow-hidden">
+                  {items.map((item, i) =>
+                    item.kind === "dip" ? (
+                      <DipGroup
+                        key={`dip-${item.trades[0].id}`}
+                        first={i === 0}
+                        trades={item.trades}
+                        openId={openId}
+                        onToggle={(id) => setOpenId(openId === id ? null : id)}
+                        onUpdateTrade={onUpdateTrade}
+                      />
+                    ) : (
+                      <TradeRow
+                        key={item.trade.id}
+                        first={i === 0}
+                        index={filtered.indexOf(item.trade) % PAGE}
+                        trade={item.trade}
+                        open={openId === item.trade.id}
+                        onToggle={() => setOpenId(openId === item.trade.id ? null : item.trade.id)}
+                        onUpdateTrade={onUpdateTrade}
+                      />
+                    )
+                  )}
+                </ul>
+              </div>
+            );
+          })}
           {filtered.length > shown && (
             <button
               type="button"
               onClick={() => setShown(shown + PAGE)}
-              className="mt-3 min-h-11 rounded-full border border-line bg-surface text-sm font-semibold cursor-pointer"
+              className="min-h-11 rounded-full border border-line bg-surface text-sm font-semibold cursor-pointer"
             >
               Show {Math.min(PAGE, filtered.length - shown)} more
             </button>
@@ -442,12 +494,13 @@ export const LedgerBookTrades: React.FC<{
  * A market dip: several stops that hit together, folded into one card.
  * Tap to fan the trades out (they stagger in), tap again to fold them.
  */
-const DipGroup: React.FC<{ trades: HistoricalTrade[]; openId: string | null; onToggle: (id: string) => void; onUpdateTrade?: (t: HistoricalTrade) => void }> = ({
-  trades,
-  openId,
-  onToggle,
-  onUpdateTrade,
-}) => {
+const DipGroup: React.FC<{
+  trades: HistoricalTrade[];
+  openId: string | null;
+  onToggle: (id: string) => void;
+  onUpdateTrade?: (t: HistoricalTrade) => void;
+  first?: boolean;
+}> = ({ trades, openId, onToggle, onUpdateTrade, first: firstRow = false }) => {
   const [open, setOpen] = useState(false);
   const total = trades.reduce((a, t) => a + t.realizedPnl, 0);
   const times = trades.map((t) => t.closedAtMs as number);
@@ -457,12 +510,12 @@ const DipGroup: React.FC<{ trades: HistoricalTrade[]; openId: string | null; onT
   const names = trades.map((t) => t.symbol.split("/")[0].replace(/\.US$/, "")).join(", ");
   const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
   return (
-    <li className="border-b border-line nx-row-in">
+    <li className={`nx-row-in px-2 py-2${firstRow ? "" : " border-t border-line"}`}>
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="w-full my-2 p-3 rounded-xl bg-warn-soft text-warn-ink text-left cursor-pointer flex flex-col gap-1"
+        className="w-full p-3 rounded-xl bg-warn-soft text-warn-ink text-left cursor-pointer flex flex-col gap-1"
       >
         <span className="flex items-baseline justify-between gap-3">
           <strong className="text-sm">Market dip · {trades.length} stops</strong>
@@ -474,9 +527,9 @@ const DipGroup: React.FC<{ trades: HistoricalTrade[]; openId: string | null; onT
         </span>
       </button>
       {open && (
-        <ul className="list-none m-0 p-0 pl-3 ml-1.5 border-l-2 border-danger-line">
+        <ul className="list-none m-0 mt-1 p-0 ml-1.5 border-l-2 border-danger-line">
           {trades.map((t, i) => (
-            <TradeRow key={t.id} index={i} trade={t} open={openId === t.id} onToggle={() => onToggle(t.id)} onUpdateTrade={onUpdateTrade} />
+            <TradeRow key={t.id} index={i} first={i === 0} trade={t} open={openId === t.id} onToggle={() => onToggle(t.id)} onUpdateTrade={onUpdateTrade} />
           ))}
         </ul>
       )}
@@ -491,25 +544,25 @@ export interface LedgerBookProps {
   risk: React.ReactNode;
   /** Whether a limit or drill is blocking new trades; flags the Risk tab. */
   riskBlocked?: boolean;
+  /** A live desk's Book says Live by its title, a paper one's Paper. */
+  isLive?: boolean;
+  /** The time it's shown at (tests); now by default. */
+  now?: number;
 }
 
 type Section = "trades" | "breakdown" | "risk";
 const SECTIONS: readonly Section[] = ["trades", "breakdown", "risk"];
 
-export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, risk, riskBlocked }) => {
+export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, risk, riskBlocked, isLive = false, now }) => {
   const [section, setSection] = useState<Section>("trades");
   const slideClass = useSlideFrom(section, SECTIONS);
   return (
     <div className="font-ui text-ink flex flex-col gap-4 pb-4 select-none">
-      <header className="pt-1">
+      <header className="pt-1 flex items-center justify-between gap-3 nx-fade-in">
         <h1 className="m-0 font-display text-[26px] font-semibold">Book</h1>
-        <div className="text-[13px] text-muted">
-          {section === "trades"
-            ? "Every closed trade, newest first"
-            : section === "breakdown"
-            ? "Where the money is made and lost"
-            : "Limits and safety checks"}
-        </div>
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${isLive ? "bg-warn-soft text-warn" : "bg-accent-soft text-accent"}`}>
+          {isLive ? "Live" : "Paper"}
+        </span>
       </header>
       <div className="relative flex p-1 rounded-full bg-surface border border-line" role="tablist" aria-label="Book sections">
         {/* The picked section's pill slides across. */}
@@ -543,9 +596,9 @@ export const LedgerBook: React.FC<LedgerBookProps> = ({ trades, onUpdateTrade, r
       </div>
       <div key={section} className={slideClass}>
         {section === "trades" ? (
-          <LedgerBookTrades trades={trades} onUpdateTrade={onUpdateTrade} />
+          <LedgerBookTrades trades={trades} onUpdateTrade={onUpdateTrade} now={now} />
         ) : section === "breakdown" ? (
-          <LedgerBreakdown trades={trades} />
+          <LedgerBreakdown trades={trades} now={now} />
         ) : (
           risk
         )}

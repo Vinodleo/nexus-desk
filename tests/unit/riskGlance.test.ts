@@ -3,13 +3,14 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FailureInjectionState, Position, RiskCalculation } from "../../src/types";
+import { cleanMarketLimits } from "../../src/shared/marketLimits";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { LedgerRisk } = await import("../../src/components/ledger/LedgerRisk");
 const { allStops } = await import("../../src/components/ledger/RiskGlance");
 const { HOLD_MS } = await import("../../src/components/ledger/ui");
 
-// Book → Risk at a glance: the loss limit left, what every open stop would take, the money in trades, and a held stop.
+// Book → Risk at a glance: the loss limit left, what every open stop would take, the money in trades, the slots, and a held stop.
 
 afterEach(() => {
   cleanup();
@@ -50,41 +51,61 @@ describe("risk at a glance", () => {
     expect(allStops(open, 0).share).toBe(0);
   });
 
-  it("draws the three rings and says what each is", () => {
+  it("draws the three rings side by side and says what each is", () => {
     render(createElement(LedgerRisk, props()));
-    expect(screen.getByTestId("ring-loss-left").style.getPropertyValue("--nx-ring")).toBe("98.0");
-    expect(screen.getByTestId("ring-all-stops").style.getPropertyValue("--nx-ring")).toBe("44.2");
-    expect(screen.getByTestId("ring-in-trades").style.getPropertyValue("--nx-ring")).toBe("30.0");
-    expect(screen.getByTestId("glance-loss-left").textContent).toBe("₹24,500 of today's ₹25,000 loss limit left");
-    expect(screen.getByTestId("glance-all-stops").textContent).toBe("44% of the limit if every stop hit");
-    expect(screen.getByTestId("glance-in-trades").textContent).toBe("30% of the money in trades");
+    const ring = (id: string) => screen.getByTestId(id);
+    expect(ring("ring-loss-left").getAttribute("data-pct")).toBe("98.0");
+    expect(ring("ring-all-stops").getAttribute("data-pct")).toBe("44.2");
+    expect(ring("ring-in-trades").getAttribute("data-pct")).toBe("30.0");
+    // Each sweeps round from empty: its dash offset is the part of the circle not filled.
+    const c = 2 * Math.PI * 36;
+    expect(ring("ring-in-trades").style.strokeDashoffset).toBe((c * 0.7).toFixed(1));
+    expect(ring("ring-in-trades").style.getPropertyValue("--nx-c")).toBe(c.toFixed(1));
+    expect(screen.getByTestId("ring-loss-left-cell").textContent).toBe("98%Loss limit left₹24,500 of ₹25,000");
+    expect(screen.getByTestId("ring-all-stops-cell").textContent).toBe("44%If every stop hit−₹11,056");
+    expect(screen.getByTestId("ring-in-trades-cell").textContent).toBe("30%Money in trades₹3,00,000");
   });
 
   it("lists each open trade's loss at its stop, the biggest first, and the total", () => {
     render(createElement(LedgerRisk, props({ positions: [...open, pos("GLD.US", 4, 21000, 21500)] })));
     expect(screen.getByTestId("stops-total").textContent).toBe("−₹9,056");
-    expect(screen.getAllByTestId("stop-row").map((r) => r.textContent)).toEqual([
-      "NVDA.US stop 22,034−₹4,503",
-      "MSFT.US stop 48,738−₹4,104",
-      "QQQ.US stop 71,029−₹2,448",
-      "GLD.US stop 21,500+₹2,000 locked in",
-    ]);
+    expect(screen.getAllByTestId("stop-row").map((r) => r.textContent)).toEqual(["NVDA−₹4,503", "MSFT−₹4,104", "QQQ−₹2,448", "GLD+₹2,000locked in"]);
+    expect(screen.getAllByTestId("stop-row")[0].getAttribute("title")).toBe("Stop 22,034");
     const bars = screen.getAllByTestId("stop-row").map((r) => (r.querySelector(".bg-loss\\/75") as HTMLElement | null)?.style.width ?? null);
     expect(bars).toEqual(["100%", `${((4104.21 / 4502.92) * 100).toFixed(1)}%`, `${((2448.42 / 4502.92) * 100).toFixed(1)}%`, null]);
-    expect(screen.getByLabelText("If every stop hit now").textContent).toContain("this is the most today could cost from what's open, 36% of today's loss limit.");
+    expect(screen.getByTestId("stops-note").textContent).toBe(
+      "Each open trade at its stop, before fees: 36% of today's loss limit. Stops seldom all hit on one day."
+    );
   });
 
-  it("leaves out what stops would take with nothing open", () => {
+  it("says nothing is open, and lists no stops, with nothing open", () => {
     render(createElement(LedgerRisk, props({ positions: [] })));
-    expect(screen.queryByTestId("ring-all-stops")).toBeNull();
-    expect(screen.queryByTestId("glance-all-stops")).toBeNull();
+    expect(screen.getByTestId("ring-all-stops").getAttribute("data-pct")).toBe("0.0");
+    expect(screen.getByTestId("ring-all-stops-cell").textContent).toBe("0%If every stop hitNothing open");
     expect(screen.queryByLabelText("If every stop hit now")).toBeNull();
   });
 
-  it("stops all trading only when held, and resumes on a tap", () => {
+  it("shows each slower strategy's slots in use, calm when full", () => {
+    const limits = cleanMarketLimits(null);
+    const more = [pos("GLD.US", 4, 21000, 21500), pos("AAPL.US", 3, 21000, 20100), { ...pos("META.US", 1, 600, 560), strategy: "momentum" as const }];
+    render(createElement(LedgerRisk, props({ marketLimits: limits, positions: [...open, ...more] })));
+    // NVDA, MSFT and AAPL fill US breakout's three; QQQ and GLD are funds; META is momentum.
+    const meter = (name: string) => screen.getByRole("meter", { name });
+    expect(meter("US breakout slots").getAttribute("aria-valuenow")).toBe("100");
+    expect(meter("US breakout slots").className).not.toMatch(/nx-pulse/);
+    expect(meter("US breakout slots").querySelector(".bg-accent")).not.toBeNull();
+    expect(meter("Funds breakout slots").getAttribute("aria-valuenow")).toBe("67");
+    expect(meter("US momentum slots").getAttribute("aria-valuenow")).toBe("33");
+    expect(meter("Coin breakout slots").getAttribute("aria-valuenow")).toBe("0");
+    expect(screen.getByLabelText("Limits").textContent).toContain("US breakout slots3 of 3");
+  });
+
+  it("stops all trading only when held, unfolds a note that stops are still watched, and resumes on a tap", () => {
     vi.useFakeTimers();
     const p = props();
     const { rerender } = render(createElement(LedgerRisk, p));
+    // Folded away while trading.
+    expect(screen.queryByRole("status", { name: "Trading stopped" })).toBeNull();
     const hold = screen.getByRole("button", { name: "Hold to stop all trading" });
     // A short press doesn't stop it.
     fireEvent.pointerDown(hold);
@@ -96,9 +117,11 @@ describe("risk at a glance", () => {
     expect(p.onToggleStop).toHaveBeenCalledTimes(1);
 
     rerender(createElement(LedgerRisk, { ...p, stopped: true }));
-    expect(screen.getByLabelText("Trading stopped").textContent).toContain("No new trades. Open ones stay guarded.");
+    const note = screen.getByRole("status", { name: "Trading stopped" });
+    expect(note.textContent).toBe("Trading stopped. No new trades open. The guardian still watches every stop on the server.");
+    expect(note.closest(".nx-fold")!.className).toContain("nx-fold-open");
     expect(screen.queryByRole("button", { name: "Hold to stop all trading" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resume trading" }));
     expect(p.onToggleStop).toHaveBeenCalledTimes(2);
   });
 });
