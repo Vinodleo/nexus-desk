@@ -187,6 +187,16 @@ export function useSlideFrom<T>(value: T, order: readonly T[]): string | undefin
   return last.current.cls;
 }
 
+/** True a moment after it's first shown: what grows or rolls starts from nothing. */
+export function useShown(delayMs = 120): boolean {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setShown(true), delayMs);
+    return () => clearTimeout(t);
+  }, [delayMs]);
+  return shown;
+}
+
 /** Delay for the i-th item of a list that staggers in (capped, so long lists don't wait). */
 export const staggerDelay = (i: number, stepMs = 35, max = 12) => `${Math.min(i, max) * stepMs}ms`;
 
