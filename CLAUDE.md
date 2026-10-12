@@ -57,6 +57,15 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   per score band (its score dashed, what worked out as the bar, the chance used now as a dot; tap for the numbers); what
   skipped setups did, each reason's average R either side of zero, "Costing trades?" on a reason whose skipped setups
   made money, as much as the proposed ones; the autopilot's record and the model in use.
+  Settings (`SettingsSheet.tsx`) opens as a circle from the gear. **Trading:** Paper or Live; Live stays locked (a tap
+  shakes it and says why) until the server takes live orders (`LIVE_TRADING_ENABLED`, set by the owner before going live,
+  docs/going-live.md), then asks once. The paper money rolls up, a chip per amount to start again at (`shortRupees`),
+  held to do it; the daily loss limit with what today lost of it (`todayLoss`). **Your limits**, one market at a time
+  (Coins, India, US): amount per trade, most to lose and trades at once stepped with − and + (tapping the figure opens
+  every choice), the slower strategies' own slots as squares, a dot in each one in use (`positions`) and a note when
+  fewer than are open, and the most the market may hold and lose at once. **Connections:** CoinDCX (the test live order
+  folded under it), Alpaca, Angel One, Gemini and Zerodha, each with a status dot. **Server:** a tile each, opened on a
+  tap; one with a problem stays open. Then pop-ups and the theme, the desk's links, the version and Sign out.
   A trade that opens with the app on screen (the server's, the phone's autopilot, or approved in the Queue) unfolds a
   ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it
   took; several queue up.

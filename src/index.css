@@ -499,6 +499,26 @@ html, body {
 .nx-gear-away { transform: rotate(120deg); opacity: 0; }
 /* Paper/Live: the pill slides across and changes colour. */
 .nx-mode-pill { transition: transform 300ms cubic-bezier(0.3, 0.9, 0.3, 1.15), background-color 300ms ease; }
+/* Live tapped while it's locked: a short shake (two copies, so each tap plays it again). */
+@keyframes nx-shake-a {
+  0%, 100% { transform: none; }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+@keyframes nx-shake-b {
+  0%, 100% { transform: none; }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+.nx-shake-a { animation: nx-shake-a 450ms ease; }
+.nx-shake-b { animation: nx-shake-b 450ms ease; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-shake-a, .nx-shake-b { animation: none; }
+}
 /* A notice that drops open under its row. */
 @keyframes nx-drop-down {
   from { opacity: 0; transform: translateY(-8px); max-height: 0; }

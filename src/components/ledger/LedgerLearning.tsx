@@ -16,7 +16,7 @@ import { shadowStore, summarizeShadows, type ShadowSignal } from "../../services
 import { SKIP_REASON_LABEL, type SkipReason } from "../../services/scanOutcome";
 import { DEFAULT_MIN_CONFIDENCE, MIN_CALIBRATION_SAMPLES, MIN_EDGE_R, buildCalibrator } from "../../services/calibration";
 import { MIN_CONDITION_SETUPS, type ConditionBreakdown } from "../../services/conditionStats";
-import { RollingDigits, useSlideFrom } from "./motion";
+import { RollingDigits, useShown, useSlideFrom } from "./motion";
 import { useLabFeed } from "./labFeed";
 
 // The Learning tab, in two parts: what the desk has learned from your real
@@ -43,16 +43,6 @@ const MIN_SHADOW_SAMPLE = 5;
 
 const signedR = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`;
 const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v)}%`);
-
-/** True a moment after it's first shown: what grows or rolls starts from nothing. */
-function useShown(delayMs = 120): boolean {
-  const [shown, setShown] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setShown(true), delayMs);
-    return () => clearTimeout(t);
-  }, [delayMs]);
-  return shown;
-}
 
 /** A ring filled to `pct` (0–100), sweeping round when shown. */
 const Ring: React.FC<{ pct: number; size: number; width: number; tone: string; testId?: string }> = ({ pct: p, size, width, tone, testId }) => {

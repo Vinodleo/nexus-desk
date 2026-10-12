@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,8 +7,11 @@ vi.mock("../../src/context/AuthContext", () => ({
   useAuth: () => ({ currentUser: { email: "owner@example.com" }, userRole: "commander", logout: vi.fn() }),
 }));
 vi.mock("../../src/hooks/usePWAInstall", () => ({ usePWAInstall: () => ({ isInstallable: false, isInstalled: false, install: vi.fn() }) }));
+vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(async () => new Response("Not found", { status: 404 })), authenticateSocket: vi.fn() }));
 
-import { SettingsSheet, backupSummary, coinDcxCheckSummary, errorReportsSummary, formatSpan, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
+import { SettingsSheet, backupSummary, coinDcxCheckSummary, errorReportsSummary, formatSpan, shortRupees, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
+import { HOLD_MS } from "../../src/components/ledger/ui";
+import { apiFetch } from "../../src/services/apiClient";
 
 import { cleanMarketLimits } from "../../src/shared/marketLimits";
 afterEach(cleanup);
@@ -39,11 +42,10 @@ describe("Settings: Server", () => {
     const { container } = render(
       createElement(SettingsSheet, props({ serverStatus: status, scanLocation: "server", lastServerScanAt: Date.now() - 2 * 60_000 }))
     );
-    const text = container.textContent ?? "";
-    expect(text).toMatch(/Running for.*keeps growing\.3 days/);
-    expect(text).toContain("Saved stateOn a mounted volumeKept");
-    expect(text).toContain("Last scan 2 min ago");
-    expect(text).toContain("On the server");
+    expect(screen.getByTestId("server-uptime").textContent).toMatch(/^Running for3 daysA restart resets this/);
+    expect(screen.getByTestId("server-state").textContent).toBe("Saved stateKeptOn a mounted volume");
+    expect(screen.getByTestId("server-scanning").textContent).toBe("Scanning" + "On the server" + "Last scan 2 min ago");
+    expect(container.querySelectorAll("[data-testid^=server-]")).toHaveLength(6);
   });
 
   it("warns when saved state won't survive a restart", () => {
@@ -82,7 +84,6 @@ describe("Settings: trade size per market", () => {
   it("sets amount per trade and trades at once separately for coins, Indian stocks and US stocks", () => {
     const onRiskLimitsChange = vi.fn();
     render(createElement(SettingsSheet, props({ onRiskLimitsChange })));
-    expect(screen.getByText("Up to ₹10,000 in coins at a time, besides breakout's")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Coins: amount per trade"), { target: { value: "3000" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
       marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 3000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3, momentumTrades: 0, fundsTrades: 0 } },
@@ -104,7 +105,7 @@ describe("Settings: trade size per market", () => {
     expect(screen.getByLabelText("Coins: breakout trades at once")).toBeTruthy();
     expect(screen.getByLabelText("US stocks: breakout trades at once")).toBeTruthy();
     expect(screen.queryByLabelText("Indian stocks: breakout trades at once")).toBeNull();
-    expect(screen.getAllByText("Breakout 55/20's own slots, up to ₹15,000 more: other trades can't fill them")).toHaveLength(2);
+    expect(screen.getAllByText("Up to ₹15,000 more")).toHaveLength(2);
     fireEvent.change(screen.getByLabelText("Coins: breakout trades at once"), { target: { value: "5" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
       marketLimits: { ...cleanMarketLimits(null), coins: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 5, momentumTrades: 0, fundsTrades: 0 } },
@@ -118,12 +119,11 @@ describe("Settings: trade size per market", () => {
   it("sets US momentum's own slots (US stocks only, up to its top 3), and switches it off at none", () => {
     const onRiskLimitsChange = vi.fn();
     render(createElement(SettingsSheet, props({ onRiskLimitsChange })));
-    expect(screen.getByText("Up to ₹10,000 in us stocks at a time, besides breakout's, momentum's and the funds'")).toBeTruthy();
     expect(screen.queryByLabelText("Coins: momentum trades at once")).toBeNull();
     expect(screen.queryByLabelText("Indian stocks: momentum trades at once")).toBeNull();
     const row = screen.getByLabelText("US stocks: momentum trades at once") as HTMLSelectElement;
     expect([...row.options].map((o) => o.textContent)).toEqual(["Off", "1", "2", "3"]);
-    expect(screen.getByText("Momentum's own slots for its weekly top 3, up to ₹15,000 more")).toBeTruthy();
+    expect(screen.getByText("Its weekly top 3, up to ₹15,000 more")).toBeTruthy();
     fireEvent.change(row, { target: { value: "0" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
       marketLimits: { ...cleanMarketLimits(null), us: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3, momentumTrades: 0, fundsTrades: 3 } },
@@ -137,7 +137,7 @@ describe("Settings: trade size per market", () => {
     expect(screen.queryByLabelText("Indian stocks: funds breakout trades at once")).toBeNull();
     const row = screen.getByLabelText("US stocks: funds breakout trades at once") as HTMLSelectElement;
     expect([...row.options].map((o) => o.textContent)).toEqual(["Off", "1", "2", "3", "4", "5", "6"]);
-    expect(screen.getByText("Breakout on gold, bond and other funds, on slots of its own, up to ₹15,000 more")).toBeTruthy();
+    expect(screen.getByText("Gold, bond and other funds, up to ₹15,000 more")).toBeTruthy();
     fireEvent.change(row, { target: { value: "0" } });
     expect(onRiskLimitsChange).toHaveBeenLastCalledWith({
       marketLimits: { ...cleanMarketLimits(null), us: { amountPerTradeInr: 5000, maxOpenTrades: 2, riskPerTradeInr: 50, breakoutTrades: 3, momentumTrades: 3, fundsTrades: 0 } },
@@ -163,7 +163,7 @@ describe("Settings: trade size per market", () => {
     const coinDcxStatus = { liveRisk: { enabled: true, maxOrderNotionalInr: 5000, maxDailyNotionalInr: 20000, maxDailyOrders: 10 } } as any;
     render(createElement(SettingsSheet, props({ tradingMode: "LIVE_COINDCX", riskLimits, coinDcxStatus })));
     expect(screen.getByText(/Above the server's ₹5,000 cap per live order: live orders this size are refused/)).toBeTruthy();
-    expect(screen.getByText("Angel One · paper only for now")).toBeTruthy();
+    expect(screen.getByText("The most one trade can cost · Angel One · paper only for now")).toBeTruthy();
   });
 });
 
@@ -245,17 +245,23 @@ describe("Settings: motion", () => {
     expect(document.querySelectorAll(".nx-ring").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("rolls a changed amount into place, but not when first shown", () => {
+  it("rolls a changed amount's digits into place, with the phone's own picker on the figure", () => {
     const limits = cleanMarketLimits(null);
-    const p = (marketLimits = limits) => props({ riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits } });
+    const onRiskLimitsChange = vi.fn();
+    const p = (marketLimits = limits) => props({ onRiskLimitsChange, riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits } });
     const { rerender } = render(createElement(SettingsSheet, p()));
-    const shown = () => screen.getByTestId("Coins: amount per trade shown");
-    expect(shown().className).not.toContain("nx-roll-in");
+    const figure = () => screen.getByLabelText("Coins: amount per trade").parentElement!;
+    expect(figure().querySelector(".nx-odo .sr-only")!.textContent).toBe("₹5,000");
     rerender(createElement(SettingsSheet, p({ ...limits, coins: { ...limits.coins, amountPerTradeInr: 10000 } })));
-    expect(shown().textContent).toBe("₹10,000");
-    expect(shown().className).toContain("nx-roll-in");
+    expect(figure().querySelector(".nx-odo .sr-only")!.textContent).toBe("₹10,000");
+    // The 1 rolls in at the left: each digit is a strip slid to its value.
+    const strips = [...figure().querySelectorAll<HTMLElement>(".nx-odo-strip")].map((s) => s.style.transform);
+    expect(strips).toHaveLength(5);
+    expect(strips[0]).toBe("translateY(-10%)");
+    for (const zero of strips.slice(1)) expect(zero).toMatch(/^translateY\(-?0%\)$/);
     // The real dropdown is still there to tap.
     fireEvent.change(screen.getByLabelText("Coins: amount per trade"), { target: { value: "5000" } });
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({ marketLimits: limits });
   });
 
   it("shows Checking… then a tick when looking for updates", async () => {
@@ -363,20 +369,52 @@ describe("Settings: error reports", () => {
 });
 
 describe("Settings: paper money", () => {
-  it("starts the paper balance again at a picked amount once confirmed, on paper only", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("shortens amounts for the chips", () => {
+    expect(shortRupees(100_000)).toBe("₹1L");
+    expect(shortRupees(2_500_000)).toBe("₹25L");
+    expect(shortRupees(150_000)).toBe("₹1.5L");
+    expect(shortRupees(10_000_000)).toBe("₹1Cr");
+    expect(shortRupees(50_000)).toBe("₹50,000");
+  });
+
+  it("starts the paper balance again at a picked amount only when held, on paper only", () => {
+    vi.useFakeTimers();
     const onRestart = vi.fn();
     const paperMoney = { start: 100_000, equity: 101_250, onRestart };
     render(createElement(SettingsSheet, props({ paperMoney, dailyLossLimit: 2_500 })));
-    expect(screen.getByText("Now ₹1,01,250 · pick an amount to start again at")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Paper money"), { target: { value: "1000000" } });
+    // The money rolls up from zeros once the page has opened.
+    const equity = () => screen.getByTestId("paper-equity").querySelector(".sr-only")!.textContent;
+    expect(equity()).toBe("₹0,00,000");
+    act(() => vi.advanceTimersByTime(400));
+    expect(equity()).toBe("₹1,01,250");
+    const chips = within(screen.getByRole("group", { name: "Start again at" })).getAllByRole("button");
+    expect(chips.map((c) => c.textContent)).toEqual(["₹1L", "₹2L", "₹5L", "₹10L", "₹25L"]);
+    expect(chips[0].getAttribute("aria-label")).toBe("Start again at ₹1,00,000 (the start now)");
+    // Folded away until an amount is picked.
+    const fold = screen.getByTestId("paper-money-confirm");
+    expect(fold.hasAttribute("inert")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Start again at ₹10,00,000" }));
+    expect(fold.className).toContain("nx-fold-open");
+    expect(fold.hasAttribute("inert")).toBe(false);
+    expect(fold.textContent).toContain("Starts the paper balance again at ₹10,00,000");
+    const hold = screen.getByRole("button", { name: "Hold to start again at ₹10,00,000" });
+    // A tap or a short press doesn't start it again.
+    fireEvent.click(hold);
+    fireEvent.pointerDown(hold);
+    act(() => vi.advanceTimersByTime(HOLD_MS / 2));
+    fireEvent.pointerUp(hold);
     expect(onRestart).not.toHaveBeenCalled();
-    expect(screen.getByTestId("paper-money-confirm").textContent).toContain("Starts the paper balance again at ₹10,00,000");
-    fireEvent.click(screen.getByText("Start again"));
+    fireEvent.pointerDown(hold);
+    act(() => vi.advanceTimersByTime(HOLD_MS + 10));
     expect(onRestart).toHaveBeenCalledWith(1_000_000);
-    expect(screen.queryByTestId("paper-money-confirm")).toBeNull();
-    // Cancelled: nothing changes.
-    fireEvent.change(screen.getByLabelText("Paper money"), { target: { value: "500000" } });
-    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.getByText("Started again at ₹10,00,000").getAttribute("role")).toBe("status");
+    expect(fold.className).not.toContain("nx-fold-open");
+    // Picked and then tapped again: nothing changes.
+    fireEvent.click(screen.getByRole("button", { name: "Start again at ₹5,00,000" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start again at ₹5,00,000" }));
+    expect(fold.className).not.toContain("nx-fold-open");
     expect(onRestart).toHaveBeenCalledTimes(1);
     // Larger trade sizes to choose from.
     const amounts = [...(screen.getByLabelText("Coins: amount per trade") as HTMLSelectElement).options].map((o) => o.textContent);
@@ -386,6 +424,167 @@ describe("Settings: paper money", () => {
     cleanup();
 
     render(createElement(SettingsSheet, props({ paperMoney, tradingMode: "LIVE_COINDCX" })));
-    expect(screen.queryByLabelText("Paper money")).toBeNull();
+    expect(screen.queryByTestId("paper-equity")).toBeNull();
+  });
+
+  it("shows the daily loss limit with what today lost of it", () => {
+    vi.useFakeTimers();
+    render(createElement(SettingsSheet, props({ dailyLossLimit: 12_811, todayLoss: 1_840 })));
+    act(() => vi.advanceTimersByTime(400));
+    expect(screen.getByTestId("loss-limit").querySelector(".sr-only")!.textContent).toBe("₹12,811");
+    expect(screen.getByText("Lost today ₹1,840")).toBeTruthy();
+    expect(screen.getByText("₹10,971 left")).toBeTruthy();
+    expect((screen.getByTestId("loss-used").firstElementChild as HTMLElement).style.width).toBe(`${(1_840 / 12_811) * 100}%`);
+  });
+});
+
+describe("Settings: Live stays locked until the server takes live orders", () => {
+  it("shakes and says why when Live is tapped while the server blocks live orders", () => {
+    const onTradingModeChange = vi.fn();
+    const { rerender } = render(createElement(SettingsSheet, props({ onTradingModeChange, coinDcxStatus: { liveRisk: { enabled: false } } as any })));
+    const live = screen.getByTestId("mode-live");
+    const note = screen.getByTestId("live-locked");
+    expect(note.closest(".nx-fold")!.className).not.toContain("nx-fold-open");
+    fireEvent.click(live);
+    expect(onTradingModeChange).not.toHaveBeenCalled();
+    expect(live.className).toContain("nx-shake-a");
+    expect(note.closest(".nx-fold")!.className).toContain("nx-fold-open");
+    expect(note.textContent).toBe("Live trading stays off until you say so. The server blocks live orders until LIVE_TRADING_ENABLED is set (docs/going-live.md).");
+    expect(screen.queryByText("Switch to live")).toBeNull();
+    // Each tap shakes again.
+    fireEvent.click(live);
+    expect(live.className).toContain("nx-shake-b");
+    // No answer from the server yet: locked too.
+    rerender(createElement(SettingsSheet, props({ onTradingModeChange, coinDcxStatus: null })));
+    fireEvent.click(screen.getByTestId("mode-live"));
+    expect(onTradingModeChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("live-locked").textContent).toContain("The server hasn't said yet whether it takes live orders.");
+  });
+
+  it("asks before switching once the server takes live orders, and goes back to Paper with a tap", () => {
+    const onTradingModeChange = vi.fn();
+    const { rerender } = render(createElement(SettingsSheet, props({ onTradingModeChange, coinDcxStatus: { liveRisk: { enabled: true } } as any })));
+    fireEvent.click(screen.getByTestId("mode-live"));
+    expect(onTradingModeChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("mode-live").className).not.toContain("nx-shake");
+    fireEvent.click(screen.getByText("Switch to live"));
+    expect(onTradingModeChange).toHaveBeenCalledWith("LIVE_COINDCX");
+    // Live already, and the server blocking again: Paper is still a tap away.
+    rerender(createElement(SettingsSheet, props({ onTradingModeChange, tradingMode: "LIVE_COINDCX", coinDcxStatus: { liveRisk: { enabled: false } } as any })));
+    fireEvent.click(screen.getByTestId("mode-paper"));
+    expect(onTradingModeChange).toHaveBeenLastCalledWith("PAPER");
+  });
+});
+
+describe("Settings: your limits, one market at a time", () => {
+  const shownMarkets = () => ["coins", "stocks", "us"].filter((m) => !screen.getByTestId(`limits-${m}`).hidden);
+
+  it("shows the picked market's limits, sliding in from its side", () => {
+    render(createElement(SettingsSheet, props()));
+    expect(shownMarkets()).toEqual(["coins"]);
+    fireEvent.click(screen.getByRole("button", { name: "US" }));
+    expect(shownMarkets()).toEqual(["us"]);
+    expect(screen.getByTestId("limits-us").className).toContain("nx-tab-from-right");
+    fireEvent.click(screen.getByRole("button", { name: "India" }));
+    expect(screen.getByTestId("limits-stocks").className).toContain("nx-tab-from-left");
+    expect(screen.getByTestId("limits-stocks").textContent).toContain("Breakout, momentum and the funds don't trade Indian stocks");
+  });
+
+  it("steps each figure through its choices, stopping at the ends", () => {
+    const onRiskLimitsChange = vi.fn();
+    const limits = cleanMarketLimits(null);
+    const p = (marketLimits = limits) => props({ onRiskLimitsChange, riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits } });
+    const { rerender } = render(createElement(SettingsSheet, p()));
+    fireEvent.click(screen.getByRole("button", { name: "Coins: amount per trade: more" }));
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({ marketLimits: { ...limits, coins: { ...limits.coins, amountPerTradeInr: 10000 } } });
+    fireEvent.click(screen.getByRole("button", { name: "Coins: amount per trade: less" }));
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({ marketLimits: { ...limits, coins: { ...limits.coins, amountPerTradeInr: 3000 } } });
+    fireEvent.click(screen.getByRole("button", { name: "Coins: trades at once: more" }));
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({ marketLimits: { ...limits, coins: { ...limits.coins, maxOpenTrades: 3 } } });
+    rerender(createElement(SettingsSheet, p({ ...limits, coins: { ...limits.coins, amountPerTradeInr: 200000, maxOpenTrades: 1 } })));
+    expect((screen.getByRole("button", { name: "Coins: amount per trade: more" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Coins: trades at once: less" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("adds up the most each market may hold and lose at once, slots included", () => {
+    const limits = cleanMarketLimits(null);
+    const marketLimits = { ...limits, stocks: { ...limits.stocks, riskPerTradeInr: 7500 } };
+    render(createElement(SettingsSheet, props({ riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits } })));
+    const figure = (id: string) => screen.getByTestId(id).querySelector(".sr-only")!.textContent;
+    // Coins: 2 trades at once and breakout's 3, at ₹5,000 and ₹50 each.
+    expect(figure("coins-at-most")).toBe("₹25,000");
+    expect(figure("coins-if-stops-hit")).toBe("₹250");
+    expect(screen.getByTestId("limits-coins").textContent).toContain("5 trades at ₹5,000");
+    // US: 2, and breakout's, momentum's and the funds' 3 each.
+    expect(figure("us-at-most")).toBe("₹55,000");
+    expect(figure("us-if-stops-hit")).toBe("₹550");
+    // India: no slots; a trade never loses more than it cost.
+    expect(figure("stocks-at-most")).toBe("₹10,000");
+    expect(figure("stocks-if-stops-hit")).toBe("₹10,000");
+  });
+
+  it("sets slots by tapping squares, with a dot in each one in use and a note when fewer than are open", () => {
+    const onRiskLimitsChange = vi.fn();
+    const limits = cleanMarketLimits(null);
+    const positions = [
+      { symbol: "SOL/INR", strategy: "breakout" }, { symbol: "AVAX/INR", strategy: "breakout" }, { symbol: "BTC/INR" },
+      { symbol: "AAPL.US", strategy: "breakout" }, { symbol: "META.US", strategy: "momentum" }, { symbol: "GLD.US", strategy: "breakout" },
+    ];
+    const p = (marketLimits = limits) => props({ onRiskLimitsChange, positions, riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits } });
+    const { rerender } = render(createElement(SettingsSheet, p()));
+    const coins = screen.getByTestId("limits-coins");
+    expect(within(coins).getAllByTestId("slot-square")).toHaveLength(6);
+    expect(within(coins).getAllByTestId("slot-in-use")).toHaveLength(2);
+    const us = screen.getByTestId("limits-us");
+    expect(within(us).getAllByTestId("slot-in-use")).toHaveLength(3);
+    // Momentum holds its top 3 at most: 3 squares.
+    expect(within(screen.getByRole("group", { name: "US stocks: momentum slots", hidden: true })).getAllByTestId("slot-square")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Coins: 5 breakout slots" }));
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({ marketLimits: { ...limits, coins: { ...limits.coins, breakoutTrades: 5 } } });
+    fireEvent.click(screen.getByRole("button", { name: "Coins: breakout off" }));
+    expect(onRiskLimitsChange).toHaveBeenLastCalledWith({ marketLimits: { ...limits, coins: { ...limits.coins, breakoutTrades: 0 } } });
+    expect(coins.textContent).not.toContain("open now run to their exits");
+    rerender(createElement(SettingsSheet, p({ ...limits, coins: { ...limits.coins, breakoutTrades: 1 } })));
+    expect(screen.getByTestId("limits-coins").textContent).toContain("2 open now run to their exits; a new one opens only once none are.");
+    rerender(createElement(SettingsSheet, p({ ...limits, coins: { ...limits.coins, breakoutTrades: 0 } })));
+    expect(screen.getByTestId("limits-coins").textContent).toContain("2 open now run to their exits; it opens no new ones here.");
+  });
+});
+
+describe("Settings: server tiles and the test live order", () => {
+  it("opens a server tile across the row on a tap, and keeps one with a problem open", () => {
+    const status = {
+      startedAt: 0, uptimeSec: 3 * 86400, storage: { dir: "/data", kept: true, note: "On a mounted volume" },
+      backup: { configured: true, keepDays: 30, lastAt: 1, files: 18, lastBytes: 0, lastError: "Upload refused", lastErrorAt: Date.now() },
+    };
+    render(createElement(SettingsSheet, props({ serverStatus: status as any })));
+    const uptime = screen.getByTestId("server-uptime");
+    expect(uptime.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(uptime);
+    expect(uptime.getAttribute("aria-expanded")).toBe("true");
+    expect(uptime.className).toContain("col-span-2");
+    fireEvent.click(uptime);
+    expect(uptime.getAttribute("aria-expanded")).toBe("false");
+    const backups = screen.getByTestId("server-backups");
+    expect(backups.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(backups);
+    expect(backups.getAttribute("aria-expanded")).toBe("true");
+    expect(backups.textContent).toContain("Failing");
+  });
+
+  it("folds the test live order under CoinDCX, loading it only when opened", async () => {
+    vi.mocked(apiFetch).mockClear();
+    vi.mocked(apiFetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ success: true, keys: true, liveEnabled: false, amountInr: 200, markets: ["SOLINR"], run: null }), { status: 200 })
+    );
+    const coinDcxStatus = { configured: true, keyMasked: "••••7Q2", liveRisk: { enabled: false } } as any;
+    render(createElement(SettingsSheet, props({ coinDcxStatus })));
+    const fold = screen.getByTestId("live-test-fold");
+    expect(fold.hasAttribute("inert")).toBe(true);
+    expect(apiFetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Test live order" }));
+    expect(fold.className).toContain("nx-fold-open");
+    expect(await within(fold).findByText(/Live orders are blocked on the server/)).toBeTruthy();
+    expect(apiFetch).toHaveBeenCalledWith("/api/live/test-order");
   });
 });

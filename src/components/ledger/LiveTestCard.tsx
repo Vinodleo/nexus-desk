@@ -83,7 +83,7 @@ export const LiveTestCard: React.FC<{ active: boolean }> = ({ active }) => {
         : `Buys ${amount} of a coin for real, then you sell it here. The desk stays on Paper.`;
 
   return (
-    <div className="py-2.5 border-b border-line text-sm">
+    <div className="py-2.5 text-sm">
       <div className="flex items-center justify-between gap-3 min-h-9">
         <div className="min-w-0">
           <div>Test live order</div>
@@ -120,7 +120,7 @@ export const LiveTestCard: React.FC<{ active: boolean }> = ({ active }) => {
         </div>
       </div>
       {confirming && ready && (
-        <div className="mt-2 -mx-3.5 px-3.5 py-2.5 text-xs leading-relaxed text-warn-ink bg-warn-soft">
+        <div className="mt-2 px-3 py-2.5 rounded-xl text-xs leading-relaxed text-warn-ink bg-warn-soft">
           Buys {amount} of {coinOf(picked)} at CoinDCX with your money, now.{" "}
           <button type="button" onClick={() => void send("buy")} className="font-semibold underline cursor-pointer">
             Yes, buy

@@ -1954,6 +1954,8 @@ export default function App() {
         zerodhaError={zerodha.error}
         onZerodhaConnect={zerodha.connect}
         dailyLossLimit={riskPolicy.hardDailyLossLimit}
+        todayLoss={currentRiskCalculation.currentDailyLoss}
+        positions={activePositions}
         paperMoney={{ start: paperStart, equity, onRestart: restartPaperMoney }}
         maxOpenPositions={riskPolicy.maxSimultaneousPositions}
         riskLimits={riskLimits}
