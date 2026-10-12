@@ -10,6 +10,24 @@ const WINDOW = 30;
 /** Brier score of a forecaster that always says 50%: the no-skill reference. */
 export const COIN_FLIP_BRIER = 0.25;
 
+/** How many of the first and of the latest real trades the early and recent win rates compare: up to 30, half of them at most. */
+export const learningWindow = (realCount: number): number => Math.min(WINDOW, Math.floor(realCount / 2));
+
+const isReal = (e: ExperienceVector) => !isSeededExperience(e) && (e.outcome === "WIN" || e.outcome === "LOSS");
+
+/**
+ * The win rate after each real trade, oldest first, over that trade and the
+ * ones before it, `window` at most (fewer at the start): 0 to 1.
+ * @param experiences memory bank, newest first (as the app stores it)
+ */
+export function rollingWinRates(experiences: ExperienceVector[], window = 10): number[] {
+  const real = experiences.filter(isReal).reverse();
+  return real.map((_, i) => {
+    const last = real.slice(Math.max(0, i - window + 1), i + 1);
+    return last.filter((e) => e.outcome === "WIN").length / last.length;
+  });
+}
+
 export interface LearningStats {
   realCount: number;
   seededCount: number;
@@ -58,7 +76,7 @@ export function computeLearningStats(experiences: ExperienceVector[], startingEq
   const chronological = [...real].reverse();
   const winsIn = (list: ExperienceVector[]) => list.filter((e) => e.outcome === "WIN").length;
 
-  const windowSize = Math.min(WINDOW, Math.floor(realCount / 2));
+  const windowSize = learningWindow(realCount);
   const early = chronological.slice(0, windowSize);
   const recent = chronological.slice(-windowSize);
 
