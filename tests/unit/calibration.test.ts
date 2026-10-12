@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MIN_CALIBRATION_SAMPLES, buildCalibrator, outcomeScore, type Calibrator } from "../../src/services/calibration";
@@ -89,6 +89,15 @@ describe("the Learning card", () => {
     expect(container.textContent).toContain("Measured from 50 finished setups");
     expect(container.textContent).toContain("60–70%");
     expect(container.textContent).toContain("50%"); // worked out
+  });
+
+  it("draws each band as a column, and gives its numbers on a tap", () => {
+    const shadows = Array.from({ length: 50 }, (_, i) => resolved(0.62, i < 25 ? "target" : "stop"));
+    render(createElement(WinChanceCalibration, { shadows }));
+    expect(screen.getAllByTestId("calibration-bar")).toHaveLength(1);
+    expect(screen.getByTestId("calibration-note").textContent).toBe("Tap a band for its numbers.");
+    fireEvent.click(screen.getByRole("button", { name: /^Score 60–70%: 50% worked out over 50 setups/ }));
+    expect(screen.getByTestId("calibration-note").textContent).toMatch(/^Scored 60–70%: 50 setups, 50% worked out\. The scanner now uses \d+% for these\.$/);
   });
 });
 

@@ -47,6 +47,16 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - **Tests:** the machine-learning tests, a card each (daily coin setups, breakout trades and momentum trades with a
     Coins/US/Funds switch, 5-minute setups; `MlTestCard`), how they ran, and the coin check (`CoinCheckCard`).
   - **Tools:** the older hands-on training tools.
+  The Learning tab (`LedgerLearning.tsx`) has two parts, the last one picked remembered per device. **Your trades:** the
+  memory's examples rolling up, real against seeded; once 10 real trades, whether it's getting better (the win rate over
+  the last 10 trades after each one as a line, `rollingWinRates`; the first against the latest `learningWindow` trades;
+  the direction called right; the win chances against a coin flip); the learning plan of Plans below as steps (the data
+  gathering's day and the condition rows with 20+ setups, `planProgress`, from `/api/scanner/exit-edge`'s conditions;
+  condition filters "Ready to build" once most rows have them; tap a step for its guardrails); win rate by strategy or
+  market mood; good calls and good luck (tap one for what it means). **Every setup:** how true the win chance is, a column
+  per score band (its score dashed, what worked out as the bar, the chance used now as a dot; tap for the numbers); what
+  skipped setups did, each reason's average R either side of zero, "Costing trades?" on a reason whose skipped setups
+  made money, as much as the proposed ones; the autopilot's record and the model in use.
   A trade that opens with the app on screen (the server's, the phone's autopilot, or approved in the Queue) unfolds a
   ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it
   took; several queue up.
