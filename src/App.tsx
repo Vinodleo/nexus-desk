@@ -1872,6 +1872,7 @@ export default function App() {
           {activeTab === "lab" && (
             <LedgerLab
               promotedLabModel={promotedLabModel}
+              isLive={tradingMode === "LIVE_COINDCX"}
               closedTrades={closedTrades}
               positions={activePositions}
               trailProfile={trailProfileId}

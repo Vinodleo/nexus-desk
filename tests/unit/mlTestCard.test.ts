@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -103,7 +103,7 @@ describe("the machine-learning test card", () => {
     expect(screen.getByTestId("ml-verdict").textContent).toBe(
       "Can a model pick the better daily coin setups? On the latest year, which it never saw, its picks averaged +0.15R a trade against +0.07R for every setup. It decides nothing live."
     );
-    expect(screen.getByTestId("ml-compare").textContent).toBe("Every setup1,100 trades+0.07R" + "Its picks560 trades+0.15R");
+    expect(screen.getByTestId("ml-compare").textContent).toBe("Its picks560 trades+0.15R" + "Every setup1,100 trades+0.07R");
     expect(screen.getByTestId("ml-five-minute").textContent).toBe("Coins+0.09R✓Passes" + "India−0.12R✕No");
     expect(screen.getByText("Details", { exact: false, selector: "summary" })).toBeTruthy();
     // The 5-minute verdict below, as before.
@@ -128,11 +128,20 @@ describe("the machine-learning test card", () => {
     render(createElement(MlTestCard));
     const coins = await screen.findByTestId("ml-breakout-coins");
     expect(coins.textContent).toBe(
-      "Coins judged 2022–2025✕Doesn't pass" + "Every trade260 trades+0.98R" + "Its picks130 trades+1.10R" + "Skipped130 trades+0.86R" +
+      "Coins judged 2022–2025✕Doesn't pass" + "Its picks130 trades+1.10R" + "Skipped130 trades+0.86R" + "Every trade260 trades+0.98R" +
         "The trades it skips still made +0.86R a trade: skipping them would cost profit."
     );
     expect(screen.getByTestId("ml-breakout-us").textContent).toContain("US stocks judged 2020–2025✓Passes");
     expect(screen.getByTestId("ml-breakout-us").textContent).toContain("The trades it skips clearly lost: skipping them would add profit.");
+    // Its own card shows one market at a time, the first first; the switch picks another, and the card's chip follows it.
+    const card = screen.getByRole("region", { name: "Breakout trades" });
+    expect(coins.hidden).toBe(false);
+    expect(screen.getByTestId("ml-breakout-us").hidden).toBe(true);
+    expect(card.firstElementChild!.textContent).toBe("Breakout trades✕Doesn't pass");
+    fireEvent.click(within(card).getByRole("button", { name: "US" }));
+    expect(coins.hidden).toBe(true);
+    expect(screen.getByTestId("ml-breakout-us").hidden).toBe(false);
+    expect(card.firstElementChild!.textContent).toBe("Breakout trades✓Passes");
     cleanup();
 
     // Before the replays have saved their breakout trades; then too few years; then running.
@@ -173,7 +182,7 @@ describe("the machine-learning test card", () => {
     vi.mocked(apiFetch).mockResolvedValue(reply({ ...done, breakout }));
     render(createElement(MlTestCard));
     expect((await screen.findByTestId("ml-momentum-coins")).textContent).toBe(
-      "Coins (not traded) judged 2022–2025✕Doesn't pass" + "Every trade200 trades+0.11R" + "Its picks100 trades+0.20R" + "Skipped100 trades+0.02R" +
+      "Coins (not traded) judged 2022–2025✕Doesn't pass" + "Its picks100 trades+0.20R" + "Skipped100 trades+0.02R" + "Every trade200 trades+0.11R" +
         "The trades it skips still made +0.02R a trade: skipping them would cost profit."
     );
     expect(screen.getByTestId("ml-momentum-us").textContent).toContain("US stocks judged 2020–2025✓Passes");

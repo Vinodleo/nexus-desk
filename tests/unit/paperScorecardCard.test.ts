@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoricalTrade, Position } from "../../src/types";
@@ -47,15 +47,24 @@ describe("Paper trades against the replay", () => {
     render(createElement(PaperScorecard, { trades, positions }));
     const coins = await screen.findByTestId("score-coinBreakout");
     expect(coins.textContent).toContain("Coin breakout 55/20–Too early · 2 of 10");
-    expect(screen.getByTestId("score-coinBreakout-bars").textContent).toBe("Paper2 closed+1.00R" + "Replay476 trades+0.98R");
+    // On one line in R, from −2R to +2R: the replay's ring at +0.98R, the paper dot gliding there from it to +1.00R.
+    expect(screen.getByTestId("score-coinBreakout-track").getAttribute("aria-label")).toBe("Coin breakout 55/20: paper +1.00R over 2 closed, replay +0.98R");
+    expect(screen.getByTestId("score-coinBreakout-replay").style.left).toBe("74.5%");
+    await waitFor(() => expect(screen.getByTestId("score-coinBreakout-paper").style.left).toBe("75%"));
+    // Its numbers fold open on a tap.
+    const head = within(coins).getByRole("button", { expanded: false });
+    fireEvent.click(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    expect(head.nextElementSibling!.className).toContain("nx-fold-open");
     expect(coins.textContent).toContain("1 open · 50% won (replay 25%) · P&L +₹20");
     expect(coins.textContent).toContain("Average win +3.00R (replay +5.00R) · average loss −1.00R (replay −0.36R)");
     expect(coins.textContent).toContain("Exits: 1 sold below the 20-day low · 1 at the stop (1 gapped past it).");
     // None closed yet: what the replay expects.
-    expect(screen.getByTestId("score-usBreakout").textContent).toBe("US breakout 55/20–Too earlyNo paper trades yet. The replay expects +0.39R a trade, 37% won.");
-    expect(screen.getByTestId("score-dailyCoins").textContent).toBe("Daily coin traders–Too early1 open, none closed yet. The replay expects +0.22R a trade, 41% won.");
+    expect(screen.getByTestId("score-usBreakout").textContent).toBe("US breakout 55/20–Too earlyNo paper trades yetReplay +0.39RThe replay expects +0.39R a trade, 37% won.");
+    expect(screen.queryByTestId("score-usBreakout-paper")).toBeNull();
+    expect(screen.getByTestId("score-dailyCoins").textContent).toBe("Daily coin traders–Too early1 open, none closed yetReplay +0.22RThe replay expects +0.22R a trade, 41% won.");
     // US momentum's trades: sold at the weekly check, or at the stop.
-    expect(screen.getByTestId("score-usMomentum").textContent).toBe("US momentum, top 3–Too earlyNo paper trades yet. The replay expects +0.26R a trade, 53% won.");
+    expect(screen.getByTestId("score-usMomentum").textContent).toBe("US momentum, top 3–Too earlyNo paper trades yetReplay +0.26RThe replay expects +0.26R a trade, 53% won.");
     cleanup();
     render(createElement(PaperScorecard, { trades: [trade(2, { id: "mo1", symbol: "NVDA.US", strategy: "momentum" })], positions: [{ symbol: "AAPL.US", strategy: "momentum" }] as Position[] }));
     const momentum = await screen.findByTestId("score-usMomentum");
@@ -74,5 +83,7 @@ describe("Paper trades against the replay", () => {
     const losing = Array.from({ length: 10 }, (_, i) => trade(-1, { id: `l${i}`, exitReason: "STOP_LOSS", symbol: "AAPL.US", realizedPnl: i === 0 ? 5 : -10 }));
     render(createElement(PaperScorecard, { trades: losing, positions: [] }));
     expect((await screen.findByTestId("score-usBreakout")).textContent).toContain("✕Behind the replay");
+    // Luck's reach shaded round the replay's ring, once there are enough trades.
+    expect(screen.getByTestId("score-usBreakout").textContent).toContain("The shading is how far luck alone could put it from the replay.");
   });
 });
