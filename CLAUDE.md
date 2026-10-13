@@ -66,6 +66,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   fewer than are open, and the most the market may hold and lose at once. **Connections:** CoinDCX (the test live order
   folded under it), Alpaca, Angel One, Gemini and Zerodha, each with a status dot. **Server:** a tile each, opened on a
   tap; one with a problem stays open. Then pop-ups and the theme, the desk's links, the version and Sign out.
+  The opening screen (`LoadingScreen`, over the page from `AuthGuard`): dots scattered over the screen fly into an N
+  in pen order (`N_DOTS`); once signed in (`ready`) and the dots have landed (`FINALE_EARLIEST_MS`), a tile grows under
+  it, the dots melt into the lettered N, a shine crosses it, and it fades to the app, which loads underneath meanwhile
+  (`onDone`). With reduced motion the icon stands still and the app follows as soon as it's ready.
   A trade that opens with the app on screen (the server's, the phone's autopilot, or approved in the Queue) unfolds a
   ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it
   took; several queue up.

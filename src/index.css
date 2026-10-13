@@ -28,6 +28,8 @@
   --nx-danger-line: #E7C5BE;
   /* Dims the page behind a sheet or notice. */
   --nx-scrim: #1C1B18;
+  /* A highlight that crosses a surface (the opening screen's tile). */
+  --nx-shine: rgba(255, 255, 255, 0.35);
 }
 
 /* Graphite: dark, warm charcoal. */
@@ -50,6 +52,7 @@ html[data-theme="graphite"] {
   --nx-danger-soft: #2D1C19;
   --nx-danger-line: #5A322B;
   --nx-scrim: #000000;
+  --nx-shine: rgba(255, 255, 255, 0.35);
 }
 
 /* Blush: light pink with a raspberry accent. */
@@ -71,6 +74,7 @@ html[data-theme="blush"] {
   --nx-danger-soft: #FCE9E5;
   --nx-danger-line: #EDC3BB;
   --nx-scrim: #2A1A1F;
+  --nx-shine: rgba(255, 255, 255, 0.35);
 }
 
 @theme inline {
@@ -546,20 +550,15 @@ html, body {
   .nx-odo-strip { transition: none; }
 }
 
-/* The loading screen: each candle's wick, then its body, grows from its
-   middle, one candle after another; they hold, fade, and grow again for as
-   long as it waits. */
-@keyframes nx-candle {
-  0% { transform: scaleY(0); opacity: 0; }
-  18% { transform: none; opacity: 1; }
-  80% { transform: none; opacity: 1; }
-  100% { transform: none; opacity: 0; }
+/* The opening screen (LoadingScreen): when the desk is ready, a shine
+   crosses the N's tile once. */
+@keyframes nx-shine {
+  from { transform: translateX(-120%) rotate(20deg); }
+  to { transform: translateX(420%) rotate(20deg); }
 }
-.nx-candle { transform-origin: center; animation: nx-candle 2600ms cubic-bezier(0.3, 0.9, 0.3, 1.1) infinite both; }
-.nx-candle-wick { animation-delay: calc(var(--i) * 120ms); }
-.nx-candle-body { animation-delay: calc(var(--i) * 120ms + 90ms); }
+.nx-shine { left: 0; background: linear-gradient(90deg, transparent, var(--nx-shine), transparent); animation: nx-shine 900ms ease-in-out 550ms both; }
 @media (prefers-reduced-motion: reduce) {
-  .nx-candle { animation: none; }
+  .nx-shine { animation: none; opacity: 0; }
 }
 
 /* A closed trade in the Book opens in its day's card: the row tints and its
