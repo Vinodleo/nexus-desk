@@ -2,11 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { prefersReducedMotion, useShown } from "./ledger/motion";
 
 // While the desk opens: dots scattered over the screen fly together, one
-// after another, into an N. When the desk is ready (`ready`), a tile grows
-// under the N, the dots take the tile's ink and melt into the lettered N, a
-// shine crosses it, and the screen fades to the app underneath (`onDone`).
-// With reduced motion the icon simply stands there, and the app follows as
-// soon as it's ready.
+// after another, into an N. When the desk is ready (`ready`), the dots shrink
+// away as a tile grows over them, the lettered N appears on the tile once
+// they're gone (no dots on the logo), a shine crosses it, and the screen
+// fades to the app underneath (`onDone`). With reduced motion the icon simply
+// stands there, and the app follows as soon as it's ready.
 
 const CELL = 18;
 
@@ -23,6 +23,11 @@ export const N_DOTS: [number, number][] = (() => {
 const GATHER_AT_MS = 250;
 /** The earliest the ending starts (ms after the screen shows): by then the dots have nearly all landed. */
 export const FINALE_EARLIEST_MS = 1000;
+/** The ending: each dot shrinks away (a ripple in pen order), the tile grows over them, and the N appears on it once they're gone (ms). */
+export const DOT_SHRINK_MS = 220;
+export const DOT_RIPPLE_MS = 6;
+const TILE_AT_MS = 80;
+export const LOGO_AT_MS = 350;
 /** How long the ending plays before the screen fades (ms), and the fade. */
 export const FINALE_MS = 1250;
 export const LEAVE_MS = 300;
@@ -110,21 +115,6 @@ export const LoadingScreen: React.FC<{ message?: string; ready?: boolean; onDone
       }`}
     >
       <div className="relative shrink-0" style={{ width: TILE, height: TILE }} aria-hidden="true">
-        <span
-          data-testid="loading-tile"
-          className={`absolute inset-0 rounded-[44px] bg-accent overflow-hidden shadow-[0_18px_40px_color-mix(in_srgb,var(--nx-accent)_32%,transparent)] transition-transform duration-[600ms] ease-[cubic-bezier(0.34,1.45,0.64,1)] ${
-            icon ? "scale-100" : "scale-0"
-          }`}
-        >
-          {finale && <span className="nx-shine absolute -top-10 -bottom-10 w-12" />}
-          <span
-            className={`absolute inset-0 flex items-center justify-center font-display text-[116px] leading-none font-semibold text-on-accent transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.34,1.4,0.64,1)] ${
-              icon ? `opacity-100 scale-100 ${still ? "" : "delay-[450ms]"}` : "opacity-0 scale-[0.8]"
-            }`}
-          >
-            N
-          </span>
-        </span>
         {!still &&
           N_DOTS.map(([x, y], i) => (
             <span
@@ -135,13 +125,17 @@ export const LoadingScreen: React.FC<{ message?: string; ready?: boolean; onDone
                 left: N_LEFT + x,
                 top: N_TOP + y,
                 transform: gathered ? "none" : `translate(${start.dots[i].dx.toFixed(0)}px, ${start.dots[i].dy.toFixed(0)}px)`,
-                opacity: finale ? 0 : 1,
-                transition: `transform 900ms cubic-bezier(0.34, 1.18, 0.64, 1) ${i * 20}ms, opacity 300ms ease ${finale ? 500 + i * 12 : 0}ms`,
+                transition: `transform 900ms cubic-bezier(0.34, 1.18, 0.64, 1) ${i * 20}ms`,
               }}
             >
               <span
-                className={`block w-full h-full rounded-full transition-colors duration-300 ${finale ? "bg-on-accent" : gathered ? "bg-accent" : scatteredTone(i)}`}
-                style={finale ? { transitionDelay: `${100 + i * 12}ms` } : undefined}
+                data-testid="n-dot-face"
+                className={`block w-full h-full rounded-full ${gathered ? "bg-accent" : scatteredTone(i)}`}
+                style={{
+                  transform: finale ? "scale(0)" : "none",
+                  opacity: finale ? 0 : 1,
+                  transition: `transform ${DOT_SHRINK_MS}ms ease-in ${finale ? i * DOT_RIPPLE_MS : 0}ms, opacity ${DOT_SHRINK_MS}ms ease-in ${finale ? i * DOT_RIPPLE_MS : 0}ms, background-color 300ms ease`,
+                }}
               />
             </span>
           ))}
@@ -160,6 +154,25 @@ export const LoadingScreen: React.FC<{ message?: string; ready?: boolean; onDone
               }}
             />
           ))}
+        {/* Over the dots, so none shows on the logo as it grows. */}
+        <span
+          data-testid="loading-tile"
+          className={`absolute inset-0 rounded-[44px] bg-accent overflow-hidden shadow-[0_18px_40px_color-mix(in_srgb,var(--nx-accent)_32%,transparent)] transition-transform duration-[550ms] ease-[cubic-bezier(0.34,1.45,0.64,1)] ${
+            icon ? "scale-100" : "scale-0"
+          }`}
+          style={finale ? { transitionDelay: `${TILE_AT_MS}ms` } : undefined}
+        >
+          {finale && <span className="nx-shine absolute -top-10 -bottom-10 w-12" />}
+          <span
+            data-testid="loading-logo"
+            className={`absolute inset-0 flex items-center justify-center font-display text-[116px] leading-none font-semibold text-on-accent transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.34,1.4,0.64,1)] ${
+              icon ? "opacity-100 scale-100" : "opacity-0 scale-[0.85]"
+            }`}
+            style={finale ? { transitionDelay: `${LOGO_AT_MS}ms` } : undefined}
+          >
+            N
+          </span>
+        </span>
       </div>
       <div className="min-h-[72px] flex flex-col items-center gap-2">
         <div

@@ -556,7 +556,7 @@ html, body {
   from { transform: translateX(-120%) rotate(20deg); }
   to { transform: translateX(420%) rotate(20deg); }
 }
-.nx-shine { left: 0; background: linear-gradient(90deg, transparent, var(--nx-shine), transparent); animation: nx-shine 900ms ease-in-out 550ms both; }
+.nx-shine { left: 0; background: linear-gradient(90deg, transparent, var(--nx-shine), transparent); animation: nx-shine 900ms ease-in-out 700ms both; }
 @media (prefers-reduced-motion: reduce) {
   .nx-shine { animation: none; opacity: 0; }
 }

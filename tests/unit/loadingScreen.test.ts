@@ -11,7 +11,9 @@ vi.mock("../../src/context/AuthContext", () => ({ useAuth: () => auth }));
 vi.mock("../../src/components/LoginScreen", () => ({ LoginScreen: () => "the login screen" }));
 vi.mock("../../src/shared/owner", () => ({ isOwner: (email?: string) => email === "owner@example.com" }));
 
-const { LoadingScreen, N_DOTS, FINALE_EARLIEST_MS, FINALE_MS, LEAVE_MS } = await import("../../src/components/LoadingScreen");
+const { LoadingScreen, N_DOTS, FINALE_EARLIEST_MS, FINALE_MS, LEAVE_MS, DOT_SHRINK_MS, DOT_RIPPLE_MS, LOGO_AT_MS } = await import(
+  "../../src/components/LoadingScreen"
+);
 const { AuthGuard } = await import("../../src/AuthGuard");
 
 const reducedMotion = (on: boolean) =>
@@ -66,14 +68,31 @@ describe("the opening screen", () => {
     act(() => vi.advanceTimersByTime(60));
     expect(tile().className).toContain("scale-100");
     expect(screen.getByRole("status").getAttribute("aria-label")).toBe("Ready");
-    // The dots melt into the lettered N.
-    expect(dots().every((d) => d.style.opacity === "0")).toBe(true);
+    // The dots give way to the lettered N.
+    expect(screen.getAllByTestId("n-dot-face").every((d) => d.style.transform === "scale(0)" && d.style.opacity === "0")).toBe(true);
     expect(tile().textContent).toBe("N");
     act(() => vi.advanceTimersByTime(FINALE_MS));
     expect(screen.getByRole("status").className).toContain("opacity-0");
     expect(onDone).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(LEAVE_MS));
     expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no dots on the logo: they shrink away under the growing tile before the N appears", () => {
+    const { rerender } = render(createElement(LoadingScreen));
+    act(() => vi.advanceTimersByTime(300));
+    rerender(createElement(LoadingScreen, { ready: true }));
+    act(() => vi.advanceTimersByTime(FINALE_EARLIEST_MS));
+    const faces = screen.getAllByTestId("n-dot-face");
+    // Each shrinks to nothing, one after another in pen order, all gone before the N shows.
+    expect(faces.every((d) => d.style.transform === "scale(0)" && d.style.opacity === "0")).toBe(true);
+    expect(faces[21].style.transition).toContain(`${DOT_SHRINK_MS}ms ease-in ${21 * DOT_RIPPLE_MS}ms`);
+    expect((N_DOTS.length - 1) * DOT_RIPPLE_MS + DOT_SHRINK_MS).toBeLessThanOrEqual(LOGO_AT_MS);
+    expect(screen.getByTestId("loading-logo").style.transitionDelay).toBe(`${LOGO_AT_MS}ms`);
+    // Nor do they keep a colour of their own on the tile.
+    expect(faces.every((d) => d.className.includes("bg-accent"))).toBe(true);
+    // The tile is drawn over every dot, so none shows through as it grows.
+    expect(dots().every((d) => d.compareDocumentPosition(tile()) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it("with reduced motion, shows the icon still and goes straight to the app when ready", () => {
