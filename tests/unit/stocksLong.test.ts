@@ -79,7 +79,16 @@ describe("each year's stocks", () => {
   it("trade only in the years they were among the 20 biggest, and none before 2016", () => {
     expect(stocks.stockCohortFor("us", 2015)).toEqual([]);
     expect(stocks.stockCohortFor("us", 2016)).toContain("GE");
-    expect(stocks.stockCohortFor("us", 2030)).toEqual(stocks.STOCK_COHORTS.us[2025]);
+    expect(stocks.stockCohortFor("us", 2030)).toEqual(stocks.STOCK_COHORTS.us[2026]);
+    expect(stocks.stockCohortFor("nse", 2030)).toEqual(stocks.STOCK_COHORTS.nse[2026]);
+    // 2026's lists: Palantir, AbbVie, Bank of America and J&J in, Netflix, Costco, UnitedHealth and Home Depot out;
+    // in India Titan and Adani Ports in, NTPC and ONGC out.
+    for (const t of ["PLTR", "ABBV", "BAC", "JNJ"]) expect(stocks.inStockCohort(`${t}.US`, Date.UTC(2026, 5, 1))).toBe(true);
+    for (const t of ["NFLX", "COST", "UNH", "HD"]) expect(stocks.inStockCohort(`${t}.US`, Date.UTC(2026, 5, 1))).toBe(false);
+    expect(stocks.inStockCohort("PLTR.US", Date.UTC(2025, 5, 1))).toBe(false);
+    for (const t of ["TITAN", "ADANIPORTS"]) expect(stocks.inStockCohort(t, Date.UTC(2026, 5, 1))).toBe(true);
+    for (const t of ["NTPC", "ONGC"]) expect(stocks.inStockCohort(t, Date.UTC(2026, 5, 1))).toBe(false);
+    expect(stocks.inStockCohort("ADANIPORTS", Date.UTC(2025, 5, 1))).toBe(false);
     expect(stocks.inStockCohort("NFLX.US", Date.UTC(2024, 5, 1))).toBe(false);
     expect(stocks.inStockCohort("NFLX.US", Date.UTC(2025, 5, 1))).toBe(true);
     expect(stocks.inStockCohort("M&M", Date.UTC(2025, 5, 1))).toBe(true);
@@ -226,6 +235,46 @@ describe("the replay", () => {
     expect(run.classic.us).toEqual(before.classic.us);
     expect(stocks.stocksLongMissing(run)).toBe(false);
     expect(stocks.stocksLongMissing(null)).toBe(false);
+  });
+
+  it("replays a market whose lists gained a stock since a finished run (a new year's) again, its results on show meanwhile", async () => {
+    const first = deps();
+    await stocks.startStocksLong(true, first.deps);
+    const finished = stocks._stocksLongRun()!;
+    // A run from before 2026's US list: Palantir never read.
+    const { ["PLTR.US"]: _pltr, ...markets } = finished.markets;
+    const before = { ...finished, markets, classic: { ...finished.classic, us: { "2016-Q1": { breakout: { trades: 1, totalR: 1, wins: 1, winR: 1, lossR: 0 } } } } };
+    fs.writeFileSync(path.join(dataDir, "stocks_long.json"), JSON.stringify(before));
+    stocks._resetStocksLong();
+    stocks.loadStocksLong();
+    expect(stocks.stocksLongMissing(stocks._stocksLongRun())).toBe(true);
+    expect(stocks.stocksLongDue(stocks._stocksLongRun(), toMs)).toBe(false);
+
+    // Held on its first download: the US results it trades on stay meanwhile, and a restart carries on with it.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const second = deps();
+    const going = stocks.startStocksLong(false, {
+      ...second.deps,
+      download: async (symbol: string) => {
+        await held;
+        return second.deps.download(symbol);
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stocks.stocksLongClassic("us")).toEqual(before.classic.us);
+    expect(stocks._stocksLongRun()!.done).toEqual(["funds", "nse"]);
+    expect(JSON.parse(fs.readFileSync(path.join(dataDir, "stocks_long.json"), "utf8")).done).toEqual(["funds", "nse"]);
+    release();
+    await going;
+    // Only the US market is downloaded again; the funds and India are left as they were.
+    expect(second.downloads).toEqual(stocks.stockSymbols("us"));
+    const run = stocks._stocksLongRun()!;
+    expect(run.markets["PLTR.US"]).toMatchObject({ status: "done" });
+    expect(run.done).toEqual(["funds", "nse", "us"]);
+    expect(run.classic.us).toEqual(finished.classic.us);
+    expect(run.classic.nse).toEqual(finished.classic.nse);
+    expect(stocks.stocksLongMissing(run)).toBe(false);
   });
 
   it("keeps the last results on show while it replays again, market by market", async () => {

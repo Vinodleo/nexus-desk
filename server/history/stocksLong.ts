@@ -66,6 +66,8 @@ export { FUNDS };
  * The 20 biggest stocks by market value on 1 January each year, from memory
  * of the rankings of the time: US (any exchange) and India (in the Nifty 50).
  * Picked by size then, not by how they did after. Later years use the last.
+ * 2026's are from published values at the close of 31 December 2025 (US:
+ * Finhacker's S&P 500 table; India: companiesmarketcap), not memory.
  */
 export const STOCK_COHORTS: Record<StockMarket, Record<number, string[]>> = {
   us: {
@@ -79,6 +81,7 @@ export const STOCK_COHORTS: Record<StockMarket, Record<number, string[]>> = {
     2023: ["AAPL", "MSFT", "GOOGL", "AMZN", "BRK.B", "UNH", "JNJ", "XOM", "JPM", "V", "NVDA", "WMT", "TSLA", "PG", "LLY", "MA", "HD", "CVX", "META", "ABBV"],
     2024: ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B", "LLY", "AVGO", "V", "JPM", "UNH", "WMT", "MA", "XOM", "JNJ", "HD", "PG", "COST"],
     2025: ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "BRK.B", "WMT", "LLY", "JPM", "V", "MA", "XOM", "ORCL", "UNH", "COST", "NFLX", "HD"],
+    2026: ["NVDA", "AAPL", "GOOGL", "MSFT", "AMZN", "AVGO", "META", "TSLA", "BRK.B", "LLY", "WMT", "JPM", "V", "ORCL", "MA", "XOM", "JNJ", "PLTR", "ABBV", "BAC"],
   },
   nse: {
     2016: ["TCS", "RELIANCE", "HDFCBANK", "ITC", "INFY", "HDFC", "ONGC", "SBIN", "HINDUNILVR", "ICICIBANK", "SUNPHARMA", "COALINDIA", "LT", "BHARTIARTL", "WIPRO", "KOTAKBANK", "HCLTECH", "AXISBANK", "MARUTI", "NTPC"],
@@ -91,6 +94,7 @@ export const STOCK_COHORTS: Record<StockMarket, Record<number, string[]>> = {
     2023: ["RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "HINDUNILVR", "HDFC", "SBIN", "ITC", "BHARTIARTL", "BAJFINANCE", "ADANIENT", "KOTAKBANK", "LT", "HCLTECH", "ASIANPAINT", "AXISBANK", "MARUTI", "TITAN", "SUNPHARMA"],
     2024: ["RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "BHARTIARTL", "SBIN", "HINDUNILVR", "ITC", "LT", "BAJFINANCE", "HCLTECH", "KOTAKBANK", "AXISBANK", "ADANIENT", "MARUTI", "SUNPHARMA", "TITAN", "ONGC", "NTPC"],
     2025: ["RELIANCE", "HDFCBANK", "TCS", "BHARTIARTL", "ICICIBANK", "SBIN", "INFY", "HINDUNILVR", "ITC", "BAJFINANCE", "LT", "HCLTECH", "SUNPHARMA", "KOTAKBANK", "MARUTI", "M&M", "AXISBANK", "NTPC", "ULTRACEMCO", "ONGC"],
+    2026: ["RELIANCE", "HDFCBANK", "BHARTIARTL", "TCS", "ICICIBANK", "SBIN", "INFY", "BAJFINANCE", "LT", "HINDUNILVR", "MARUTI", "ITC", "HCLTECH", "M&M", "KOTAKBANK", "SUNPHARMA", "AXISBANK", "TITAN", "ULTRACEMCO", "ADANIPORTS"],
   },
   // The same funds every year.
   funds: { 2016: FUNDS },
@@ -236,9 +240,16 @@ export function stocksLongDue(saved: StocksLongRun | null, now: number): boolean
   return saved.finishedAt !== null && now - saved.finishedAt > RERUN_AFTER_MS;
 }
 
-/** A finished run without a market added since (the funds): carried on to replay just that one, nothing downloaded again. */
+/** Whether a market's lists have a stock the run hasn't read (a new year's list brought it). */
+const lacksStock = (saved: StocksLongRun, market: StockMarket) => stockSymbols(market).some((s) => !saved.markets[s]);
+
+/**
+ * A finished run without a market added since (the funds), or with a market
+ * whose lists have gained a stock since: carried on to replay just those
+ * markets, the others not downloaded again.
+ */
 export function stocksLongMissing(saved: StocksLongRun | null): boolean {
-  return !!saved && saved.finishedAt !== null && STOCK_MARKETS.some((m) => !saved.done.includes(m));
+  return !!saved && saved.finishedAt !== null && STOCK_MARKETS.some((m) => !saved.done.includes(m) || lacksStock(saved, m));
 }
 
 async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<void> {
@@ -299,7 +310,12 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
   };
 
   for (const market of STOCK_MARKETS) {
-    if (r.done.includes(market)) continue;
+    if (r.done.includes(market)) {
+      if (!lacksStock(r, market)) continue;
+      // Its lists gained a stock since it finished (a new year's): replayed again, its results on show meanwhile.
+      r.done = r.done.filter((m) => m !== market);
+      save();
+    }
     const symbols = stockSymbols(market);
     const series: Record<string, CandleSeries> = {};
     for (const symbol of symbols) {

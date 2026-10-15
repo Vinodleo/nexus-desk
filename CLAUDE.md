@@ -253,7 +253,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Indian stocks' daily candles: US from Alpaca (all exchanges' trades where the plan allows, else IEX; adjusted for splits
   and dividends, `fetchUsDailyBars`), India from Angel One (`fetchNseDaily`, unadjusted, so splits and bonus issues are found
   and adjusted, `adjustForSplits`). Each year trades only its 20 biggest stocks on 1 January (`STOCK_COHORTS`, from memory,
-  nothing before 2016; a year of warm-up from 2015). Each market's index fund (`MARKET_FUND`: SPY, NIFTYBEES) is the
+  2026's from published 31 Dec 2025 values; nothing before 2016; a year of warm-up from 2015). A market whose lists gain a
+  stock after it finished (a new year's) is replayed again alone, its results on show meanwhile (`stocksLongMissing`). Each market's index fund (`MARKET_FUND`: SPY, NIFTYBEES) is the
   200-day guard in place of Bitcoin; momentum rebalances at each week's last session (`stockWeekClose`). Costs: Alpaca's
   fees and a spread; for India, delivery charges (`stockCost`). Results by quarter per market (`stocks_long.json`), kept
   on show while it reruns. Monthly, at `CPU_SHARE`, never alongside the other background work; Indian downloads wait for
