@@ -64,7 +64,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   (Coins, India, US): amount per trade, most to lose and trades at once stepped with − and + (tapping the figure opens
   every choice), the slower strategies' own slots as squares, a dot in each one in use (`positions`) and a note when
   fewer than are open, and the most the market may hold and lose at once. **Connections:** CoinDCX (the test live order
-  folded under it), Alpaca, Angel One, Gemini and Zerodha, each with a status dot. **Server:** a tile each, opened on a
+  folded under it), Alpaca, Angel One, Gemini, Zerodha and Telegram (Link opens the bot with a one-time code; then Test or
+  Unlink; `useTelegramLink`), each with a status dot. **Server:** a tile each, opened on a
   tap; one with a problem stays open. Then pop-ups and the theme, the desk's links, the version and Sign out.
   The opening screen (`LoadingScreen`, over the page from `AuthGuard`): dots scattered over the screen fly into an N
   in pen order (`N_DOTS`); once signed in (`ready`) and the dots have landed (`FINALE_EARLIEST_MS`), the dots shrink
@@ -149,7 +150,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     missing, a little short (up to `FEE_SHORT` 1%: the fee taken in coins) or a failed exit's coins still held pops up
     once a day, once seen on two checks 5 minutes apart; coins beyond the live trades are only listed. Trades opened
     in the last 5 minutes and ones being closed aren't compared. Settings → Server → CoinDCX check.
-  - Web Push sends the trade pop-ups.
+  - Web Push sends the trade pop-ups, and each also goes to the user's Telegram chat (`server/telegram.ts`, owner's ask):
+    the owner's own bot (`TELEGRAM_BOT_TOKEN`, a Fly secret), the chat linked from Settings with a one-time code
+    (`t.me/<bot>?start=<code>`, 10 minutes; the server reads the bot's messages only while one waits) and kept in
+    `telegram.json`. `notifyUser` and `notifyEveryone` send to both; sends go one at a time, a 429 waits once, a chat that
+    blocked the bot (403) is forgotten.
   - The weekly summary (`server/weeklySummary.ts`): a pop-up each Sunday at 10 am India time per desk, from the trades
     the server recorded (its own closes and the app's): the week's closed, won, still open and what they made, and each slower strategy's paper trades
     so far against its replay (`paperScore`, a strategy clearly behind named first). Sent late after a restart until

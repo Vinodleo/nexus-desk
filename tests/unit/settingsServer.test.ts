@@ -11,6 +11,7 @@ vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(async () => new
 
 import { SettingsSheet, backupSummary, coinDcxCheckSummary, errorReportsSummary, formatSpan, shortRupees, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
 import { HOLD_MS } from "../../src/components/ledger/ui";
+import { LINK_CHECK_MS } from "../../src/hooks/useTelegramLink";
 import { apiFetch } from "../../src/services/apiClient";
 
 import { cleanMarketLimits } from "../../src/shared/marketLimits";
@@ -240,8 +241,8 @@ describe("Settings: motion", () => {
       alpaca: { configured: true, accountStatus: "ACTIVE", lastError: null },
     };
     rerender(createElement(SettingsSheet, props({ serverStatus: status as any })));
-    // Only CoinDCX's own check (not given here) is still on its way.
-    expect(screen.queryAllByRole("status", { name: "Checking" })).toHaveLength(1);
+    // Only CoinDCX's and Telegram's own checks (not given here) are still on their way.
+    expect(screen.queryAllByRole("status", { name: "Checking" })).toHaveLength(2);
     expect(document.querySelectorAll(".nx-ring").length).toBeGreaterThanOrEqual(2);
   });
 
@@ -581,10 +582,69 @@ describe("Settings: server tiles and the test live order", () => {
     render(createElement(SettingsSheet, props({ coinDcxStatus })));
     const fold = screen.getByTestId("live-test-fold");
     expect(fold.hasAttribute("inert")).toBe(true);
-    expect(apiFetch).not.toHaveBeenCalled();
+    expect(apiFetch).not.toHaveBeenCalledWith("/api/live/test-order");
     fireEvent.click(screen.getByRole("button", { name: "Test live order" }));
     expect(fold.className).toContain("nx-fold-open");
     expect(await within(fold).findByText(/Live orders are blocked on the server/)).toBeTruthy();
     expect(apiFetch).toHaveBeenCalledWith("/api/live/test-order");
   });
+});
+
+describe("Settings: Telegram", () => {
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+  it("links Telegram from a link to the bot, sees it linked, and sends a test", async () => {
+    let linked = false;
+    vi.mocked(apiFetch).mockClear();
+    vi.mocked(apiFetch).mockImplementation(async (url: string) =>
+      url === "/api/telegram"
+        ? json({ success: true, configured: true, linked, linking: !linked })
+        : url === "/api/telegram/link"
+          ? json({ success: true, url: "https://t.me/nexus_desk_bot?start=abc123" })
+          : url === "/api/telegram/test"
+            ? json({ success: true })
+            : new Response("Not found", { status: 404 })
+    );
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(createElement(SettingsSheet, props()));
+      const row = () => screen.getByText("Telegram").parentElement!;
+      fireEvent.click(await screen.findByRole("button", { name: "Link" }));
+      // A real link to the bot, so the phone opens Telegram from the tap itself.
+      const open = await screen.findByRole("link", { name: "Open Telegram" });
+      expect(open.getAttribute("href")).toBe("https://t.me/nexus_desk_bot?start=abc123");
+      expect(open.getAttribute("target")).toBe("_blank");
+      expect(row().textContent).toContain("Tap Start in Telegram");
+
+      // Start tapped in Telegram: it looks again and sees it linked.
+      linked = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LINK_CHECK_MS);
+      });
+      expect(row().textContent).toContain("Linked: every pop-up comes here too");
+      expect(screen.getByTestId("Telegram dot").className).toContain("bg-gain");
+      fireEvent.click(screen.getByRole("button", { name: "Test" }));
+      expect(await screen.findByText("Sent: look in Telegram.")).toBeTruthy();
+      expect(apiFetch).toHaveBeenCalledWith("/api/telegram/test", { method: "POST" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says how to set it up without a bot on the server, and stays out of the way on a server without it", async () => {
+    vi.mocked(apiFetch).mockImplementation(async (url: string) => (url === "/api/telegram" ? json({ success: true, configured: false, linked: false, linking: false }) : new Response("Not found", { status: 404 })));
+    const { unmount } = render(createElement(SettingsSheet, props()));
+    expect(await screen.findByText(/set TELEGRAM_BOT_TOKEN on the server/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Link" })).toBeNull();
+    unmount();
+    vi.mocked(apiFetch).mockImplementation(async () => new Response("Not found", { status: 404 }));
+    render(createElement(SettingsSheet, props()));
+    await waitForQuiet();
+    expect(screen.queryByText("Telegram")).toBeNull();
+  });
+});
+
+/** Lets pending requests settle. */
+const waitForQuiet = () => act(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 });

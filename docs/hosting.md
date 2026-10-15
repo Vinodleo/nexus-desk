@@ -247,6 +247,33 @@ The app restarts. **Settings → Server → Error reports** says **On**, and
 Sentry shows "Nexus Desk server started (error reports on)" within a minute.
 To stop it: `fly secrets unset SENTRY_DSN -a nexus-desk-vinodleo`.
 
+### Telegram alerts
+
+With `TELEGRAM_BOT_TOKEN` set, every pop-up the server sends (trades opened
+and closed, the Sunday summary, a failed backup, the CoinDCX check) also goes
+to your Telegram chat, so one missed on the phone still arrives
+(`server/telegram.ts`). The bot is your own; only you link it.
+
+**Set it up once:**
+
+1. In Telegram, open **@BotFather** (the blue tick one), send `/newbot`, and
+   give it a name and a username ending in `bot` (say `vinod_desk_bot`).
+   BotFather replies with the bot's token: a number, a colon and letters.
+   Keep it to yourself; don't paste it into a chat or a screenshot.
+2. In Cloud Shell:
+
+   ```
+   fly secrets set TELEGRAM_BOT_TOKEN="123456789:AA…" -a nexus-desk-vinodleo
+   ```
+
+3. Once the app has restarted: **Settings → Connections → Telegram → Link**,
+   then **Open Telegram**, and tap **Start** in the bot's chat (within 10
+   minutes). The row turns to **Linked** and the bot says so. **Test** sends
+   one more message to check.
+
+To stop it: **Unlink** in Settings, or block the bot in Telegram. To remove
+the bot: `fly secrets unset TELEGRAM_BOT_TOKEN -a nexus-desk-vinodleo`.
+
 ## Checking it works
 
 - **In the app, Settings → Server:**
