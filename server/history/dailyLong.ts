@@ -66,7 +66,10 @@ const PROFILES = Object.keys(TRAIL_PROFILES) as TrailProfileId[];
 /**
  * The 20 biggest coins by market value on 1 January each year (stablecoins
  * left out), from memory of the rankings of the time: picked by size then,
- * not by how they did after. Later years use the last list.
+ * not by how they did after. Later years use the last list. 2026's is from
+ * CoinMarketCap on 15 October 2026, each coin's value wound back by its change
+ * since 1 January (an estimate), leaving out coins Binance doesn't trade
+ * (LEO, Monero, Canton, Cronos).
  */
 export const COIN_COHORTS: Record<number, string[]> = {
   2018: ["BTC", "XRP", "ETH", "BCH", "ADA", "LTC", "XEM", "XLM", "IOTA", "DASH", "NEO", "TRX", "XMR", "EOS", "ETC", "QTUM", "BTG", "ICX", "LSK", "NANO"],
@@ -77,6 +80,7 @@ export const COIN_COHORTS: Record<number, string[]> = {
   2023: ["BTC", "ETH", "BNB", "XRP", "DOGE", "ADA", "MATIC", "DOT", "LTC", "SHIB", "TRX", "SOL", "UNI", "AVAX", "LINK", "ATOM", "XMR", "ETC", "XLM", "BCH"],
   2024: ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "AVAX", "DOGE", "TRX", "DOT", "LINK", "MATIC", "ICP", "SHIB", "BCH", "LTC", "IMX", "UNI", "ATOM", "ETC"],
   2025: ["BTC", "ETH", "XRP", "SOL", "BNB", "DOGE", "ADA", "TRX", "AVAX", "LINK", "TON", "SHIB", "SUI", "XLM", "DOT", "HBAR", "BCH", "UNI", "PEPE", "LTC"],
+  2026: ["BTC", "ETH", "XRP", "BNB", "SOL", "TRX", "DOGE", "ADA", "BCH", "LINK", "ZEC", "XLM", "LTC", "HYPE", "SUI", "AVAX", "HBAR", "TON", "WLFI", "SHIB"],
 };
 const COHORT_YEARS = Object.keys(COIN_COHORTS).map(Number).sort((a, b) => a - b);
 
@@ -196,6 +200,17 @@ function save(): void {
 export function dailyLongDue(saved: DailyLongRun | null, now: number): boolean {
   if (!saved || saved.version !== DAILY_LONG_VERSION || saved.traders.join() !== traderIds().join()) return true;
   return saved.finishedAt !== null && now - saved.finishedAt > RERUN_AFTER_MS;
+}
+
+/**
+ * A finished run without a coin added to the lists since (2026's new ones):
+ * carried on to replay just those, then the classic strategies again on every
+ * kept coin under the lists as they are now (breakout's record, which decides
+ * whether it trades, is never dropped meanwhile). Coins already replayed that
+ * joined or left a list keep their traders' results until the monthly rerun.
+ */
+export function dailyLongMissing(saved: DailyLongRun | null, symbols: string[] = cohortCoins()): boolean {
+  return !!saved && saved.version === DAILY_LONG_VERSION && saved.finishedAt !== null && symbols.some((s) => !saved.markets[s]);
 }
 
 function mergeRecords(into: HistoryRecords, add: HistoryRecords): void {
@@ -428,7 +443,7 @@ export function startDailyLongJob(): void {
   loadDailyLong();
   waitForOtherWork(() => active !== null);
   const check = () => {
-    const due = dailyLongDue(run, Date.now()) || (run !== null && (run.finishedAt === null || run.classicVersion !== CLASSIC_VERSION));
+    const due = dailyLongDue(run, Date.now()) || (run !== null && (run.finishedAt === null || run.classicVersion !== CLASSIC_VERSION)) || dailyLongMissing(run);
     const free = !active && !historyRunning() && !backgroundWorkBusy();
     if (free && due) void startDailyLong(false);
     // Due but waiting for other work: looked at again soon, not hours later.

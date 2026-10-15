@@ -68,12 +68,18 @@ function klines(from: number, to: number, price: number, micro = false): string[
 }
 
 /**
- * Binance, stubbed. The API lists BTCUSDT (from Aug 2017) and POLUSDT (from
- * 10 Sept 2024); the archive has MATICUSDT (Apr 2019 to 10 Sept 2024),
+ * Binance, stubbed. The API lists BTCUSDT (from Aug 2017), POLUSDT (from
+ * 10 Sept 2024), TONUSDT (Aug 2024 to 30 June 2026, at 2) and GRAMUSDT (Toncoin's
+ * name from 2 July 2026, at 3); the archive has MATICUSDT (Apr 2019 to 10 Sept 2024),
  * LUNAUSDT (Terra's, then a new coin from Sept 2022) and OLDUSDT (2025, in
  * microseconds, one month stored rather than deflated).
  */
-const LISTED = { BTCUSDT: [utc("2017-08-17"), Infinity], POLUSDT: [utc("2024-09-10"), Infinity] } as Record<string, [number, number]>;
+const LISTED = {
+  BTCUSDT: [utc("2017-08-17"), Infinity],
+  POLUSDT: [utc("2024-09-10"), Infinity],
+  TONUSDT: [utc("2024-08-08"), utc("2026-07-01"), 2],
+  GRAMUSDT: [utc("2026-07-02"), Infinity, 3],
+} as Record<string, [number, number, number?]>;
 const ARCHIVED = {
   MATICUSDT: [utc("2019-04-26"), utc("2024-09-10"), 1],
   LUNAUSDT: [utc("2020-08-21"), utc("2023-12-31"), 50],
@@ -102,7 +108,7 @@ beforeEach(() => {
     const listed = LISTED[pair];
     if (!listed) return new Response(JSON.stringify({ code: -1121, msg: "Invalid symbol." }), { status: 400 });
     const from = Math.max(listed[0], Math.ceil(Number(url.searchParams.get("startTime")) / DAY) * DAY);
-    const rows = klines(from, Math.min(Number(url.searchParams.get("endTime")) + 1, from + Number(url.searchParams.get("limit")) * DAY), 100);
+    const rows = klines(from, Math.min(Number(url.searchParams.get("endTime")) + 1, from + Number(url.searchParams.get("limit")) * DAY, listed[1]), listed[2] ?? 100);
     return new Response(JSON.stringify(rows));
   });
 });
@@ -117,7 +123,16 @@ describe("each year's coins", () => {
     expect(long.cohortFor(2017)).toEqual([]);
     expect(long.inCohort("BTC/INR", utc("2017-12-31"))).toBe(false);
     expect(long.inCohort("BTC/INR", utc("2018-01-01"))).toBe(true);
-    expect(long.cohortFor(2026)).toBe(long.COIN_COHORTS[2025]);
+    expect(long.cohortFor(2027)).toBe(long.COIN_COHORTS[2026]);
+    // 2026's own list: Zcash, Hyperliquid and World Liberty Financial in; Polkadot, Uniswap and Pepe out.
+    for (const coin of ["ZEC", "HYPE", "WLFI"]) {
+      expect(long.inCohort(`${coin}/INR`, utc("2026-06-01"))).toBe(true);
+      expect(long.inCohort(`${coin}/INR`, utc("2025-06-01"))).toBe(false);
+    }
+    for (const coin of ["DOT", "UNI", "PEPE"]) {
+      expect(long.inCohort(`${coin}/INR`, utc("2025-06-01"))).toBe(true);
+      expect(long.inCohort(`${coin}/INR`, utc("2026-06-01"))).toBe(false);
+    }
     // Terra's LUNA was among the biggest only on 1 January 2022.
     expect(long.inCohort("LUNA/INR", utc("2022-05-09"))).toBe(true);
     expect(long.inCohort("LUNA/INR", utc("2021-12-31"))).toBe(false);
@@ -128,7 +143,7 @@ describe("each year's coins", () => {
     const coins = long.cohortCoins();
     expect(coins[0]).toBe("BTC/INR");
     expect(new Set(coins).size).toBe(coins.length);
-    expect(coins).toEqual(expect.arrayContaining(["XMR/INR", "LUNA/INR", "BSV/INR", "MATIC/INR", "PEPE/INR"]));
+    expect(coins).toEqual(expect.arrayContaining(["XMR/INR", "LUNA/INR", "BSV/INR", "MATIC/INR", "PEPE/INR", "HYPE/INR", "WLFI/INR"]));
   });
 });
 
@@ -169,6 +184,42 @@ describe("daily candles since 2017", () => {
     expect(luna.series.t.at(-1)).toBe(utc("2022-05-31"));
 
     expect(await candles.fetchCoinDailySince("BTG/INR", utc("2024-01-01"), utc("2024-03-01"), noPause)).toEqual({ error: "BTGUSDT isn't on Binance" });
+  });
+
+  it("follow Toncoin from TON to GRAM, its name on Binance since July 2026, in the replay and the daily check alike", async () => {
+    const ton = await candles.fetchCoinDailySince("TON/INR", utc("2017-08-01"), utc("2026-10-03"), noPause);
+    if ("error" in ton) throw new Error(ton.error);
+    expect(ton.series.t[0]).toBe(utc("2024-08-08"));
+    expect(ton.series.c[ton.series.t.indexOf(utc("2026-06-30"))]).toBe(2);
+    expect(ton.series.c[ton.series.t.indexOf(utc("2026-07-02"))]).toBe(3);
+    expect(ton.series.t.at(-1)).toBe(utc("2026-10-02"));
+
+    // The daily check's last 400 days: TON's up to the switch, then GRAM's, to yesterday.
+    const recent = await candles.fetchCoinDaily("TON/INR", 400, utc("2026-10-03"));
+    if ("error" in recent) throw new Error(recent.error);
+    const { t, c } = recent.series;
+    expect(t[0]).toBe(utc("2025-08-29"));
+    expect(c[t.indexOf(utc("2026-06-30"))]).toBe(2);
+    expect(c[t.indexOf(utc("2026-07-02"))]).toBe(3);
+    expect(t.at(-1)).toBe(utc("2026-10-02"));
+    // Every day but 1 July, when it traded under neither.
+    expect(t.length).toBe(399);
+
+    // Once Binance drops TONUSDT altogether, GRAM's candles still come.
+    const kept = LISTED.TONUSDT;
+    delete LISTED.TONUSDT;
+    try {
+      const gram = await candles.fetchCoinDaily("TON/INR", 400, utc("2026-10-03"));
+      if ("error" in gram) throw new Error(gram.error);
+      expect(gram.series.t[0]).toBe(utc("2026-07-02"));
+      expect(gram.series.t.at(-1)).toBe(utc("2026-10-02"));
+    } finally {
+      LISTED.TONUSDT = kept;
+    }
+    // Other coins read as before.
+    const btc = await candles.fetchCoinDaily("BTC/INR", 400, utc("2026-10-03"));
+    if ("error" in btc) throw new Error(btc.error);
+    expect(btc.series.t.length).toBe(400);
   });
 });
 
@@ -371,6 +422,53 @@ describe("the long daily replay", () => {
     expect(again.downloads).toEqual(["BTC/INR"]);
     expect(again.sleeps.filter((ms) => ms === 500).length).toBe(3);
     expect(long._dailyLongRun()!.markets["LUNA/INR"]).toEqual(kept.markets["LUNA/INR"]);
+  });
+
+  it("replays only a coin a new year's list brings, then the classic strategies, keeping the records it judges on meanwhile", async () => {
+    const { deps } = fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] });
+    await long.startDailyLong(false, deps);
+    const run = structuredClone(long._dailyLongRun()!);
+    // 2026's list brings Hyperliquid: the finished run lacks it, so it carries on rather than starting again.
+    const symbols = ["BTC/INR", "LUNA/INR", "HYPE/INR"];
+    expect(long.dailyLongMissing(run, symbols)).toBe(true);
+    expect(long.dailyLongDue(run, deps.now())).toBe(false);
+    expect(long.dailyLongMissing(run, ["BTC/INR", "LUNA/INR"])).toBe(false);
+    expect(long.dailyLongMissing({ ...run, version: long.DAILY_LONG_VERSION - 1 }, symbols)).toBe(false);
+    expect(long.dailyLongMissing(null, symbols)).toBe(false);
+    expect(long.dailyLongMissing(run)).toBe(true);
+    expect(Object.keys(run.classic!).some((q) => q.startsWith("2026"))).toBe(false);
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const fetched: string[] = [];
+    const added = fakes({
+      symbols: () => symbols,
+      download: async (symbol: string) => {
+        fetched.push(symbol);
+        await held;
+        return { series: symbol === "HYPE/INR" ? dailySeries("2024-11-29", "2026-10-03", 11) : series[symbol] };
+      },
+    });
+    const going = long.startDailyLong(false, added.deps);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Breakout's record, which decides whether it trades, isn't dropped while the new coin replays.
+    expect(long.dailyLongClassic()).toEqual(run.classic);
+    expect(long.dailyLongRecords()).toEqual(run.records);
+    release();
+    await going;
+    // Only it is replayed (Bitcoin's candles read again for its market reading).
+    expect(fetched).toEqual(["HYPE/INR", "BTC/INR"]);
+    const after = long._dailyLongRun()!;
+    expect(after.markets["BTC/INR"]).toEqual(run.markets["BTC/INR"]);
+    expect(after.markets["LUNA/INR"]).toEqual(run.markets["LUNA/INR"]);
+    expect(after.startedAt).toBe(run.startedAt);
+    // Its trades count from 2026, its first year on the list, and the classic strategies ran again with it.
+    const hype = after.markets["HYPE/INR"];
+    expect(hype.status).toBe("done");
+    expect(hype.totals!.tight!.trades).toBeGreaterThan(0);
+    expect(Object.keys(after.records.tight!).filter((q) => !(q in run.records.tight!)).every((q) => q.startsWith("2026"))).toBe(true);
+    expect(Object.keys(after.classic!).some((q) => q.startsWith("2026"))).toBe(true);
+    expect(long.dailyLongMissing(after, symbols)).toBe(false);
   });
 });
 

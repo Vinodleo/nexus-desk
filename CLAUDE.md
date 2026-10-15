@@ -233,10 +233,12 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   at about 3% of a core (`CPU_SHARE`): Fly's shared CPU guarantees only 6.25%, and draining its burst allowance slows the scanner.
 - **Coins on daily candles since 2017 (Lab):** `server/history/dailyLong.ts` replays the traders' daily coin trades over
   every year Binance has (daily candles from its API, `fetchCoinDailySince`; delisted pairs from its monthly zip archive;
-  renamed coins via `DAILY_PAIRS`), to see whether they last through long falls (2018, 2022). Each year trades only its
-  20 biggest coins on 1 January (`COIN_COHORTS`, from memory of the rankings; later years use the last list, and nothing
-  trades before 2018: that list was 2017's winners), so today's
-  winners aren't replayed in years they were small. Same exits, fees and spreads as the two-year daily replay; results by
+  renamed coins via `DAILY_PAIRS`; Toncoin is GRAM on Binance since 2 July 2026, `RENAMED_PAIRS`, read that way by the daily
+  check too), to see whether they last through long falls (2018, 2022). Each year trades only its
+  20 biggest coins on 1 January (`COIN_COHORTS`, from memory of the rankings, 2026's from CoinMarketCap wound back to
+  1 January; later years use the last list, and nothing trades before 2018: that list was 2017's winners), so today's
+  winners aren't replayed in years they were small. A coin a new list brings is replayed alone, then the classic
+  strategies again, without starting over (`dailyLongMissing`). Same exits, fees and spreads as the two-year daily replay; results by
   quarter (`daily_long.json`), shown by year. Every setup in a coin's list years is saved with its readings (Bitcoin's last
   30 days as the market's) and results (`daily_long_setups/`, `replayTimeframe`'s `onSetup`), for the machine-learning test.
   Each coin's daily candles are kept (`daily_long_candles/`), and at the end the classic strategies of step 2 run on them
