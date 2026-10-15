@@ -61,14 +61,35 @@ async function binancePage(pair: string, startMs: number, endMs: number, interva
 }
 
 /**
+ * Coins Binance renamed while the desk trades them: the old pair up to the
+ * switch, then the new one, read as one series (by the daily check and the
+ * long replay alike).
+ */
+export const RENAMED_PAIRS: Record<string, { pair: string; untilMs?: number }[]> = {
+  // Toncoin trades as GRAM since 2 July 2026 (TONUSDT stopped on 30 June), one for one.
+  TON: [{ pair: "TONUSDT", untilMs: Date.UTC(2026, 6, 1) }, { pair: "GRAMUSDT" }],
+};
+
+/**
  * A coin's last `days` daily candles from Binance (COINUSDT, UTC days, as
  * the replay builds them), closed by `now`: what the daily coin trades read.
  */
 export async function fetchCoinDaily(symbol: string, days: number, now: number): Promise<HistoryFetch> {
-  const page = await binancePage(binancePair(symbol), now - Math.min(days, BINANCE_LIMIT) * DAY_MS, now, "1d");
-  if ("error" in page) return { error: page.error };
   const series = emptySeries();
-  appendBars(series, toClosedBars(page.rows, DAY_MS, now));
+  const fromMs = now - Math.min(days, BINANCE_LIMIT) * DAY_MS;
+  for (const { pair, untilMs } of RENAMED_PAIRS[symbol.split("/")[0].toUpperCase()] ?? [{ pair: binancePair(symbol) }]) {
+    const last = series.t[series.t.length - 1];
+    const from = last === undefined ? fromMs : last + DAY_MS;
+    const to = Math.min(now, untilMs ?? Infinity);
+    if (from >= to) continue;
+    const page = await binancePage(pair, from, to, "1d");
+    if ("error" in page) {
+      // An old pair Binance no longer lists is left out: the current one is what counts.
+      if (untilMs !== undefined) continue;
+      return { error: page.error };
+    }
+    appendBars(series, toClosedBars(page.rows, DAY_MS, to));
+  }
   return { series };
 }
 
@@ -117,6 +138,7 @@ export const DAILY_PAIRS: Record<string, { pair: string; untilMs?: number }[]> =
   NANO: [{ pair: "NANOUSDT" }, { pair: "XNOUSDT" }],
   // Terra's LUNA until its collapse in May 2022 (the name went to a new coin later).
   LUNA: [{ pair: "LUNAUSDT", untilMs: Date.UTC(2022, 5, 1) }],
+  ...RENAMED_PAIRS,
 };
 
 const ARCHIVE_URL = "https://data.binance.vision/data/spot/monthly/klines";
