@@ -129,7 +129,7 @@ export interface DailyLongRun {
   records: HistoryRecords;
   /** The last finished run's records, kept while this one replays (the daily trades are judged on them). */
   lastRecords?: HistoryRecords;
-  /** The classic strategies' results on the same coins and years (CLASSIC_VERSION's). */
+  /** The classic strategies' results on the same coins and years (CLASSIC_VERSION's); the last finished run's while this one replays. */
   classic?: ClassicRecords;
   classicVersion?: number;
 }
@@ -232,12 +232,15 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
   const stopped = () => gen !== generation;
   if (fresh || !run) {
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
-    // A run of another version was replayed under other rules or costs (Oct 2026: CoinDCX's real fee),
-    // so its records aren't carried: nothing trades on them while this one replays.
-    const lastRecords = run?.version === DAILY_LONG_VERSION ? dailyLongRecords() ?? undefined : undefined;
+    // The last run's records and classic results (breakout's decides whether it trades) stand until this one
+    // finishes. A run of another version was replayed under other rules or costs (Oct 2026: CoinDCX's real fee),
+    // so its aren't carried: nothing trades on them while this one replays.
+    const last = run?.version === DAILY_LONG_VERSION ? run : null;
+    const lastRecords = last ? dailyLongRecords() ?? undefined : undefined;
+    const lastClassic = last?.classic ? { classic: last.classic, classicVersion: last.classicVersion } : {};
     fs.rmSync(dailySetupsDir(), { recursive: true, force: true });
     fs.rmSync(dailyCandlesDir(), { recursive: true, force: true });
-    run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {}, ...(lastRecords ? { lastRecords } : {}) };
+    run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {}, ...(lastRecords ? { lastRecords } : {}), ...lastClassic };
     save();
   }
   const r = run;
@@ -477,7 +480,7 @@ export function dailyLongView() {
     records: run?.records ?? {},
     /** The results are from an older version (the old coin fee), kept on show until it replays again; nothing trades on them. */
     stale: !!run && run.version !== DAILY_LONG_VERSION,
-    /** The classic strategies' results on the same coins and years, by quarter (null until they've run). */
+    /** The classic strategies' results on the same coins and years, by quarter (the last finished run's while it replays again; null until they've run). */
     classic: run?.classic ?? null,
     /** Each coin's own result in its list years. */
     byMarket: Object.fromEntries(Object.entries(markets).flatMap(([symbol, m]) => (m.status === "done" && m.totals ? [[symbol, m.totals]] : []))) as Record<
@@ -509,7 +512,11 @@ export function dailyLongRecords(): HistoryRecords | null {
   return run.finishedAt !== null ? run.records : run.lastRecords ?? null;
 }
 
-/** The classic strategies' records (breakout's decides whether it trades), or null before they've run or while they're from an older version. */
+/**
+ * The classic strategies' records (breakout's decides whether it trades): the
+ * last finished run's while the next replays, or null before they've run or
+ * while they're from an older version.
+ */
 export function dailyLongClassic(): ClassicRecords | null {
   if (!run || run.version !== DAILY_LONG_VERSION) return null;
   return run.classic ?? null;

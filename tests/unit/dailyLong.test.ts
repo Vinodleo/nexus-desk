@@ -493,6 +493,10 @@ describe("the records the daily trades are judged on", () => {
     const finished = long._dailyLongRun()!.records;
     expect(Object.keys(finished.tight ?? {}).length).toBeGreaterThan(0);
     expect(long.dailyLongRecords()).toEqual(finished);
+    // Breakout's record since 2018, which decides whether it trades.
+    const classic = long._dailyLongRun()!.classic!;
+    expect(Object.values(classic).some((q) => (q.breakout?.trades ?? 0) > 0)).toBe(true);
+    expect(long.dailyLongClassic()).toEqual(classic);
 
     // Replaying from the start again, held up on its first download.
     let release!: () => void;
@@ -507,12 +511,24 @@ describe("the records the daily trades are judged on", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(long._dailyLongRun()!.finishedAt).toBeNull();
     expect(long.dailyLongRecords()).toEqual(finished);
+    // Breakout's record stands too, so the monthly replay doesn't pause it; the Lab shows the same.
+    expect(long.dailyLongClassic()).toEqual(classic);
+    expect(long.dailyLongView().classic).toEqual(classic);
     // Saved with the run, so a restart mid-run keeps them too.
-    expect(JSON.parse(fs.readFileSync(path.join(dataDir, "daily_long.json"), "utf8")).lastRecords).toEqual(finished);
+    const saved = JSON.parse(fs.readFileSync(path.join(dataDir, "daily_long.json"), "utf8"));
+    expect(saved.lastRecords).toEqual(finished);
+    expect(saved.classic).toEqual(classic);
+    long._resetDailyLong();
+    long.loadDailyLong();
+    expect(long.dailyLongClassic()).toEqual(classic);
+    expect(long.dailyLongDue(long._dailyLongRun(), utc("2026-10-03"))).toBe(false);
     release();
     await again;
+    // It carries on from where it was after the restart, and its own results replace the last run's.
+    await long.startDailyLong(false, deps(async () => ({ series: dailySeries("2021-06-01", "2022-06-01", 9) })));
     expect(long._dailyLongRun()!.finishedAt).not.toBeNull();
     expect(long.dailyLongRecords()).toEqual(long._dailyLongRun()!.records);
+    expect(long.dailyLongClassic()).not.toEqual(classic);
 
     // A run of an older version (other costs: CoinDCX's real fee came in with 3) judges no one,
     // even before its replay can start (other background work first): on show, marked so.
@@ -537,6 +553,7 @@ describe("the records the daily trades are judged on", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(long._dailyLongRun()!.version).toBe(long.DAILY_LONG_VERSION);
     expect(long.dailyLongRecords()).toBeNull();
+    expect(long.dailyLongClassic()).toBeNull();
     releaseNew();
     await newVersion;
     expect(long.dailyLongRecords()).toEqual(long._dailyLongRun()!.records);
