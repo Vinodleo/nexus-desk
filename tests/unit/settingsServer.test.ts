@@ -19,8 +19,8 @@ afterEach(cleanup);
 
 const props = (over: Partial<SettingsSheetProps> = {}): SettingsSheetProps => ({
   isOpen: true, onClose: vi.fn(), tradingMode: "PAPER", onTradingModeChange: vi.fn(), coinDcxStatus: null,
-  coinDcxBalance: { totalInr: 0, loading: false } as any, onRefreshBalance: vi.fn(), zerodhaStatus: "idle" as any,
-  zerodhaError: "", onZerodhaConnect: vi.fn(), dailyLossLimit: 2500, maxOpenPositions: 3,
+  coinDcxBalance: { totalInr: 0, loading: false } as any, onRefreshBalance: vi.fn(),
+  dailyLossLimit: 2500, maxOpenPositions: 3,
   riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits: cleanMarketLimits(null) }, onRiskLimitsChange: vi.fn(),
   onOpenDeskBrief: vi.fn(), onOpenBackground: vi.fn(), onOpenSecurity: vi.fn(),
   ...over,
@@ -587,6 +587,15 @@ describe("Settings: server tiles and the test live order", () => {
     expect(fold.className).toContain("nx-fold-open");
     expect(await within(fold).findByText(/Live orders are blocked on the server/)).toBeTruthy();
     expect(apiFetch).toHaveBeenCalledWith("/api/live/test-order");
+  });
+});
+
+describe("Settings: Connections", () => {
+  it("lists the connections the desk uses, and no Zerodha (never used; removed)", () => {
+    render(createElement(SettingsSheet, props()));
+    const group = within(screen.getByRole("region", { name: "Connections" }));
+    for (const name of ["CoinDCX", "Alpaca", "Angel One", "Gemini reviewer"]) expect(group.getByText(name)).toBeTruthy();
+    expect(group.queryByText(/Zerodha/)).toBeNull();
   });
 });
 

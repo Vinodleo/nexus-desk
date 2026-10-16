@@ -2,8 +2,8 @@
 
 A self-learning, multi-agent trading terminal (React + Vite PWA) with an Express
 backend. It paper-trades by default and can optionally route live orders to
-CoinDCX. It streams live crypto prices from CoinDCX and Indian equity prices
-from Zerodha Kite.
+CoinDCX. It streams live crypto prices from CoinDCX, Indian stock prices from
+Angel One and US stock prices from Alpaca.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ from Zerodha Kite.
   walk-forward validation, a TensorFlow.js model that learns from trade
   results, and Firebase Auth and Firestore persistence.
 - **Backend (`server.ts`, `server/`)**: Express. It:
-  - relays CoinDCX prices over WebSocket and runs the Zerodha Kite login and ticker
+  - relays CoinDCX prices over WebSocket
   - signs CoinDCX orders with HMAC
   - runs a 24/7 position guardian (stop-loss, take-profit, trailing stops,
     expiry), saved to `data/`
@@ -27,9 +27,9 @@ from Zerodha Kite.
   `{"type":"AUTH","token":"…"}` within 10 s or they are disconnected.
   `src/services/apiClient.ts` handles both for you. If `ALLOWED_EMAILS` is
   empty, every request is rejected.
-- **Exchange keys stay on the server.** CoinDCX and Zerodha keys are read only
-  from server env vars. They are never accepted from, stored in, or returned to
-  the browser. The Zerodha access token also stays on the server.
+- **Exchange keys stay on the server.** CoinDCX, Alpaca and Angel One keys are
+  read only from server env vars. They are never accepted from, stored in, or
+  returned to the browser. Angel One's login tokens also stay on the server.
 - **Live-order limits** (`server/liveOrderGuard.ts`). A live order is sent
   only when:
   - the client explicitly asks for it (`isPaperTrade: false` and
@@ -105,7 +105,6 @@ See `.env.example` for the full list. At minimum you need:
 | `ALLOWED_EMAILS` | Accounts allowed to use the server (required) |
 | `GEMINI_API_KEY` | AI agents (without it, the rule-based fallbacks are used) |
 | `COINDCX_API_KEY`, `COINDCX_API_SECRET` | Live CoinDCX balances and orders |
-| `ZERODHA_API_KEY`, `ZERODHA_API_SECRET` | Zerodha Kite login, ticker and candles |
 | `ANGEL_API_KEY`, `ANGEL_CLIENT_CODE`, `ANGEL_PIN`, `ANGEL_TOTP_SECRET` | Indian stocks (Nifty 50) via Angel One SmartAPI: candles, live prices, depth |
 | `LIVE_TRADING_ENABLED` + `LIVE_*` limits | Server-side live-order limits |
 

@@ -88,7 +88,6 @@ DigitalOcean or Hetzner VM (1 vCPU, 1–2 GB RAM).
 3. Tell the other services about the new address:
    - **Firebase Authentication → Settings → Authorized domains:** add the
      domain, or sign-in fails.
-   - **Kite Connect app → Redirect URL:** `https://desk.example.com/`.
 4. Updates: `git pull && docker compose up -d --build`.
 
 When you move, switch the old Cloud Run service's minimum instances back to 0,
@@ -172,7 +171,6 @@ an https address. `fly.toml` holds the settings. The GitHub Action
      `nexus-desk-vinodleo.fly.dev`. This must be in a Firebase project you
      own (the app uses `nexus-desk-21656`, see the README): AI Studio's own
      project can't be changed from your account.
-   - **Kite Connect app → Redirect URL:** `https://nexus-desk-vinodleo.fly.dev/`.
 
 The paper book, trade history and Lab model live in the browser, per
 address, so the Fly address starts with a fresh book.

@@ -261,17 +261,6 @@ export const scannerReportsQuery = z.object({
   since: z.coerce.number().finite().nonnegative().optional(),
 });
 
-export const zerodhaCallbackBody = z.object({
-  requestToken: z.string().min(1).max(256),
-});
-
-export const zerodhaCandlesQuery = z.object({
-  symbol: z.string().regex(/^[A-Z0-9&-]{1,32}$/, "NSE trading symbol"),
-  interval: z
-    .enum(["minute", "3minute", "5minute", "10minute", "15minute", "30minute", "60minute", "day"])
-    .optional(),
-});
-
 // ---------- AI agents (loose: context objects are passed to the model) ----------
 
 const jsonObject = z.record(z.unknown());

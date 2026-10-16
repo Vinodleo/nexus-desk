@@ -19,8 +19,8 @@ import { useTheme } from "../../src/hooks/useTheme";
 
 const props = (over: Partial<SettingsSheetProps> = {}): SettingsSheetProps => ({
   isOpen: true, onClose: vi.fn(), tradingMode: "PAPER", onTradingModeChange: vi.fn(), coinDcxStatus: null,
-  coinDcxBalance: { totalInr: 0, loading: false } as any, onRefreshBalance: vi.fn(), zerodhaStatus: "idle" as any,
-  zerodhaError: "", onZerodhaConnect: vi.fn(), dailyLossLimit: 2500, maxOpenPositions: 3,
+  coinDcxBalance: { totalInr: 0, loading: false } as any, onRefreshBalance: vi.fn(),
+  dailyLossLimit: 2500, maxOpenPositions: 3,
   riskLimits: { maxOrderValueInr: 10000, maxAllowedExposureFraction: 0.1, marketLimits: cleanMarketLimits(null) }, onRiskLimitsChange: vi.fn(),
   onOpenDeskBrief: vi.fn(), onOpenBackground: vi.fn(), onOpenSecurity: vi.fn(),
   ...over,
