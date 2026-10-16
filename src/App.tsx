@@ -56,7 +56,6 @@ import { LoginScreen } from './components/LoginScreen';
 import { BottomNavBar, TabType, useTabSlide } from "./components/BottomNavBar";
 import { LedgerFloor } from "./components/ledger/LedgerFloor";
 import { SettingsSheet } from "./components/ledger/SettingsSheet";
-import { useZerodhaConnection } from "./hooks/useZerodhaConnection";
 import { LedgerQueue } from "./components/ledger/LedgerQueue";
 import { LedgerBook } from "./components/ledger/LedgerBook";
 import { LedgerRisk } from "./components/ledger/LedgerRisk";
@@ -522,7 +521,6 @@ export default function App() {
   const guardianOnline = useGuardianSync(setActivePositions, handleServerClose, isClosedLocally);
   // The server's trade book gets the closes it may not hold (from before it was kept, or made offline).
   useBookUpload(closedTradesRef);
-  const zerodha = useZerodhaConnection();
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   // Where the gear was when Settings was opened: it opens from there.
   const [settingsFrom, setSettingsFrom] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -1950,9 +1948,6 @@ export default function App() {
         coinDcxStatus={coinDcxStatus}
         coinDcxBalance={coinDcxBalance}
         onRefreshBalance={fetchCoinDcxBalance}
-        zerodhaStatus={zerodha.status}
-        zerodhaError={zerodha.error}
-        onZerodhaConnect={zerodha.connect}
         dailyLossLimit={riskPolicy.hardDailyLossLimit}
         todayLoss={currentRiskCalculation.currentDailyLoss}
         positions={activePositions}

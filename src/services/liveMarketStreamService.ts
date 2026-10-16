@@ -164,10 +164,9 @@ class LiveMarketStreamService {
     setInterval(() => void this.followUniverse(), UNIVERSE_REFRESH_MS);
 
     // 1-hour candles for the higher-timeframe trend; they change slowly.
-    this.refreshHigherTimeframeData(this.cryptoSymbols, "crypto");
-    this.refreshHigherTimeframeData(this.equitySymbols, "equity");
-    setInterval(() => this.refreshHigherTimeframeData(this.cryptoSymbols, "crypto"), 5 * 60 * 1000);
-    setInterval(() => this.refreshHigherTimeframeData(this.equitySymbols, "equity"), 5 * 60 * 1000);
+    // Coins only: the phone has no hourly candles for stocks (the server scans those).
+    this.refreshHigherTimeframeData(this.cryptoSymbols);
+    setInterval(() => this.refreshHigherTimeframeData(this.cryptoSymbols), 5 * 60 * 1000);
   }
 
   /** Reads the coin list from the server. Returns the coins that are new to it. */
@@ -202,7 +201,7 @@ class LiveMarketStreamService {
     if (added.length === 0) return;
     await this.refreshSignalCandles(added);
     this.notifyListeners();
-    await this.refreshHigherTimeframeData(added, "crypto");
+    await this.refreshHigherTimeframeData(added);
   }
 
   /** Last prices and 24-hour changes from CoinDCX's ticker. */
@@ -284,31 +283,11 @@ class LiveMarketStreamService {
     }, delay);
   }
 
-  /** 1-hour candles for the higher-timeframe trend check. */
-  private async refreshHigherTimeframeData(symbols: string[], assetClass: "crypto" | "equity") {
+  /** 1-hour candles for the coins' higher-timeframe trend check. */
+  private async refreshHigherTimeframeData(symbols: string[]) {
     for (const sym of symbols) {
       try {
-        let bars: MarketBar[] | null;
-        if (assetClass === "crypto") {
-          bars = (await fetchClosedCandles(sym, "1h", 60 * 60 * 1000, 100)).bars;
-        } else {
-          // Zerodha's historical-candles endpoint needs an active login —
-          // a 401 just means "not connected yet", not a failure.
-          const res = await apiFetch(`/api/zerodha/candles?symbol=${sym}&interval=60minute`);
-          if (!res.ok) continue;
-          const raw = await res.json();
-          bars = Array.isArray(raw)
-            ? raw.map((c: any) => ({
-                time: new Date(c.date).toISOString(),
-                timestampMs: new Date(c.date).getTime(),
-                open: c.open,
-                high: c.high,
-                low: c.low,
-                close: c.close,
-                volume: c.volume,
-              }))
-            : null;
-        }
+        const bars = (await fetchClosedCandles(sym, "1h", 60 * 60 * 1000, 100)).bars;
         if (!bars || bars.length === 0) continue;
         const decorated = decorateBarsWithIndicators(bars);
         this.higherTimeframeData.set(sym, decorated);

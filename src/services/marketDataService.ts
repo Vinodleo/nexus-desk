@@ -82,9 +82,7 @@ export const SUPPORTED_SYMBOLS: SymbolConfig[] = [
     assetClass: "crypto",
   },
 
-  // 2. NSE Equities (Zerodha) — these 4 match the instrument tokens wired
-  // in server.ts's KiteTicker subscription. Adding a new one means adding
-  // its real NSE instrument token there too, not just a config entry here.
+  // 2. NSE Equities (prices from Angel One, through the server).
   {
     symbol: "HDFCBANK",
     name: "HDFC Bank",

@@ -11,7 +11,6 @@ import {
   saveDaemonStateToDisk,
   startExpiryGuard,
 } from "./server/guardian";
-import { router as zerodhaRouter } from "./server/routes/zerodha";
 import { router as coindcxRouter } from "./server/routes/coindcx";
 import { router as tradingRouter } from "./server/routes/trading";
 import { router as agentsRouter } from "./server/routes/agents";
@@ -71,7 +70,6 @@ app.get("/api/health", (_req: Request, res: Response) => {
 // (see server/auth.ts).
 app.use("/api", requireAuth);
 
-app.use(zerodhaRouter);
 app.use(coindcxRouter);
 app.use(tradingRouter);
 app.use(guardianRouter);

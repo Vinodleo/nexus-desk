@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { X, RefreshCw, ChevronRight, ChevronDown, Check, Lock, Minus, Plus, MessageSquare, Moon, ShieldCheck, Download } from "lucide-react";
 import type { CoinDcxAccountBalance, CoinDcxServerStatus, TradingExecutionMode } from "../../types";
-import type { ZerodhaStatus } from "../../hooks/useZerodhaConnection";
 import { useAuth } from "../../context/AuthContext";
 import { usePWAInstall } from "../../hooks/usePWAInstall";
 import { HoldButton, RoundIconButton, Segmented, Switch } from "./ui";
@@ -46,9 +45,6 @@ export interface SettingsSheetProps {
   coinDcxStatus: CoinDcxServerStatus | null;
   coinDcxBalance: CoinDcxAccountBalance;
   onRefreshBalance: () => void;
-  zerodhaStatus: ZerodhaStatus;
-  zerodhaError: string;
-  onZerodhaConnect: () => void;
   dailyLossLimit: number;
   /** What today's closed trades lost so far (the daily loss limit's use). */
   todayLoss?: number;
@@ -693,15 +689,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
     setLastPick(v);
   };
 
-  const zerodhaLabel =
-    props.zerodhaStatus === "connected"
-      ? "Connected"
-      : props.zerodhaStatus === "connecting"
-      ? "Connecting…"
-      : props.zerodhaStatus === "error"
-      ? "Try again"
-      : "Connect";
-
   const server = props.serverStatus ?? null;
   const backup = backupSummary(server);
   const dcxCheck = coinDcxCheckSummary(server);
@@ -1054,26 +1041,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               <StatusWord tone="text-gain">Connected</StatusWord>
             ) : (
               <StatusWord tone="text-gain">Ready</StatusWord>
-            )}
-          </Connection>
-          <Connection
-            initials="Z"
-            name="Zerodha Kite"
-            tone={props.zerodhaStatus === "connected" ? "connected" : props.zerodhaStatus === "error" ? "problem" : "off"}
-            sub={props.zerodhaStatus === "error" ? props.zerodhaError : "Indian equities"}
-          >
-            {props.zerodhaStatus === "connected" ? (
-              <StatusWord tone="text-gain">Connected</StatusWord>
-            ) : (
-              <button
-                type="button"
-                onClick={props.onZerodhaConnect}
-                disabled={props.zerodhaStatus === "connecting"}
-                className="min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer disabled:opacity-60 inline-flex items-center gap-1.5"
-              >
-                {props.zerodhaStatus === "connecting" && <RefreshCw aria-hidden="true" className="w-3.5 h-3.5 motion-safe:animate-spin" />}
-                {zerodhaLabel}
-              </button>
             )}
           </Connection>
           {telegram.state !== null && (
