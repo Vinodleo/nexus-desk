@@ -17,6 +17,7 @@ import { router as tradingRouter } from "./server/routes/trading";
 import { router as agentsRouter } from "./server/routes/agents";
 import { router as scannerRouter } from "./server/routes/scanner";
 import { router as pushRouter } from "./server/routes/push";
+import { router as telegramRouter } from "./server/routes/telegram";
 import { router as tradeBookRouter, loadTradeBook } from "./server/tradeBook";
 import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
@@ -77,6 +78,7 @@ app.use(guardianRouter);
 app.use(agentsRouter);
 app.use(scannerRouter);
 app.use(pushRouter);
+app.use(telegramRouter);
 app.use(tradeBookRouter);
 
 // Where the server runs and whether its saved state survives restarts.

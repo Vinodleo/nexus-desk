@@ -1,10 +1,12 @@
 import fs from "fs";
 import path from "path";
 import webpush, { type PushSubscription } from "web-push";
+import { sendTelegram, telegramUsers } from "./telegram";
 
 // Pop-up notifications on your phone (Web Push), even with the app closed
 // and the phone locked: the server sends them when a trade opens. The phone
 // subscribes once from Settings; its subscription is kept here per user.
+// Each one also goes to the user's linked Telegram chat (telegram.ts).
 //
 // The server's own key pair (VAPID) identifies it to the phone's push
 // service. It's made on first use and kept on disk, or can be set with
@@ -91,9 +93,14 @@ export interface PushMessage {
   url?: string;
 }
 
-/** Sends to every device the user subscribed; devices that have gone away are forgotten. Returns how many it reached. */
+/** Sends to every device the user subscribed and their Telegram chat; devices that have gone away are forgotten. Returns how many it reached. */
 export async function notifyUser(uid: string | undefined, message: PushMessage): Promise<number> {
   if (!uid) return 0;
+  const [devices, telegram] = await Promise.all([pushToDevices(uid, message), sendTelegram(uid, message)]);
+  return devices + (telegram ? 1 : 0);
+}
+
+async function pushToDevices(uid: string, message: PushMessage): Promise<number> {
   const mine = subscriptions()[uid] ?? [];
   if (mine.length === 0) return 0;
   vapidKeys();
@@ -115,10 +122,10 @@ export async function notifyUser(uid: string | undefined, message: PushMessage):
   return sent;
 }
 
-/** Sends to every subscribed device, whoever subscribed it (server-wide news, like a failed backup). */
+/** Sends to every subscribed device and linked Telegram chat, whoever set it up (server-wide news, like a failed backup). */
 export async function notifyEveryone(message: PushMessage): Promise<number> {
   let sent = 0;
-  for (const uid of Object.keys(subscriptions())) sent += await notifyUser(uid, message);
+  for (const uid of new Set([...Object.keys(subscriptions()), ...telegramUsers()])) sent += await notifyUser(uid, message);
   return sent;
 }
 

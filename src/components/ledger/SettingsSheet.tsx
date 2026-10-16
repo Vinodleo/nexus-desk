@@ -34,6 +34,7 @@ import { nseTakesEntries } from "../../shared/nse";
 import { usTakesEntries } from "../../shared/usMarket";
 import { coinProblemLine } from "../../shared/coinDcxCheck";
 import { LiveTestCard } from "./LiveTestCard";
+import { useTelegramLink } from "../../hooks/useTelegramLink";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -508,6 +509,9 @@ const Connection: React.FC<{
 /** A status in words, coloured by how it stands. */
 const StatusWord: React.FC<{ tone: string; children: React.ReactNode }> = ({ tone, children }) => <span className={tone}>{children}</span>;
 
+/** A small round-ended button at the end of a connection's row. */
+const pillButton = "min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer disabled:opacity-60 inline-flex items-center gap-1.5";
+
 /**
  * The server at a glance: a tile each, its state in a word and a dot. A tap
  * opens a tile across the row with the details; one with a problem stays open.
@@ -625,6 +629,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
   const [lastPick, setLastPick] = useState<number | null>(null);
   const [restarted, setRestarted] = useState<number | null>(null);
   const [testOpen, setTestOpen] = useState(false);
+  const telegram = useTelegramLink(props.isOpen);
   // Opens as a circle from the gear (and closes back into it); without the
   // gear's place, or with reduced motion, it rises and fades as before.
   const origin = props.from ?? null;
@@ -1071,6 +1076,48 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               </button>
             )}
           </Connection>
+          {telegram.state !== null && (
+            <Connection
+              initials="TG"
+              name="Telegram"
+              tone={!telegram.state ? "checking" : telegram.state.linked ? "connected" : "off"}
+              sub={
+                telegram.note ??
+                (!telegram.state || !telegram.state.configured ? (
+                  "Every pop-up in Telegram too: make a bot with @BotFather, then set TELEGRAM_BOT_TOKEN on the server (docs/hosting.md)"
+                ) : telegram.state.linked ? (
+                  <>
+                    Linked: every pop-up comes here too ·{" "}
+                    <button type="button" onClick={() => void telegram.unlink()} disabled={telegram.busy} className="underline cursor-pointer text-muted">
+                      Unlink
+                    </button>
+                  </>
+                ) : telegram.url ? (
+                  "Tap Start in Telegram to finish linking…"
+                ) : (
+                  "Every pop-up in Telegram too, so none is missed"
+                ))
+              }
+            >
+              {!telegram.state ? (
+                <Checking />
+              ) : !telegram.state.configured ? (
+                <StatusWord tone="text-muted">Not set up</StatusWord>
+              ) : telegram.state.linked ? (
+                <button type="button" onClick={() => void telegram.test()} disabled={telegram.busy} className={pillButton}>
+                  Test
+                </button>
+              ) : telegram.url ? (
+                <a href={telegram.url} target="_blank" rel="noopener noreferrer" className={`${pillButton} border-accent text-accent no-underline`}>
+                  Open Telegram
+                </a>
+              ) : (
+                <button type="button" onClick={() => void telegram.link()} disabled={telegram.busy} className={pillButton}>
+                  Link
+                </button>
+              )}
+            </Connection>
+          )}
         </Group>
 
         <Label delay={260}>Server</Label>
