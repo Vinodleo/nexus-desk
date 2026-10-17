@@ -15,6 +15,17 @@ export interface TradeMessage {
 const inr = (n: number) => `₹${Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: Math.abs(n) >= 100 ? 2 : 4 })}`;
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${inr(n)}`;
 
+/**
+ * A slower strategy's own sale in its own words: they're recorded as
+ * trailing-stop exits, though neither strategy trails its stop. Breakout's is
+ * the close below the 20-day low, momentum's is leaving the week's top 3.
+ * Undefined for any other exit (each place has its words for those).
+ */
+export function slowExitWords(exitReason: string, strategy?: string): string | undefined {
+  if (exitReason !== "TRAILING_STOP") return undefined;
+  return strategy === "breakout" ? "Below its 20-day low" : strategy === "momentum" ? "Left the top 3" : undefined;
+}
+
 const EXIT_WORDS: Record<string, string> = {
   TAKE_PROFIT: "Target reached",
   STOP_LOSS: "Stop loss",
@@ -47,11 +58,12 @@ export function tradeClosedMessage(t: {
   exitReason: string;
   holdingDurationMinutes?: number;
   setupName?: string;
+  strategy?: string;
 }): TradeMessage {
   const held = t.holdingDurationMinutes;
   return {
     title: `${t.symbol} closed ${signed(t.realizedPnl)}`,
-    body: `${EXIT_WORDS[t.exitReason] ?? t.exitReason} · ${t.direction === "LONG" ? "sold" : "bought back"} ${t.quantity} @ ${inr(t.exitPrice)}${
+    body: `${slowExitWords(t.exitReason, t.strategy) ?? EXIT_WORDS[t.exitReason] ?? t.exitReason} · ${t.direction === "LONG" ? "sold" : "bought back"} ${t.quantity} @ ${inr(t.exitPrice)}${
       held !== undefined ? ` · held ${held < 60 ? `${held} min` : `${Math.floor(held / 60)} h ${held % 60} min`}` : ""
     }${t.setupName ? ` · ${t.setupName}` : ""}`,
     tag: `close-${t.positionId}`,

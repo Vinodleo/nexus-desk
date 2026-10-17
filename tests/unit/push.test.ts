@@ -125,6 +125,16 @@ describe("when a trade closes", () => {
     expect(push.tradeClosedMessage({ positionId: "p", symbol: "A/INR", direction: "LONG", quantity: 1, exitPrice: 1, realizedPnl: 1, exitReason: "EXPIRY_TIME", holdingDurationMinutes: 75 }).body).toMatch(/held 1 h 15 min/);
   });
 
+  it("says a slower strategy's own sale in its own words, as the Book does (neither trails its stop)", () => {
+    const close = (strategy?: "breakout" | "momentum", exitReason: "TRAILING_STOP" | "STOP_LOSS" = "TRAILING_STOP") =>
+      push.tradeClosedMessage({ positionId: "p", symbol: "MA.US", direction: "LONG", quantity: 1.7497, exitPrice: 58441.23, realizedPnl: 2252.51, exitReason, holdingDurationMinutes: 10081, strategy }).body;
+    expect(close("momentum")).toMatch(/^Left the top 3 · sold 1.7497 @ ₹58,441.23/);
+    expect(close("breakout")).toMatch(/^Below its 20-day low · sold/);
+    // A stop hit is still a stop, and a 5-minute trader's trailing stop is one.
+    expect(close("momentum", "STOP_LOSS")).toMatch(/^Stop loss · /);
+    expect(close(undefined)).toMatch(/^Trailing stop · /);
+  });
+
   it("pops up when the guardian closes it", async () => {
     push.addSubscription("u3", sub(6));
     guardian.daemonPositions.set("g1", {
@@ -135,6 +145,18 @@ describe("when a trade closes", () => {
     await vi.waitFor(() =>
       expect(sent.find((s) => s.payload.tag === "close-g1")?.payload).toMatchObject({ title: expect.stringMatching(/^SOL\/INR closed −₹/), body: expect.stringMatching(/^Stop loss · sold 2 @ ₹98.5/) })
     );
+  });
+});
+
+describe("when the server's momentum check sells a trade", () => {
+  it("pops up that it left the top 3", async () => {
+    push.addSubscription("u4", sub(7));
+    guardian.daemonPositions.set("m1", {
+      id: "m1", userId: "u4", symbol: "MA.US", direction: "LONG", entryPrice: 57000, currentPrice: 58441, strategy: "momentum",
+      quantity: 1.7497, stopLoss: 54000, takeProfit: 0, openTime: new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString(),
+    } as any);
+    guardian.closeServerPosition("m1", 58441.23, "TRAILING_STOP");
+    await vi.waitFor(() => expect(sent.find((s) => s.payload.tag === "close-m1")?.payload.body).toMatch(/^Left the top 3 · sold 1.7497/));
   });
 });
 

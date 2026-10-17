@@ -81,7 +81,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   its days tinted by what each made with the amount under the date (tap a day for only its trades; `DayCalendar`,
   `shortAmount`, `BookCalendar.tsx`), All/Wins/Losses (`Segmented` in `ui.tsx`), and its trades in a card per day with
   the day's total. Each row has its strategy's badge (`strategyBadge`), how it ended (`exitWords`: a breakout's own sale
-  reads "Below its 20-day low", momentum's "Left the top 3"; both are recorded as trailing-stop exits) and its result in
+  reads "Below its 20-day low", momentum's "Left the top 3"; both are recorded as trailing-stop exits; the pop-ups, so
+  Telegram, and the "While you were away" card say the same, `slowExitWords`) and its result in
   R after fees (`resultR`); tapping one opens how it moved in R, bought and sold, held, before fees, fees and kept. An
   empty month offers the last one with trades. Book → Breakdown (last 7 days, this month or all, `tradesIn`):
   where the money went (`MoneyWaterfall`, `moneyFlow`: what was kept, then won and lost before fees, the fees; what

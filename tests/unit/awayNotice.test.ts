@@ -105,6 +105,18 @@ describe("the notice", () => {
     expect(onDismiss).toHaveBeenCalled();
   });
 
+  it("says a slower strategy's own sale in its own words", () => {
+    const summary = summarizeAway(T0, T0 + 60_000, [], [
+      { ...closed("m1", T0 + 2, 2252.51), symbol: "MA.US", strategy: "momentum" as const },
+      { ...closed("b1", T0 + 3, -400), symbol: "SOL/INR", strategy: "breakout" as const },
+    ]);
+    render(React.createElement(AwayNotice, { notice: { id: 2, phase: "card", summary }, onDismiss: vi.fn(), onOpenBook: vi.fn() }));
+    const text = screen.getByRole("dialog").textContent;
+    expect(text).toMatch(/Closed · Left the top 3/);
+    expect(text).toMatch(/Closed · Below its 20-day low/);
+    expect(text).not.toMatch(/Trailing stop/);
+  });
+
   it("the card lists what happened and the net result", () => {
     const onDismiss = vi.fn();
     const onOpenBook = vi.fn();
