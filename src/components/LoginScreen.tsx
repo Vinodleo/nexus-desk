@@ -13,6 +13,20 @@ const GoogleMark = () => (
   </svg>
 );
 
+/** Where the faint dots sit (percent of the screen), their size, tone and strength. */
+const LOGIN_DOTS = [
+  { x: 11, y: 11, size: 8, tone: "bg-accent", opacity: 0.25 },
+  { x: 85, y: 8, size: 6, tone: "bg-gain", opacity: 0.3 },
+  { x: 77, y: 19, size: 10, tone: "bg-accent", opacity: 0.18 },
+  { x: 18, y: 25, size: 6, tone: "bg-loss", opacity: 0.25 },
+  { x: 90, y: 36, size: 8, tone: "bg-accent", opacity: 0.22 },
+  { x: 9, y: 43, size: 10, tone: "bg-gain", opacity: 0.2 },
+  { x: 88, y: 60, size: 6, tone: "bg-accent", opacity: 0.25 },
+  { x: 14, y: 66, size: 8, tone: "bg-accent", opacity: 0.15 },
+];
+
+// Sign-in: the opening screen's N tile, floating, with the Google button at
+// the bottom where a thumb reaches it.
 export const LoginScreen: React.FC = () => {
   const { signInWithGoogle, logout, loading, currentUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
@@ -41,15 +55,37 @@ export const LoginScreen: React.FC = () => {
   const wrongAccount = currentUser && !isOwner(currentUser.email);
 
   return (
-    <div className="min-h-screen bg-canvas text-ink font-ui flex items-center justify-center p-5">
-      <main className="w-full max-w-sm flex flex-col gap-6">
-        <div>
-          <h1 className="m-0 font-display text-[40px] leading-tight font-semibold">Nexus Desk</h1>
-          <p className="m-0 mt-1.5 text-[15px] text-muted">Your private trading desk. Sign in to continue.</p>
-        </div>
+    <div className="relative min-h-screen bg-canvas text-ink font-ui flex flex-col items-center px-4 pb-8 overflow-hidden">
+      {/* A few of the opening screen's dots, still scattered. */}
+      <div aria-hidden="true" className="absolute inset-0 pointer-events-none">
+        {LOGIN_DOTS.map((d, i) => (
+          <span
+            key={i}
+            className={`absolute rounded-full ${d.tone}`}
+            style={{ left: `${d.x}%`, top: `${d.y}%`, width: d.size, height: d.size, opacity: d.opacity }}
+          />
+        ))}
+      </div>
 
+      <main className="relative flex-1 w-full max-w-sm flex flex-col items-center justify-center gap-5 py-10">
+        <div
+          data-testid="login-tile"
+          className="nx-float relative w-[132px] h-[132px] rounded-[40px] bg-accent overflow-hidden flex items-center justify-center shadow-[0_18px_40px_color-mix(in_srgb,var(--nx-accent)_32%,transparent)]"
+        >
+          <span className="nx-shine absolute -top-10 -bottom-10 w-12" aria-hidden="true" />
+          <span aria-hidden="true" className="font-display text-[84px] leading-none font-semibold text-on-accent">
+            N
+          </span>
+        </div>
+        <div className="text-center">
+          <h1 className="m-0 font-display text-[34px] leading-tight font-semibold">Nexus Desk</h1>
+          <p className="m-0 mt-1.5 text-[15px] text-muted">Your private trading desk</p>
+        </div>
+      </main>
+
+      <section className="relative w-full max-w-sm flex flex-col gap-3">
         {wrongAccount ? (
-          <section className="bg-surface border border-line rounded-2xl p-4 flex flex-col gap-3">
+          <div className="bg-surface border border-line rounded-2xl p-4 flex flex-col gap-3">
             <div className="flex gap-2.5 text-sm">
               <ShieldAlert className="w-5 h-5 shrink-0 text-loss" strokeWidth={1.8} />
               <span>
@@ -63,26 +99,25 @@ export const LoginScreen: React.FC = () => {
             >
               Use a different account
             </button>
-          </section>
+          </div>
         ) : (
-          <section className="flex flex-col gap-3">
+          <>
             <button
               type="button"
               onClick={signIn}
               disabled={signingIn}
-              className="min-h-[52px] rounded-full bg-surface border border-line font-semibold text-[15px] flex items-center justify-center gap-2.5 cursor-pointer hover:bg-inset disabled:opacity-70"
+              className="min-h-[54px] rounded-full bg-surface border border-line font-semibold text-[15px] flex items-center justify-center gap-2.5 cursor-pointer shadow-[0_4px_14px_-6px_color-mix(in_srgb,var(--nx-scrim)_30%,transparent)] hover:bg-inset disabled:opacity-70"
             >
               {signingIn ? <Loader2 className="w-[18px] h-[18px] animate-spin" /> : <GoogleMark />}
               {signingIn ? "Signing in…" : "Continue with Google"}
             </button>
-            {error && <p className="m-0 text-[13px] text-loss">{error}</p>}
-            <p className="m-0 text-xs text-muted leading-relaxed">
-              Sign-in uses your Google account, including its two-step verification. Only the owner's account can open
-              the desk.
+            {error && <p className="m-0 text-[13px] text-loss text-center">{error}</p>}
+            <p className="m-0 text-xs text-muted leading-relaxed text-center">
+              Only the owner's account opens the desk. Google's two-step check guards it.
             </p>
-          </section>
+          </>
         )}
-      </main>
+      </section>
     </div>
   );
 };

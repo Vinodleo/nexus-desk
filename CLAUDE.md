@@ -66,7 +66,14 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   fewer than are open, and the most the market may hold and lose at once. **Connections:** CoinDCX (the test live order
   folded under it), Alpaca, Angel One, Gemini and Telegram (Link opens the bot with a one-time code; then Test or
   Unlink; `useTelegramLink`), each with a status dot. **Server:** a tile each, opened on a
-  tap; one with a problem stays open. Then pop-ups and the theme, the desk's links, the version and Sign out.
+  tap; one with a problem stays open. Then pop-ups and the theme, the desk's links (the desk brief, This phone), the
+  version and Sign out. **This phone** (`ThisPhoneSheet`): the account and Sign out, that the server does the trading,
+  the pop-ups and where the CoinDCX keys are, a role other than the owner's offered back ("Allow everything again"),
+  old keys in Firestore if any, recent activity in plain words (`activityOf`, `activityTime`) and, folded, the memory's
+  cloud copy. It replaced "Run in the background" (wake lock, silent audio, a play/pause the server made pointless) and
+  "Security and access" (role picker).
+  Sign-in (`LoginScreen`): the opening screen's N tile, floating (`nx-float`) among a few faint dots, with Continue with
+  Google at the bottom; another account is turned away there.
   The opening screen (`LoadingScreen`, over the page from `AuthGuard`): dots scattered over the screen fly into an N
   in pen order (`N_DOTS`); once signed in (`ready`) and the dots have landed (`FINALE_EARLIEST_MS`), the dots shrink
   away as a tile grows over them, the lettered N appears on it only once they're gone (owner's ask: no dots on the logo;
@@ -75,6 +82,13 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   A trade that opens with the app on screen (the server's, the phone's autopilot, or approved in the Queue) unfolds a
   ticket over it (`TradeTicket`): what was bought, the stop, why (the slower strategies) and on paper the free cash it
   took; several queue up.
+  The Queue (`LedgerQueue`) is a deck of proposals, swiped right to approve (paper) or left to skip, each behind an Undo.
+  Each card: a line along its top running down to its expiry with the time left (`expiryText`), the trader and its
+  candles, the chance of a win as a ring, a bar from the stop (−1R) through the entry to the target (`stopShare`,
+  `targetR`), size, what it could lose and the expected R, who agrees as initials, and similar setups' and the
+  trader's record (`describeProposal`). The rest are "Next in line", each with a small ring. With nothing waiting
+  (`QuietQueue`): a radar whose beam sweeps (faster while a scan runs, `nx-radar`), the next scan's countdown, which
+  markets are open and the coins' daily check, and the server's last hour of scans (`heartbeatView`).
   The Book says Paper or Live by its title. Book → Trades is one month at a time, opening on this one: its total
   rolling digit by digit between the arrows (back to any month, forward to this one; a swipe on the days too), its
   running total as a line that draws itself and shows the total at any close under a finger (`MonthLine`, `monthLine`),

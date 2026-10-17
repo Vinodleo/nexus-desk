@@ -1,10 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Clock, ChevronRight } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import type { TradeProposal } from "../../types";
 import { DataQualityNotice } from "../DataQualityNotice";
-import { RoundIconButton, SectionHeading, StatTile, Switch } from "./ui";
+import { RoundIconButton, SectionHeading, Switch } from "./ui";
 import { formatMoney, formatPrice } from "./format";
 import { SwipeCard } from "./SwipeCard";
+import { istClock, untilText, useNow } from "./FloorDesk";
+import { heartbeatView } from "./ScanHeartbeat";
+import { BEAT_SLOTS, type ScanBeat } from "../../shared/scanHeartbeat";
+import { marketOf, type MarketKey } from "../../shared/marketLimits";
+import { deskDay } from "../../shared/deskDay";
+import { isNseOpen } from "../../shared/nse";
+import { isUsOpen } from "../../shared/usMarket";
 
 /** How far each card in the deck peeks out under the one above it. */
 const DECK_STEP_PX = 8;
@@ -28,6 +35,11 @@ export interface LedgerQueueProps {
   memoryCount: number;
   /** Live mode sends approved trades to CoinDCX. */
   isLive?: boolean;
+  /** The server's last scan and its scans over the last hour (the Floor's heartbeat), for the quiet Queue. */
+  lastServerScanAt?: number;
+  serverScans?: ScanBeat[];
+  /** Fixed time, for tests. */
+  now?: number;
 }
 
 const FAMILY_LABEL: Record<string, string> = {
@@ -37,6 +49,8 @@ const FAMILY_LABEL: Record<string, string> = {
   volatility_filter: "Volatility",
   event_news_filter: "News",
 };
+
+const MARKET_NAME: Record<MarketKey, string> = { coins: "Coins", stocks: "Indian stocks", us: "US stocks" };
 
 function timeframeLabel(tf: string): string {
   const m = /^(\d+)([mhd])$/.exec(tf);
@@ -48,6 +62,9 @@ function titleCase(s: string): string {
   return s.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/** "+2R", "+1.5R": a target's distance in multiples of what the stop risks. */
+const targetR = (r: number) => `+${Number(r.toFixed(1))}R`;
+
 /** The numbers a proposal card shows, derived from the proposal. */
 export function describeProposal(p: TradeProposal, now = Date.now()) {
   const { setup, evAssessment: ev, riskCalc, metaScore } = p;
@@ -56,9 +73,14 @@ export function describeProposal(p: TradeProposal, now = Date.now()) {
   const rewardPerUnit = Math.abs(setup.takeProfit - setup.entryPrice);
   const votes = p.personaVotesCast ?? 0;
   const ageMin = Math.max(0, Math.round((now - new Date(p.timestamp).getTime()) / 60000));
+  const family = FAMILY_LABEL[setup.family] ?? titleCase(setup.family);
+  const similar = metaScore.historicalSampleCount > 0;
   return {
     action: `${setup.direction === "LONG" ? "Buy" : "Sell"} ${p.symbol}`,
-    setupLabel: `${FAMILY_LABEL[setup.family] ?? titleCase(setup.family)} · ${timeframeLabel(setup.timeframe)}`,
+    setupLabel: `${family} · ${timeframeLabel(setup.timeframe)}`,
+    /** The trader who found it (the setup's name), and its candles. */
+    trader: `${setup.name || family} · ${timeframeLabel(setup.timeframe)}`,
+    market: MARKET_NAME[marketOf(p.symbol)],
     winPct: Math.round(metaScore.calibratedWinProbability * 100),
     // The EV is computed for a standard risk unit, so dividing by that unit's
     // loss gives it in R (multiples of what the stop risks).
@@ -66,7 +88,12 @@ export function describeProposal(p: TradeProposal, now = Date.now()) {
     sizeInr: riskCalc.recommendedDollarExposure || setup.entryPrice * units,
     riskInr: riskPerUnit * units,
     rewardInr: rewardPerUnit * units,
-    agreement: votes > 0 ? `${p.supportingPersonas?.length ?? 0} of ${votes} analysts agree` : null,
+    /** The stop's share of the stop-to-target span (the bar's red part), or null without a target. */
+    stopShare: riskPerUnit > 0 && rewardPerUnit > 0 ? riskPerUnit / (riskPerUnit + rewardPerUnit) : null,
+    targetR: riskPerUnit > 0 && rewardPerUnit > 0 ? targetR(rewardPerUnit / riskPerUnit) : null,
+    agreement: votes > 0 ? `${p.supportingPersonas?.length ?? 0} of ${votes} traders agree` : null,
+    similar: similar ? `Similar setups won ${Math.round(metaScore.historicalWinRate * 100)}% of ${metaScore.historicalSampleCount}` : null,
+    record: p.exitEdge && p.exitEdge.trades > 0 ? `its record ${signedR(p.exitEdge.r)} over ${p.exitEdge.trades}` : null,
     held: p.status === "DEFERRED" ? p.deferralReason || "Held for your review" : null,
     age: ageMin < 1 ? "just now" : ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin / 60)} h ago`,
   };
@@ -76,82 +103,331 @@ function signedR(r: number): string {
   return `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R`;
 }
 
+/** "expires in 3:12" (under an hour), "expires in 2 h", or "expiring" once due. */
+export function expiryText(expiresAt: number, now: number): string {
+  const s = Math.round((expiresAt - now) / 1000);
+  if (s <= 0) return "expiring";
+  if (s < 3600) return `expires in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  return `expires in ${Math.round(s / 3600)} h`;
+}
+
+const RING_R = 31;
+const RING_C = 2 * Math.PI * RING_R;
+
+/** The chance of a win as a ring that sweeps round when the card shows. */
+const WinRing: React.FC<{ pct: number }> = ({ pct }) => {
+  const f = Math.max(0, Math.min(100, pct)) / 100;
+  return (
+    <div className="relative w-[76px] h-[76px] shrink-0" role="img" aria-label={`${pct}% chance of a win`}>
+      <svg width="76" height="76" viewBox="0 0 76 76" aria-hidden="true" className="-rotate-90">
+        <circle cx="38" cy="38" r={RING_R} fill="none" className="stroke-inset" strokeWidth="7" />
+        <circle
+          data-testid="win-ring"
+          cx="38"
+          cy="38"
+          r={RING_R}
+          fill="none"
+          className="stroke-gain nx-ring-sweep"
+          strokeWidth="7"
+          strokeLinecap="round"
+          style={
+            {
+              "--nx-c": RING_C.toFixed(1),
+              strokeDasharray: RING_C.toFixed(1),
+              strokeDashoffset: (RING_C * (1 - f)).toFixed(1),
+            } as React.CSSProperties
+          }
+        />
+      </svg>
+      <span aria-hidden="true" className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="font-display text-[22px] leading-none font-semibold text-gain tabular-nums">{pct}%</span>
+        <span className="text-[10px] text-muted mt-0.5">to win</span>
+      </span>
+    </div>
+  );
+};
+
+/** A small ring for the proposals further down. */
+const MiniRing: React.FC<{ pct: number }> = ({ pct }) => {
+  const c = 2 * Math.PI * 11;
+  const f = Math.max(0, Math.min(100, pct)) / 100;
+  return (
+    <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" className="-rotate-90 shrink-0">
+      <circle cx="14" cy="14" r="11" fill="none" className="stroke-inset" strokeWidth="4" />
+      <circle cx="14" cy="14" r="11" fill="none" className="stroke-gain" strokeWidth="4" strokeDasharray={`${(c * f).toFixed(1)} ${c.toFixed(1)}`} />
+    </svg>
+  );
+};
+
+const AVATAR_TONES = ["bg-accent", "bg-gain", "bg-warn"];
+
+/** The traders backing it, as overlapping initials (three at most, then "+2"). */
+const Backers: React.FC<{ names: string[] }> = ({ names }) => {
+  const shown = names.slice(0, 3);
+  const more = names.length - shown.length;
+  return (
+    <span aria-hidden="true" className="flex shrink-0">
+      {shown.map((n, i) => (
+        <span
+          key={`${n}-${i}`}
+          className={`w-6 h-6 rounded-full border-2 border-surface text-on-accent text-[11px] font-bold flex items-center justify-center ${AVATAR_TONES[i % AVATAR_TONES.length]} ${i > 0 ? "-ml-2" : ""}`}
+        >
+          {(n.trim()[0] || "?").toUpperCase()}
+        </span>
+      ))}
+      {more > 0 && (
+        <span className="w-6 h-6 -ml-2 rounded-full border-2 border-surface bg-inset text-muted text-[10px] font-bold flex items-center justify-center">
+          +{more}
+        </span>
+      )}
+    </span>
+  );
+};
+
+/** The time left to approve it: a line along the card's top running down, and the minutes and seconds. */
+const Expiry: React.FC<{ proposal: TradeProposal; now?: number }> = ({ proposal, now: fixed }) => {
+  const now = useNow(1000, fixed);
+  const at = proposal.expiresAt;
+  if (at === undefined) return null;
+  return (
+    <span className="shrink-0 text-xs text-muted tabular-nums" data-testid="expiry">
+      {expiryText(at, now)}
+    </span>
+  );
+};
+
+const ExpiryBar: React.FC<{ proposal: TradeProposal; now?: number }> = ({ proposal, now: fixed }) => {
+  const at = proposal.expiresAt;
+  if (at === undefined) return null;
+  const total = Math.max(1, proposal.approvalExpiryMs || at - new Date(proposal.timestamp).getTime());
+  const elapsed = Math.max(0, total - (at - (fixed ?? Date.now())));
+  return (
+    <div aria-hidden="true" className="h-[3px] bg-inset">
+      <div
+        data-testid="expiry-bar"
+        className="h-full bg-accent nx-countdown"
+        style={{ animationDuration: `${total}ms`, animationDelay: `-${Math.min(elapsed, total)}ms` }}
+      />
+    </div>
+  );
+};
+
 const ProposalCard: React.FC<{
   proposal: TradeProposal;
   busy: boolean;
   isLive: boolean;
   onApprove: () => void;
   onSkip: () => void;
-}> = ({ proposal, busy, isLive, onApprove, onSkip }) => {
+  now?: number;
+}> = ({ proposal, busy, isLive, onApprove, onSkip, now }) => {
   const d = describeProposal(proposal);
+  const { setup } = proposal;
+  const why = [d.similar, d.record].filter(Boolean).join(" · ");
   return (
     <article
       aria-label={d.action}
-      className="bg-surface border border-line rounded-[18px] p-[18px] flex flex-col gap-4"
+      className="bg-surface border border-line rounded-[22px] overflow-hidden shadow-[0_10px_28px_-18px_color-mix(in_srgb,var(--nx-scrim)_45%,transparent)]"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs text-muted">{d.setupLabel}</div>
-          <h2 className="m-0 font-display text-[28px] font-semibold leading-tight">{d.action}</h2>
+      <ExpiryBar proposal={proposal} now={now} />
+      <div className="p-[18px] pt-4 flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-2.5">
+          <span className="min-w-0 truncate px-2.5 py-1 rounded-full bg-accent-soft text-accent text-xs font-semibold">{d.trader}</span>
+          {proposal.expiresAt !== undefined ? <Expiry proposal={proposal} now={now} /> : <span className="shrink-0 text-xs text-muted">{d.age}</span>}
         </div>
-        <div className="shrink-0 flex items-center gap-1 text-xs text-muted tabular-nums">
-          <Clock className="w-3.5 h-3.5" strokeWidth={1.8} />
-          {d.age}
-        </div>
-      </div>
 
-      <div className="flex items-end gap-6">
-        <div>
-          <div className="font-display text-[52px] leading-none text-gain tabular-nums">
-            {d.winPct}
-            <span className="text-2xl">%</span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="m-0 font-display text-[30px] font-semibold leading-[1.05] break-words">{d.action}</h2>
+            <div className="text-[13px] text-muted mt-1 tabular-nums">
+              {formatPrice(setup.entryPrice)} · {d.market}
+            </div>
           </div>
-          <div className="text-xs text-muted mt-1">chance of a win</div>
+          <WinRing pct={d.winPct} />
         </div>
-        <div>
-          <div className={`font-display text-[30px] leading-none tabular-nums ${d.evR < 0 ? "text-loss" : ""}`}>{signedR(d.evR)}</div>
-          <div className="text-xs text-muted mt-1">expected, after fees</div>
+
+        {d.stopShare !== null && (
+          <section aria-label="Stop, entry and target" className="flex flex-col gap-2">
+            <div className="flex h-2.5 rounded-full overflow-hidden" aria-hidden="true">
+              <div className="bg-loss/25 border-r-2 border-ink" style={{ width: `${(d.stopShare * 100).toFixed(1)}%` }} />
+              <div className="flex-1 bg-gain/25" />
+            </div>
+            <div className="grid grid-cols-3 text-xs tabular-nums">
+              <div>
+                <div className="text-loss font-semibold">Stop −1R</div>
+                <div className="text-muted">{formatPrice(setup.stopLoss)}</div>
+              </div>
+              <div className="text-center">
+                <div className="font-semibold">{setup.direction === "LONG" ? "Buy" : "Sell"}</div>
+                <div className="text-muted">{formatPrice(setup.entryPrice)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-gain font-semibold">Target {d.targetR}</div>
+                <div className="text-muted">{formatPrice(setup.takeProfit)}</div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-inset rounded-[14px] px-3 py-2.5 min-w-0">
+            <div className="text-[11px] text-muted">Size</div>
+            <div className="text-[15px] font-semibold tabular-nums truncate">{formatMoney(d.sizeInr, { decimals: 0 })}</div>
+          </div>
+          <div className="bg-inset rounded-[14px] px-3 py-2.5 min-w-0">
+            <div className="text-[11px] text-muted">Could lose</div>
+            <div className="text-[15px] font-semibold tabular-nums text-loss truncate">{formatMoney(d.riskInr, { decimals: 0 })}</div>
+          </div>
+          <div className="bg-inset rounded-[14px] px-3 py-2.5 min-w-0">
+            <div className="text-[11px] text-muted">Expected</div>
+            <div className={`text-[15px] font-semibold tabular-nums ${d.evR < 0 ? "text-loss" : "text-gain"}`}>{signedR(d.evR)}</div>
+          </div>
         </div>
-      </div>
 
-      <div className="flex gap-2.5">
-        <StatTile label="Size" value={formatMoney(d.sizeInr, { decimals: 0 })} valueClassName="font-ui text-sm font-semibold" />
-        <StatTile label="Stop" value={formatPrice(proposal.setup.stopLoss)} valueClassName="font-ui text-sm font-semibold text-loss" />
-        <StatTile label="Target" value={formatPrice(proposal.setup.takeProfit)} valueClassName="font-ui text-sm font-semibold text-gain" />
-      </div>
+        {(d.agreement || why) && (
+          <div className="flex flex-col gap-2 text-[13px] leading-snug">
+            {d.agreement && (
+              <div className="flex items-center gap-2.5">
+                <Backers names={proposal.supportingPersonas ?? []} />
+                <span>{d.agreement}</span>
+              </div>
+            )}
+            {why && <div className="text-muted">{why.charAt(0).toUpperCase() + why.slice(1)}</div>}
+          </div>
+        )}
 
-      <p className="m-0 text-[13px] leading-relaxed text-muted">
-        {d.agreement && `${d.agreement}. `}
-        Risking {formatMoney(d.riskInr, { decimals: 0 })} to make about {formatMoney(d.rewardInr, { decimals: 0 })}.
-      </p>
+        {d.held && (
+          <div className="text-xs leading-relaxed text-warn-ink bg-warn-soft rounded-xl px-3 py-2.5">
+            <strong>Held by autopilot:</strong> {d.held}
+          </div>
+        )}
 
-      {d.held && (
-        <div className="text-xs leading-relaxed text-warn-ink bg-warn-soft rounded-xl px-3 py-2.5">
-          <strong>Held by autopilot:</strong> {d.held}
+        <DataQualityNotice quality={proposal.dataQuality} />
+
+        <div className="flex gap-2.5">
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={busy}
+            className="flex-1 min-h-[50px] rounded-full border border-line bg-surface text-ink font-semibold text-[15px] cursor-pointer disabled:opacity-60"
+          >
+            Skip
+          </button>
+          <button
+            type="button"
+            onClick={onApprove}
+            disabled={busy}
+            className="flex-[2] min-h-[50px] rounded-full bg-accent text-on-accent font-semibold text-[15px] cursor-pointer disabled:opacity-60"
+          >
+            {busy ? "Approving…" : isLive ? "Approve live trade" : "Approve paper trade"}
+          </button>
         </div>
-      )}
-
-      <DataQualityNotice quality={proposal.dataQuality} />
-
-      <div className="flex gap-2.5">
-        <button
-          type="button"
-          onClick={onSkip}
-          disabled={busy}
-          className="flex-1 min-h-[50px] rounded-full border border-line bg-surface text-ink font-semibold text-[15px] cursor-pointer disabled:opacity-60"
-        >
-          Skip
-        </button>
-        <button
-          type="button"
-          onClick={onApprove}
-          disabled={busy}
-          className="flex-[2] min-h-[50px] rounded-full bg-accent text-on-accent font-semibold text-[15px] cursor-pointer disabled:opacity-60"
-        >
-          {busy ? "Approving…" : isLive ? "Approve live trade" : "Approve paper trade"}
-        </button>
       </div>
     </article>
+  );
+};
+
+const Chip: React.FC<{ on?: boolean; children: React.ReactNode }> = ({ on, children }) => (
+  <span
+    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-semibold ${
+      on ? "bg-gain/15 text-gain" : "bg-inset text-muted"
+    }`}
+  >
+    <span aria-hidden="true" className={`w-[7px] h-[7px] rounded-full ${on ? "bg-gain" : "bg-muted"}`} />
+    {children}
+  </span>
+);
+
+/**
+ * Nothing waiting: the scanner as a radar (its beam sweeps round, faster
+ * while a scan runs), the next scan's countdown, which markets are open and
+ * when the coins' daily check runs, and the server's last hour of scans.
+ */
+const QuietQueue: React.FC<{
+  isScanning: boolean;
+  continuousScan: boolean;
+  lastScanAt: number;
+  scans: ScanBeat[];
+  now?: number;
+}> = ({ isScanning, continuousScan, lastScanAt, scans, now: fixed }) => {
+  const now = useNow(1000, fixed);
+  const view = heartbeatView(scans, lastScanAt, now);
+  const running = isScanning || view.scanning;
+  const serverScans = lastScanAt > 0 || scans.length > 0;
+  const looking = serverScans || continuousScan;
+  const ran = view.slots.filter((s) => s.beat).length;
+  const latest = [...view.slots].reverse().find((s) => s.beat)?.beat;
+  const proposed = view.slots.reduce((a, s) => a + (s.beat?.proposed ?? 0), 0);
+  const coinCheck = deskDay(now).events.find((e) => e.id === "coin-check");
+  const coinAt = coinCheck ? istClock(coinCheck.nextAt) : null;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <section aria-label="The scanner" className="bg-surface border border-line rounded-[22px] px-[18px] py-5 flex flex-col items-center gap-4">
+        <div className="relative w-[200px] h-[200px]" aria-hidden="true" data-testid="radar">
+          <svg width="200" height="200" viewBox="0 0 200 200" className="absolute inset-0">
+            <circle cx="100" cy="100" r="96" fill="none" className="stroke-line" strokeWidth="1" />
+            <circle cx="100" cy="100" r="64" fill="none" className="stroke-line" strokeWidth="1" />
+            <circle cx="100" cy="100" r="32" fill="none" className="stroke-line" strokeWidth="1" />
+            <line x1="100" y1="4" x2="100" y2="196" className="stroke-line" strokeWidth="1" />
+            <line x1="4" y1="100" x2="196" y2="100" className="stroke-line" strokeWidth="1" />
+            <circle cx="146" cy="62" r="4.5" className={proposed > 0 ? "fill-gain" : "fill-muted"} opacity={proposed > 0 ? 1 : 0.45} />
+            <circle cx="58" cy="138" r="3.5" className="fill-muted" opacity="0.45" />
+            <circle cx="128" cy="154" r="3.5" className="fill-muted" opacity="0.45" />
+          </svg>
+          {looking && (
+            <svg width="200" height="200" viewBox="0 0 200 200" className={`absolute inset-0 nx-radar${running ? " nx-radar-fast" : ""}`}>
+              <path d="M100 100 L100 4 A96 96 0 0 1 183 52 Z" className="fill-accent" opacity="0.12" />
+              <line x1="100" y1="100" x2="100" y2="4" className="stroke-accent" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          )}
+          <span className="absolute left-1/2 top-1/2 w-3 h-3 -ml-1.5 -mt-1.5 rounded-full bg-accent" />
+        </div>
+        <div className="text-center">
+          <h2 className="m-0 font-display text-xl font-semibold">{running ? "Scanning the markets…" : "Nothing to approve"}</h2>
+          <div className="text-[13px] text-muted mt-1 tabular-nums">
+            {running ? "Each 5-minute candle is checked as it closes" : looking ? `Next scan ${untilText(view.next, now)}` : "Scanning is off on this phone"}
+          </div>
+        </div>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Chip on={isUsOpen(now)}>{isUsOpen(now) ? "US open" : "US closed"}</Chip>
+          <Chip on={isNseOpen(now)}>{isNseOpen(now) ? "India open" : "India closed"}</Chip>
+          {coinAt && (
+            <Chip>
+              Coins: daily check {coinAt.time} {coinAt.half}
+            </Chip>
+          )}
+        </div>
+      </section>
+
+      {serverScans && (
+        <section aria-label="The last hour" className="grid grid-cols-3 gap-2">
+          <div className="bg-surface border border-line rounded-2xl p-3">
+            <div className="font-display text-2xl tabular-nums">
+              {ran}
+              <span className="text-sm text-muted"> of {BEAT_SLOTS}</span>
+            </div>
+            <div className="text-[11px] text-muted mt-0.5 leading-tight">scans this hour</div>
+          </div>
+          <div className="bg-surface border border-line rounded-2xl p-3">
+            <div className="font-display text-2xl tabular-nums">{latest?.checked ?? 0}</div>
+            <div className="text-[11px] text-muted mt-0.5 leading-tight">checked each scan</div>
+          </div>
+          <div className="bg-surface border border-line rounded-2xl p-3">
+            <div className="font-display text-2xl tabular-nums">{proposed}</div>
+            <div className="text-[11px] text-muted mt-0.5 leading-tight">proposed this hour</div>
+          </div>
+        </section>
+      )}
+
+      <p className="m-0 text-[13px] leading-relaxed text-muted px-1">
+        Only setups with a good chance of winning and a positive expected value after fees reach this queue.
+        {serverScans
+          ? " The server scans for you; trades that pass its checks open by themselves."
+          : continuousScan
+            ? " The scanner keeps looking."
+            : " Scanning is paused; tap the refresh button to scan once."}
+      </p>
+    </div>
   );
 };
 
@@ -321,7 +597,7 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
                 key={depth}
                 aria-hidden="true"
                 data-testid="deck-peek"
-                className="absolute inset-x-0 top-0 rounded-[18px] border border-line bg-surface origin-bottom nx-deck-peek"
+                className="absolute inset-x-0 top-0 rounded-[22px] border border-line bg-surface origin-bottom nx-deck-peek"
                 style={{
                   bottom: peeks * DECK_STEP_PX,
                   transform: `translateY(${depth * DECK_STEP_PX}px) scale(${1 - depth * 0.04})`,
@@ -351,6 +627,7 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
                     props.onApprove(focused);
                   }}
                   onSkip={() => props.onReject(focused.id, "Skipped by you in the queue")}
+                  now={props.now}
                 />
               </SwipeCard>
             </div>
@@ -360,43 +637,50 @@ export const LedgerQueue: React.FC<LedgerQueueProps> = (props) => {
           </div>
         </div>
       ) : (
-        <section className="bg-surface border border-line rounded-[18px] p-[18px] flex flex-col gap-2">
-          <h2 className="m-0 font-display text-xl font-semibold">
-            {props.isScanning ? "Scanning the markets…" : "Nothing to approve"}
-          </h2>
-          <p className="m-0 text-[13px] leading-relaxed text-muted">
-            Only setups with a good chance of winning and a positive expected value after fees reach this queue.
-            {props.continuousScan ? " The scanner keeps looking." : " Scanning is paused; tap the refresh button to scan once."}
-          </p>
-        </section>
+        <QuietQueue
+          isScanning={props.isScanning}
+          continuousScan={props.continuousScan}
+          lastScanAt={props.lastServerScanAt ?? 0}
+          scans={props.serverScans ?? []}
+          now={props.now}
+        />
       )}
 
       {others.length > 0 && (
-        <ul className="list-none m-0 p-0 flex flex-col" aria-label="Other proposals">
-          {others.map((p) => {
-            const d = describeProposal(p);
-            return (
-              <li key={p.id} className="border-b border-line">
-                <button
-                  type="button"
-                  onClick={() => setFocusedId(p.id)}
-                  className="w-full flex items-center justify-between gap-3 py-3 px-1 text-left cursor-pointer"
-                >
-                  <span className="min-w-0">
-                    <span className="block font-semibold">{d.action}</span>
-                    <span className={`block text-xs truncate ${d.held ? "text-warn" : "text-muted"}`}>
-                      {d.held ? `Held · ${d.held}` : d.setupLabel}
+        <section className="flex flex-col">
+          <SectionHeading title="Next in line" />
+          <ul className="list-none m-0 p-0 flex flex-col" aria-label="Other proposals">
+            {others.map((p) => {
+              const d = describeProposal(p);
+              return (
+                <li key={p.id} className="border-b border-line">
+                  <button
+                    type="button"
+                    onClick={() => setFocusedId(p.id)}
+                    className="w-full min-h-[52px] flex items-center justify-between gap-3 py-2.5 px-1 text-left cursor-pointer"
+                  >
+                    <span className="min-w-0">
+                      <span className="block font-semibold">{d.action}</span>
+                      <span className={`block text-xs truncate ${d.held ? "text-warn" : "text-muted"}`}>
+                        {d.held ? `Held · ${d.held}` : d.trader}
+                        {!d.held && p.expiresAt !== undefined && (
+                          <>
+                            {" · "}
+                            <Expiry proposal={p} now={props.now} />
+                          </>
+                        )}
+                      </span>
                     </span>
-                  </span>
-                  <span className="shrink-0 flex items-center gap-1.5">
-                    <span className="font-display text-[22px] tabular-nums">{d.winPct}%</span>
-                    <ChevronRight className="w-4 h-4 text-muted" />
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                    <span className="shrink-0 flex items-center gap-2">
+                      <MiniRing pct={d.winPct} />
+                      <span className="font-display text-lg tabular-nums">{d.winPct}%</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
 
       {pending && <UndoBar key={pending.seq} pending={pending} onUndo={undo} />}
