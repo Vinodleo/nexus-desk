@@ -19,6 +19,7 @@ vi.spyOn(console, "warn").mockImplementation(() => {});
 const candles = await import("../../server/history/historyCandles");
 const long = await import("../../server/history/dailyLong");
 const historyJob = await import("../../server/history/historyJob");
+const memory = await import("../../server/memory");
 
 afterAll(() => {
   vi.unstubAllEnvs();
@@ -422,6 +423,62 @@ describe("the long daily replay", () => {
     expect(again.downloads).toEqual(["BTC/INR"]);
     expect(again.sleeps.filter((ms) => ms === 500).length).toBe(3);
     expect(long._dailyLongRun()!.markets["LUNA/INR"]).toEqual(kept.markets["LUNA/INR"]);
+  });
+
+  it("stops when Node's memory is tight, and carries on later from where it was", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    memory._resetMemory({ heapUsed: 230 * 1024 * 1024, heapLimit: 256 * 1024 * 1024, at: Date.now() });
+    try {
+      await long.startDailyLong(false, fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] }).deps);
+    } finally {
+      memory._resetMemory();
+    }
+    // Stopped at its first rest, nothing recorded for the coin it was on, and said so (to Sentry).
+    expect(long._dailyLongRun()!.finishedAt).toBeNull();
+    expect(long._dailyLongRun()!.markets).toEqual({});
+    expect(String(error.mock.calls[0]?.[1])).toContain("Stopped the coin replay since 2017 to keep the server safe");
+    expect(long.dailyLongRunning()).toBe(false);
+    // Unfinished, so due: it carries on once memory allows.
+    await long.startDailyLong(false, fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] }).deps);
+    expect(long._dailyLongRun()!.finishedAt).not.toBeNull();
+    expect(Object.keys(long._dailyLongRun()!.markets).sort()).toEqual(["BTC/INR", "LUNA/INR"]);
+  });
+
+  it("works out the classic strategies again when a fresh run carries on after its last coin", async () => {
+    const symbols = () => ["BTC/INR", "LUNA/INR"];
+    await long.startDailyLong(false, fakes({ symbols }).deps);
+    const last = long._dailyLongRun()!.classic!;
+    // Next month's candles differ.
+    const next: Record<string, CandleSeries> = { "BTC/INR": dailySeries("2020-01-01", "2023-06-01", 13), "LUNA/INR": dailySeries("2020-08-21", "2022-06-01", 17) };
+    const download = async (symbol: string) => ({ series: next[symbol] });
+    // A fresh run stopped (a restart, or memory) once its coins are done, during its classic step.
+    let restarted = false;
+    const fresh = fakes({
+      symbols,
+      download,
+      sleep: async () => {
+        const r = long._dailyLongRun();
+        if (!restarted && r && r.finishedAt === null && Object.keys(r.markets).length === 2) {
+          restarted = true;
+          long._resetDailyLong();
+          long.loadDailyLong();
+        }
+      },
+    });
+    await long.startDailyLong(true, fresh.deps);
+    expect(restarted).toBe(true);
+    expect(long._dailyLongRun()!.finishedAt).toBeNull();
+    // The last run's results on show meanwhile.
+    expect(long.dailyLongClassic()).toEqual(last);
+    // Carrying on: worked out on this run's candles, not left as the last run's.
+    await long.startDailyLong(false, fakes({ symbols, download }).deps);
+    const carried = long._dailyLongRun()!;
+    expect(carried.finishedAt).not.toBeNull();
+    expect(carried.classic).not.toEqual(last);
+    long._resetDailyLong();
+    fs.rmSync(path.join(dataDir, "daily_long.json"), { force: true });
+    await long.startDailyLong(true, fakes({ symbols, download }).deps);
+    expect(carried.classic).toEqual(long._dailyLongRun()!.classic);
   });
 
   it("replays only a coin a new year's list brings, then the classic strategies, keeping the records it judges on meanwhile", async () => {

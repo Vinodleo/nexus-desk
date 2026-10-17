@@ -17,6 +17,7 @@ vi.spyOn(console, "warn").mockImplementation(() => {});
 const stocks = await import("../../server/history/stocksLong");
 const { CLASSIC_VERSION } = await import("../../server/history/dailyLong");
 const { fetchUsDailyBars } = await import("../../server/alpaca");
+const memory = await import("../../server/memory");
 
 afterAll(() => {
   vi.unstubAllEnvs();
@@ -275,6 +276,26 @@ describe("the replay", () => {
     expect(run.classic.us).toEqual(finished.classic.us);
     expect(run.classic.nse).toEqual(finished.classic.nse);
     expect(stocks.stocksLongMissing(run)).toBe(false);
+  });
+
+  it("stops when Node's memory is tight, and carries on later with the market it was on", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    memory._resetMemory({ heapUsed: 230 * 1024 * 1024, heapLimit: 256 * 1024 * 1024, at: Date.now() });
+    const first = deps();
+    try {
+      await stocks.startStocksLong(true, first.deps);
+    } finally {
+      memory._resetMemory();
+    }
+    expect(stocks._stocksLongRun()!.finishedAt).toBeNull();
+    expect(stocks._stocksLongRun()!.done).toEqual([]);
+    expect(String(error.mock.calls[0]?.[1])).toContain("Stopped the stock replay since 2016 to keep the server safe");
+    expect(stocks.stocksLongView().running).toBe(false);
+    const again = deps();
+    await stocks.startStocksLong(false, again.deps);
+    expect(again.downloads.slice(0, stocks.stockSymbols("us").length)).toEqual(stocks.stockSymbols("us"));
+    expect(stocks._stocksLongRun()!.done).toEqual(["us", "funds", "nse"]);
+    expect(stocks._stocksLongRun()!.finishedAt).not.toBeNull();
   });
 
   it("keeps the last results on show while it replays again, market by market", async () => {

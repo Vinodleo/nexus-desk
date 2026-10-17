@@ -6,6 +6,7 @@ import { roundTripFeeRate } from "../../src/shared/tradeCosts";
 import { nseDeliveryRoundTripRate } from "../../src/shared/nse";
 import { fetchNseDaily, fetchUsDaily, type HistoryFetch } from "./historyCandles";
 import { backgroundWorkBusy, CPU_SHARE, historyRunning, nseBusy, SLOW_NSE_TRADE_INR, UNREAD_STOCK_SPREAD, waitForOtherWork } from "./historyJob";
+import { stopIfMemoryTight } from "../memory";
 import { CLASSIC_VERSION } from "./dailyLong";
 import { breakoutSetups, marketCandles, momentumSetups, type BreakoutSetup } from "../../src/services/breakoutModel";
 import { saveBreakoutSetups } from "./breakoutSetups";
@@ -58,6 +59,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export type StockMarket = "us" | "nse" | "funds";
 /** US first, then the funds (from Alpaca too), India last: its downloads wait for NSE to close. */
 export const STOCK_MARKETS: StockMarket[] = ["us", "funds", "nse"];
+const JOB_NAME = "the stock replay since 2016";
 
 /** The funds (shared/funds.ts). SPY, the US index fund, is their market reading (not traded here, as in the US market). */
 export { FUNDS };
@@ -272,6 +274,7 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
   const r = run;
   total = STOCK_MARKETS.reduce((n, m) => n + stockSymbols(m).length, 0);
   const rest = async (took: number) => {
+    stopIfMemoryTight(JOB_NAME);
     await deps.sleep(Math.max(1, Math.round(took * (1 / CPU_SHARE - 1))));
     while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
   };
@@ -388,7 +391,7 @@ export function startStocksLong(fresh: boolean, deps: StocksLongDeps = realDeps)
 /** Loads kept results, then checks every few hours whether a run is due, never alongside the other background work. */
 export function startStocksLongJob(): void {
   loadStocksLong();
-  waitForOtherWork(() => active !== null);
+  waitForOtherWork(() => active !== null, JOB_NAME);
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);
     const due = stocksLongDue(run, Date.now()) || (run !== null && run.finishedAt === null) || stocksLongMissing(run);

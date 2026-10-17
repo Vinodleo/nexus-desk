@@ -20,7 +20,8 @@ import { router as telegramRouter } from "./server/routes/telegram";
 import { router as tradeBookRouter, loadTradeBook } from "./server/tradeBook";
 import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
-import { startHistoryJob } from "./server/history/historyJob";
+import { backgroundWorkRunning, startHistoryJob } from "./server/history/historyJob";
+import { startMemoryWatch } from "./server/memory";
 import { startMlTestJob } from "./server/history/mlTest";
 import { startDailyCoins } from "./server/scanner/dailyCoins";
 import { startDailyLongJob } from "./server/history/dailyLong";
@@ -153,6 +154,8 @@ async function startServer() {
   startCoinDcxRelay();
   startExpiryGuard();
   startServerScanner();
+  // Tells Sentry when Node's memory nears its limit, naming the background work running (server/memory.ts).
+  startMemoryWatch(backgroundWorkRunning);
   startHistoryJob();
   startMlTestJob();
   startBackups((title, body) => void notifyEveryone({ title, body, tag: "backup-failed", url: "/" }));

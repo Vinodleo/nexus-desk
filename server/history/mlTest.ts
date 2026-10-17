@@ -3,6 +3,7 @@ import path from "path";
 import { promisify } from "util";
 import { gunzip } from "zlib";
 import { backgroundWorkBusy, CPU_SHARE, historyRunInfo, historyRunning, setupsDir, setupsFileName, waitForOtherWork } from "./historyJob";
+import { stopIfMemoryTight } from "../memory";
 import { scannerHeartbeat } from "../scanner/scannerService";
 import { scanningDesks } from "../scanner/deskState";
 import { dailyLongRunInfo, dailyLongRunning, dailySetupsDir } from "./dailyLong";
@@ -65,7 +66,8 @@ const EDGE_SAMPLE = 20_000;
  * The server has 512 MB, and running out stops everything (Fly ends the
  * machine). The test sizes what it loads to stay under MEMORY_PLAN_MB with
  * room to spare, and stops (freeing what it loaded) if the server's memory
- * passes MEMORY_STOP_MB anyway.
+ * passes MEMORY_STOP_MB anyway, or Node's own heap nears its limit (about
+ * half the machine's: server/memory.ts).
  */
 export const MEMORY_PLAN_MB = 400;
 export const MEMORY_STOP_MB = 450;
@@ -287,6 +289,7 @@ async function work(source: CsvSource, deps: MlDeps): Promise<void> {
   /** Rests after `took` ms of work, so the test averages CPU_SHARE of a core; waits for a scan cycle. */
   const rest = async (took: number) => {
     if (deps.memory() > MEMORY_STOP_MB * MB) throw new Error(`Stopped to keep the server safe: its memory reached ${Math.round(deps.memory() / MB)} MB.`);
+    stopIfMemoryTight(`the machine-learning test (${source})`);
     await deps.sleep(Math.max(1, Math.round(took * (1 / CPU_SHARE - 1))));
     while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
   };
@@ -414,7 +417,7 @@ export function startMlTest(deps: MlDeps = realDeps, sources: MlSource[] = ML_SO
 /** Loads the kept verdict, and checks hourly whether a newly finished replay needs testing. */
 export function startMlTestJob(): void {
   loadMlTest();
-  waitForOtherWork(() => active !== null);
+  waitForOtherWork(() => active !== null, () => `the machine-learning test${testing ? ` (${testing})` : ""}`);
   const check = () => {
     timer = setTimeout(check, CHECK_EVERY_MS);
     const due = ML_SOURCES.filter((s) => mlTestDue(s));
