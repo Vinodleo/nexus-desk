@@ -126,6 +126,23 @@ describe("per-market limits", () => {
     expect(sectorOf("SOL/INR")).toBeNull();
   });
 
+  it("give every stock on this year's lists a sector, scanned or not, so two in a sector is the most for them too", async () => {
+    const { STOCK_COHORTS, stockCohortFor } = await import("../../server/history/stocksLong");
+    const { US_SYMBOLS } = await import("../../src/shared/usMarket");
+    const latest = (market: "us" | "nse") => Math.max(...Object.keys(STOCK_COHORTS[market]).map(Number));
+    for (const ticker of stockCohortFor("us", latest("us"))) expect(sectorOf(`${ticker}.US`), ticker).not.toBeNull();
+    for (const ticker of stockCohortFor("nse", latest("nse"))) expect(sectorOf(ticker), ticker).not.toBeNull();
+    // Momentum held AbbVie with nothing counting it: J&J and AbbVie are health, like Eli Lilly; Berkshire is finance.
+    expect(sectorOf("ABBV.US")).toEqual({ key: "us:HEALTH", label: "health" });
+    expect(sectorOf("JNJ.US")?.key).toBe(sectorOf("LLY.US")?.key);
+    expect(sectorOf("BRK.B.US")?.key).toBe("us:FINANCE");
+    const { openInSector } = await import("../../src/shared/marketLimits");
+    expect(openInSector([{ symbol: "LLY.US" }, { symbol: "ABBV.US" }, { symbol: "AAPL.US" }], "JNJ.US")).toHaveLength(2);
+    // The 5-minute scanner's list stays as it was.
+    expect(US_SYMBOLS).not.toContain("JNJ.US");
+    expect(US_SYMBOLS).not.toContain("ABBV.US");
+  });
+
   it("allow at most two open stock trades in one sector, whatever the market's count", () => {
     const roomy = { ...policy, marketLimits: { ...limits, stocks: { amountPerTradeInr: 8000, maxOpenTrades: 4 } } };
     const score = { calibratedWinProbability: 0.6, confidence: 0.6 } as MetaLabelScore;

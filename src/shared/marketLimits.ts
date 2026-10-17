@@ -1,6 +1,6 @@
 import type { SlowStrategy } from "../types";
 import { isNseSymbol, NSE_UNIVERSE } from "./nse";
-import { isUsSymbol, US_UNIVERSE, usTicker } from "./usMarket";
+import { isUsSymbol, usSector, usTicker } from "./usMarket";
 import { isFundSymbol } from "./funds";
 
 // How much goes into each trade, how much it may lose, and how many trades
@@ -133,7 +133,7 @@ const SECTOR_LABEL: Record<string, string> = {
 
 /** The sector a stock trades in (Indian and US stocks apart), or null for a coin or a stock outside the lists. */
 export function sectorOf(symbol: string): { key: string; label: string } | null {
-  const sector = isUsSymbol(symbol) ? US_UNIVERSE[usTicker(symbol)] : isNseSymbol(symbol) ? NSE_UNIVERSE[symbol] : undefined;
+  const sector = isUsSymbol(symbol) ? usSector(usTicker(symbol)) : isNseSymbol(symbol) ? NSE_UNIVERSE[symbol] : undefined;
   if (!sector) return null;
   return { key: `${marketOf(symbol)}:${sector}`, label: SECTOR_LABEL[sector] ?? sector.toLowerCase() };
 }
