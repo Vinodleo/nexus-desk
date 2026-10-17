@@ -189,7 +189,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     to entry): a stop at or past the price would sell at once.
   - Market sessions: `nse.ts`, `usMarket.ts`.
   - Per-market limits: `marketLimits.ts`, the amount per trade, risk per trade and trades at once for each market,
-    and at most 2 open trades in one stock sector (`sectorOf`). Breakout 55/20 has slots of its own in coins and US
+    and at most 2 open trades in one stock sector (`sectorOf`; the yearly lists' US stocks the scanner doesn't watch have
+    theirs in `US_LISTED_SECTORS`, and a test keeps every stock on this year's lists in a sector). Breakout 55/20 has slots of its own in coins and US
     stocks (`breakoutTrades`, 3 until chosen, none switches it off), and US momentum in US stocks (`momentumTrades`,
     0 to 3, 3 until chosen), and breakout on the funds in US stocks (`fundsTrades`, slot kind "funds" for a breakout
     trade on a fund, `isFundSymbol`, 3 until chosen): each kind counts only against its own (`SlotKind`, `slotKindOf`, `openInSlots`, `slotsFor`),

@@ -1,4 +1,4 @@
-import { isUsSymbol, usTicker, US_UNIVERSE } from "../shared/usMarket";
+import { isUsSymbol, usSector, usTicker } from "../shared/usMarket";
 import { hourlyAtrSeries } from "../shared/coinHolds";
 import { MarketBar, OrderBook, RegimeType } from "../types";
 import { averageTrueRange, directionalIndex } from "./indicators";
@@ -203,7 +203,7 @@ export function getSymbolConfig(symbolOrCfg: SymbolConfig | string): SymbolConfi
         basePrice: 0,
         tickSize: 0.01,
         volatility: 0.25,
-        correlatedGroup: `US_${US_UNIVERSE[usTicker(normalized)] ?? "OTHER"}`,
+        correlatedGroup: `US_${usSector(usTicker(normalized)) ?? "OTHER"}`,
         assetClass: "equity",
       };
       dynamicConfigs.set(normalized, cfg);

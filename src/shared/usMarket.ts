@@ -17,6 +17,19 @@ export const US_UNIVERSE: Record<string, string> = {
   XOM: "ENERGY", UNH: "HEALTH", LLY: "HEALTH",
 };
 
+/**
+ * Sectors of the yearly lists' stocks the 5-minute scanner doesn't watch
+ * (breakout and momentum trade this year's 20 biggest): kept apart from
+ * US_UNIVERSE so the scanner's list stays as it is, while at most 2 open
+ * trades in one sector still counts them.
+ */
+export const US_LISTED_SECTORS: Record<string, string> = {
+  "BRK.B": "FINANCE", JNJ: "HEALTH", ABBV: "HEALTH",
+};
+
+/** A US stock's sector by ticker: the scanned list's, else the yearly lists'. */
+export const usSector = (ticker: string): string | undefined => US_UNIVERSE[ticker] ?? US_LISTED_SECTORS[ticker];
+
 export const US_SUFFIX = ".US";
 export const US_SYMBOLS = Object.keys(US_UNIVERSE).map((t) => `${t}${US_SUFFIX}`);
 /** The index funds among them (SPY, QQQ, IWM). */
