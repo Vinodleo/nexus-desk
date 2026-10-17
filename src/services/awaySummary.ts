@@ -14,7 +14,7 @@ export const AWAY_SETTLE_MS = 3_000;
 export interface AwaySummary {
   awayMs: number;
   opened: { id: string; symbol: string; byServer: boolean }[];
-  closed: { id: string; symbol: string; pnl: number; exitReason: HistoricalTrade["exitReason"] }[];
+  closed: { id: string; symbol: string; pnl: number; exitReason: HistoricalTrade["exitReason"]; strategy?: HistoricalTrade["strategy"] }[];
   /** Net result of the trades that closed while away. */
   netPnl: number;
 }
@@ -31,12 +31,12 @@ export function summarizeAway(
   since: number,
   now: number,
   positions: Pick<Position, "id" | "symbol" | "openTime" | "openedByServer">[],
-  closedTrades: Pick<HistoricalTrade, "id" | "positionId" | "symbol" | "realizedPnl" | "exitReason" | "openedAt" | "closedAt" | "openedByServer">[]
+  closedTrades: Pick<HistoricalTrade, "id" | "positionId" | "symbol" | "realizedPnl" | "exitReason" | "openedAt" | "closedAt" | "openedByServer" | "strategy">[]
 ): AwaySummary {
   const within = (t: number) => t >= since && t <= now;
   const closed = closedTrades
     .filter((t) => within(at(t.closedAt)))
-    .map((t) => ({ id: t.positionId ?? t.id, symbol: t.symbol, pnl: t.realizedPnl, exitReason: t.exitReason }));
+    .map((t) => ({ id: t.positionId ?? t.id, symbol: t.symbol, pnl: t.realizedPnl, exitReason: t.exitReason, ...(t.strategy ? { strategy: t.strategy } : {}) }));
   const opened = positions
     .filter((p) => within(at(p.openTime)))
     .map((p) => ({ id: p.id, symbol: p.symbol, byServer: Boolean(p.openedByServer) }));

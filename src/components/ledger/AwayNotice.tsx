@@ -2,7 +2,8 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { Check, RefreshCw } from "lucide-react";
 import type { AwayNoticeState } from "../../hooks/useAwayNotice";
 import { formatAway } from "../../services/awaySummary";
-import { EXIT_LABEL, formatMoney, pnlTone } from "./format";
+import { formatMoney, pnlTone } from "./format";
+import { exitWords } from "./BookMoney";
 import { prefersReducedMotion, useAnimatedNumber } from "./motion";
 
 /** How long the "Back online" pill stays up. */
@@ -106,7 +107,7 @@ const AwayCard: React.FC<{
     ...summary.closed.map((t) => ({
       key: `c-${t.id}`,
       left: t.symbol,
-      sub: `Closed · ${EXIT_LABEL[t.exitReason] ?? t.exitReason}`,
+      sub: `Closed · ${exitWords(t)}`,
       right: <span className={`tabular-nums font-semibold ${pnlTone(t.pnl)}`}>{formatMoney(t.pnl, { signed: true })}</span>,
     })),
     ...summary.opened.map((p) => ({

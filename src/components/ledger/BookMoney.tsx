@@ -3,6 +3,7 @@ import type { HistoricalTrade } from "../../types";
 import { marketOf } from "../../shared/marketLimits";
 import { isFundSymbol } from "../../shared/funds";
 import { COIN_FEE_PER_SIDE } from "../../shared/tradeMath";
+import { slowExitWords } from "../../shared/tradeMessages";
 import { Card } from "./ui";
 import { EXIT_LABEL, formatMoney } from "./format";
 import { RollingDigits } from "./motion";
@@ -126,15 +127,9 @@ const BADGE: Record<string, string> = {
 /** A closed trade's strategy in two letters, for the Book's row badge. */
 export const strategyBadge = (t: HistoricalTrade): string => BADGE[strategyOf(t)] ?? "5m";
 
-/**
- * How a closed trade ended, in words. The slower strategies' own sales are
- * recorded as trailing-stop exits: breakout's is the close below the 20-day
- * low, momentum's is leaving the week's top 3.
- */
-export function exitWords(t: HistoricalTrade): string {
-  if (t.exitReason === "TRAILING_STOP" && t.strategy === "breakout") return "Below its 20-day low";
-  if (t.exitReason === "TRAILING_STOP" && t.strategy === "momentum") return "Left the top 3";
-  return EXIT_LABEL[t.exitReason] ?? t.exitReason;
+/** How a closed trade ended, in words (a slower strategy's own sale in its own, as its pop-up says it). */
+export function exitWords(t: Pick<HistoricalTrade, "exitReason" | "strategy">): string {
+  return slowExitWords(t.exitReason, t.strategy) ?? EXIT_LABEL[t.exitReason] ?? t.exitReason;
 }
 
 /** Each strategy's result after fees, as bars either side of zero, the best first; they glide as the period changes. */
