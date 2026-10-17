@@ -23,6 +23,7 @@ import { breakoutSetups, marketCandles, momentumSetups, type BreakoutSetup } fro
 import { saveBreakoutSetups } from "./breakoutSetups";
 import { fetchCoinDailySince, type HistoryFetch } from "./historyCandles";
 import { backgroundWorkBusy, CPU_SHARE, historyRunning, historySpread, setupsFileName, waitForOtherWork } from "./historyJob";
+import { stopIfMemoryTight } from "../memory";
 import { scannerHeartbeat, typicalSpread } from "../scanner/scannerService";
 
 // Coins on daily candles over every year Binance has, back to 2017. The
@@ -168,6 +169,7 @@ export const dailyCandlesDir = () => path.join(dataDir(), "daily_long_candles");
 const MARKET_MOVE_DAYS = 30;
 const BTC = "BTC/INR";
 const traderIds = () => TRADER_PERSONAS.map((p) => p.id);
+const JOB_NAME = "the coin replay since 2017";
 
 let run: DailyLongRun | null = null;
 let active: Promise<void> | null = null;
@@ -234,10 +236,11 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
     const toMs = Math.floor(deps.now() / DAY_MS) * DAY_MS;
     // The last run's records and classic results (breakout's decides whether it trades) stand until this one
     // finishes. A run of another version was replayed under other rules or costs (Oct 2026: CoinDCX's real fee),
-    // so its aren't carried: nothing trades on them while this one replays.
+    // so its aren't carried: nothing trades on them while this one replays. The classic results come without
+    // their version, so this run works them out again even if it stops after its last coin and carries on.
     const last = run?.version === DAILY_LONG_VERSION ? run : null;
     const lastRecords = last ? dailyLongRecords() ?? undefined : undefined;
-    const lastClassic = last?.classic ? { classic: last.classic, classicVersion: last.classicVersion } : {};
+    const lastClassic = last?.classic ? { classic: last.classic } : {};
     fs.rmSync(dailySetupsDir(), { recursive: true, force: true });
     fs.rmSync(dailyCandlesDir(), { recursive: true, force: true });
     run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {}, ...(lastRecords ? { lastRecords } : {}), ...lastClassic };
@@ -247,6 +250,7 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
   const symbols = deps.symbols();
   total = new Set([...symbols, ...Object.keys(r.markets)]).size;
   const rest = async (took: number) => {
+    stopIfMemoryTight(JOB_NAME);
     await deps.sleep(Math.max(1, Math.round(took * (1 / CPU_SHARE - 1))));
     while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
   };
@@ -444,7 +448,7 @@ export function startDailyLong(fresh: boolean, deps: DailyLongDeps = realDeps): 
 /** Loads kept results, then checks every few hours whether a run is due, never alongside the other background work. */
 export function startDailyLongJob(): void {
   loadDailyLong();
-  waitForOtherWork(() => active !== null);
+  waitForOtherWork(() => active !== null, JOB_NAME);
   const check = () => {
     const due = dailyLongDue(run, Date.now()) || (run !== null && (run.finishedAt === null || run.classicVersion !== CLASSIC_VERSION)) || dailyLongMissing(run);
     const free = !active && !historyRunning() && !backgroundWorkBusy();

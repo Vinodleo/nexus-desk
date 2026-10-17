@@ -3,6 +3,7 @@ import path from "path";
 import { promisify } from "util";
 import { gunzip, gzip } from "zlib";
 import { getCoinUniverse } from "../coinUniverse";
+import { stopIfMemoryTight } from "../memory";
 import { fetchCoinHistory, fetchNseHistory, fetchUsHistory, type HistoryFetch } from "./historyCandles";
 import { scannerHeartbeat, stockUniverse, typicalSpread, usUniverse } from "../scanner/scannerService";
 import {
@@ -343,6 +344,7 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
       await deps.sleep(Math.max(1, Math.round(took * (1 / CPU_SHARE - 1))));
       while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
       if (stopped()) return false;
+      stopIfMemoryTight(REPLAY_NAME);
     }
     const saved = await saveSetups(r, symbol, rows, stopped);
     if (stopped()) return false;
@@ -375,6 +377,7 @@ async function work(gen: number, fresh: boolean, deps: HistoryDeps): Promise<voi
         await deps.sleep(Math.max(1, Math.round(took * (1 / CPU_SHARE - 1))));
         while (deps.scannerBusy()) await deps.sleep(CYCLE_WAIT_MS);
         if (stopped()) return null;
+        stopIfMemoryTight(REPLAY_NAME);
       }
       slowRecords[tf] = tfRecords;
     }
@@ -496,11 +499,16 @@ export function startHistoryRun(fresh: boolean, deps: HistoryDeps = realDeps): P
  * machine-learning test, the long daily replay): two at once would double
  * the load. Each registers whether it's running.
  */
-const otherWork: (() => boolean)[] = [];
-export function waitForOtherWork(busy: () => boolean): void {
-  otherWork.push(busy);
+const otherWork: { busy: () => boolean; name: string | (() => string) }[] = [];
+export function waitForOtherWork(busy: () => boolean, name: string | (() => string) = "background work"): void {
+  otherWork.push({ busy, name });
 }
-const otherWorkBusy = () => otherWork.some((busy) => busy());
+const otherWorkBusy = () => otherWork.some((w) => w.busy());
+const REPLAY_NAME = "the two-year replay";
+/** The background work running now, by name (what the server's memory warning names). */
+export function backgroundWorkRunning(): string[] {
+  return [...(active ? [REPLAY_NAME] : []), ...otherWork.filter((w) => w.busy()).map((w) => (typeof w.name === "function" ? w.name() : w.name))];
+}
 /** Background work besides this replay is running (one checking for itself isn't, until it starts). */
 export function backgroundWorkBusy(): boolean {
   return otherWorkBusy();

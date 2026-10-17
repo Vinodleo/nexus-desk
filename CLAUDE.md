@@ -164,6 +164,12 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     sets the `AWS_*`/`BUCKET_NAME` secrets itself; `server/s3.ts` signs requests with SigV4, no SDK), 30 days kept,
     shown in Settings → Server → Backups, a pop-up once a day if failing. `RESTORE_BACKUP=YYYY-MM-DD` restores a day at
     start-up (once, `.restored` marker; replaced files kept in `before-restore-…`) and restarts (docs/hosting.md).
+  - Memory (`server/memory.ts`): Node's own heap limit is about half the machine's 512 MB; near it Node stalls, then
+    dies with no error (16 Oct, 4:18–4:48 am IST). After each full clean-up (a major GC, `startMemoryWatch`) what's
+    left is checked: past 75% of the limit it tells Sentry once an hour, naming the background work running
+    (`backgroundWorkRunning`, named in `waitForOtherWork`); past 80% each background job stops itself at its next rest
+    (`stopIfMemoryTight`: the two-year, coin and stock replays and the machine-learning test) and carries on later. A
+    1 GB machine (about $4 more a month) waits for a second crash, a warning that needs it, or going live.
   - Error reports (`server/errorReports.ts`, loaded first by `server/instrument.ts`): with `SENTRY_DSN` set (a Fly
     secret; docs/hosting.md), the server's crashes, route errors and every `console.error` go to Sentry (org and
     project `nexus-desk`), errors only. No request headers, cookies or bodies; tokens, keys, secrets and emails
@@ -251,7 +257,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   top 3 weekly), on the same coins and years, costs included, results in R by quarter (`classic`). Bumping
   `CLASSIC_VERSION` redoes only them, from the kept candles, leaving the traders' results alone. Monthly, at `CPU_SHARE`, never alongside the two-year replay or the
   machine-learning test (`waitForOtherWork`, `backgroundWorkBusy`). Its records (the last finished run's while it reruns,
-  `dailyLongRecords`, and `dailyLongClassic` for breakout, so the monthly rerun doesn't pause breakout) decide which traders
+  `dailyLongRecords`, and `dailyLongClassic` for breakout, so the monthly rerun doesn't pause breakout; carried without
+  their version, so a run stopped after its last coin still works its own out) decide which traders
   take daily paper trades (owner's call, 4 Oct: nine years over two). A run of an older `DAILY_LONG_VERSION` decides nothing, even while it waits to rerun (shown with a
   note, `stale`); a due run blocked by other background work looks again every 15 minutes (`nextDailyLongCheckMs`).
 - **Stocks on daily candles since 2016 (Lab):** `server/history/stocksLong.ts` runs the classic strategies on US and
