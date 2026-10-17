@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, RefreshCw, ChevronRight, ChevronDown, Check, Lock, Minus, Plus, MessageSquare, Moon, ShieldCheck, Download } from "lucide-react";
+import { X, RefreshCw, ChevronRight, ChevronDown, Check, Lock, Minus, Plus, MessageSquare, Smartphone, Download } from "lucide-react";
 import type { CoinDcxAccountBalance, CoinDcxServerStatus, TradingExecutionMode } from "../../types";
 import { useAuth } from "../../context/AuthContext";
 import { usePWAInstall } from "../../hooks/usePWAInstall";
@@ -56,8 +56,8 @@ export interface SettingsSheetProps {
   /** The open trades: the slots each slower strategy uses now. */
   positions?: { symbol: string; strategy?: string }[];
   onOpenDeskBrief: () => void;
-  onOpenBackground: () => void;
-  onOpenSecurity: () => void;
+  /** This phone: the account, recent activity and the memory's cloud copy (ThisPhoneSheet). */
+  onOpenPhone: () => void;
   /** The server's host status (null while loading or unreachable). */
   serverStatus?: ServerStatus | null;
   /** Where scanning runs, and when the server last scanned. */
@@ -615,7 +615,7 @@ const LinkRow: React.FC<{ label: string; sub?: string; icon: React.ReactNode; on
 );
 
 export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
-  const { currentUser, userRole, logout } = useAuth();
+  const { currentUser, logout } = useAuth();
   const pwa = usePWAInstall();
   const [confirmLive, setConfirmLive] = useState(false);
   // Live tapped while it's locked: it shakes (a or b, so each tap plays again) and says why.
@@ -1211,8 +1211,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
         <Label delay={380}>Desk</Label>
         <Group label="Desk" delay={380}>
           <LinkRow label="Desk brief" sub="Ask the commander to explain the book" icon={<MessageSquare className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenDeskBrief} />
-          <LinkRow label="Run in the background" sub="Keep this device awake while trading" icon={<Moon className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenBackground} />
-          <LinkRow label="Security and access" sub={`Role: ${userRole}`} icon={<ShieldCheck className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenSecurity} />
+          <LinkRow label="This phone" sub="Your account, recent activity and the memory's cloud copy" icon={<Smartphone className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenPhone} />
           {pwa.isInstallable && !pwa.isInstalled && (
             <LinkRow label="Install the app" sub="Add Nexus Desk to your home screen" icon={<Download className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={() => void pwa.install()} />
           )}

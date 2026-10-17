@@ -62,13 +62,12 @@ import { LedgerRisk } from "./components/ledger/LedgerRisk";
 import { LedgerLab } from "./components/ledger/LedgerLab";
 import { LedgerLearning } from "./components/ledger/LedgerLearning";
 import { CommanderModal } from "./components/CommanderModal";
-import { SecurityConsoleModal } from "./components/SecurityConsoleModal";
+import { ThisPhoneSheet } from "./components/ledger/ThisPhoneSheet";
 import { useAuth } from "./context/AuthContext";
 import { useBackgroundExecution } from "./hooks/useBackgroundExecution";
 import { useAwayNotice } from "./hooks/useAwayNotice";
 import { AwayNotice } from "./components/ledger/AwayNotice";
 import { TradeTicket, ticketFor, type TicketTrade } from "./components/ledger/TradeTicket";
-import { BackgroundExecutionModal } from "./components/BackgroundExecutionModal";
 import {
   playTradeExecutionSound,
   playProfitTargetSound,
@@ -116,7 +115,7 @@ function atrForExits(proposal: TradeProposal): number {
 
 export default function App() {
   const { userRole, logSecurityAudit, currentUser, loading } = useAuth();
-  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
+  const [isPhoneSheetOpen, setIsPhoneSheetOpen] = useState<boolean>(false);
 
   // Navigation: Floor, Queue, Book, Lab, Learning
   const [activeTab, setActiveTab] = useState<TabType>("floor");
@@ -184,7 +183,6 @@ export default function App() {
 
   // Core Market State
   const [currentSymbol, setCurrentSymbol] = useState<string>("BTC/INR");
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
 
   useEffect(() => {
     // Start the market data feed once (candles, prices, market rules).
@@ -193,11 +191,6 @@ export default function App() {
 
   // Background Trading Loop & Web Worker Heartbeat Reference
   const lastStepTimeRef = useRef<number>(Date.now());
-
-  // Background Web Worker Heartbeat listener (continues unthrottled when screen locked or minimized)
-  const handleBackgroundTick = useCallback(() => {
-    if (!isPlaying) return;
-  }, [isPlaying]);
 
   // On unlocking the phone: a pill, or a "While you were away" card when
   // trades opened or closed meanwhile (see useAwayNotice).
@@ -212,24 +205,15 @@ export default function App() {
     tradingMode === "PAPER" ? { money: equity, freeBefore: freeCash(equity, activePositionsRef.current) } : undefined;
   const handleReconcileMissedTicks = useCallback(
     (missedCycles: number, elapsedMs: number) => {
-      if (!isPlaying || missedCycles <= 0) return;
+      if (missedCycles <= 0) return;
       away.onUnlock(elapsedMs);
     },
-    [isPlaying, away.onUnlock]
+    [away.onUnlock]
   );
 
-  const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState<boolean>(false);
-
-  // Background Execution Engine Hook: Screen Wake Lock, Web Worker, Audio Guardian, Native Alerts
-  const {
-    status: backgroundStatus,
-    toggleWakeLock,
-    toggleAudioKeepAlive,
-    requestNotifications,
-    sendAlertNotification,
-  } = useBackgroundExecution({
-    isPlaying,
-    onBackgroundTick: handleBackgroundTick,
+  // The background worker's heartbeat (it notices the phone waking up after missed beats) and alerts.
+  const { sendAlertNotification } = useBackgroundExecution({
+    isPlaying: true,
     onReconcileMissedTicks: handleReconcileMissedTicks,
   });
 
@@ -1810,6 +1794,8 @@ export default function App() {
               autopilotOn={decisionMode === "AUTO_WITHIN_LIMITS"}
               memoryCount={experiences.length}
               isLive={tradingMode === "LIVE_COINDCX"}
+              lastServerScanAt={serverScanner.lastScanAt}
+              serverScans={serverScanner.recentScans}
             />
           )}
 
@@ -1959,13 +1945,9 @@ export default function App() {
           setIsSettingsOpen(false);
           handleWakeCommander();
         }}
-        onOpenBackground={() => {
+        onOpenPhone={() => {
           setIsSettingsOpen(false);
-          setIsBackgroundModalOpen(true);
-        }}
-        onOpenSecurity={() => {
-          setIsSettingsOpen(false);
-          setIsSecurityModalOpen(true);
+          setIsPhoneSheetOpen(true);
         }}
       />
 
@@ -1978,23 +1960,8 @@ export default function App() {
       />
 
 
-      {/* Firebase Security, RBAC & Audit Console */}
-      <SecurityConsoleModal
-        isOpen={isSecurityModalOpen}
-        onClose={() => setIsSecurityModalOpen(false)}
-      />
-
-      {/* 24/7 Background Execution & Device-Lock Guardian Modal */}
-      <BackgroundExecutionModal
-        isOpen={isBackgroundModalOpen}
-        onClose={() => setIsBackgroundModalOpen(false)}
-        status={backgroundStatus}
-        isPlaying={isPlaying}
-        onTogglePlay={() => setIsPlaying((prev) => !prev)}
-        onToggleWakeLock={toggleWakeLock}
-        onToggleAudioKeepAlive={toggleAudioKeepAlive}
-        onRequestNotifications={requestNotifications}
-      />
+      {/* Settings → This phone: the account, recent activity and the memory's cloud copy. */}
+      <ThisPhoneSheet isOpen={isPhoneSheetOpen} onClose={() => setIsPhoneSheetOpen(false)} popups={tradeNotifications.state} />
     </div>
   );
 }

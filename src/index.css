@@ -289,6 +289,15 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .nx-deck-peek, .nx-deck-rise { animation: none; }
 }
+/* The quiet Queue's radar: the beam sweeps round, faster while a scan runs. */
+@keyframes nx-radar-spin {
+  to { transform: rotate(360deg); }
+}
+.nx-radar { transform-origin: 50% 50%; animation: nx-radar-spin 6s linear infinite; }
+.nx-radar-fast { animation-duration: 1.6s; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-radar { animation: none; }
+}
 
 /* The Queue's Undo bar rises from the bottom. */
 @keyframes nx-snack-in {
@@ -559,6 +568,15 @@ html, body {
 .nx-shine { left: 0; background: linear-gradient(90deg, transparent, var(--nx-shine), transparent); animation: nx-shine 900ms ease-in-out 700ms both; }
 @media (prefers-reduced-motion: reduce) {
   .nx-shine { animation: none; opacity: 0; }
+}
+/* Sign-in: the N's tile floats gently. */
+@keyframes nx-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.nx-float { animation: nx-float 5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-float { animation: none; }
 }
 
 /* A closed trade in the Book opens in its day's card: the row tints and its

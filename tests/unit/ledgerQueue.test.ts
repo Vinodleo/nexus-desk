@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { createElement } from "react";
 import { act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LedgerQueue, UNDO_MS, describeProposal, type LedgerQueueProps } from "../../src/components/ledger/LedgerQueue";
+import { LedgerQueue, UNDO_MS, describeProposal, expiryText, type LedgerQueueProps } from "../../src/components/ledger/LedgerQueue";
 import { swipeOutcome } from "../../src/components/ledger/SwipeCard";
 import type { TradeProposal } from "../../src/types";
 
@@ -60,9 +60,36 @@ describe("describeProposal", () => {
     expect(d.evR).toBeCloseTo(0.42, 2); // ₹126 EV on a ₹300 risk unit
     expect(d.riskInr).toBe(90); // 9 units × ₹10 to the stop
     expect(d.rewardInr).toBe(270);
-    expect(d.agreement).toBe("4 of 5 analysts agree");
+    expect(d.agreement).toBe("4 of 5 traders agree");
     expect(d.age).toBe("3 min ago");
     expect(d.held).toBeNull();
+    expect(d.trader).toBe("Breakout · 5 min");
+    expect(d.market).toBe("Coins");
+    expect(d.stopShare).toBeCloseTo(0.25, 5); // ₹10 to the stop, ₹30 to the target
+    expect(d.targetR).toBe("+3R");
+    expect(d.similar).toBe("Similar setups won 61% of 40");
+    expect(d.record).toBeNull();
+  });
+
+  it("names the market, a fractional target and the trader's record; no bar without a target", () => {
+    const p = proposal("p", "NVDA.US", 0.55, { exitEdge: { r: 0.12, trades: 23 } });
+    p.setup = { ...p.setup, takeProfit: 1015 };
+    const d = describeProposal(p);
+    expect(d.market).toBe("US stocks");
+    expect(d.targetR).toBe("+1.5R");
+    expect(d.record).toBe("its record +0.12R over 23");
+    expect(describeProposal(proposal("q", "RELIANCE", 0.5)).market).toBe("Indian stocks");
+    const flat = proposal("r", "ETH/INR", 0.5);
+    flat.setup = { ...flat.setup, takeProfit: 1000 };
+    expect(describeProposal(flat).stopShare).toBeNull();
+  });
+});
+
+describe("expiryText", () => {
+  it("counts down in minutes and seconds under an hour", () => {
+    expect(expiryText(1_000_000 + 192_000, 1_000_000)).toBe("expires in 3:12");
+    expect(expiryText(1_000_000 + 7_200_000, 1_000_000)).toBe("expires in 2 h");
+    expect(expiryText(1_000_000, 1_000_000)).toBe("expiring");
   });
 });
 
@@ -103,6 +130,49 @@ describe("LedgerQueue", () => {
     expect(container.textContent).toContain("Held by autopilot: swing setup, manual approval only");
     fireEvent.click(screen.getByRole("button", { name: "Approve all 2" }));
     expect(p.onApproveAll).toHaveBeenCalled();
+  });
+
+  it("shows the card's ring, the stop-to-target bar, who agrees and the time left", () => {
+    const now = Date.now();
+    render(createElement(LedgerQueue, props([proposal("a", "ETH/INR", 0.61, { expiresAt: now + 192_000 })], { now })));
+    expect(screen.getByRole("img", { name: "61% chance of a win" })).toBeTruthy();
+    const bar = screen.getByRole("region", { name: "Stop, entry and target" });
+    expect(bar.textContent).toContain("Stop −1R");
+    expect(bar.textContent).toContain("Target +3R");
+    expect(screen.getByText("4 of 5 traders agree")).toBeTruthy();
+    expect(screen.getByText("Similar setups won 61% of 40")).toBeTruthy();
+    expect(screen.getByTestId("expiry").textContent).toBe("expires in 3:12");
+    expect(screen.getByTestId("expiry-bar").style.animationDelay).toBe("-0ms");
+  });
+
+  it("starts the time-left line part way down for a proposal that has waited", () => {
+    const now = Date.now();
+    render(createElement(LedgerQueue, props([proposal("a", "ETH/INR", 0.61, { approvalExpiryMs: 60_000, expiresAt: now + 15_000 })], { now })));
+    const line = screen.getByTestId("expiry-bar");
+    expect(line.style.animationDuration).toBe("60000ms");
+    expect(line.style.animationDelay).toBe("-45000ms");
+  });
+
+  it("shows the radar, the next scan, the markets and the server's last hour when nothing waits", () => {
+    // Friday 16 Oct 2026, 2:02:30 pm UTC: 7:32 pm in India (NSE closed), 10:02 am in New York (US open).
+    const now = Date.UTC(2026, 9, 16, 14, 2, 30);
+    const slot = Math.floor(now / 300_000) * 300_000;
+    const scans = [
+      { at: slot - 300_000 + 20_000, checked: 70, proposed: 0 },
+      { at: slot + 20_000, checked: 72, proposed: 1 },
+    ];
+    render(createElement(LedgerQueue, props([], { now, lastServerScanAt: slot + 20_000, serverScans: scans })));
+    expect(screen.getByTestId("radar")).toBeTruthy();
+    expect(screen.getByText("Nothing to approve")).toBeTruthy();
+    expect(screen.getByText(/^Next scan in \d:\d\d$/)).toBeTruthy();
+    expect(screen.getByText("US open")).toBeTruthy();
+    expect(screen.getByText("India closed")).toBeTruthy();
+    expect(screen.getByText(/Coins: daily check 5:40 am/)).toBeTruthy();
+    const hour = screen.getByRole("region", { name: "The last hour" });
+    expect(hour.textContent).toContain("2 of 12");
+    expect(hour.textContent).toContain("72checked each scan");
+    expect(hour.textContent).toContain("1proposed this hour");
+    expect(screen.getByText(/The server scans for you/)).toBeTruthy();
   });
 
   it("shows an empty state and still lets you scan", () => {

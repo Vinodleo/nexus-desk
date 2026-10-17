@@ -20,8 +20,7 @@ vi.mock("../../src/services/storagePersistenceService", () => ({
 
 const { Sheet } = await import("../../src/components/ledger/Sheet");
 const { LoginScreen } = await import("../../src/components/LoginScreen");
-const { SecurityConsoleModal, auditLabel } = await import("../../src/components/SecurityConsoleModal");
-const { BackgroundExecutionModal } = await import("../../src/components/BackgroundExecutionModal");
+const { ThisPhoneSheet, auditLabel, activityOf, activityTime } = await import("../../src/components/ledger/ThisPhoneSheet");
 const { isOwner } = await import("../../src/shared/owner");
 const storage = await import("../../src/services/storagePersistenceService");
 
@@ -67,6 +66,13 @@ describe("LoginScreen", () => {
     expect(auth.value.signInWithGoogle).toHaveBeenCalled();
   });
 
+  it("shows the opening screen's N tile above the button", () => {
+    auth.value.currentUser = null;
+    render(createElement(LoginScreen));
+    expect(screen.getByTestId("login-tile").textContent).toBe("N");
+    expect(screen.getByRole("heading", { name: "Nexus Desk" })).toBeTruthy();
+  });
+
   it("turns away other accounts and offers to switch", () => {
     auth.value.currentUser = { uid: "x", email: "someone@example.com" };
     render(createElement(LoginScreen));
@@ -76,49 +82,51 @@ describe("LoginScreen", () => {
   });
 });
 
-describe("SecurityConsoleModal", () => {
-  it("shows the account, switches role and lists activity", async () => {
-    render(createElement(SecurityConsoleModal, { isOpen: true, onClose: vi.fn() }));
-    expect(screen.getByText("vinoduppar007@gmail.com · google")).toBeTruthy();
-    fireEvent.click(screen.getByRole("radio", { name: /Trader/ }));
-    expect(auth.value.switchUserRole).toHaveBeenCalledWith("trader");
-    expect(screen.getByText("Kill switch engaged")).toBeTruthy();
-    expect(await screen.findByText("Key ab…cd")).toBeTruthy();
+describe("ThisPhoneSheet", () => {
+  it("shows the account, says the server trades, and lists activity in plain words", async () => {
+    render(createElement(ThisPhoneSheet, { isOpen: true, onClose: vi.fn(), popups: "on" }));
+    expect(screen.getByRole("dialog", { name: "This phone" })).toBeTruthy();
+    expect(screen.getByText("vinoduppar007@gmail.com · Google")).toBeTruthy();
+    expect(screen.getByText(/The server does the trading/)).toBeTruthy();
+    expect(screen.getByText("Stopped all trading")).toBeTruthy();
+    expect(screen.getByText("On")).toBeTruthy();
+    expect(await screen.findByText("On the server only")).toBeTruthy();
+    // No roles, wake lock or silent audio any more.
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(auth.value.logout).toHaveBeenCalled();
   });
 
-  it("asks before restoring from the cloud", async () => {
-    render(createElement(SecurityConsoleModal, { isOpen: true, onClose: vi.fn() }));
-    fireEvent.click(screen.getByRole("button", { name: /^Restore$/ }));
+  it("offers everything back on a phone left on a narrower role, and says nothing on the owner's", () => {
+    auth.value.userRole = "auditor";
+    render(createElement(ThisPhoneSheet, { isOpen: true, onClose: vi.fn() }));
+    expect(screen.getByText("look only")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Allow everything again" }));
+    expect(auth.value.switchUserRole).toHaveBeenCalledWith("commander");
+    cleanup();
+    auth.value.userRole = "commander";
+    render(createElement(ThisPhoneSheet, { isOpen: true, onClose: vi.fn() }));
+    expect(screen.queryByRole("button", { name: "Allow everything again" })).toBeNull();
+  });
+
+  it("asks before bringing the memory back from the cloud", async () => {
+    render(createElement(ThisPhoneSheet, { isOpen: true, onClose: vi.fn() }));
+    fireEvent.click(screen.getByRole("button", { name: /Bring back/ }));
     expect(storage.syncFromFirebase).not.toHaveBeenCalled();
-    const confirm = screen.getAllByRole("button", { name: "Restore" });
-    fireEvent.click(confirm[confirm.length - 1]);
+    fireEvent.click(screen.getByRole("button", { name: "Replace" }));
     expect(storage.syncFromFirebase).toHaveBeenCalledWith("u1");
-    expect(await screen.findByText("Couldn't restore from the cloud.")).toBeTruthy();
+    expect(await screen.findByText("Couldn't bring it back from the cloud.")).toBeTruthy();
   });
 
-  it("labels audit actions in plain words", () => {
+  it("labels activity in plain words, with the day it happened", () => {
     expect(auditLabel("CLOUD_SYNC_PUSH")).toBe("Cloud sync push");
-  });
-});
-
-describe("BackgroundExecutionModal", () => {
-  it("starts the desk and flips the device switches", () => {
-    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
-    const p = {
-      isOpen: true, onClose: vi.fn(), isPlaying: false, onTogglePlay: vi.fn(), onToggleWakeLock: vi.fn(),
-      onToggleAudioKeepAlive: vi.fn(), onRequestNotifications: vi.fn(),
-      status: {
-        isSupported: true, isWorkerActive: false, isAudioKeepAliveActive: false, isWakeLockActive: true, wakeLockError: null,
-        notificationsPermission: "default" as NotificationPermission, heartbeatCount: 0, lastHeartbeatTimestamp: null, totalReconciledCycles: 0,
-      },
-    };
-    render(createElement(BackgroundExecutionModal, p));
-    fireEvent.click(screen.getByRole("button", { name: "Start" }));
-    expect(p.onTogglePlay).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("switch", { name: "Keep running when locked" }));
-    expect(p.onToggleAudioKeepAlive).toHaveBeenCalled();
-    expect(screen.getByRole("switch", { name: "Keep the screen on" }).getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
-    expect(p.onRequestNotifications).toHaveBeenCalled();
+    expect(activityOf({ action: "KILL_SWITCH_DISENGAGED", details: "" })).toEqual({ label: "Resumed trading", tone: "gain" });
+    expect(activityOf({ action: "DECISION_MODE_CHANGED", details: "Operational mode switched to AUTO_WITHIN_LIMITS" }).label).toBe("Autopilot on");
+    expect(activityOf({ action: "DECISION_MODE_CHANGED", details: "Operational mode switched to MANUAL" }).label).toBe("Autopilot off");
+    expect(activityOf({ action: "SOMETHING_NEW", details: "" }).label).toBe("Something new");
+    const at = new Date(2026, 9, 12, 9, 41).getTime();
+    expect(activityTime({ id: `audit-${at}-ab12`, timestamp: "09:41:00" })).toBe("12 Oct, 9:41 am");
+    expect(activityTime({ id: "a1", timestamp: "10:42" })).toBe("10:42");
   });
 });
