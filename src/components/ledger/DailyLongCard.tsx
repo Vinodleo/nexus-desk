@@ -1,4 +1,5 @@
 import React from "react";
+import type { SettingsResult, SettingsStrategy } from "../../services/settingsTest";
 import { useLabFeed } from "./labFeed";
 import { Fold } from "./labUi";
 import { profileTotals, recordStats, sumRecords, type HistoryRecords } from "../../services/historyReplay";
@@ -32,6 +33,8 @@ export interface DailyLongView {
   records: HistoryRecords;
   /** The classic strategies on the same coins and years (absent until they've run, or from older servers). */
   classic?: ClassicRecords | null;
+  /** The settings test on breakout (absent until it has run, or from older servers). */
+  settings?: Partial<Record<SettingsStrategy, SettingsResult>> | null;
   byMarket: Record<string, Partial<Record<TrailProfileId, TraderRecord>>>;
   cohorts: Record<string, string[]>;
 }

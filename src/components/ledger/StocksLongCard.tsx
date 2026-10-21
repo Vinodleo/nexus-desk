@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import type { SettingsResult, SettingsStrategy } from "../../services/settingsTest";
 import { recordStats, sumRecords } from "../../services/historyReplay";
 import type { TraderRecord } from "../../services/exitExpectancy";
 import { MIN_EDGE_R, MIN_TRADER_TRADES } from "../../services/calibration";
@@ -36,6 +37,8 @@ export interface StocksLongView {
     adjusted: { symbol: string; count: number }[];
   } | null;
   classic: Partial<Record<StockMarket, ClassicRecords>>;
+  /** Each market's settings test (absent until it has run, or from older servers). */
+  settings?: Partial<Record<StockMarket, Partial<Record<SettingsStrategy, SettingsResult>>>>;
   cohorts: Partial<Record<StockMarket, Record<string, string[]>>>;
   funds: Partial<Record<StockMarket, string>>;
 }

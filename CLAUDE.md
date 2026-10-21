@@ -44,7 +44,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     "ahead" once 10+ trades, by two standard errors). Then every strategy side by side in one market at a time (Coins, US,
     Funds, India) against `MIN_EDGE_R`, with whether each trades, and the one tapped year by year (`StrategyRecords`,
     `LabDesk.tsx`), the classic strategies on stocks (`StocksLongCard`), and the replays' details.
-  - **Tests:** the machine-learning tests, a card each (daily coin setups, breakout trades and momentum trades with a
+  - **Tests:** the settings test first (`SettingsTestCard`: a strategy at a time, its grid with its own settings in the
+    middle, a cell tapped for its numbers, the extra checks as bars, the verdict and the grid's average), then the
+    machine-learning tests, a card each (daily coin setups, breakout trades and momentum trades with a
     Coins/US/Funds switch, 5-minute setups; `MlTestCard`), how they ran, and the coin check (`CoinCheckCard`).
   - **Tools:** the older hands-on training tools.
   The Learning tab (`LedgerLearning.tsx`) has two parts, the last one picked remembered per device. **Your trades:** the
@@ -359,6 +361,16 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   way alongside, on the same readings (`momentumSetups`, `momentum_setups_coins.json`, `momentum_setups_us.json`;
   verdict in the same file's `momentum`, coins marked "not traded" in the Lab). The funds' (gold, bonds and the rest)
   are tested the same way (`BreakoutMarket` "funds", `*_setups_funds.json`, marked "not traded"). Decides nothing live.
+- **Settings test (Lab):** `src/services/settingsTest.ts`, whether a traded strategy's record holds up around its
+  settings (a plateau) or leans on them (a peak, likely fitted to the past). The long replays run it in their classic step,
+  on the same candles, yearly lists and costs: coin breakout (`dailyLong.ts`, from the kept candles), US breakout, US
+  momentum and funds breakout (`stocksLong.ts`, `SETTINGS_TESTED`; India trades none). A 3 x 3 grid around the traded
+  settings (breakout buying above a 40/55/70-day high and selling below a 15/20/30-day low; momentum's rise over
+  60/90/120 days and its top 2/3/5; `BREAKOUT_SETTINGS`, `MOMENTUM_SETTINGS` in `classicStrategies.ts`), breakout's stop at
+  1.5 and 3 ATR, and its own settings at double the costs. "Holds up" when every nearby setting made money and doubled
+  costs still do; "Fragile" when most nearby lost or doubled costs lose; else "Mixed". The grid's average is the fairer
+  guide to what it may make. Bumping `SETTINGS_TEST_VERSION` runs it again (coins redo only their classic step; stocks
+  replay again). Decides nothing.
 - **When setups win:** `src/services/conditionStats.ts`, results grouped by market conditions.
   - It, the win-chance calibration and the trade memory count each trader's move once
     (`oneShadowAtATime` in `shadowTracker.ts`), not once per candle a setup stayed valid.

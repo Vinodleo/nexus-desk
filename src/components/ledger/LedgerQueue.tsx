@@ -351,8 +351,9 @@ const QuietQueue: React.FC<{
 }> = ({ isScanning, continuousScan, lastScanAt, scans, now: fixed }) => {
   const now = useNow(1000, fixed);
   const view = heartbeatView(scans, lastScanAt, now);
-  const running = isScanning || view.scanning;
   const serverScans = lastScanAt > 0 || scans.length > 0;
+  // The candle's scan is due only where something scans: the server, or this phone when it's asked to.
+  const running = isScanning || (serverScans && view.scanning);
   const looking = serverScans || continuousScan;
   const ran = view.slots.filter((s) => s.beat).length;
   const latest = [...view.slots].reverse().find((s) => s.beat)?.beat;
