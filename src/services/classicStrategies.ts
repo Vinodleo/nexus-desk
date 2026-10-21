@@ -133,13 +133,16 @@ export function breakoutEntryAt(
 ): { entry: number; risk: number; atr: number } | null {
   const a = range[i];
   if (i < p.entryDays || a === undefined || !(a > 0)) return null;
-  if (!(s.c[i] > Math.max(...s.h.slice(i - p.entryDays, i)))) return null;
+  // The last days' high, read in place (the replays and the settings test ask this of every day).
+  for (let k = i - p.entryDays; k < i; k++) if (!(s.c[i] > s.h[k])) return null;
   return { entry: s.c[i], risk: p.stopAtr * a, atr: a };
 }
 
 /** Whether the close of day `i` is below the last 20 days' low: a breakout trade is sold there. */
 export function breakoutExitAt(s: CandleSeries, i: number, p: BreakoutSettings = BREAKOUT_SETTINGS): boolean {
-  return i >= p.exitDays && s.c[i] < Math.min(...s.l.slice(i - p.exitDays, i));
+  if (i < p.exitDays) return false;
+  for (let k = i - p.exitDays; k < i; k++) if (!(s.c[i] < s.l[k])) return false;
+  return true;
 }
 
 /**
@@ -289,9 +292,17 @@ export function momentumTrades(
   p: MomentumSettings = MOMENTUM_SETTINGS
 ): ClassicTrade[] {
   const symbols = Object.keys(coins);
-  const index = new Map(symbols.map((sym) => [sym, new Map(coins[sym].t.map((t, i) => [t, i]))]));
   const ranges = new Map(symbols.map((sym) => [sym, atr(coins[sym])]));
   const days = [...new Set(symbols.flatMap((sym) => coins[sym].t))].sort((a, b) => a - b);
+  // Each one's candle on a day, found by walking its candles alongside the days (they're only asked in order).
+  const cursor = new Map(symbols.map((sym) => [sym, 0]));
+  const candleOn = (sym: string, day: number): number | undefined => {
+    const t = coins[sym].t;
+    let k = cursor.get(sym)!;
+    while (k < t.length && t[k] < day) k++;
+    cursor.set(sym, k);
+    return t[k] === day ? k : undefined;
+  };
   const held = new Map<string, Held>();
   const trades: ClassicTrade[] = [];
   const sell = (sym: string, i: number, exit: number, open?: boolean) => {
@@ -301,7 +312,7 @@ export function momentumTrades(
   for (const [k, day] of days.entries()) {
     // Stops first, on every held coin's candle that day.
     for (const [sym, h] of [...held]) {
-      const i = index.get(sym)!.get(day);
+      const i = candleOn(sym, day);
       if (i !== undefined && coins[sym].l[i] <= h.stop) sell(sym, i, stopFill(coins[sym], i, h.stop));
     }
     // Rebalanced at the week's close.
@@ -310,7 +321,7 @@ export function momentumTrades(
     const ranked = up
       ? momentumTop(
           symbols.flatMap((sym) => {
-            const i = index.get(sym)!.get(day);
+            const i = candleOn(sym, day);
             if (i === undefined || !eligible(sym, closeMs(coins[sym], i))) return [];
             const rise = momentumRise(coins[sym], i, p.days);
             return rise !== undefined ? [{ sym, rise }] : [];
@@ -321,12 +332,12 @@ export function momentumTrades(
     for (const sym of [...held.keys()]) {
       if (ranked.includes(sym)) continue;
       // Not trading that day (delisted): sold at its last close.
-      const i = index.get(sym)!.get(day) ?? coins[sym].t.length - 1;
+      const i = candleOn(sym, day) ?? coins[sym].t.length - 1;
       sell(sym, i, coins[sym].c[i]);
     }
     for (const sym of ranked) {
       if (held.has(sym)) continue;
-      const i = index.get(sym)!.get(day)!;
+      const i = candleOn(sym, day)!;
       const entry = momentumEntryAt(coins[sym], i, ranges.get(sym)!);
       if (entry) held.set(sym, { i, entry: entry.entry, stop: entry.entry - entry.risk, risk: entry.risk });
     }
