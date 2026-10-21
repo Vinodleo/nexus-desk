@@ -55,14 +55,28 @@ export type ClassicRecords = Record<string, Partial<Record<ClassicId, TraderReco
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const ATR_DAYS = 20;
-const BREAKOUT_ENTRY_DAYS = 55;
-const BREAKOUT_EXIT_DAYS = 20;
-const BREAKOUT_STOP_ATR = 2;
 const FAST_DAYS = 50;
 const SLOW_DAYS = 200;
 const TREND_STOP_ATR = 3;
 const MOMENTUM_DAYS = 90;
 export const MOMENTUM_HOLD = 3;
+
+/** Breakout's settings: the high it buys above, the low it sells below (days), and its stop (ATR below the entry). */
+export interface BreakoutSettings {
+  entryDays: number;
+  exitDays: number;
+  stopAtr: number;
+}
+/** The settings breakout trades on (55/20, a stop 2 ATR below); the settings test (settingsTest.ts) tries others nearby. */
+export const BREAKOUT_SETTINGS: BreakoutSettings = { entryDays: 55, exitDays: 20, stopAtr: 2 };
+
+/** Momentum's settings: the rise it ranks by (days) and how many it holds. */
+export interface MomentumSettings {
+  days: number;
+  hold: number;
+}
+/** The settings momentum trades on (the 3 that rose most over 90 days). */
+export const MOMENTUM_SETTINGS: MomentumSettings = { days: MOMENTUM_DAYS, hold: MOMENTUM_HOLD };
 
 /** Simple moving average of `xs` over `n` values, per index (undefined until there are `n`). */
 export function sma(xs: number[], n: number): (number | undefined)[] {
@@ -111,41 +125,52 @@ function close(strategy: ClassicId, symbol: string, s: CandleSeries, h: Held, j:
  * with its entry and risk (2 ATR); null otherwise. The replay and the paper
  * trades (server/scanner/dailyCoins.ts) both enter by it.
  */
-export function breakoutEntryAt(s: CandleSeries, i: number, range: (number | undefined)[] = atr(s)): { entry: number; risk: number; atr: number } | null {
+export function breakoutEntryAt(
+  s: CandleSeries,
+  i: number,
+  range: (number | undefined)[] = atr(s),
+  p: BreakoutSettings = BREAKOUT_SETTINGS
+): { entry: number; risk: number; atr: number } | null {
   const a = range[i];
-  if (i < BREAKOUT_ENTRY_DAYS || a === undefined || !(a > 0)) return null;
-  if (!(s.c[i] > Math.max(...s.h.slice(i - BREAKOUT_ENTRY_DAYS, i)))) return null;
-  return { entry: s.c[i], risk: BREAKOUT_STOP_ATR * a, atr: a };
+  if (i < p.entryDays || a === undefined || !(a > 0)) return null;
+  if (!(s.c[i] > Math.max(...s.h.slice(i - p.entryDays, i)))) return null;
+  return { entry: s.c[i], risk: p.stopAtr * a, atr: a };
 }
 
 /** Whether the close of day `i` is below the last 20 days' low: a breakout trade is sold there. */
-export function breakoutExitAt(s: CandleSeries, i: number): boolean {
-  return i >= BREAKOUT_EXIT_DAYS && s.c[i] < Math.min(...s.l.slice(i - BREAKOUT_EXIT_DAYS, i));
+export function breakoutExitAt(s: CandleSeries, i: number, p: BreakoutSettings = BREAKOUT_SETTINGS): boolean {
+  return i >= p.exitDays && s.c[i] < Math.min(...s.l.slice(i - p.exitDays, i));
 }
 
 /**
  * Breakout 55/20 on one coin's daily candles. `eligible` says whether a
  * trade may open at a close (the coin on that year's list); `cost` is a
- * round trip's fees and spread (share of price).
+ * round trip's fees and spread (share of price); `p` other settings to try.
  */
-export function breakoutTrades(symbol: string, s: CandleSeries, cost: number, eligible: (ms: number) => boolean): ClassicTrade[] {
+export function breakoutTrades(
+  symbol: string,
+  s: CandleSeries,
+  cost: number,
+  eligible: (ms: number) => boolean,
+  p: BreakoutSettings = BREAKOUT_SETTINGS
+): ClassicTrade[] {
   const n = s.t.length;
   const range = atr(s);
   const trades: ClassicTrade[] = [];
   let held: Held | null = null;
-  for (let i = BREAKOUT_ENTRY_DAYS; i < n; i++) {
+  for (let i = p.entryDays; i < n; i++) {
     if (held) {
       if (s.l[i] <= held.stop) {
         trades.push(close("breakout", symbol, s, held, i, stopFill(s, i, held.stop), cost));
         held = null;
-      } else if (breakoutExitAt(s, i)) {
+      } else if (breakoutExitAt(s, i, p)) {
         trades.push(close("breakout", symbol, s, held, i, s.c[i], cost));
         held = null;
       }
       continue;
     }
     if (!eligible(closeMs(s, i))) continue;
-    const entry = breakoutEntryAt(s, i, range);
+    const entry = breakoutEntryAt(s, i, range, p);
     if (entry) held = { i, entry: entry.entry, stop: entry.entry - entry.risk, risk: entry.risk };
   }
   if (held) trades.push(close("breakout", symbol, s, held, n - 1, s.c[n - 1], cost, true));
@@ -225,16 +250,16 @@ export function maTrendTrades(
 }
 
 /** How much a coin or stock rose over the last 90 days (sessions, for stocks) to day `i`'s close; undefined before it has 90. */
-export function momentumRise(s: CandleSeries, i: number): number | undefined {
-  return i >= MOMENTUM_DAYS ? s.c[i] / s.c[i - MOMENTUM_DAYS] - 1 : undefined;
+export function momentumRise(s: CandleSeries, i: number, days: number = MOMENTUM_DAYS): number | undefined {
+  return i >= days ? s.c[i] / s.c[i - days] - 1 : undefined;
 }
 
 /** Momentum's picks among `rises`: the MOMENTUM_HOLD that rose most, if they rose at all, best first. */
-export function momentumTop<T extends { rise: number }>(rises: T[]): T[] {
+export function momentumTop<T extends { rise: number }>(rises: T[], hold: number = MOMENTUM_HOLD): T[] {
   return rises
     .filter((x) => x.rise > 0)
     .sort((a, b) => b.rise - a.rise)
-    .slice(0, MOMENTUM_HOLD);
+    .slice(0, hold);
 }
 
 /**
@@ -260,7 +285,8 @@ export function momentumTrades(
   costFor: (symbol: string) => number,
   eligible: (symbol: string, ms: number) => boolean,
   /** Whether a candle (by its start, and the next one's) is the week's close: coins' Sunday by default. */
-  weekClose: (day: number, next: number | undefined) => boolean = coinWeekClose
+  weekClose: (day: number, next: number | undefined) => boolean = coinWeekClose,
+  p: MomentumSettings = MOMENTUM_SETTINGS
 ): ClassicTrade[] {
   const symbols = Object.keys(coins);
   const index = new Map(symbols.map((sym) => [sym, new Map(coins[sym].t.map((t, i) => [t, i]))]));
@@ -286,9 +312,10 @@ export function momentumTrades(
           symbols.flatMap((sym) => {
             const i = index.get(sym)!.get(day);
             if (i === undefined || !eligible(sym, closeMs(coins[sym], i))) return [];
-            const rise = momentumRise(coins[sym], i);
+            const rise = momentumRise(coins[sym], i, p.days);
             return rise !== undefined ? [{ sym, rise }] : [];
-          })
+          }),
+          p.hold
         ).map((x) => x.sym)
       : [];
     for (const sym of [...held.keys()]) {

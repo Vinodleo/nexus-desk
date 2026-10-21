@@ -20,6 +20,15 @@ import { TRAIL_PROFILES, type TrailProfileId } from "../../src/shared/trailingSt
 import { roundTripFeeRate } from "../../src/shared/tradeCosts";
 import { addClassicTrades, breakoutTrades, btcUptrend, maTrendTrades, momentumTrades, type ClassicRecords } from "../../src/services/classicStrategies";
 import { breakoutSetups, marketCandles, momentumSetups, type BreakoutSetup } from "../../src/services/breakoutModel";
+import {
+  SETTINGS_TEST_VERSION,
+  breakoutVariantCell,
+  breakoutVariants,
+  settingsResult,
+  type SettingsCell,
+  type SettingsResult,
+  type SettingsStrategy,
+} from "../../src/services/settingsTest";
 import { saveBreakoutSetups } from "./breakoutSetups";
 import { fetchCoinDailySince, type HistoryFetch } from "./historyCandles";
 import { backgroundWorkBusy, CPU_SHARE, historyRunning, historySpread, setupsFileName, waitForOtherWork } from "./historyJob";
@@ -133,6 +142,9 @@ export interface DailyLongRun {
   /** The classic strategies' results on the same coins and years (CLASSIC_VERSION's); the last finished run's while this one replays. */
   classic?: ClassicRecords;
   classicVersion?: number;
+  /** The settings test on breakout (src/services/settingsTest.ts, SETTINGS_TEST_VERSION's); the last run's while this one replays. */
+  settings?: Partial<Record<SettingsStrategy, SettingsResult>>;
+  settingsVersion?: number;
 }
 
 export interface DailyLongDeps {
@@ -240,7 +252,7 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
     // their version, so this run works them out again even if it stops after its last coin and carries on.
     const last = run?.version === DAILY_LONG_VERSION ? run : null;
     const lastRecords = last ? dailyLongRecords() ?? undefined : undefined;
-    const lastClassic = last?.classic ? { classic: last.classic } : {};
+    const lastClassic = { ...(last?.classic ? { classic: last.classic } : {}), ...(last?.settings ? { settings: last.settings } : {}) };
     fs.rmSync(dailySetupsDir(), { recursive: true, force: true });
     fs.rmSync(dailyCandlesDir(), { recursive: true, force: true });
     run = { version: DAILY_LONG_VERSION, startedAt: deps.now(), finishedAt: null, fromMs: DAILY_LONG_FROM_MS, toMs, traders: traderIds(), markets: {}, records: {}, ...(lastRecords ? { lastRecords } : {}), ...lastClassic };
@@ -329,7 +341,7 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
   }
 
   // The classic strategies, on the same coins' kept candles (fetched once more where they weren't kept).
-  if (replayedAny || r.classicVersion !== CLASSIC_VERSION) {
+  if (replayedAny || r.classicVersion !== CLASSIC_VERSION || r.settingsVersion !== SETTINGS_TEST_VERSION) {
     current = null;
     const coins: Record<string, CandleSeries> = {};
     for (const [symbol, m] of Object.entries(r.markets)) {
@@ -371,6 +383,16 @@ async function work(gen: number, fresh: boolean, deps: DailyLongDeps): Promise<v
     r.classicVersion = CLASSIC_VERSION;
     saveBreakoutSetups("coins", setups, deps.now());
     saveBreakoutSetups("coins", momentumPicks, deps.now(), "momentum");
+    // The settings test: breakout at settings around its own and at double the costs, on the same coins and lists.
+    const cells: SettingsCell[] = [];
+    for (const v of breakoutVariants()) {
+      const began = deps.now();
+      cells.push(breakoutVariantCell(coins, v, costFor, inCohort));
+      await rest(deps.now() - began);
+      if (stopped()) return;
+    }
+    r.settings = { breakout: settingsResult("breakout", cells) };
+    r.settingsVersion = SETTINGS_TEST_VERSION;
   }
   if (replayedAny || r.finishedAt === null) r.finishedAt = deps.now();
   save();
@@ -450,7 +472,10 @@ export function startDailyLongJob(): void {
   loadDailyLong();
   waitForOtherWork(() => active !== null, JOB_NAME);
   const check = () => {
-    const due = dailyLongDue(run, Date.now()) || (run !== null && (run.finishedAt === null || run.classicVersion !== CLASSIC_VERSION)) || dailyLongMissing(run);
+    const due =
+      dailyLongDue(run, Date.now()) ||
+      (run !== null && (run.finishedAt === null || run.classicVersion !== CLASSIC_VERSION || run.settingsVersion !== SETTINGS_TEST_VERSION)) ||
+      dailyLongMissing(run);
     const free = !active && !historyRunning() && !backgroundWorkBusy();
     if (free && due) void startDailyLong(false);
     // Due but waiting for other work: looked at again soon, not hours later.
@@ -486,6 +511,8 @@ export function dailyLongView() {
     stale: !!run && run.version !== DAILY_LONG_VERSION,
     /** The classic strategies' results on the same coins and years, by quarter (the last finished run's while it replays again; null until they've run). */
     classic: run?.classic ?? null,
+    /** The settings test on breakout (null until it has run). */
+    settings: run?.settings ?? null,
     /** Each coin's own result in its list years. */
     byMarket: Object.fromEntries(Object.entries(markets).flatMap(([symbol, m]) => (m.status === "done" && m.totals ? [[symbol, m.totals]] : []))) as Record<
       string,

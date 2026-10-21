@@ -16,6 +16,7 @@ import { GrowBar, staggerDelay, useSlideFrom } from "./motion";
 import { ExitSettings } from "./ExitSettings";
 import { CoinCheckCard, HistoryCard } from "./HistoryCard";
 import { MlTestCard } from "./MlTestCard";
+import { SettingsTestCard } from "./SettingsTestCard";
 import { DailyCoinsCard } from "./DailyCoinsCard";
 import { StrategyLineup } from "./StrategyLineup";
 import { DeskDayCard } from "./DeskDayCard";
@@ -300,6 +301,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({
       </section>
 
       <section {...panel("tests")}>
+        <SettingsTestCard />
         <MlTestCard />
         <CoinCheckCard trailProfile={trailProfile} />
       </section>

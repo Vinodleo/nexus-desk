@@ -12,6 +12,17 @@ import { breakoutSetups, marketCandles, momentumSetups, type BreakoutSetup } fro
 import { saveBreakoutSetups } from "./breakoutSetups";
 import { scannerHeartbeat } from "../scanner/scannerService";
 import { FUNDS } from "../../src/shared/funds";
+import {
+  SETTINGS_TEST_VERSION,
+  breakoutVariantCell,
+  breakoutVariants,
+  momentumVariantCell,
+  momentumVariants,
+  settingsResult,
+  type SettingsCell,
+  type SettingsResult,
+  type SettingsStrategy,
+} from "../../src/services/settingsTest";
 
 // The classic strategies (src/services/classicStrategies.ts) on US and
 // Indian stocks' daily candles since 2016: whether breakout 55/20, moving
@@ -188,7 +199,14 @@ export interface StocksLongRun {
   classic: Partial<Record<StockMarket, ClassicRecords>>;
   /** Markets this run has finished. */
   done: StockMarket[];
+  /** The settings test (src/services/settingsTest.ts) on the strategies each market trades: a market finished in this run, or the last run's. */
+  settings?: Partial<Record<StockMarket, Partial<Record<SettingsStrategy, SettingsResult>>>>;
+  /** SETTINGS_TEST_VERSION when this run started: another one runs it again from the start. */
+  settingsVersion?: number;
 }
+
+/** The strategies the settings test checks in each market: those that trade there (India trades none). */
+export const SETTINGS_TESTED: Record<StockMarket, SettingsStrategy[]> = { us: ["breakout", "momentum"], funds: ["breakout"], nse: [] };
 
 export interface StocksLongDeps {
   now: () => number;
@@ -238,7 +256,7 @@ function save(): void {
 
 /** Whether the kept results need replaying from the start: none, another version, or a month old. */
 export function stocksLongDue(saved: StocksLongRun | null, now: number): boolean {
-  if (!saved || saved.version !== STOCKS_LONG_VERSION || saved.classicVersion !== CLASSIC_VERSION) return true;
+  if (!saved || saved.version !== STOCKS_LONG_VERSION || saved.classicVersion !== CLASSIC_VERSION || saved.settingsVersion !== SETTINGS_TEST_VERSION) return true;
   return saved.finishedAt !== null && now - saved.finishedAt > RERUN_AFTER_MS;
 }
 
@@ -267,6 +285,8 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
       markets: {},
       // The last run's results stay on show until this run replaces each market's.
       classic: run?.classic ?? {},
+      settings: run?.settings ?? {},
+      settingsVersion: SETTINGS_TEST_VERSION,
       done: [],
     };
     save();
@@ -359,7 +379,25 @@ async function work(gen: number, fresh: boolean, deps: StocksLongDeps): Promise<
     const momentumPicks = learn ? momentumSetups(stocks, momentum, fundMarket) : [];
     await rest(deps.now() - started);
     if (stopped()) return;
+    // The settings test: the strategies traded here at settings around their own and at double the costs.
+    const tested: Partial<Record<SettingsStrategy, SettingsResult>> = {};
+    const eligible = (symbol: string, ms: number) => inStockCohort(symbol, ms, market);
+    for (const strategy of SETTINGS_TESTED[market]) {
+      const replays =
+        strategy === "breakout"
+          ? breakoutVariants().map((v) => () => breakoutVariantCell(stocks, v, () => cost, eligible))
+          : momentumVariants().map((v) => () => momentumVariantCell(stocks, v, up, () => cost, eligible, stockWeekClose));
+      const cells: SettingsCell[] = [];
+      for (const replay of replays) {
+        const began = deps.now();
+        cells.push(replay());
+        await rest(deps.now() - began);
+        if (stopped()) return;
+      }
+      tested[strategy] = settingsResult(strategy, cells);
+    }
     r.classic[market] = classic;
+    (r.settings ??= {})[market] = tested;
     r.done.push(market);
     if (market !== "nse") {
       saveBreakoutSetups(market, setups, deps.now());
@@ -424,6 +462,8 @@ export function stocksLongView() {
       : null,
     /** Each market's classic results by quarter (absent until it has run). */
     classic: run?.classic ?? {},
+    /** Each market's settings test (absent until it has run). */
+    settings: run?.settings ?? {},
     cohorts: STOCK_COHORTS,
     funds: MARKET_FUND,
   };

@@ -176,7 +176,8 @@ describe("LedgerQueue", () => {
   });
 
   it("shows an empty state and still lets you scan", () => {
-    const p = props([], { continuousScan: false });
+    // Just after a 5-minute candle closes: with nothing scanning, it doesn't say it's scanning.
+    const p = props([], { continuousScan: false, now: Date.UTC(2026, 9, 16, 3, 30, 40) });
     const { container } = render(createElement(LedgerQueue, p));
     expect(container.textContent).toContain("Nothing to approve");
     expect(container.textContent).toContain("Scanning is paused");

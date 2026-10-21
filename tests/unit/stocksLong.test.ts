@@ -183,6 +183,27 @@ describe("the replay", () => {
     expect(stocks.stocksLongDue(saved, saved.finishedAt! + 31 * DAY)).toBe(true);
     expect(stocks.stocksLongDue({ ...saved, classicVersion: CLASSIC_VERSION - 1 }, saved.finishedAt!)).toBe(true);
     expect(stocks.stocksLongDue(null, 0)).toBe(true);
+    // A run from before the settings test: replayed again for it.
+    expect(stocks.stocksLongDue({ ...saved, settingsVersion: undefined }, saved.finishedAt!)).toBe(true);
+  });
+
+  it("runs the settings test on the strategies each market trades: US breakout and momentum, the funds' breakout", async () => {
+    const { deps: d } = deps();
+    await stocks.startStocksLong(true, d);
+    const run = stocks._stocksLongRun()!;
+    const { SETTINGS_TEST_VERSION } = await import("../../src/services/settingsTest");
+    expect(run.settingsVersion).toBe(SETTINGS_TEST_VERSION);
+    expect(Object.keys(run.settings!.us!).sort()).toEqual(["breakout", "momentum"]);
+    expect(Object.keys(run.settings!.funds!)).toEqual(["breakout"]);
+    expect(run.settings!.nse).toEqual({});
+    // Its own settings' cells are the replayed records.
+    const total = (market: "us" | "funds", id: "breakout" | "momentum") =>
+      Object.values(run.classic[market]!).reduce((n, q) => n + (q[id]?.trades ?? 0), 0);
+    expect(run.settings!.us!.breakout!.grid[4].trades).toBe(total("us", "breakout"));
+    expect(run.settings!.us!.momentum!.grid[4].trades).toBe(total("us", "momentum"));
+    expect(run.settings!.funds!.breakout!.grid[4].trades).toBe(total("funds", "breakout"));
+    expect(run.settings!.us!.momentum!.extra.map((c) => c.id)).toEqual(["costs-x2"]);
+    expect(stocks.stocksLongView().settings).toEqual(run.settings);
   });
 
   it("replays the funds across kinds of assets, the same every year and with no share-market guard, and saves their trades for the machine-learning test", async () => {

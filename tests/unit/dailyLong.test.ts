@@ -407,6 +407,39 @@ describe("the long daily replay", () => {
     expect(fs.readdirSync(long.dailyCandlesDir()).length).toBe(2);
   });
 
+  it("runs the settings test on breakout with the classic strategies, and on its own from the kept candles when it's missing", async () => {
+    const { deps } = fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] });
+    await long.startDailyLong(false, deps);
+    const run = long._dailyLongRun()!;
+    const { SETTINGS_TEST_VERSION } = await import("../../src/services/settingsTest");
+    expect(run.settingsVersion).toBe(SETTINGS_TEST_VERSION);
+    const tested = run.settings!.breakout!;
+    expect(tested.grid.map((c) => c.id)).toEqual(["40/15", "40/20", "40/30", "55/15", "55/20", "55/30", "70/15", "70/20", "70/30"]);
+    expect(tested.extra.map((c) => c.id)).toEqual(["stop-1.5", "stop-3", "costs-x2"]);
+    // Its own settings' cell is breakout's replayed record.
+    const breakout = Object.values(run.classic!).reduce(
+      (a, q) => ({ trades: a.trades + (q.breakout?.trades ?? 0), totalR: a.totalR + (q.breakout?.totalR ?? 0) }),
+      { trades: 0, totalR: 0 }
+    );
+    expect(tested.grid[4].trades).toBe(breakout.trades);
+    expect(tested.grid[4].avgR).toBeCloseTo(breakout.totalR / breakout.trades, 9);
+    expect(["holds", "mixed", "fragile"]).toContain(tested.verdict);
+    expect(long.dailyLongView().settings).toEqual(run.settings);
+
+    // A finished run from before the test: run from the kept candles, nothing downloaded, the rest kept.
+    const kept = { ...run, settings: undefined, settingsVersion: undefined };
+    fs.writeFileSync(path.join(dataDir, "daily_long.json"), JSON.stringify(kept));
+    long._resetDailyLong();
+    long.loadDailyLong();
+    const again = fakes({ symbols: () => ["BTC/INR", "LUNA/INR"] });
+    await long.startDailyLong(false, again.deps);
+    const redone = long._dailyLongRun()!;
+    expect(again.downloads).toEqual([]);
+    expect(redone.settings).toEqual(run.settings);
+    expect(redone.classic).toEqual(run.classic);
+    expect(redone.finishedAt).toBe(run.finishedAt);
+  });
+
   it("carries on after a restart from the next coin, and waits for a scan cycle to finish", async () => {
     const first = fakes({ symbols: () => ["LUNA/INR"] });
     await long.startDailyLong(false, first.deps);
