@@ -35,6 +35,7 @@ interface World {
   now: number;
   listings: IpoListing[];
   bids: Record<string, (now: number) => IpoBids | null>;
+  details: Record<string, { lotSize: number | null; upiCutoff: number | null }>;
   quotes: Record<string, { open: number; low: number; ltp: number } | null>;
   sessions: Record<string, IpoSession[]>;
   everyone: PushMessage[];
@@ -52,6 +53,7 @@ const deps = (): IpoDeps => ({
       return w.listings;
     },
     bids: async (symbol, now) => w.bids[symbol]?.(now) ?? null,
+    detail: async (symbol) => w.details[symbol] ?? { lotSize: null, upiCutoff: null },
   },
   prices: {
     quote: async (symbol) => w.quotes[symbol] ?? null,
@@ -77,6 +79,7 @@ beforeEach(() => {
     now: 0,
     listings: [HOT, COLD],
     bids: { HOTCO: (now) => bids(45, 22, now), COLDCO: (now) => bids(3, 2.4, now) },
+    details: {},
     quotes: {},
     sessions: {},
     everyone: [],
@@ -122,6 +125,34 @@ describe("while bidding", () => {
     w.everyone = [];
     await at("2026-10-21T16:55:00");
     expect(w.everyone).toEqual([]);
+  });
+
+  it("takes the lot and the UPI cutoff from the issue's page: the alert runs to 10 minutes before it", async () => {
+    w.listings = [{ ...HOT, lotSize: null }];
+    w.details.HOTCO = { lotSize: 12, upiCutoff: 19 * 60 };
+    await at("2026-10-21T18:45:00");
+    expect(w.everyone).toHaveLength(1);
+    expect(w.everyone[0].body).toContain("One lot is ₹1,200 (12 shares at ₹100).");
+    expect(w.everyone[0].body).toContain("Apply and approve the UPI request by 7 pm.");
+    const row = ipo.ipoView("u", w.now).bidding[0];
+    expect([row.lotSize, row.lotEstimated, row.upiCutoff]).toEqual([12, false, 19 * 60]);
+    // The book is final 45 minutes after the cutoff.
+    await at("2026-10-21T19:30:00");
+    expect(ipo._ipoState().ipos[0].fit).toBeNull();
+    await at("2026-10-21T19:50:00");
+    expect(ipo._ipoState().ipos[0].fit).toBe(true);
+  });
+
+  it("reads the issue's page once a day until it has the lot and the cutoff", async () => {
+    let reads = 0;
+    w.listings = [{ ...HOT, lotSize: null }];
+    // Each read of the page looks its issue up once here.
+    w.details = new Proxy({}, { get: () => (reads++, undefined) });
+    await at("2026-10-19T10:00:00");
+    await at("2026-10-19T10:15:00");
+    expect(reads).toBe(1);
+    await at("2026-10-20T10:00:00");
+    expect(reads).toBe(2);
   });
 
   it("makes the rule's call once the last day's book has closed", async () => {

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { apiFetch } from "../../services/apiClient";
-import { HOLD_DAYS, STRONG_OPEN, addDays, dayLabel, istDay, type IpoBids, type IpoPlan, type IpoRecord } from "../../shared/ipo";
+import { DEFAULT_UPI_CUTOFF, HOLD_DAYS, STRONG_OPEN, addDays, dayLabel, istDay, timeLabel, type IpoBids, type IpoPlan, type IpoRecord } from "../../shared/ipo";
 import { Card } from "./ui";
 import { formatMoney, pnlTone } from "./format";
 import { useLabFeed } from "./labFeed";
@@ -22,6 +22,8 @@ interface IpoRow {
   priceHigh: number | null;
   lotSize: number | null;
   lotEstimated?: boolean;
+  /** When UPI approvals close on the last day (India minutes). */
+  upiCutoff?: number;
   lotCost: number | null;
   bids: IpoBids | null;
   bidsError?: string | null;
@@ -150,6 +152,7 @@ export const IpoCard: React.FC = () => {
 
       {view.bidding.map((r) => {
         const lastDay = r.closes === today;
+        const cutoff = timeLabel(r.upiCutoff ?? DEFAULT_UPI_CUTOFF);
         return (
           <section key={r.symbol} className="flex flex-col gap-1.5" aria-label={`${r.name} IPO`} data-testid={`ipo-bidding-${r.symbol}`}>
             <div className="flex items-baseline justify-between gap-2">
@@ -157,7 +160,7 @@ export const IpoCard: React.FC = () => {
               <LabChip status={r.fits ? "passes" : "paused"}>{r.fits ? "Fits the rule" : "Not yet"}</LabChip>
             </div>
             <div className="text-xs tabular-nums text-muted">
-              {lastDay ? "Closes today, 5 pm" : `Closes ${dayLabel(r.closes)}`} · {band(r)}
+              {lastDay ? `Closes today, ${cutoff}` : `Closes ${dayLabel(r.closes)}`} · {band(r)}
               {r.lotCost !== null ? ` · lot ${r.lotEstimated ? "about " : ""}${rupees(r.lotCost)}` : ""}
             </div>
             {r.bids ? (
@@ -170,7 +173,7 @@ export const IpoCard: React.FC = () => {
               <div className="text-xs text-muted">{r.bidsError ? `Bids not read: ${r.bidsError}` : "Bids not read yet."}</div>
             )}
             {lastDay && r.fits && (
-              <p className="m-0 text-[13px] font-semibold text-gain">Apply and approve the UPI request by 5 pm today.</p>
+              <p className="m-0 text-[13px] font-semibold text-gain">Apply and approve the UPI request by {cutoff} today.</p>
             )}
           </section>
         );
@@ -252,7 +255,7 @@ export const IpoCard: React.FC = () => {
       <Fold title="How the IPO rule works">
         <p className="m-0 text-xs text-muted leading-relaxed">
           Apply on the last bidding day to an issue the big institutions (QIBs: mutual funds, banks, insurers) bid {view.rule.qib}× or more
-          for, and the whole issue {view.rule.total}× or more. The alert comes from 2 pm that day, before retail bids close at 5 pm. You
+          for, and the whole issue {view.rule.total}× or more. The alert comes from 2 pm that day, before UPI approvals close (the time NSE's page gives, 5 pm if it doesn't). You
           apply and approve the UPI request yourself: the money is only blocked until allotment.
         </p>
         <p className="m-0 text-xs text-muted leading-relaxed">

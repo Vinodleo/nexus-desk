@@ -14,7 +14,7 @@ const { IpoCard, planText } = await import("../../src/components/ledger/IpoCard"
 
 const row = (over: Record<string, unknown>) => ({
   symbol: "HOTCO", name: "Hot Co", opens: "2026-10-19", closes: "2026-10-21", priceLow: 95, priceHigh: 100, lotSize: 150, lotCost: 15_000,
-  bids: { qib: 45, nii: 18, retail: 12, total: 22, at: 0 }, fits: true, fit: null, allotmentOn: "2026-10-22", listsOn: "2026-10-26",
+  bids: { qib: 45, nii: 18, retail: 12, total: 22, at: 0 }, upiCutoff: 19 * 60, fits: true, fit: null, allotmentOn: "2026-10-22", listsOn: "2026-10-26",
   listedOn: null, open: null, openPct: null, plan: null, held: false, ...over,
 });
 const listed = ipoPlan(200, 75, [
@@ -58,10 +58,10 @@ describe("the IPO card", () => {
     render(createElement(IpoCard));
     const hot = await screen.findByTestId("ipo-bidding-HOTCO");
     expect(hot.textContent).toContain("Fits the rule");
-    expect(hot.textContent).toContain("Closes today, 5 pm · ₹95–100 · lot ₹15,000");
+    expect(hot.textContent).toContain("Closes today, 7 pm · ₹95–100 · lot ₹15,000");
     expect(hot.textContent).toContain("Institutions45×");
     expect(hot.textContent).toContain("Whole issue22×");
-    expect(hot.textContent).toContain("Apply and approve the UPI request by 5 pm today.");
+    expect(hot.textContent).toContain("Apply and approve the UPI request by 7 pm today.");
     const cold = screen.getByTestId("ipo-bidding-COLDCO");
     expect(cold.textContent).toContain("Not yet");
     expect(cold.textContent).toContain("2.4×");

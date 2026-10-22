@@ -1,28 +1,17 @@
+import fs from "fs";
+import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bidsFrom, listingFrom, nseDay, nseIpoSource, priceBand, _resetNseIpo } from "../../server/nseIpo";
+import { bidsFrom, clockMinutes, detailFrom, listingFrom, nseDay, nseIpoSource, priceBand, _resetNseIpo } from "../../server/nseIpo";
 
 // NSE's IPO pages as the tracker reads them: dates, price bands, the issue
-// lists (SME left out) and the table of how many times over each group bid.
+// lists (SME left out), the table of how many times over each group bid,
+// and an issue's lot and UPI cutoff. The replies are NSE's own from 22 Oct
+// 2026 (two issues bidding), trimmed.
 
-const current = [
-  {
-    symbol: "HOTCO", companyName: "Hot Co Limited", series: "EQ", issueStartDate: "19-Oct-2026", issueEndDate: "21-Oct-2026",
-    status: "Active", issuePrice: "Rs.95 to Rs.100", lotSize: "150", noOfTime: "5.20",
-  },
-  { symbol: "TINYCO", companyName: "Tiny Co Ltd", series: "SME", issueStartDate: "20-Oct-2026", issueEndDate: "22-Oct-2026", issuePrice: "Rs.50" },
-];
-const upcoming = [
-  { symbol: "NEXTCO", companyName: "Next Co Limited", series: "EQ", issueStartDate: "27-Oct-2026", issueEndDate: "29-Oct-2026", issuePrice: "", lotSize: null },
-];
-const categories = {
-  dataList: [
-    { srNo: "1", category: "Qualified Institutional Buyers (QIBs)", noOfShareOffered: "1,000", noOfSharesBid: "45,000", noOfTotalMeant: "45.00" },
-    { srNo: "2", category: "Non Institutional Investors (NIIs)", noOfTotalMeant: "18.40" },
-    { srNo: "3", category: "Retail Individual Investors (RIIs)", noOfTotalMeant: "12.10" },
-    { srNo: "", category: "Total", noOfTotalMeant: "22.30" },
-  ],
-  updateTime: "21-Oct-2026 14:00:00",
-};
+const nse = JSON.parse(fs.readFileSync(path.join(__dirname, "../fixtures/nse_ipo_2026-10-22.json"), "utf8"));
+const current: any[] = [...nse.current, { symbol: "TINYCO", companyName: "Tiny Co Ltd", series: "SME", issueStartDate: "20-Oct-2026", issueEndDate: "22-Oct-2026", issuePrice: "Rs.50" }];
+const upcoming: any[] = nse.upcoming;
+const categories = nse.activeCategory;
 
 describe("NSE's dates and prices", () => {
   it("reads its dates and price bands", () => {
@@ -38,18 +27,27 @@ describe("NSE's dates and prices", () => {
 
 describe("the issue lists", () => {
   it("reads a main-board issue and leaves SME ones out", () => {
-    expect(listingFrom(current[0])).toEqual({
-      symbol: "HOTCO", name: "Hot Co", opens: "2026-10-19", closes: "2026-10-21", priceLow: 95, priceHigh: 100, lotSize: 150, times: 5.2,
+    expect(listingFrom(current[1])).toEqual({
+      symbol: "JPL", name: "Jio Platforms", opens: "2026-10-21", closes: "2026-10-23", priceLow: 1065, priceHigh: 1119, lotSize: null, times: 2.3312991599371453,
     });
-    expect(listingFrom(current[1])).toBeNull();
-    // Coming up, its price not set yet.
-    expect(listingFrom(upcoming[0])).toMatchObject({ symbol: "NEXTCO", priceLow: null, priceHigh: null, lotSize: null });
+    expect(listingFrom(current[2])).toBeNull();
+    // The upcoming list carries the issues bidding now too, without the bids.
+    expect(listingFrom(upcoming[0])).toMatchObject({ symbol: "PARASHLTH", name: "Paras Healthcare", priceLow: 660, priceHigh: 693, times: null });
     expect(listingFrom({ symbol: "X", issueStartDate: "soon" })).toBeNull();
   });
 
-  it("reads how many times over each group bid", () => {
-    expect(bidsFrom(categories, 5)).toEqual({ qib: 45, nii: 18.4, retail: 12.1, total: 22.3, at: 5 });
+  it("reads how many times over each group bid, from the group's own row", () => {
+    // "Individuals(Other than RIIs)" comes before the retail row, with no figure of its own.
+    expect(bidsFrom(categories, 5)).toEqual({ qib: 9.686279295754126, nii: 3.7655418013037827, retail: 1.2479737515738236, total: 4.005566114675352, at: 5 });
     expect(bidsFrom({ dataList: [] }, 5)).toBeNull();
+  });
+
+  it("reads an issue's lot and the last day's UPI cutoff from its page", () => {
+    expect(detailFrom(nse.detail)).toEqual({ lotSize: 12, upiCutoff: 19 * 60 });
+    expect(detailFrom({})).toEqual({ lotSize: null, upiCutoff: null });
+    expect(clockMinutes("23-Oct-2026 (upto 5:30 pm)")).toBe(17 * 60 + 30);
+    expect(clockMinutes("12 PM")).toBe(12 * 60);
+    expect(clockMinutes("soon")).toBeNull();
   });
 });
 
@@ -71,13 +69,15 @@ describe("reading NSE", () => {
       if (url.includes("/api/ipo-current-issue")) return json(current);
       if (url.includes("/api/all-upcoming-issues")) return json(upcoming);
       if (url.includes("/api/ipo-active-category")) return json(categories);
+      if (url.includes("/api/ipo-detail?symbol=JPL&series=EQ")) return json(nse.detail);
       return page();
     });
     const issues = await nseIpoSource.issues(0);
-    expect(issues.map((i) => i.symbol)).toEqual(["HOTCO", "NEXTCO"]);
+    expect(issues.map((i) => i.symbol)).toEqual(["PARASHLTH", "JPL"]);
     expect(calls[0].url).toBe("https://www.nseindia.com/market-data/all-upcoming-issues-ipo");
     expect(calls.filter((c) => c.url.includes("/api/")).every((c) => c.cookie === "nsit=abc; nseappid=xyz")).toBe(true);
-    expect(await nseIpoSource.bids("HOTCO", 0)).toMatchObject({ qib: 45, total: 22.3 });
+    expect(await nseIpoSource.bids("JPL", 0)).toMatchObject({ qib: 9.686279295754126, total: 4.005566114675352 });
+    expect(await nseIpoSource.detail("JPL", 0)).toEqual({ lotSize: 12, upiCutoff: 19 * 60 });
     // The cookies are kept: one home-page visit.
     expect(calls.filter((c) => !c.url.includes("/api/"))).toHaveLength(1);
   });

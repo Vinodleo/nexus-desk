@@ -1,0 +1,298 @@
+{
+ "current": [
+  {
+   "companyName": "Paras Healthcare Limited",
+   "issueEndDate": "23-Oct-2026",
+   "issuePrice": "Rs.660 to Rs.693",
+   "issueSize": "12083331",
+   "issueStartDate": "21-Oct-2026",
+   "series": "EQ",
+   "status": "Active",
+   "symbol": "PARASHLTH",
+   "category": "Total",
+   "noOfSharesOffered": "1.2083331E7",
+   "noOfTime": "0.1594864859698042",
+   "noOfsharesBid": "1927128.0",
+   "srNo": null
+  },
+  {
+   "companyName": "Jio Platforms Limited",
+   "issueEndDate": "23-Oct-2026",
+   "issuePrice": "Rs.1065 to Rs.1119",
+   "issueSize": "197525934",
+   "issueStartDate": "21-Oct-2026",
+   "series": "EQ",
+   "status": "Active",
+   "symbol": "JPL",
+   "category": "Total",
+   "noOfSharesOffered": "1.97525934E8",
+   "noOfTime": "2.3312991599371453",
+   "noOfsharesBid": "4.60492044E8",
+   "srNo": null
+  }
+ ],
+ "upcoming": [
+  {
+   "companyName": "Paras Healthcare Limited",
+   "issueEndDate": "23-Oct-2026",
+   "issuePrice": "Rs.660 to Rs.693",
+   "issueSize": "12083331",
+   "issueStartDate": "21-Oct-2026",
+   "series": "EQ",
+   "status": "Active",
+   "symbol": "PARASHLTH"
+  },
+  {
+   "companyName": "Jio Platforms Limited",
+   "issueEndDate": "23-Oct-2026",
+   "issuePrice": "Rs.1065 to Rs.1119",
+   "issueSize": "197525934",
+   "issueStartDate": "21-Oct-2026",
+   "series": "EQ",
+   "status": "Active",
+   "symbol": "JPL"
+  }
+ ],
+ "activeCategory": {
+  "dataList": [
+   {
+    "category": "Category",
+    "noOfShareOffered": "No.of shares offered/reserved",
+    "noOfSharesBid": "No. of shares bid for",
+    "noOfTotalMeant": "No. of times of total meant for the category",
+    "srNo": "Sr.No."
+   },
+   {
+    "category": "Qualified Institutional Buyers(QIBs)",
+    "noOfShareOffered": "49007827",
+    "noOfSharesBid": "474703500",
+    "noOfTotalMeant": "9.686279295754126",
+    "srNo": "1"
+   },
+   {
+    "category": "Foreign Institutional Investors(FIIs)",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "172526916",
+    "noOfTotalMeant": "",
+    "srNo": "1(a)"
+   },
+   {
+    "category": "Domestic Financial Institutions(Banks/ Financial Institutions(FIs)/ Insurance Companies)",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "259163976",
+    "noOfTotalMeant": "",
+    "srNo": "1(b)"
+   },
+   {
+    "category": "Mutual funds",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "31860312",
+    "noOfTotalMeant": "",
+    "srNo": "1(c)"
+   },
+   {
+    "category": "Others",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "11152296",
+    "noOfTotalMeant": "",
+    "srNo": "1(d)"
+   },
+   {
+    "category": "Non Institutional Investors",
+    "noOfShareOffered": "36444569",
+    "noOfSharesBid": "137233548",
+    "noOfTotalMeant": "3.7655418013037827",
+    "srNo": "2"
+   },
+   {
+    "category": "Non Institutional Investors(Bid amount of more than Ten Lakh Rupees)",
+    "noOfShareOffered": "24296380",
+    "noOfSharesBid": "100464744",
+    "noOfTotalMeant": "4.134967595995782",
+    "srNo": "2.1"
+   },
+   {
+    "category": "Corporates",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "10902276",
+    "noOfTotalMeant": "",
+    "srNo": "2.1(a)"
+   },
+   {
+    "category": "Individuals(Other than RIIs)",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "76402140",
+    "noOfTotalMeant": "",
+    "srNo": "2.1(b)"
+   },
+   {
+    "category": "Others",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "13160328",
+    "noOfTotalMeant": "",
+    "srNo": "2.1(c)"
+   },
+   {
+    "category": "Non Institutional Investors(Bid amount of more than Two Lakh Rupees upto Ten Lakh Rupees)",
+    "noOfShareOffered": "12148189",
+    "noOfSharesBid": "36768804",
+    "noOfTotalMeant": "3.026690151099888",
+    "srNo": "2.2"
+   },
+   {
+    "category": "Corporates",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "171876",
+    "noOfTotalMeant": "",
+    "srNo": "2.2(a)"
+   },
+   {
+    "category": "Individuals(Other than RIIs)",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "36045600",
+    "noOfTotalMeant": "",
+    "srNo": "2.2(b)"
+   },
+   {
+    "category": "Others",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "551328",
+    "noOfTotalMeant": "",
+    "srNo": "2.2(c)"
+   },
+   {
+    "category": "Retail Individual Investors(RIIs)",
+    "noOfShareOffered": "85037327",
+    "noOfSharesBid": "106124352",
+    "noOfTotalMeant": "1.2479737515738236",
+    "srNo": "3"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "96457464",
+    "noOfTotalMeant": "",
+    "srNo": "3(a)"
+   },
+   {
+    "category": "Price bids",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "9666888",
+    "noOfTotalMeant": "",
+    "srNo": "3(b)"
+   },
+   {
+    "category": "Employees",
+    "noOfShareOffered": "4694835",
+    "noOfSharesBid": "8567496",
+    "noOfTotalMeant": "1.8248769126071522",
+    "srNo": "4"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "7531260",
+    "noOfTotalMeant": "",
+    "srNo": "4(a)"
+   },
+   {
+    "category": "Price Bids",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "1036236",
+    "noOfTotalMeant": "",
+    "srNo": "4(b)"
+   },
+   {
+    "category": "Shareholders",
+    "noOfShareOffered": "22341376",
+    "noOfSharesBid": "64574292",
+    "noOfTotalMeant": "2.890345339517136",
+    "srNo": "5"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "54266640",
+    "noOfTotalMeant": "",
+    "srNo": "5(a)"
+   },
+   {
+    "category": "Price Bids",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "10307652",
+    "noOfTotalMeant": "",
+    "srNo": "5(b)"
+   },
+   {
+    "category": "Total",
+    "noOfShareOffered": "1.97525934E8",
+    "noOfSharesBid": "7.91203188E8",
+    "noOfTotalMeant": "4.005566114675352",
+    "srNo": null
+   }
+  ],
+  "heading": null,
+  "symbol": null,
+  "updateTime": "Updated as on 22-Oct-2026 13:39:00"
+ },
+ "detail": {
+  "companyName": "JPL",
+  "issueInfo": {
+   "symbol": "JPL",
+   "dataList": [
+    {
+     "title": "Jio Platforms Limited",
+     "value": ""
+    },
+    {
+     "title": "Symbol",
+     "value": "JPL"
+    },
+    {
+     "title": "Issue Period",
+     "value": "21-Oct-2026 to 23-Oct-2026"
+    },
+    {
+     "title": "Cut-off time for UPI Mandate Confirmation",
+     "value": "\"23-Oct-2026 (upto 7:00 PM) The new cut-off time for UPI mandate acceptance is 07:00 PM on last day of IPO bidding. Further bids with confirmed status of mandate amount blocked (RC100) shall be considered as valid applications and hence, investors are advised to submit their UPI applications in IPO well in advance to avoid any last minute technical/systemic constraints that may hamper their ability to participate in IPOs by successfully accepting the mandate.\""
+    },
+    {
+     "title": "Issue Type",
+     "value": "Book Building"
+    },
+    {
+     "title": "Price Range",
+     "value": "Rs. 1065 to Rs. 1119 per Equity Share"
+    },
+    {
+     "title": "Discount",
+     "value": "Rs. 54 per equity share to Eligible Employees"
+    },
+    {
+     "title": "Face Value",
+     "value": "Rs. 10 per Equity Share"
+    },
+    {
+     "title": "Tick Size",
+     "value": "Re. 1"
+    },
+    {
+     "title": "Bid Lot",
+     "value": "12 Equity Shares and in multiples thereof"
+    },
+    {
+     "title": "Minimum Order Quantity",
+     "value": "12 Equity Shares"
+    },
+    {
+     "title": "Maximum Subscription Amount for Retail Investor",
+     "value": "\"Rs. 2,00,000\""
+    },
+    {
+     "title": "IPO Market Timings",
+     "value": "\"October 21, 2026     9:00 am - 7:00 pm \""
+    }
+   ]
+  }
+ }
+}

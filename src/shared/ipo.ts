@@ -55,8 +55,18 @@ export const STRONG_OPEN = 0.1;
 export const HOLD_DAYS = 7;
 /** On the last bidding day, the apply alert goes from this time (India minutes) while the issue fits the rule. */
 export const APPLY_ALERT_FROM = 14 * 60;
-/** Retail bids (and their UPI approvals) close at 5 pm on the last day; no alert after this. */
-export const APPLY_ALERT_UNTIL = 16 * 60 + 50;
+/** UPI approvals close at this time on the last day (India minutes) when NSE's page doesn't say: SEBI's 5 pm. */
+export const DEFAULT_UPI_CUTOFF = 17 * 60;
+/** The apply alert stops this long before the UPI cutoff: too little time left to apply. */
+export const APPLY_ALERT_LEAD = 10;
+
+/** "7 pm", "5:30 pm", from India minutes after midnight. */
+export function timeLabel(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "am" : "pm"}`;
+}
 /** Main-board listings start trading at 10 am, after an hour of pre-open bidding. */
 export const LISTING_TRADES_FROM = 10 * 60;
 

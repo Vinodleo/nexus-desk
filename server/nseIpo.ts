@@ -1,10 +1,11 @@
 import { fetchWithTimeout } from "./http";
 import type { IpoBids } from "../src/shared/ipo";
-import type { IpoListing, IpoSource } from "./ipoTracker";
+import type { IpoDetail, IpoListing, IpoSource } from "./ipoTracker";
 
 // NSE's IPO pages, read the way its website reads them (the IPO tracker's
-// source): the issues bidding now, the ones coming up, and how many times
-// over each group has bid for one. NSE answers its data routes only with
+// source): the issues bidding now, the ones coming up, how many times over
+// each group has bid for one, and an issue's lot and UPI cutoff from its
+// page. Checked against NSE's replies on 22 Oct 2026. NSE answers its data routes only with
 // the cookies its home page sets, so those are fetched first and kept until
 // it refuses them. SME issues are left out (main board only).
 
@@ -100,21 +101,47 @@ export function listingFrom(row: any): IpoListing | null {
   };
 }
 
-/** Group times-bid from NSE's category table: institutions, wealthy investors, retail and the whole issue. */
+/**
+ * Group times-bid from NSE's category table (`/api/ipo-active-category`,
+ * both exchanges' bids): institutions, wealthy investors, retail and the
+ * whole issue. Its sub-rows (FIIs, mutual funds, "Individuals (Other than
+ * RIIs)") carry no figure of their own, so a group's row is the first named
+ * for it that does.
+ */
 export function bidsFrom(body: any, now: number): IpoBids | null {
   const rows: any[] = Array.isArray(body?.dataList) ? body.dataList : Array.isArray(body) ? body : [];
   const pick = (re: RegExp): number | null => {
-    const row = rows.find((r) => re.test(String(r?.category ?? r?.categoryName ?? "")));
-    return row ? num(row.noOfTotalMeant ?? row.noOfTime ?? row.times ?? row.subscription) : null;
+    for (const r of rows) {
+      const times = num(r?.noOfTotalMeant ?? r?.noOfTime);
+      if (times !== null && re.test(String(r?.category ?? ""))) return times;
+    }
+    return null;
   };
   const bids: IpoBids = {
-    qib: pick(/qualified institution|\bqibs?\b/i),
-    nii: pick(/non.?institution|\bniis?\b|\bhnis?\b/i),
-    retail: pick(/retail|\brii/i),
+    qib: pick(/qualified institution/i),
+    nii: pick(/^non institution/i),
+    retail: pick(/^retail/i),
     total: pick(/^\s*total\b/i),
     at: now,
   };
   return bids.qib === null && bids.total === null ? null : bids;
+}
+
+/** India minutes from a time written like "7:00 PM" or "5 pm"; null without one. */
+export function clockMinutes(s: unknown): number | null {
+  const m = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i.exec(String(s ?? ""));
+  if (!m) return null;
+  const h = Number(m[1]) % 12 + (m[3].toLowerCase() === "pm" ? 12 : 0);
+  return h * 60 + Number(m[2] ?? 0);
+}
+
+/** The lot and the last day's UPI cutoff from an issue's page (`/api/ipo-detail`, its "Issue information" rows). */
+export function detailFrom(body: any): IpoDetail {
+  const rows: any[] = Array.isArray(body?.issueInfo?.dataList) ? body.issueInfo.dataList : [];
+  const value = (re: RegExp) => rows.find((r) => re.test(String(r?.title ?? "")))?.value;
+  const lot = /([\d,]+)\s*equity shares/i.exec(String(value(/^bid lot/i) ?? value(/^minimum order quantity/i) ?? ""));
+  const lotSize = lot ? num(lot[1]) : null;
+  return { lotSize: lotSize && lotSize > 0 ? lotSize : null, upiCutoff: clockMinutes(value(/cut-?off time for upi/i)) };
 }
 
 export const nseIpoSource: IpoSource = {
@@ -134,6 +161,9 @@ export const nseIpoSource: IpoSource = {
     const main = rows.filter((r) => !isSmeRow(r)).length;
     if (main > 0 && out.length === 0) throw new Error(`NSE listed ${main} main-board issues in a form the desk can't read`);
     return out;
+  },
+  async detail(symbol, now) {
+    return detailFrom(await nseJson(`/api/ipo-detail?symbol=${encodeURIComponent(symbol)}&series=EQ`, now));
   },
   async bids(symbol, now) {
     const body: any = await nseJson(`/api/ipo-active-category?symbol=${encodeURIComponent(symbol)}`, now);
