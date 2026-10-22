@@ -60,10 +60,15 @@ function angel(url: string, init?: RequestInit): Response {
     return new Response(JSON.stringify({ status: false, message: "Invalid Token", errorcode: "AG8001", data: null }));
   }
   if (p.endsWith("/searchScrip")) {
+    // A new listing trading trade-for-trade at first: only its BE line.
+    if (body.searchscrip === "NEWCO") return ok([{ exchange: "NSE", tradingsymbol: "NEWCO-BE", symboltoken: "777" }, { tradingsymbol: "NEWCOLTD-EQ", symboltoken: "778" }]);
     return ok(body.searchscrip === "SBIN" ? [{ exchange: "NSE", tradingsymbol: "SBIN-EQ", symboltoken: "3045" }, { tradingsymbol: "SBIN-BE", symboltoken: "9" }] : []);
   }
   if (p.endsWith("/getCandleData")) {
     return ok(candles(istToMs(body.fromdate), istToMs(body.todate), body.interval === "ONE_HOUR" ? HOUR : FIVE));
+  }
+  if (p.endsWith("/quote/") && body.mode === "OHLC") {
+    return ok({ fetched: [{ tradingSymbol: "NEWCO-BE", symbolToken: body.exchangeTokens.NSE[0], ltp: 131, open: 130, high: 133, low: 128, close: 100 }], unfetched: [] });
   }
   if (p.endsWith("/quote/")) {
     const last = (candles(now - FIVE, now, FIVE).at(-1) as number[])[4] * (1 + quoteRunUp);
@@ -108,6 +113,19 @@ beforeEach(() => {
 });
 
 describe("Angel One client", () => {
+  it("finds a just-listed stock's BE line and reads its open, low and last price (the IPO tracker)", async () => {
+    expect(await angelOne.listingTokenFor("NEWCO")).toBe("777");
+    expect(await angelOne.listingTokenFor("SBIN")).toBe("3045");
+    expect(await angelOne.listingTokenFor("LATECO")).toBeNull();
+    expect(await angelOne.fetchListingQuote("NEWCO")).toEqual({ open: 130, low: 128, ltp: 131 });
+    const quote = calls.find((c) => c.path.endsWith("/quote/"))!;
+    expect(quote.body).toEqual({ mode: "OHLC", exchangeTokens: { NSE: ["777"] } });
+    expect(await angelOne.fetchListingQuote("LATECO")).toBeNull();
+    // Found once: not searched again this run.
+    await angelOne.listingTokenFor("NEWCO");
+    expect(calls.filter((c) => c.path.endsWith("/searchScrip") && c.body.searchscrip === "NEWCO")).toHaveLength(1);
+  });
+
   it("makes the RFC 6238 one-time code", () => {
     // RFC 6238 test key "12345678901234567890"; at 59s the 8-digit code is 94287082.
     expect(angelOne.totp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 59_000, 8)).toBe("94287082");

@@ -39,6 +39,8 @@ import { backupStatus, restoreIfAsked, startBackups } from "./server/backup";
 import { coinDcxCheckStatus, startCoinDcxCheck } from "./server/coinDcxCheck";
 import { notifyEveryone, notifyUser } from "./server/push";
 import { startWeeklySummary } from "./server/weeklySummary";
+import { angelIpoPrices, startIpoTracker } from "./server/ipoTracker";
+import { nseIpoSource } from "./server/nseIpo";
 import { errorReportsOn, reportExpressErrors, reportStarted } from "./server/errorReports";
 
 // Entry point: builds the Express app, mounts the route modules behind
@@ -161,6 +163,12 @@ async function startServer() {
   startBackups((title, body) => void notifyEveryone({ title, body, tag: "backup-failed", url: "/" }));
   startCoinDcxCheck((title, body, tag) => void notifyEveryone({ title, body, tag, url: "/" }));
   startWeeklySummary((uid, message) => void notifyUser(uid, message));
+  startIpoTracker({
+    source: nseIpoSource,
+    prices: angelIpoPrices,
+    notifyAll: (message) => void notifyEveryone(message),
+    notify: (uid, message) => void notifyUser(uid, message),
+  });
   startDailyLongJob();
   startStocksLongJob();
   startDailyCoins();

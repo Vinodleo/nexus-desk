@@ -274,6 +274,56 @@ async function searchToken(symbol: string): Promise<string | null> {
   return match.symboltoken;
 }
 
+/** Newly listed stocks' tokens (the IPO tracker), kept this run only. */
+const listingTokens = new Map<string, string>();
+
+/**
+ * Angel One's token for a stock that has just listed: its EQ line, or its BE
+ * line (smaller issues trade-for-trade at first). Null until it's listed.
+ */
+export async function listingTokenFor(symbol: string): Promise<string | null> {
+  const known = listingTokens.get(symbol) ?? loadTokens()[symbol];
+  if (known) return known;
+  const found = await call<{ tradingsymbol?: string; symboltoken?: string }[]>("search", "/rest/secure/angelbroking/order/v1/searchScrip", {
+    exchange: "NSE",
+    searchscrip: symbol,
+  });
+  const rows = Array.isArray(found) ? found : [];
+  const match = rows.find((r) => r.tradingsymbol === `${symbol}-EQ`) ?? rows.find((r) => r.tradingsymbol === `${symbol}-BE`);
+  if (!match?.symboltoken) return null;
+  listingTokens.set(symbol, match.symboltoken);
+  return match.symboltoken;
+}
+
+/** A newly listed stock's open, low and last price today; null before it has traded. */
+export async function fetchListingQuote(symbol: string): Promise<{ open: number; low: number; ltp: number } | null> {
+  const token = await listingTokenFor(symbol);
+  if (!token) return null;
+  const data = await call<{ fetched?: { ltp?: number; open?: number; low?: number }[] }>("quote", "/rest/secure/angelbroking/market/v1/quote/", {
+    mode: "OHLC",
+    exchangeTokens: { NSE: [token] },
+  });
+  const row = data.fetched?.[0];
+  const open = Number(row?.open);
+  const low = Number(row?.low);
+  const ltp = Number(row?.ltp);
+  return open > 0 && ltp > 0 ? { open, low: low > 0 ? low : Math.min(open, ltp), ltp } : null;
+}
+
+/** A newly listed stock's daily candles between two times, as getCandleData gives them; none before it's listed. */
+export async function fetchListingCandles(symbol: string, fromMs: number, toMs: number): Promise<unknown[]> {
+  const token = await listingTokenFor(symbol);
+  if (!token) return [];
+  const data = await call<unknown[]>("historical", "/rest/secure/angelbroking/historical/v1/getCandleData", {
+    exchange: "NSE",
+    symboltoken: token,
+    interval: "ONE_DAY",
+    fromdate: istStamp(fromMs),
+    todate: istStamp(toMs),
+  });
+  return Array.isArray(data) ? data : [];
+}
+
 /** Tokens for several symbols; unlisted ones are left out. */
 export async function tokensFor(symbols: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -407,6 +457,7 @@ export function _resetAngelOne(): void {
   tokens = null;
   unknownSymbols.clear();
   searching.clear();
+  listingTokens.clear();
   lastCallAt.clear();
   queues.clear();
   pausedUntil.clear();

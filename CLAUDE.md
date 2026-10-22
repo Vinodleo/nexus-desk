@@ -34,8 +34,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     (`LabSummary`), the desk's day (`DeskDayCard`: a 24-hour dial in India time of the
     market sessions and the server's scheduled checks with their next times; the check times live in `src/shared/deskDay.ts`
     and the server reads them there), what each check did last as one timeline, newest first, with chips for what it
-    bought, sold, kept or left waiting (`ChecksTimeline`, `checkTags`, `LabDesk.tsx`), and folded under it ("Each check in
-    full", `CheckDetails`) the daily coin check with its coin slots (`DailyCoinsCard`), the US breakout check
+    bought, sold, kept or left waiting (`ChecksTimeline`, `checkTags`, `LabDesk.tsx`), the IPOs (`IpoCard`, below), and folded
+    under it ("Each check in full", `CheckDetails`) the daily coin check with its coin slots (`DailyCoinsCard`), the US breakout check
     (`UsBreakoutCard`), the funds' breakout check (`FundsBreakoutCard`) and the weekly US momentum check (`UsMomentumCard`).
   - **Records:** the scorecard first (`PaperScorecard`, `services/paperScorecard.ts`): coin breakout's, US breakout's,
     the funds' breakout's, US momentum's and the daily coin traders' real paper trades from the Book against their replays,
@@ -346,6 +346,19 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   apply. It trades only while the stocks' replay's US momentum record since 2016 averages `MIN_EDGE_R`+ over
   `MIN_TRADER_TRADES`+ trades (`momentumGate`, `classicGate`). Positions carry `strategy: "momentum"`, labelled
   "momentum". Without prices or SPY's candles it tries again each minute until 3:50. State in `us_momentum.json`.
+- **IPO tracker (Lab → Today, owner's ask, 22 Oct):** `server/ipoTracker.ts`, the rule in `src/shared/ipo.ts`, `IpoCard`.
+  Alerts only: it applies for nothing and sells nothing (Angel One's live orders aren't set up; Groww's API has no IPO bids).
+  NSE's main-board issues (SME left out) and their bids by group, read like its website (`server/nseIpo.ts`: the cookies
+  its page sets, then `/api/ipo-current-issue`, `/api/all-upcoming-issues?category=ipo`, `/api/ipo-active-category`; a
+  format it can't read shows in the card, not as an empty list). Every 15 minutes (the list every half hour on market days).
+  The rule (`IPO_RULE`): institutions (QIBs) bid 20×+ and the whole issue 10×+; on the last bidding day from 2 pm, while it
+  fits, one alert to everyone to apply by 5 pm (`APPLY_ALERT_FROM`). Its call is made once the book closes (`fit`).
+  Allotment T+1, listing T+3 weekdays (`expectedListing`); prices after listing from Angel One (`fetchListingQuote`,
+  `fetchListingCandles`: EQ or BE lines). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
+  open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
+  day's low, or 7 days on from 3 pm (`HOLD_DAYS`). The paper record (`ipoPlan`, `ipoRecord`): every listed issue as one
+  lot at the top of its band (about ₹15,000 of shares where NSE's list has no lot, `lotShares`), after Angel One's selling
+  charges, before tax, picked against skipped. State `ipo.json`.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if
