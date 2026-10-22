@@ -348,16 +348,19 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   "momentum". Without prices or SPY's candles it tries again each minute until 3:50. State in `us_momentum.json`.
 - **IPO tracker (Lab → Today, owner's ask, 22 Oct):** `server/ipoTracker.ts`, the rule in `src/shared/ipo.ts`, `IpoCard`.
   Alerts only: it applies for nothing and sells nothing (Angel One's live orders aren't set up; Groww's API has no IPO bids).
-  NSE's main-board issues (SME left out) and their bids by group, read like its website (`server/nseIpo.ts`: the cookies
-  its page sets, then `/api/ipo-current-issue`, `/api/all-upcoming-issues?category=ipo`, `/api/ipo-active-category`; a
-  format it can't read shows in the card, not as an empty list). Every 15 minutes (the list every half hour on market days).
-  The rule (`IPO_RULE`): institutions (QIBs) bid 20×+ and the whole issue 10×+; on the last bidding day from 2 pm, while it
-  fits, one alert to everyone to apply by 5 pm (`APPLY_ALERT_FROM`). Its call is made once the book closes (`fit`).
+  NSE's main-board issues (SME left out), read like its website (`server/nseIpo.ts`, checked against NSE's replies on
+  22 Oct: the cookies its page sets, then `/api/ipo-current-issue`, `/api/all-upcoming-issues?category=ipo`, the bids by
+  group from `/api/ipo-active-category` (both exchanges'; a group's own row, not its sub-rows), and each issue's lot and
+  last-day UPI cutoff from `/api/ipo-detail` (they differ: 5 pm or 7 pm), read once a day until known; a format it can't
+  read shows in the card, not as an empty list). Every 15 minutes (the list every half hour on market days).
+  The rule (`IPO_RULE`): institutions (QIBs) bid 20×+ and the whole issue 10×+; on the last bidding day from 2 pm until
+  10 minutes before the UPI cutoff, while it fits, one alert to everyone to apply (`APPLY_ALERT_FROM`, `upiCutoffOf`,
+  5 pm if unknown). Its call is made 45 minutes after the cutoff (`fit`).
   Allotment T+1, listing T+3 weekdays (`expectedListing`); prices after listing from Angel One (`fetchListingQuote`,
   `fetchListingCandles`: EQ or BE lines). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
   day's low, or 7 days on from 3 pm (`HOLD_DAYS`). The paper record (`ipoPlan`, `ipoRecord`): every listed issue as one
-  lot at the top of its band (about ₹15,000 of shares where NSE's list has no lot, `lotShares`), after Angel One's selling
+  lot at the top of its band (about ₹15,000 of shares where NSE gives no lot, `lotShares`), after Angel One's selling
   charges, before tax, picked against skipped. State `ipo.json`.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on

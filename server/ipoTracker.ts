@@ -4,7 +4,8 @@ import { formatMoney } from "../src/components/ledger/format";
 import { istParts, NSE_CLOSE, NSE_OPEN } from "../src/shared/nse";
 import {
   APPLY_ALERT_FROM,
-  APPLY_ALERT_UNTIL,
+  APPLY_ALERT_LEAD,
+  DEFAULT_UPI_CUTOFF,
   HOLD_DAYS,
   IPO_RULE,
   LISTING_TRADES_FROM,
@@ -18,6 +19,7 @@ import {
   istDay,
   listingOpen,
   lotShares,
+  timeLabel,
   type IpoBids,
   type IpoPlan,
   type IpoRecord,
@@ -29,8 +31,8 @@ import type { PushMessage } from "./push";
 
 // The IPO tracker (src/shared/ipo.ts has the rule): NSE's main-board issues
 // bidding now and coming up, how many times over each group has bid, an
-// alert on an issue's last bidding day when it fits the rule (apply by
-// 5 pm), and from listing day, for whoever said they got shares, when to sell
+// alert on an issue's last bidding day when it fits the rule (apply before
+// the UPI cutoff NSE's page gives), and from listing day, for whoever said they got shares, when to sell
 // half or all of it, when the price goes under the listing day's low, and a
 // week on. Every listed issue's result under the rule, one lot at the issue
 // price, is kept as the rule's paper record. Alerts only: it applies for
@@ -48,6 +50,14 @@ export interface IpoListing {
   lotSize: number | null;
   /** How many times over the whole issue has been bid, when the list says. */
   times?: number | null;
+  /** When UPI approvals close on the last day (India minutes), from the issue's page. */
+  upiCutoff?: number | null;
+}
+
+/** What an issue's own page adds to the list: its lot and the last day's UPI cutoff. */
+export interface IpoDetail {
+  lotSize: number | null;
+  upiCutoff: number | null;
 }
 
 /** Where the issues and their bids come from (NSE). */
@@ -56,6 +66,8 @@ export interface IpoSource {
   issues(now: number): Promise<IpoListing[]>;
   /** How many times over each group has bid for an issue bidding now; null when not known. */
   bids(symbol: string, now: number): Promise<IpoBids | null>;
+  /** The issue's lot and UPI cutoff. */
+  detail(symbol: string, now: number): Promise<IpoDetail>;
 }
 
 /** A listed issue's prices (Angel One). */
@@ -72,6 +84,8 @@ export interface TrackedIpo extends IpoListing {
   bids: IpoBids | null;
   /** Why the bids couldn't be read last time; null once they were. */
   bidsError?: string | null;
+  /** The day the issue's page was last read (for its lot and UPI cutoff), once a day until both are known. */
+  detailRead?: string | null;
   /** The rule's call on the last bids seen, once bidding is over (null while bidding). */
   fit: boolean | null;
   /** The apply alert went out. */
@@ -115,8 +129,8 @@ const LIST_EVERY_MS = 30 * MIN;
 /** Outside market days and hours the list is read about twice a day. */
 const LIST_QUIET_MS = 12 * 60 * MIN;
 const BIDS_EVERY_MS = 15 * MIN;
-/** Bidding is over for the rule's call once the last day's book has closed. */
-const BIDS_FINAL_AT = 17 * 60 + 30;
+/** Bidding is over for the rule's call this long after the UPI cutoff, once the last day's book has closed. */
+const BIDS_FINAL_AFTER = 45;
 /** The day's session is complete for its daily candle a little after the close. */
 const SESSION_DONE_AT = NSE_CLOSE + 15;
 /** The week's alert goes from this time on the day it's due, so the rest is sold before the close. */
@@ -167,7 +181,10 @@ export const issuePriceOf = (ipo: Pick<IpoListing, "priceHigh" | "priceLow">): n
 /** The issue's lot: the exchange's, else about ₹15,000 of shares. */
 export const lotOf = (ipo: Pick<IpoListing, "priceHigh" | "priceLow" | "lotSize">) => lotShares(ipo.lotSize, issuePriceOf(ipo));
 
-/** The last day's alert: it fits the rule, apply by 5 pm. */
+/** When UPI approvals close on the issue's last day (India minutes). */
+export const upiCutoffOf = (ipo: Pick<IpoListing, "upiCutoff">) => ipo.upiCutoff ?? DEFAULT_UPI_CUTOFF;
+
+/** The last day's alert: it fits the rule, apply before the UPI cutoff. */
 export function applyMessage(ipo: TrackedIpo): PushMessage {
   const p = issuePriceOf(ipo);
   const lot = lotOf(ipo);
@@ -176,7 +193,7 @@ export function applyMessage(ipo: TrackedIpo): PushMessage {
     title: `Apply today: ${ipo.name} IPO`,
     body:
       `Institutions bid ${times(ipo.bids?.qib ?? null)}, the whole issue ${times(ipo.bids?.total ?? null)}, retail ${times(ipo.bids?.retail ?? null)}.${lotText} ` +
-      `Apply and approve the UPI request by 5 pm. Allotment ${dayLabel(allotmentDay(ipo.closes))}, listing ${dayLabel(expectedListing(ipo.closes))}.`,
+      `Apply and approve the UPI request by ${timeLabel(upiCutoffOf(ipo))}. Allotment ${dayLabel(allotmentDay(ipo.closes))}, listing ${dayLabel(expectedListing(ipo.closes))}.`,
     tag: `ipo-${ipo.symbol}`,
     url: "/",
   };
@@ -323,11 +340,23 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
             console.warn(`[IPO] Couldn't read ${ipo.symbol}'s bids:`, ipo.bidsError);
           }
         }
-        if (today === ipo.closes && !ipo.alerted && minutes >= APPLY_ALERT_FROM && minutes <= APPLY_ALERT_UNTIL && fitsIpoRule(ipo.bids)) {
+        // The issue's page, for its lot and the last day's UPI cutoff: once a day until both are known.
+        if (today >= ipo.opens && marketDay && minutes >= 9 * 60 && ipo.detailRead !== today && (ipo.lotSize == null || ipo.upiCutoff == null)) {
+          try {
+            const d = await deps.source.detail(ipo.symbol, now);
+            ipo.lotSize ??= d.lotSize;
+            ipo.upiCutoff ??= d.upiCutoff;
+            ipo.detailRead = today;
+          } catch (err: any) {
+            console.warn(`[IPO] Couldn't read ${ipo.symbol}'s page:`, err?.message ?? err);
+          }
+        }
+        const cutoff = upiCutoffOf(ipo);
+        if (today === ipo.closes && !ipo.alerted && minutes >= APPLY_ALERT_FROM && minutes <= cutoff - APPLY_ALERT_LEAD && fitsIpoRule(ipo.bids)) {
           deps.notifyAll(applyMessage(ipo));
           ipo.alerted = true;
         }
-        if (today > ipo.closes || (today === ipo.closes && minutes >= BIDS_FINAL_AT)) {
+        if (today > ipo.closes || (today === ipo.closes && minutes >= cutoff + BIDS_FINAL_AFTER)) {
           ipo.fit = fitsIpoRule(ipo.bids);
           // Never bid for (withdrawn, or no figure for its book at all): nothing for the rule to judge.
           if (!ipo.bids && ipo.times == null) ipo.done = true;
@@ -409,6 +438,8 @@ export interface IpoRow {
   lotSize: number | null;
   /** The lot isn't the exchange's figure but about ₹15,000 of shares. */
   lotEstimated: boolean;
+  /** When UPI approvals close on the last day (India minutes). */
+  upiCutoff: number;
   /** One lot at the issue price. */
   lotCost: number | null;
   bids: IpoBids | null;
@@ -453,6 +484,7 @@ function rowOf(ipo: TrackedIpo, uid: string): IpoRow {
     priceHigh: ipo.priceHigh,
     lotSize: lot?.shares ?? null,
     lotEstimated: lot?.estimated ?? false,
+    upiCutoff: upiCutoffOf(ipo),
     lotCost: issue !== null && lot ? issue * lot.shares : null,
     // Without the book by group, the list's figure for the whole issue.
     bids: ipo.bids ?? (ipo.times != null ? { qib: null, nii: null, retail: null, total: ipo.times, at: ipo.firstSeen } : null),
