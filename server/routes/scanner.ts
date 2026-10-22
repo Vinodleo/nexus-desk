@@ -1,7 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import type { AuthedRequest } from "../auth";
 import type { PromotedLabModel } from "../../src/types";
-import { validate, deskStateBody, scannerReportsQuery } from "../validation";
+import { validate, deskStateBody, ipoHeldBody, scannerReportsQuery } from "../validation";
+import { ipoView, setHolding } from "../ipoTracker";
 import { getDeskState, setDeskState } from "../scanner/deskState";
 import { coinActivity, exitEdgeTable, reportsSince, scanNow, scannerStatus, shadowsFor, shadowsForDevice, typicalSpread } from "../scanner/scannerService";
 import { conditionBreakdown } from "../../src/services/conditionStats";
@@ -118,6 +119,21 @@ router.get("/api/funds-breakout", (req: Request, res: Response) => {
 // Momentum, top 3, on US stocks (the Lab): the last weekly check, its record, and its US slots.
 router.get("/api/us-momentum", (req: Request, res: Response) => {
   res.json({ success: true, ...usMomentumView(uidOf(req)) });
+});
+
+// IPOs (the Lab): bidding now and coming up, the ones waiting to list or just listed, and the rule's paper record.
+router.get("/api/ipos", (req: Request, res: Response) => {
+  res.json({ success: true, ...ipoView(uidOf(req)) });
+});
+
+// "I got shares" in an IPO: its listing-day and later alerts go to this user.
+router.post("/api/ipos/held", validate({ body: ipoHeldBody }), (req: Request, res: Response) => {
+  const uid = uidOf(req);
+  if (!setHolding(uid, req.body.symbol, req.body.held)) {
+    res.status(404).json({ success: false, error: "No such IPO waiting to list or just listed.", code: "NOT_FOUND" });
+    return;
+  }
+  res.json({ success: true, ...ipoView(uid) });
 });
 
 // Coin trades on daily candles (the Lab): the last daily scan, and which traders trade.

@@ -64,6 +64,12 @@ export const liveTestBody = z.object({
   market: z.string().regex(/^[A-Za-z0-9]{2,16}\/?INR$/i, "must be a CoinDCX INR market, like BTCINR"),
 });
 
+/** "I got shares" in an IPO (the Lab's IPO card): its NSE symbol, and whether held. */
+export const ipoHeldBody = z.object({
+  symbol: z.string().regex(/^[A-Z0-9&-]{1,20}$/, "must be an NSE symbol"),
+  held: z.boolean(),
+});
+
 // ---------- guardian ----------
 
 /** A position the app opens, sent with its order (/api/execute-trade). */
