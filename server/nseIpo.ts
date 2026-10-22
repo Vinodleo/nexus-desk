@@ -96,6 +96,7 @@ export function listingFrom(row: any): IpoListing | null {
     priceLow: band.low,
     priceHigh: band.high,
     lotSize: num(row.lotSize ?? row.minBidQuantity ?? row.marketLot),
+    times: num(row.noOfTime),
   };
 }
 

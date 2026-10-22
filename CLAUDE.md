@@ -357,7 +357,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   `fetchListingCandles`: EQ or BE lines). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
   day's low, or 7 days on from 3 pm (`HOLD_DAYS`). The paper record (`ipoPlan`, `ipoRecord`): every listed issue as one
-  lot at the top of its band, after Angel One's selling charges, before tax, picked against skipped. State `ipo.json`.
+  lot at the top of its band (about ₹15,000 of shares where NSE's list has no lot, `lotShares`), after Angel One's selling
+  charges, before tax, picked against skipped. State `ipo.json`.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if

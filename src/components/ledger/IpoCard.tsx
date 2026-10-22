@@ -21,6 +21,7 @@ interface IpoRow {
   priceLow: number | null;
   priceHigh: number | null;
   lotSize: number | null;
+  lotEstimated?: boolean;
   lotCost: number | null;
   bids: IpoBids | null;
   bidsError?: string | null;
@@ -157,7 +158,7 @@ export const IpoCard: React.FC = () => {
             </div>
             <div className="text-xs tabular-nums text-muted">
               {lastDay ? "Closes today, 5 pm" : `Closes ${dayLabel(r.closes)}`} · {band(r)}
-              {r.lotCost !== null ? ` · lot ${rupees(r.lotCost)}` : ""}
+              {r.lotCost !== null ? ` · lot ${r.lotEstimated ? "about " : ""}${rupees(r.lotCost)}` : ""}
             </div>
             {r.bids ? (
               <div className="flex flex-col gap-1">
@@ -260,7 +261,8 @@ export const IpoCard: React.FC = () => {
           and {HOLD_DAYS} days after listing at the latest. An alert comes for each.
         </p>
         <p className="m-0 text-xs text-muted leading-relaxed">
-          The record follows every main-board issue as if one lot was allotted at the top of its price band, after Angel One's selling
+          The record follows every main-board issue as if one lot was allotted at the top of its price band (about ₹15,000 of shares
+          where NSE's list doesn't give the lot), after Angel One's selling
           charges and before tax (a sale within a year is taxed at 20%). Picked against skipped shows whether the rule is worth following.
           SME issues are left out. Prices: NSE for the issues and bids, Angel One after listing.
         </p>

@@ -148,6 +148,28 @@ describe("while bidding", () => {
     expect(view.lastError).toBe("NSE's site answered 403 without cookies");
   });
 
+  it("without the lot or the book by group, uses about ₹15,000 of shares and the list's figure for the whole issue", async () => {
+    w.listings = [{ ...HOT, lotSize: null, times: 6.5 }];
+    w.bids.HOTCO = () => null;
+    await at("2026-10-20T11:00:00");
+    const row = ipo.ipoView("u", w.now).bidding[0];
+    expect([row.lotSize, row.lotEstimated, row.lotCost]).toEqual([150, true, 15_000]);
+    expect(row.bids).toMatchObject({ qib: null, total: 6.5 });
+    expect(row.fits).toBe(false);
+    w.bids.HOTCO = (now) => bids(45, 22, now);
+    await at("2026-10-21T14:05:00");
+    expect(w.everyone[0].body).toContain("One lot is about ₹15,000 at ₹100 a share.");
+  });
+
+  it("keeps following an issue whose book by group was never read, for the record", async () => {
+    w.listings = [{ ...COLD, times: 1.4 }];
+    w.bids.COLDCO = () => null;
+    await at("2026-10-21T15:00:00");
+    await at("2026-10-21T17:45:00");
+    const tracked = ipo._ipoState().ipos[0];
+    expect([tracked.fit, tracked.done]).toEqual([false, false]);
+  });
+
   it("shows issues opening later as coming up", async () => {
     w.listings = [...w.listings, { ...HOT, symbol: "NEXTCO", name: "Next Co", opens: "2026-10-27", closes: "2026-10-29" }];
     await at("2026-10-20T11:00:00");

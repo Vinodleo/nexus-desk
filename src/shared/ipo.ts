@@ -39,6 +39,16 @@ export function fitsIpoRule(bids: IpoBids | null | undefined): boolean {
   return !!bids && (bids.qib ?? 0) >= IPO_RULE.qib && (bids.total ?? 0) >= IPO_RULE.total;
 }
 
+/** SEBI sizes a main-board retail lot at about this much; used when the exchange's list doesn't give the lot. */
+export const RETAIL_LOT_RUPEES = 15_000;
+
+/** Shares in a lot: the exchange's figure, else about `RETAIL_LOT_RUPEES` at the issue price. */
+export function lotShares(lotSize: number | null | undefined, issuePrice: number | null): { shares: number; estimated: boolean } | null {
+  if (lotSize && lotSize > 0) return { shares: lotSize, estimated: false };
+  if (!(issuePrice && issuePrice > 0)) return null;
+  return { shares: Math.max(1, Math.floor(RETAIL_LOT_RUPEES / issuePrice)), estimated: true };
+}
+
 /** Opened at least this far above the issue price: sell half at the open and keep half. Under it, sell it all. */
 export const STRONG_OPEN = 0.1;
 /** The rest is sold, at the latest, on the first session this many days after listing. */

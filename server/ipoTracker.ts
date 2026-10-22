@@ -17,6 +17,7 @@ import {
   ipoRecord,
   istDay,
   listingOpen,
+  lotShares,
   type IpoBids,
   type IpoPlan,
   type IpoRecord,
@@ -45,6 +46,8 @@ export interface IpoListing {
   priceLow: number | null;
   priceHigh: number | null;
   lotSize: number | null;
+  /** How many times over the whole issue has been bid, when the list says. */
+  times?: number | null;
 }
 
 /** Where the issues and their bids come from (NSE). */
@@ -161,14 +164,18 @@ const price = (x: number) => formatMoney(x, { decimals: x >= 100 || Number.isInt
 /** The issue price: the top of the band, where heavily bid issues are priced. */
 export const issuePriceOf = (ipo: Pick<IpoListing, "priceHigh" | "priceLow">): number | null => ipo.priceHigh ?? ipo.priceLow;
 
+/** The issue's lot: the exchange's, else about ₹15,000 of shares. */
+export const lotOf = (ipo: Pick<IpoListing, "priceHigh" | "priceLow" | "lotSize">) => lotShares(ipo.lotSize, issuePriceOf(ipo));
+
 /** The last day's alert: it fits the rule, apply by 5 pm. */
 export function applyMessage(ipo: TrackedIpo): PushMessage {
   const p = issuePriceOf(ipo);
-  const lot = p !== null && ipo.lotSize ? ` One lot is ${rupees(p * ipo.lotSize)} (${ipo.lotSize} shares at ${price(p)}).` : "";
+  const lot = lotOf(ipo);
+  const lotText = p === null || !lot ? "" : lot.estimated ? ` One lot is about ${rupees(p * lot.shares)} at ${price(p)} a share.` : ` One lot is ${rupees(p * lot.shares)} (${lot.shares} shares at ${price(p)}).`;
   return {
     title: `Apply today: ${ipo.name} IPO`,
     body:
-      `Institutions bid ${times(ipo.bids?.qib ?? null)}, the whole issue ${times(ipo.bids?.total ?? null)}, retail ${times(ipo.bids?.retail ?? null)}.${lot} ` +
+      `Institutions bid ${times(ipo.bids?.qib ?? null)}, the whole issue ${times(ipo.bids?.total ?? null)}, retail ${times(ipo.bids?.retail ?? null)}.${lotText} ` +
       `Apply and approve the UPI request by 5 pm. Allotment ${dayLabel(allotmentDay(ipo.closes))}, listing ${dayLabel(expectedListing(ipo.closes))}.`,
     tag: `ipo-${ipo.symbol}`,
     url: "/",
@@ -228,15 +235,17 @@ function mergeListings(listings: IpoListing[], now: number): void {
   for (const l of listings) {
     const known = state.ipos.find((i) => i.symbol === l.symbol);
     if (!known) state.ipos.push(fresh(l, now));
-    else if (known.fit === null) Object.assign(known, { name: l.name, opens: l.opens, closes: l.closes, priceLow: l.priceLow, priceHigh: l.priceHigh, lotSize: l.lotSize ?? known.lotSize });
+    else if (known.fit === null)
+      Object.assign(known, { name: l.name, opens: l.opens, closes: l.closes, priceLow: l.priceLow, priceHigh: l.priceHigh, lotSize: l.lotSize ?? known.lotSize, times: l.times ?? known.times ?? null });
   }
 }
 
 /** The rule's lot under its sessions so far (null before listing day is over, or without a price and lot). */
 export function planOf(ipo: TrackedIpo): IpoPlan | null {
   const issue = issuePriceOf(ipo);
-  if (issue === null || !ipo.lotSize) return null;
-  return ipoPlan(issue, ipo.lotSize, ipo.sessions);
+  const lot = lotOf(ipo);
+  if (issue === null || !lot) return null;
+  return ipoPlan(issue, lot.shares, ipo.sessions);
 }
 
 async function holderAlerts(deps: IpoDeps, ipo: TrackedIpo, today: string, minutes: number): Promise<void> {
@@ -320,8 +329,8 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
         }
         if (today > ipo.closes || (today === ipo.closes && minutes >= BIDS_FINAL_AT)) {
           ipo.fit = fitsIpoRule(ipo.bids);
-          // Never bid for (withdrawn, or its book never read): nothing for the rule to judge.
-          if (!ipo.bids) ipo.done = true;
+          // Never bid for (withdrawn, or no figure for its book at all): nothing for the rule to judge.
+          if (!ipo.bids && ipo.times == null) ipo.done = true;
         }
         continue;
       }
@@ -352,7 +361,7 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
           if (sessions.length > 0) {
             ipo.listedOn ??= sessions[0].day;
             ipo.open ??= sessions[0].open;
-            const plan = ipoPlan(issuePriceOf(ipo) ?? 0, ipo.lotSize ?? 0, sessions);
+            const plan = ipoPlan(issuePriceOf(ipo) ?? 0, lotOf(ipo)?.shares ?? 0, sessions);
             const lastSale = plan?.held === 0 ? plan.sales[plan.sales.length - 1].day : null;
             ipo.sessions = lastSale ? sessions.filter((s) => s.day <= lastSale) : sessions;
           }
@@ -398,6 +407,8 @@ export interface IpoRow {
   priceLow: number | null;
   priceHigh: number | null;
   lotSize: number | null;
+  /** The lot isn't the exchange's figure but about ₹15,000 of shares. */
+  lotEstimated: boolean;
   /** One lot at the issue price. */
   lotCost: number | null;
   bids: IpoBids | null;
@@ -432,6 +443,7 @@ export interface IpoView {
 
 function rowOf(ipo: TrackedIpo, uid: string): IpoRow {
   const issue = issuePriceOf(ipo);
+  const lot = lotOf(ipo);
   return {
     symbol: ipo.symbol,
     name: ipo.name,
@@ -439,9 +451,11 @@ function rowOf(ipo: TrackedIpo, uid: string): IpoRow {
     closes: ipo.closes,
     priceLow: ipo.priceLow,
     priceHigh: ipo.priceHigh,
-    lotSize: ipo.lotSize,
-    lotCost: issue !== null && ipo.lotSize ? issue * ipo.lotSize : null,
-    bids: ipo.bids,
+    lotSize: lot?.shares ?? null,
+    lotEstimated: lot?.estimated ?? false,
+    lotCost: issue !== null && lot ? issue * lot.shares : null,
+    // Without the book by group, the list's figure for the whole issue.
+    bids: ipo.bids ?? (ipo.times != null ? { qib: null, nii: null, retail: null, total: ipo.times, at: ipo.firstSeen } : null),
     bidsError: ipo.bidsError ?? null,
     fits: fitsIpoRule(ipo.bids),
     fit: ipo.fit,

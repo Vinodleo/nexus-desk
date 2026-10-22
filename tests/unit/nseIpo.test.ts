@@ -39,7 +39,7 @@ describe("NSE's dates and prices", () => {
 describe("the issue lists", () => {
   it("reads a main-board issue and leaves SME ones out", () => {
     expect(listingFrom(current[0])).toEqual({
-      symbol: "HOTCO", name: "Hot Co", opens: "2026-10-19", closes: "2026-10-21", priceLow: 95, priceHigh: 100, lotSize: 150,
+      symbol: "HOTCO", name: "Hot Co", opens: "2026-10-19", closes: "2026-10-21", priceLow: 95, priceHigh: 100, lotSize: 150, times: 5.2,
     });
     expect(listingFrom(current[1])).toBeNull();
     // Coming up, its price not set yet.

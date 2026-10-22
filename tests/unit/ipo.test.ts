@@ -11,6 +11,7 @@ import {
   ipoRecord,
   ipoSaleCosts,
   listingOpen,
+  lotShares,
   type IpoSession,
 } from "../../src/shared/ipo";
 
@@ -118,6 +119,16 @@ describe("what a holder should do now", () => {
     expect(holderStep({ ...base, open: 130, stop: 125, today: "2026-10-28", ltp: 124 })).toBe("sell-rest-stop");
     expect(holderStep({ ...base, open: 130, stop: 125, today: "2026-11-02", ltp: 150 })).toBe("sell-rest-week");
     expect(holderStep({ ...base, open: 103, stop: 101, today: "2026-10-27", ltp: 110 })).toBe("done");
+  });
+});
+
+describe("an issue's lot", () => {
+  it("is the exchange's figure, else about ₹15,000 of shares at the issue price", () => {
+    expect(lotShares(150, 100)).toEqual({ shares: 150, estimated: false });
+    expect(lotShares(null, 100)).toEqual({ shares: 150, estimated: true });
+    expect(lotShares(null, 1_105)).toEqual({ shares: 13, estimated: true });
+    expect(lotShares(null, 40_000)).toEqual({ shares: 1, estimated: true });
+    expect(lotShares(null, null)).toBeNull();
   });
 });
 
