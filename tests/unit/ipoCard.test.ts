@@ -67,7 +67,10 @@ describe("the IPO card", () => {
     expect(cold.textContent).toContain("Not yet");
     expect(cold.textContent).toContain("2.4×");
     expect(cold.textContent).not.toContain("Apply and approve");
-    expect(screen.getByTestId("ipo-upcoming-NEXTCO").textContent).toContain("Tue 27 Oct to Thu 29 Oct");
+    // Coming up: each on its own row, the name and price band on top and the bidding days under it.
+    expect(screen.getByTestId("ipo-upcoming-NEXTCO").tagName).toBe("LI");
+    expect(screen.getByTestId("ipo-upcoming-band-NEXTCO").textContent).toBe("₹95–100");
+    expect(screen.getByTestId("ipo-upcoming-days-NEXTCO").textContent).toBe("Tue 27 Oct to Thu 29 Oct");
   });
 
   it("says when an issue lists and what the rule did, and takes 'I got shares'", async () => {
