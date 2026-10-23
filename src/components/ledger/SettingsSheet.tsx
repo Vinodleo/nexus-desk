@@ -37,6 +37,7 @@ import { LiveTestCard } from "./LiveTestCard";
 import { telegramLinkParts, useTelegramLink } from "../../hooks/useTelegramLink";
 import { useViewers } from "../../hooks/useViewers";
 import { ReadAccess } from "./ReadAccess";
+import { RestoreBackup } from "./RestoreBackup";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -1219,6 +1220,11 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
               },
             ]}
           />
+          {server?.backup?.configured && (
+            <div className="mt-2">
+              <RestoreBackup />
+            </div>
+          )}
         </section>
 
         {viewers.viewers !== null && (

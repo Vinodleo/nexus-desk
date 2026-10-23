@@ -70,6 +70,12 @@ export const ipoHeldBody = z.object({
   held: z.boolean(),
 });
 
+// ---------- backups ----------
+
+export const restoreBackupBody = z.object({
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "must be a day, like 2026-10-05"),
+});
+
 // ---------- read access ----------
 
 export const viewerEmailBody = z.object({

@@ -208,13 +208,19 @@ shows the five settings, the server hasn't loaded them: run
 ones). The row names any setting the server still can't see, and the server's
 log says so at start-up (`[Backup] Off: …`).
 
-**To put a day back** (after a lost or broken disk, say). Backups are named by
-their day in UTC; Settings shows when the last one ran.
+**To put a day back** (after a lost or broken disk, say): **Settings → Server
+→ Restore a backup**. It lists the backups with when each was made (India
+time) and its size. Tap one, then hold **Restore**. The server checks the
+backup can be read, restarts, puts that day's files back (the ones they
+replace are kept in a `before-restore-…` folder beside them), and restarts
+once more to load them: about a minute. The card says when it's done, or why
+it couldn't (the server then starts with its files as they were); then
+**Reload the app**. Look-only accounts can't see or use it.
+
+From Cloud Shell instead (backups are named by their day in UTC):
 
 1. `fly secrets set RESTORE_BACKUP=2026-10-05 -a nexus-desk-vinodleo`. The app
-   restarts, puts that day's files back (the ones they replace are kept in a
-   `before-restore-…` folder beside them), and restarts once more to load
-   them. `fly logs -a nexus-desk-vinodleo` shows
+   restarts and restores as above. `fly logs -a nexus-desk-vinodleo` shows
    `[Backup] Restored … files from 2026-10-05`.
 2. `fly secrets unset RESTORE_BACKUP -a nexus-desk-vinodleo`. (It restores a
    day once only, so forgetting this is harmless.)

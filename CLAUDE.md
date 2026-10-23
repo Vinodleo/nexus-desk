@@ -202,8 +202,13 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - Daily backups (`server/backup.ts`): every top-level file in the data folder (not the rebuildable folders, not
     `angel_tokens.json`) as one gzipped JSON a day to an S3 bucket (Fly's Tigris, set up by `fly storage create`, which
     sets the `AWS_*`/`BUCKET_NAME` secrets itself; `server/s3.ts` signs requests with SigV4, no SDK), 30 days kept,
-    shown in Settings → Server → Backups, a pop-up once a day if failing. `RESTORE_BACKUP=YYYY-MM-DD` restores a day at
-    start-up (once, `.restored` marker; replaced files kept in `before-restore-…`) and restarts (docs/hosting.md).
+    shown in Settings → Server → Backups, a pop-up once a day if failing. A day is restored from Settings → Server →
+    Restore a backup (owner's ask, 23 Oct; `RestoreBackup`, `useBackups`, `/api/backups`, owner only): the days listed from
+    the bucket (`listBackups`, S3's `listObjects`), one held to restore; the server checks it reads (`requestRestore`),
+    leaves `.restore_request.json`, saves its state and restarts (`restartForRestore`, `setRestart`), takes the request
+    once at start-up whatever comes of it (`restoreIfAsked`, the result in `.restore_result.json`, `restoreState`), and
+    restarts again to load the files; the card waits for the result. Or `RESTORE_BACKUP=YYYY-MM-DD` restores a day at
+    start-up (once, `.restored` marker). Either way the replaced files are kept in `before-restore-…` (docs/hosting.md).
   - Memory (`server/memory.ts`): Node's own heap limit is about half the machine's 512 MB; near it Node stalls, then
     dies with no error (16 Oct, 4:18–4:48 am IST). After each full clean-up (a major GC, `startMemoryWatch`) what's
     left is checked: past 75% of the limit it tells Sentry once an hour, naming the background work running

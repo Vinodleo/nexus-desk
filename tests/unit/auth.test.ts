@@ -133,6 +133,8 @@ describe("look only", () => {
     ["anything but a read", "DELETE", "/api/anything"],
     ["the real CoinDCX balance", "GET", "/api/coindcx/balances"],
     ["the live orders' state", "GET", "/api/live/positions"],
+    ["the backups", "GET", "/api/backups"],
+    ["restoring a backup", "POST", "/api/backups/restore"],
   ])("refuses a viewer %s", async (_n, method, url) => {
     await ownerSignsIn();
     as("friend-uid", "friend@example.com");

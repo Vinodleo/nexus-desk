@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { gunzipSync } from "zlib";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteObject, getObject, missingS3Settings, putObject, s3ConfigFromEnv, signObjectRequest, type S3Config } from "../../server/s3";
+import { deleteObject, getObject, listObjects, missingS3Settings, putObject, s3ConfigFromEnv, signObjectRequest, type S3Config } from "../../server/s3";
 import * as backup from "../../server/backup";
 
 // Daily backups of the server's saved state to an S3 bucket (Fly's object
@@ -39,6 +39,36 @@ describe("S3 requests", () => {
     expect(signature(signObjectRequest(cfg, "DELETE", "nexus-desk/backup 2026(x).json.gz", undefined, now))).toBe("73d171fdcc27c074c24ac2f536cde51913db7425fb59e7c2f992f49c16c293d9");
     // fetch sets the Host header itself.
     expect(put.headers.host).toBeUndefined();
+  });
+
+  it("list a bucket's objects, signed as AWS's own library signs them, a page at a time", async () => {
+    const now = new Date(Date.UTC(2026, 9, 5, 21, 30, 15));
+    const signature = (r: { headers: Record<string, string> }) => r.headers.authorization.split("Signature=")[1];
+    // The same listings signed by botocore at the same moment.
+    const list = signObjectRequest(cfg, "GET", "", undefined, now, {}, { "list-type": "2", prefix: "nexus-desk/backup-" });
+    expect(list.url).toBe("https://fly.storage.tigris.dev/nexus-backups?list-type=2&prefix=nexus-desk%2Fbackup-");
+    expect(signature(list)).toBe("7f3b12733c3b49500e96f233b645a737aeed695473b66297fdfd1dd3ad04afe0");
+    const next = signObjectRequest(cfg, "GET", "", undefined, now, {}, { prefix: "nexus-desk/backup-", "list-type": "2", "continuation-token": "abc+def=" });
+    expect(next.url).toBe("https://fly.storage.tigris.dev/nexus-backups?continuation-token=abc%2Bdef%3D&list-type=2&prefix=nexus-desk%2Fbackup-");
+    expect(signature(next)).toBe("5ccf214283de9a8698678c002f05ce742c702ce8078f73e6efb3d5a9269efb04");
+
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      urls.push(url);
+      const entry = (key: string, size: number, at: string) => `<Contents><Key>${key}</Key><LastModified>${at}</LastModified><Size>${size}</Size></Contents>`;
+      return new Response(
+        urls.length === 1
+          ? `<ListBucketResult>${entry("nexus-desk/backup-2026-10-04.json.gz", 1200, "2026-10-04T03:10:00.000Z")}<IsTruncated>true</IsTruncated><NextContinuationToken>tok&amp;1</NextContinuationToken></ListBucketResult>`
+          : `<ListBucketResult>${entry("nexus-desk/backup-2026-10-05.json.gz", 1300, "2026-10-05T03:10:00.000Z")}<IsTruncated>false</IsTruncated></ListBucketResult>`
+      );
+    });
+    expect(await listObjects(cfg, "nexus-desk/backup-")).toEqual([
+      { key: "nexus-desk/backup-2026-10-04.json.gz", bytes: 1200, at: Date.parse("2026-10-04T03:10:00Z") },
+      { key: "nexus-desk/backup-2026-10-05.json.gz", bytes: 1300, at: Date.parse("2026-10-05T03:10:00Z") },
+    ]);
+    expect(urls[1]).toContain("continuation-token=tok%261&");
+    vi.stubGlobal("fetch", async () => new Response("<Error><Code>AccessDenied</Code></Error>", { status: 403 }));
+    await expect(listObjects(cfg, "x")).rejects.toThrow("Listing refused (403 AccessDenied)");
   });
 
   it("read the bucket from what `fly storage create` sets, and nothing until it's all there", () => {
@@ -80,6 +110,7 @@ function bucket() {
     put: async (_c, key, body) => void stored.set(key, body),
     get: async (_c, key) => stored.get(key) ?? null,
     del: async (_c, key) => void deleted.push(key),
+    list: async (_c, prefix) => [...stored].filter(([key]) => key.startsWith(prefix)).map(([key, body], i) => ({ key, bytes: body.length, at: 1_000 + i })),
     notify: (title, body) => void notes.push(`${title}: ${body}`),
     ...over,
   });
@@ -183,5 +214,86 @@ describe("restoring a day at start-up", () => {
     expect(await backup.restoreIfAsked({ RESTORE_BACKUP: "2026-10-05" }, b.deps(day1))).toBe(true);
     expect(fs.existsSync(path.join(dir, "..", "outside.json"))).toBe(false);
     expect(fs.readFileSync(path.join(dir, "desk_state.json"), "utf8")).toBe("{}");
+  });
+});
+
+describe("restoring a day from Settings", () => {
+  const day1 = Date.parse("2026-10-05T03:00:00Z");
+
+  it("lists the days there's a backup for, newest first", async () => {
+    const b = bucket();
+    writeState();
+    await backup.runBackup(b.deps(day1));
+    await backup.runBackup(b.deps(day1 + DAY));
+    b.stored.set("nexus-desk/other.txt", Buffer.from("x"));
+    expect((await backup.listBackups(b.deps(day1 + DAY)))!.map((d) => d.day)).toEqual(["2026-10-06", "2026-10-05"]);
+    expect(await backup.listBackups(b.deps(day1, { config: () => null }))).toBeNull();
+  });
+
+  it("checks the backup, leaves the request for the restart, and puts the day back at start-up once, saying how it went", async () => {
+    writeState();
+    const b = bucket();
+    await backup.runBackup(b.deps(day1));
+    fs.writeFileSync(path.join(dir, "desk_state.json"), JSON.stringify({ u: { equity: 1 } }));
+
+    const asked = await backup.requestRestore("2026-10-05", b.deps(day1 + DAY));
+    expect(asked).toEqual({ ok: true, requestedAt: day1 + DAY });
+    expect(backup.restoreState(dir)).toEqual({ last: null, pending: "2026-10-05" });
+    // Nothing changes until the restart.
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "desk_state.json"), "utf8"))).toEqual({ u: { equity: 1 } });
+    // One at a time.
+    expect(await backup.requestRestore("2026-10-05", b.deps(day1 + DAY))).toMatchObject({ ok: false, status: 409 });
+
+    // The restart: put back, the replaced files kept aside, the request taken.
+    expect(await backup.restoreIfAsked({}, b.deps(day1 + DAY + 60_000))).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "desk_state.json"), "utf8"))).toEqual({ u: { equity: 100000 } });
+    const aside = fs.readdirSync(dir).find((n) => n.startsWith("before-restore-"))!;
+    expect(JSON.parse(fs.readFileSync(path.join(dir, aside, "desk_state.json"), "utf8"))).toEqual({ u: { equity: 1 } });
+    expect(backup.restoreState(dir)).toEqual({
+      last: { day: "2026-10-05", requestedAt: day1 + DAY, at: day1 + DAY + 60_000, ok: true, files: 2, error: null },
+      pending: null,
+    });
+    // The next start loads the files, without restoring again.
+    expect(await backup.restoreIfAsked({}, b.deps(day1 + DAY + 120_000))).toBe(false);
+    // The request and its result are never in a backup, so a restore can't bring one back.
+    expect(Object.keys(backup.collectBackup(dir, day1).files).sort()).toEqual(["backup_status.json", "daemon_positions_state.json", "desk_state.json"]);
+  });
+
+  it("takes a request that fails only once, so the server starts as it was and can't loop", async () => {
+    const b = bucket();
+    writeState();
+    await backup.runBackup(b.deps(day1));
+    expect((await backup.requestRestore("2026-10-05", b.deps(day1))).ok).toBe(true);
+    // The bucket can't be read by the time it restarts.
+    const broken = b.deps(day1 + 1000, { get: async () => { throw new Error("Download refused (503 SlowDown)"); } });
+    expect(await backup.restoreIfAsked({}, broken)).toBe(false);
+    expect(backup.restoreState(dir)).toMatchObject({ last: { day: "2026-10-05", ok: false, error: "Download refused (503 SlowDown)" }, pending: null });
+    expect(await backup.restoreIfAsked({}, b.deps(day1 + 2000))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "desk_state.json"), "utf8"))).toEqual({ u: { equity: 100000 } });
+  });
+
+  it("refuses what it can't do before restarting anything", async () => {
+    const b = bucket();
+    expect(await backup.requestRestore("yesterday", b.deps(day1))).toMatchObject({ ok: false, status: 400 });
+    expect(await backup.requestRestore("2026-10-04", b.deps(day1))).toEqual({ ok: false, status: 404, error: "There's no backup for that day." });
+    expect(await backup.requestRestore("2026-10-04", b.deps(day1, { config: () => null }))).toMatchObject({ ok: false, status: 409 });
+    b.stored.set(backup.backupKey("2026-10-03"), Buffer.from("not gzip"));
+    expect(await backup.requestRestore("2026-10-03", b.deps(day1))).toMatchObject({ ok: false, status: 502 });
+    expect(backup.restoreState(dir)).toEqual({ last: null, pending: null });
+  });
+
+  it("restarts a moment after answering, the server's way", () => {
+    vi.useFakeTimers();
+    try {
+      const restart = vi.fn();
+      backup.setRestart(restart);
+      backup.restartForRestore(1500);
+      vi.advanceTimersByTime(1499);
+      expect(restart).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(restart).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
