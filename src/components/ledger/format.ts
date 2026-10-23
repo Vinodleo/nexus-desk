@@ -76,3 +76,22 @@ export function pnlTone(value: number): string {
   if (value < -0.004) return "text-loss";
   return "text-ink";
 }
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** India is UTC+5:30 all year: a moment's date and clock there, read with the UTC getters. */
+const inIndia = (ms: number) => new Date(ms + 330 * 60_000);
+
+/** A moment's day in India time: "Fri 23 Oct". */
+export function indiaDay(ms: number): string {
+  const d = inIndia(ms);
+  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+}
+
+/** A moment's time of day in India: "4:10 pm", or "4:10:05 pm" with seconds. */
+export function indiaClock(ms: number, seconds = false): string {
+  const d = inIndia(ms);
+  const h = d.getUTCHours();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${h % 12 || 12}:${pad(d.getUTCMinutes())}${seconds ? `:${pad(d.getUTCSeconds())}` : ""} ${h < 12 ? "am" : "pm"}`;
+}

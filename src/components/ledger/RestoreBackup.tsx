@@ -2,21 +2,15 @@ import React, { useState } from "react";
 import { ChevronDown, RefreshCw } from "lucide-react";
 import { HoldButton } from "./ui";
 import { useBackups, type BackupDay } from "../../hooks/useBackups";
+import { indiaClock, indiaDay } from "./format";
 
 // Settings → Server → Restore a backup (owner's ask, 23 Oct): instead of
 // RESTORE_BACKUP in Cloud Shell. Pick a day, hold to restore; the server
 // keeps what's there now aside, restarts to put the day back, and says how
 // it went.
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
 /** A moment in India time: "Fri 23 Oct, 4:10 pm". */
-export function indiaWhen(ms: number): string {
-  const d = new Date(ms + 330 * 60_000);
-  const h = d.getUTCHours();
-  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}, ${h % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, "0")} ${h < 12 ? "am" : "pm"}`;
-}
+export const indiaWhen = (ms: number): string => `${indiaDay(ms)}, ${indiaClock(ms)}`;
 
 /** The newest backups shown before "Show older". */
 export const SHOWN_BACKUPS = 7;

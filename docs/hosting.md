@@ -328,6 +328,10 @@ replaces the secret's whole list.
   - **CoinDCX check** says **OK** once CoinDCX keys are set (**Off** without
     them: paper trading needs none).
   - **Scanning** says **On the server** with a recent last scan.
+  - **Recent log** shows what the server wrote lately, newest first (in place
+    of `fly logs`): **Warnings and errors** shows only the problems. It keeps
+    about a megabyte of lines on the server's disk, so it holds the lines
+    from before a restart or crash too. Keys, tokens and emails are masked.
 - **`https://YOUR_URL/api/health`** answers 200, and `scanner.lastTickAt` is
   within the last 5 minutes. It answers 503 if the scanner's loop has stopped.
   A free uptime monitor (e.g. UptimeRobot) pointed at this URL will alert you.

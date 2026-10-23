@@ -69,7 +69,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   folded under it), Alpaca, Angel One, Gemini and Telegram (Link opens the bot with a one-time code, in the Telegram app itself, `tg://`,
   `telegramLinkParts`; if it doesn't open, the `/start` message to copy and send by hand; then Test or
   Unlink; `useTelegramLink`), each with a status dot. **Server:** a tile each, opened on a
-  tap; one with a problem stays open. **Desk: Read access** (`ReadAccess`, `useViewers`): the accounts let look, whether each
+  tap; one with a problem stays open; under them, Restore a backup (below) and Recent log (`ServerLog`, `useServerLog`:
+  the server's latest lines newest first by day in India time, all or warnings and errors, looked at again every 15 s
+  while open). **Desk: Read access** (`ReadAccess`, `useViewers`): the accounts let look, whether each
   has signed in, an email to add, and ✕ then Remove to shut one out. Then pop-ups and the theme, the desk's links (the desk brief, This phone), the
   version and Sign out. **This phone** (`ThisPhoneSheet`): the account and Sign out, that the server does the trading,
   the pop-ups and where the CoinDCX keys are, a role other than the owner's offered back ("Allow everything again"),
@@ -215,6 +217,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     (`backgroundWorkRunning`, named in `waitForOtherWork`); past 80% each background job stops itself at its next rest
     (`stopIfMemoryTight`: the two-year, coin and stock replays and the machine-learning test) and carries on later. A
     1 GB machine (about $4 more a month) waits for a second crash, a warning that needs it, or going live.
+  - The server's log (`server/serverLog.ts`, started by `server/instrument.ts`, owner's ask, 23 Oct, in place of
+    `fly logs`): every console line, masked like the error reports (`scrubText`), as a JSON line in `logs/server.log`
+    on the volume (moved to `server.log.1` past `LOG_MAX_BYTES`, so about a megabyte, lines before a restart or crash
+    included; a folder, so not backed up). `/api/server-log` (owner only) reads the latest, newest first.
   - Error reports (`server/errorReports.ts`, loaded first by `server/instrument.ts`): with `SENTRY_DSN` set (a Fly
     secret; docs/hosting.md), the server's crashes, route errors and every `console.error` go to Sentry (org and
     project `nexus-desk`), errors only. No request headers, cookies or bodies; tokens, keys, secrets and emails
