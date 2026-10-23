@@ -219,16 +219,24 @@ export const IpoCard: React.FC = () => {
       )}
 
       {view.upcoming.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <div className="text-xs font-semibold">Coming up</div>
-          {view.upcoming.map((r) => (
-            <div key={r.symbol} className="flex items-baseline justify-between gap-2 text-xs tabular-nums" data-testid={`ipo-upcoming-${r.symbol}`}>
-              <span>{r.name}</span>
-              <span className="text-muted">
-                {dayLabel(r.opens)} to {dayLabel(r.closes)} · {band(r)}
-              </span>
-            </div>
-          ))}
+        <div className="flex flex-col">
+          <div className="text-xs font-semibold mb-1">Coming up</div>
+          {/* One issue a row: its name and price band on top, its bidding days under it. */}
+          <ul className="m-0 p-0 list-none [&>*+*]:border-t [&>*+*]:border-line">
+            {view.upcoming.map((r) => (
+              <li key={r.symbol} className="py-2 flex flex-col gap-0.5 text-xs tabular-nums" data-testid={`ipo-upcoming-${r.symbol}`}>
+                <span className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 font-medium">{r.name}</span>
+                  <span className="shrink-0 text-muted" data-testid={`ipo-upcoming-band-${r.symbol}`}>
+                    {band(r)}
+                  </span>
+                </span>
+                <span className="text-muted" data-testid={`ipo-upcoming-days-${r.symbol}`}>
+                  {dayLabel(r.opens)} to {dayLabel(r.closes)}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
