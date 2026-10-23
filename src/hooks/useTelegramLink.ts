@@ -14,6 +14,17 @@ export interface TelegramState {
 /** How often it looks whether the link went through, while one waits. */
 export const LINK_CHECK_MS = 3000;
 
+/**
+ * The server's link to the bot (https://t.me/<bot>?start=<code>) in its
+ * parts, with the link that opens the Telegram app itself (tg://): opened
+ * from the app, the t.me web page can sit blank instead of handing over to
+ * Telegram (owner's screenshot, 23 Oct). Null for a link it can't read.
+ */
+export function telegramLinkParts(url: string): { bot: string; code: string; appUrl: string } | null {
+  const m = url.match(/^https:\/\/t\.me\/([A-Za-z0-9_]{3,64})\?start=([A-Za-z0-9_-]{1,64})$/);
+  return m ? { bot: m[1], code: m[2], appUrl: `tg://resolve?domain=${m[1]}&start=${m[2]}` } : null;
+}
+
 export function useTelegramLink(active: boolean) {
   /** undefined while loading; null when the server has no Telegram (an older one). */
   const [state, setState] = useState<TelegramState | null | undefined>(undefined);

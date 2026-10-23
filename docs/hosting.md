@@ -267,7 +267,9 @@ to your Telegram chat, so one missed on the phone still arrives
 3. Once the app has restarted: **Settings → Connections → Telegram → Link**,
    then **Open Telegram**, and tap **Start** in the bot's chat (within 10
    minutes). The row turns to **Linked** and the bot says so. **Test** sends
-   one more message to check.
+   one more message to check. If Telegram doesn't open, tap **Copy** under
+   the row and send the copied `/start …` message to the bot in Telegram:
+   it links the same way.
 
 To stop it: **Unlink** in Settings, or block the bot in Telegram. To remove
 the bot: `fly secrets unset TELEGRAM_BOT_TOKEN -a nexus-desk-vinodleo`.

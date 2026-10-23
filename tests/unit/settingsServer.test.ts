@@ -11,7 +11,7 @@ vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(async () => new
 
 import { SettingsSheet, backupSummary, coinDcxCheckSummary, errorReportsSummary, formatSpan, shortRupees, type SettingsSheetProps } from "../../src/components/ledger/SettingsSheet";
 import { HOLD_MS } from "../../src/components/ledger/ui";
-import { LINK_CHECK_MS } from "../../src/hooks/useTelegramLink";
+import { LINK_CHECK_MS, telegramLinkParts } from "../../src/hooks/useTelegramLink";
 import { apiFetch } from "../../src/services/apiClient";
 
 import { cleanMarketLimits } from "../../src/shared/marketLimits";
@@ -619,11 +619,19 @@ describe("Settings: Telegram", () => {
       render(createElement(SettingsSheet, props()));
       const row = () => screen.getByText("Telegram").parentElement!;
       fireEvent.click(await screen.findByRole("button", { name: "Link" }));
-      // A real link to the bot, so the phone opens Telegram from the tap itself.
+      // The Telegram app's own link, so the phone opens the app from the tap itself, not t.me's web page.
       const open = await screen.findByRole("link", { name: "Open Telegram" });
-      expect(open.getAttribute("href")).toBe("https://t.me/nexus_desk_bot?start=abc123");
-      expect(open.getAttribute("target")).toBe("_blank");
+      expect(open.getAttribute("href")).toBe("tg://resolve?domain=nexus_desk_bot&start=abc123");
+      expect(open.getAttribute("target")).toBeNull();
       expect(row().textContent).toContain("Tap Start in Telegram");
+      // If it doesn't open, the same message can be sent to the bot by hand.
+      expect(screen.getByTestId("telegram-by-hand").textContent).toBe("Telegram not opening? Send @nexus_desk_bot this message: /start abc123 Copy");
+      const writeText = vi.fn(async () => {});
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+      fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+      await act(async () => {});
+      expect(writeText).toHaveBeenCalledWith("/start abc123");
+      expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
 
       // Start tapped in Telegram: it looks again and sees it linked.
       linked = true;
@@ -638,6 +646,16 @@ describe("Settings: Telegram", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reads the server's link to the bot into the Telegram app's own link", () => {
+    expect(telegramLinkParts("https://t.me/nexus_desk_bot?start=0f3a9c_b-1")).toEqual({
+      bot: "nexus_desk_bot",
+      code: "0f3a9c_b-1",
+      appUrl: "tg://resolve?domain=nexus_desk_bot&start=0f3a9c_b-1",
+    });
+    expect(telegramLinkParts("https://example.com/nexus_desk_bot?start=abc")).toBeNull();
+    expect(telegramLinkParts("https://t.me/nexus_desk_bot?start=abc&x=<script>")).toBeNull();
   });
 
   it("says how to set it up without a bot on the server, and stays out of the way on a server without it", async () => {
