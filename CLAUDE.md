@@ -81,8 +81,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   the app sends no request but a GET (`setLookOnly` in `apiClient.ts`, answered `LOOK_ONLY` there), plays the auditor
   role (the "Look only" toasts), never scans or runs the autopilot, shows the owner's autopilot, Stop all, limits and
   paper or live mode from `/api/desk/state` (every 5 minutes), and hides what would change something: Settings keeps only
-  a Look only note, the theme, This phone, the version and Sign out; Stop all, Resume, Hold to close, the autopilot
-  switch and the IPO card's "I got shares" are gone. No pop-ups.
+  a Look only note, IPO alerts (its own pop-ups and Telegram, `TelegramConnection`), the theme, This phone, the version
+  and Sign out; Stop all, Resume, Hold to close and the autopilot switch are gone. Its own alerts and IPOs go through
+  (`VIEWER_OWN_ROUTES` in `src/shared/lookOnly.ts`: pop-ups, Telegram, `/api/ipos` with its own "I got shares").
   The opening screen (`LoadingScreen`, over the page from `AuthGuard`): dots scattered over the screen fly into an N
   in pen order (`N_DOTS`); once signed in (`ready`) and the dots have landed (`FINALE_EARLIEST_MS`), the dots shrink
   away as a tile grows over them, the lettered N appears on it only once they're gone (owner's ask: no dots on the logo;
@@ -123,8 +124,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - Look only (`server/auth.ts`): `VIEWER_EMAILS` pass the token check as viewers. Their requests are served as the
     owner's desk (`req.user.uid` is the owner's, learned when the owner signs in and kept in `desk_owner.json`, else the
     only desk the server holds; until then 503 `NO_DESK`), every request but a GET is refused (403 `LOOK_ONLY`), and so are
-    the GETs in `OWNER_ONLY` (the CoinDCX balance, live orders, the Telegram link). Their sockets get the owner's events
-    (`deskUidFor`). An email on both lists is the owner's.
+    the GETs in `OWNER_ONLY` (the CoinDCX balance, live orders). Their sockets get the owner's events (`deskUidFor`). An
+    email on both lists is the owner's. Their own alerts are their own (owner's ask, 23 Oct): `VIEWER_OWN_ROUTES` (pop-ups,
+    Telegram, IPOs) act for the viewer's own uid; viewers who have signed in are kept (`desk_viewers.json`, `viewerStatus`):
+    `notifyEveryone` leaves them out (the backup and CoinDCX warnings) unless asked (`viewers: true`, the IPO apply alert),
+    and `notifyUser` sends nothing to one taken off the list. Trade alerts go to the owner's uid only.
   - The scanner runs after every 5-minute candle close (`server/scanner/`), on Indian and US stocks in their hours.
     Coins aren't scanned on 5-minute candles (owner's call, 5 Oct: with CoinDCX's real fee none pass the costs check;
     `fiveMinuteCoinsScanned`, `_setFiveMinuteCoins` for the tests of that path): coins trade on the daily check, which
@@ -366,8 +370,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   last-day UPI cutoff from `/api/ipo-detail` (they differ: 5 pm or 7 pm), read once a day until known; a format it can't
   read shows in the card, not as an empty list). Every 15 minutes (the list every half hour on market days).
   The rule (`IPO_RULE`): institutions (QIBs) bid 20×+ and the whole issue 10×+; on the last bidding day from 2 pm until
-  10 minutes before the UPI cutoff, while it fits, one alert to everyone to apply (`APPLY_ALERT_FROM`, `upiCutoffOf`,
-  5 pm if unknown). Its call is made 45 minutes after the cutoff (`fit`).
+  10 minutes before the UPI cutoff, while it fits, one alert to everyone to apply, look-only accounts included
+  (`APPLY_ALERT_FROM`, `upiCutoffOf`, 5 pm if unknown). Its call is made 45 minutes after the cutoff (`fit`).
   Allotment T+1, listing T+3 weekdays (`expectedListing`); prices after listing from Angel One (`fetchListingQuote`,
   `fetchListingCandles`: EQ or BE lines). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing

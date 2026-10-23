@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import webpush, { type PushSubscription } from "web-push";
 import { sendTelegram, telegramUsers } from "./telegram";
+import { viewerStatus } from "./auth";
 
 // Pop-up notifications on your phone (Web Push), even with the app closed
 // and the phone locked: the server sends them when a trade opens. The phone
@@ -96,6 +97,8 @@ export interface PushMessage {
 /** Sends to every device the user subscribed and their Telegram chat; devices that have gone away are forgotten. Returns how many it reached. */
 export async function notifyUser(uid: string | undefined, message: PushMessage): Promise<number> {
   if (!uid) return 0;
+  // A look-only account the owner has taken off the list gets nothing more.
+  if (viewerStatus(uid) === "removed") return 0;
   const [devices, telegram] = await Promise.all([pushToDevices(uid, message), sendTelegram(uid, message)]);
   return devices + (telegram ? 1 : 0);
 }
@@ -122,10 +125,18 @@ async function pushToDevices(uid: string, message: PushMessage): Promise<number>
   return sent;
 }
 
-/** Sends to every subscribed device and linked Telegram chat, whoever set it up (server-wide news, like a failed backup). */
-export async function notifyEveryone(message: PushMessage): Promise<number> {
+/**
+ * Sends to every subscribed device and linked Telegram chat of the desk's
+ * own accounts (server-wide news, like a failed backup). With `viewers`, to
+ * the look-only accounts still on the list too (the IPO apply alert).
+ */
+export async function notifyEveryone(message: PushMessage, opts: { viewers?: boolean } = {}): Promise<number> {
   let sent = 0;
-  for (const uid of new Set([...Object.keys(subscriptions()), ...telegramUsers()])) sent += await notifyUser(uid, message);
+  for (const uid of new Set([...Object.keys(subscriptions()), ...telegramUsers()])) {
+    const viewer = viewerStatus(uid);
+    if (viewer && !(opts.viewers && viewer === "active")) continue;
+    sent += await notifyUser(uid, message);
+  }
   return sent;
 }
 

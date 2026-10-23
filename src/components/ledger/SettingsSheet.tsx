@@ -510,6 +510,62 @@ const StatusWord: React.FC<{ tone: string; children: React.ReactNode }> = ({ ton
 const pillButton = "min-h-9 px-3.5 rounded-full border border-line text-[13px] font-semibold cursor-pointer disabled:opacity-60 inline-flex items-center gap-1.5";
 
 /**
+ * Telegram: link (a one-time code opened in the bot), Test and Unlink. `offer`
+ * says what comes there before linking, `linkedText` after; `setup` how to
+ * set the bot up when the server has none (the owner's Settings only).
+ */
+const TelegramConnection: React.FC<{ telegram: ReturnType<typeof useTelegramLink>; offer: string; linkedText: string; setup?: string }> = ({
+  telegram,
+  offer,
+  linkedText,
+  setup,
+}) => {
+  if (telegram.state && !telegram.state.configured && !setup) return null;
+  return (
+    <Connection
+      initials="TG"
+      name="Telegram"
+      tone={!telegram.state ? "checking" : telegram.state.linked ? "connected" : "off"}
+      sub={
+        telegram.note ??
+        (!telegram.state || !telegram.state.configured ? (
+          setup
+        ) : telegram.state.linked ? (
+          <>
+            Linked: {linkedText} ·{" "}
+            <button type="button" onClick={() => void telegram.unlink()} disabled={telegram.busy} className="underline cursor-pointer text-muted">
+              Unlink
+            </button>
+          </>
+        ) : telegram.url ? (
+          "Tap Start in Telegram to finish linking…"
+        ) : (
+          offer
+        ))
+      }
+    >
+      {!telegram.state ? (
+        <Checking />
+      ) : !telegram.state.configured ? (
+        <StatusWord tone="text-muted">Not set up</StatusWord>
+      ) : telegram.state.linked ? (
+        <button type="button" onClick={() => void telegram.test()} disabled={telegram.busy} className={pillButton}>
+          Test
+        </button>
+      ) : telegram.url ? (
+        <a href={telegram.url} target="_blank" rel="noopener noreferrer" className={`${pillButton} border-accent text-accent no-underline`}>
+          Open Telegram
+        </a>
+      ) : (
+        <button type="button" onClick={() => void telegram.link()} disabled={telegram.busy} className={pillButton}>
+          Link
+        </button>
+      )}
+    </Connection>
+  );
+};
+
+/**
  * The server at a glance: a tile each, its state in a word and a dot. A tap
  * opens a tile across the row with the details; one with a problem stays open.
  */
@@ -746,8 +802,37 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             <Group label="Look only" delay={80} className="px-4">
               <p className="m-0 py-3.5 text-sm leading-relaxed" data-testid="look-only-note">
                 This account sees the owner's desk: its trades, money, Lab and records. It can't change anything: no trades, closes,
-                limits or settings, and the pop-ups stay the owner's.
+                limits or settings. Trade pop-ups stay the owner's; the IPO alerts can come to you.
               </p>
+            </Group>
+            <Label delay={140}>IPO alerts</Label>
+            <Group label="IPO alerts" delay={140} className="px-4 [&>*+*]:border-t [&>*+*]:border-line">
+              {props.notifications && (
+                <div className="flex items-center gap-3 min-h-16 py-2.5">
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-semibold">IPO pop-ups</span>
+                    <span className="block text-xs text-muted leading-snug">
+                      {props.notifications.error ||
+                        {
+                          unsupported: "This browser can't show them. On iPhone, add the app to your home screen first.",
+                          blocked: "Blocked for this site: allow notifications in your browser's site settings.",
+                          off: "A pop-up when an IPO fits the rule (apply that day), and when to sell one you got shares in",
+                          on: "On for this phone: the apply alert, and the selling alerts for IPOs you got shares in",
+                          working: "Checking…",
+                        }[props.notifications.state]}
+                    </span>
+                  </span>
+                  <Switch
+                    checked={props.notifications.state === "on"}
+                    onChange={(on) => (on ? props.notifications!.enable() : props.notifications!.disable())}
+                    label="IPO pop-ups"
+                    disabled={["unsupported", "blocked", "working"].includes(props.notifications.state)}
+                  />
+                </div>
+              )}
+              {telegram.state !== null && (
+                <TelegramConnection telegram={telegram} offer="The IPO alerts in Telegram too" linkedText="the IPO alerts come here too" />
+              )}
             </Group>
           </>
         ) : (
@@ -1058,46 +1143,12 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             )}
           </Connection>
           {telegram.state !== null && (
-            <Connection
-              initials="TG"
-              name="Telegram"
-              tone={!telegram.state ? "checking" : telegram.state.linked ? "connected" : "off"}
-              sub={
-                telegram.note ??
-                (!telegram.state || !telegram.state.configured ? (
-                  "Every pop-up in Telegram too: make a bot with @BotFather, then set TELEGRAM_BOT_TOKEN on the server (docs/hosting.md)"
-                ) : telegram.state.linked ? (
-                  <>
-                    Linked: every pop-up comes here too ·{" "}
-                    <button type="button" onClick={() => void telegram.unlink()} disabled={telegram.busy} className="underline cursor-pointer text-muted">
-                      Unlink
-                    </button>
-                  </>
-                ) : telegram.url ? (
-                  "Tap Start in Telegram to finish linking…"
-                ) : (
-                  "Every pop-up in Telegram too, so none is missed"
-                ))
-              }
-            >
-              {!telegram.state ? (
-                <Checking />
-              ) : !telegram.state.configured ? (
-                <StatusWord tone="text-muted">Not set up</StatusWord>
-              ) : telegram.state.linked ? (
-                <button type="button" onClick={() => void telegram.test()} disabled={telegram.busy} className={pillButton}>
-                  Test
-                </button>
-              ) : telegram.url ? (
-                <a href={telegram.url} target="_blank" rel="noopener noreferrer" className={`${pillButton} border-accent text-accent no-underline`}>
-                  Open Telegram
-                </a>
-              ) : (
-                <button type="button" onClick={() => void telegram.link()} disabled={telegram.busy} className={pillButton}>
-                  Link
-                </button>
-              )}
-            </Connection>
+            <TelegramConnection
+              telegram={telegram}
+              offer="Every pop-up in Telegram too, so none is missed"
+              linkedText="every pop-up comes here too"
+              setup="Every pop-up in Telegram too: make a bot with @BotFather, then set TELEGRAM_BOT_TOKEN on the server (docs/hosting.md)"
+            />
           )}
         </Group>
 

@@ -133,7 +133,6 @@ describe("look only", () => {
     ["anything but a read", "DELETE", "/api/anything"],
     ["the real CoinDCX balance", "GET", "/api/coindcx/balances"],
     ["the live orders' state", "GET", "/api/live/positions"],
-    ["the owner's Telegram link", "GET", "/api/telegram"],
   ])("refuses a viewer %s", async (_n, method, url) => {
     await ownerSignsIn();
     as("friend-uid", "friend@example.com");
@@ -141,6 +140,36 @@ describe("look only", () => {
     expect(next).not.toHaveBeenCalled();
     expect(r.status).toHaveBeenCalledWith(403);
     expect(r.json).toHaveBeenCalledWith(expect.objectContaining({ code: "LOOK_ONLY" }));
+  });
+
+  it.each([
+    ["its phone's pop-ups", "POST", "/api/push/subscribe"],
+    ["its own Telegram link", "GET", "/api/telegram"],
+    ["linking its Telegram", "POST", "/api/telegram/link"],
+    ["the IPOs, with its own 'I got shares'", "GET", "/api/ipos"],
+    ["'I got shares'", "POST", "/api/ipos/held"],
+  ])("lets a viewer set up %s as itself", async (_n, method, url) => {
+    await ownerSignsIn();
+    as("friend-uid", "friend@example.com");
+    const { req, next } = await ask(method, url);
+    expect(next).toHaveBeenCalled();
+    expect(req.user.uid).toBe("friend-uid");
+    expect(req.viewer).toEqual({ uid: "friend-uid", email: "friend@example.com" });
+  });
+
+  it("remembers who has looked, and who the owner has since taken off the list", async () => {
+    await ownerSignsIn();
+    as("friend-uid", "friend@example.com");
+    await ask("GET", "/api/book");
+    expect(auth.viewerStatus("friend-uid")).toBe("active");
+    expect(auth.viewerStatus("owner-uid")).toBeNull();
+    expect(auth.viewerStatus("nobody")).toBeNull();
+    vi.stubEnv("VIEWER_EMAILS", "");
+    expect(auth.viewerStatus("friend-uid")).toBe("removed");
+    // Kept across a restart.
+    vi.stubEnv("VIEWER_EMAILS", "friend@example.com");
+    auth._resetAuth();
+    expect(auth.viewerStatus("friend-uid")).toBe("active");
   });
 
   it("leaves the owner's own requests as they were", async () => {

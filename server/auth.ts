@@ -5,6 +5,7 @@ import { initializeApp, getApps } from "firebase-admin/app";
 import { getAuth, type DecodedIdToken } from "firebase-admin/auth";
 import firebaseConfig from "../firebase-applet-config.json";
 import { OWNER_EMAIL } from "../src/shared/owner";
+import { isViewerOwnRoute } from "../src/shared/lookOnly";
 import { deskUids } from "./scanner/deskState";
 
 // Server-side authentication. Every /api route (except /api/health) and every
@@ -15,8 +16,13 @@ import { deskUids } from "./scanner/deskState";
 // Look only (owner's ask, 23 Oct): emails on VIEWER_EMAILS may read the
 // owner's desk and change nothing. Their requests are served as the owner's
 // (the owner's uid, learned when the owner signs in), every request but a
-// GET is refused, and so are the GETs for real money and the owner's own
-// links (OWNER_ONLY). Their sockets get the owner's events and can send none.
+// GET is refused, and so are the GETs for real money and live orders
+// (OWNER_ONLY). Their sockets get the owner's events and can send none.
+// Their own IPO alerts are their own (owner's ask, 23 Oct): the pop-up,
+// Telegram and IPO routes act for the viewer's own uid (VIEWER_OWN_ROUTES),
+// and the viewers who have signed in are kept (desk_viewers.json) so the
+// server sends them the IPO alerts and nothing else, and nothing once the
+// owner takes them off the list.
 
 export interface AuthedRequest extends Request {
   user?: DecodedIdToken;
@@ -128,11 +134,54 @@ export function deskUidFor(decoded: DecodedIdToken): string | null {
     rememberOwner(decoded);
     return decoded.uid;
   }
+  rememberViewer(decoded);
   return deskOwnerUid();
 }
 
-/** Reads a viewer can't make: real money at CoinDCX, live orders, and the owner's Telegram link. */
-const OWNER_ONLY = ["/api/coindcx/balances", "/api/live/", "/api/telegram"];
+/** Reads a viewer can't make: real money at CoinDCX and live orders. */
+const OWNER_ONLY = ["/api/coindcx/balances", "/api/live/"];
+
+// ---------- viewers who have signed in ----------
+
+const VIEWERS_FILE = "desk_viewers.json";
+let viewers: Record<string, string> | null = null;
+
+function viewerList(): Record<string, string> {
+  if (viewers) return viewers;
+  try {
+    const file = path.join(dataDir(), VIEWERS_FILE);
+    const saved = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
+    viewers = saved && typeof saved === "object" ? saved : {};
+  } catch {
+    viewers = {};
+  }
+  return viewers!;
+}
+
+/** Notes a viewer's uid and email (kept on disk): the alerts sent to viewers go only to those still on the list. */
+function rememberViewer(decoded: DecodedIdToken): void {
+  const email = decoded.email?.toLowerCase() ?? "";
+  const list = viewerList();
+  if (list[decoded.uid] === email) return;
+  list[decoded.uid] = email;
+  try {
+    fs.mkdirSync(dataDir(), { recursive: true });
+    fs.writeFileSync(path.join(dataDir(), VIEWERS_FILE), JSON.stringify(list), "utf8");
+  } catch (err) {
+    console.warn("[Auth] Couldn't save the viewers:", err);
+  }
+}
+
+/**
+ * Whether a uid is a look-only account's: "active" while its email is on
+ * VIEWER_EMAILS (and not the owner's list), "removed" once the owner has taken
+ * it off; null for anyone else (the owner).
+ */
+export function viewerStatus(uid: string): "active" | "removed" | null {
+  const email = viewerList()[uid];
+  if (email === undefined) return null;
+  return viewerEmails().has(email) && !allowedEmails().has(email) ? "active" : "removed";
+}
 
 function bearerToken(req: Request): string | undefined {
   const header = req.headers.authorization;
@@ -159,6 +208,14 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
     return;
   }
   const route = (req.originalUrl || req.url || "").split("?")[0];
+  rememberViewer(decoded);
+  // Its own alerts and IPOs: as itself.
+  if (isViewerOwnRoute(route)) {
+    req.viewer = { uid: decoded.uid, email: decoded.email ?? "" };
+    req.user = decoded;
+    next();
+    return;
+  }
   if ((req.method !== "GET" && req.method !== "HEAD") || OWNER_ONLY.some((p) => route.startsWith(p))) {
     res.status(403).json({ success: false, error: LOOK_ONLY, code: "LOOK_ONLY" });
     return;
@@ -181,4 +238,5 @@ export function whoAmI(req: AuthedRequest): { role: DeskRole; email: string } {
 /** Test hook. */
 export function _resetAuth(): void {
   ownerUid = undefined;
+  viewers = null;
 }
