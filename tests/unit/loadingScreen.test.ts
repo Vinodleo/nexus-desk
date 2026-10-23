@@ -8,20 +8,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = { currentUser: null as { email: string } | null, loading: true };
 vi.mock("../../src/context/AuthContext", () => ({ useAuth: () => auth }));
-vi.mock("../../src/components/LoginScreen", () => ({ LoginScreen: ({ notReady }: { notReady?: boolean }) => (notReady ? "not ready to view yet" : "the login screen") }));
+vi.mock("../../src/components/LoginScreen", () => ({
+  LoginScreen: ({ notReady, unreachable }: { notReady?: boolean; unreachable?: boolean }) =>
+    unreachable ? "trying again" : notReady ? "not ready to view yet" : "the login screen",
+}));
 vi.mock("../../src/shared/owner", () => ({ isOwner: (email?: string) => email === "owner@example.com" }));
-// Who the server says a signed-in account other than the owner is (/api/me).
-let me: { status: number; body: unknown } = { status: 403, body: { success: false, code: "UNAUTHORIZED" } };
+// Who the server says a signed-in account other than the owner is (/api/me); null: no answer (offline).
+let me: { status: number; body: unknown } | null = { status: 403, body: { success: false, code: "UNAUTHORIZED" } };
 const setLookOnly = vi.fn();
 vi.mock("../../src/services/apiClient", () => ({
-  apiFetch: vi.fn(async () => new Response(JSON.stringify(me.body), { status: me.status })),
+  apiFetch: vi.fn(async () => {
+    if (!me) throw new TypeError("Failed to fetch");
+    return new Response(typeof me.body === "string" ? me.body : JSON.stringify(me.body), { status: me.status });
+  }),
   setLookOnly: (on: boolean) => setLookOnly(on),
 }));
 
 const { LoadingScreen, N_DOTS, FINALE_EARLIEST_MS, FINALE_MS, LEAVE_MS, DOT_SHRINK_MS, DOT_RIPPLE_MS, LOGO_AT_MS } = await import(
   "../../src/components/LoadingScreen"
 );
-const { AuthGuard } = await import("../../src/AuthGuard");
+const { AuthGuard, accessFrom, RETRY_MS } = await import("../../src/AuthGuard");
+const { apiFetch } = await import("../../src/services/apiClient");
 const { useLookOnly } = await import("../../src/context/LookOnly");
 
 const reducedMotion = (on: boolean) =>
@@ -183,5 +190,57 @@ describe("opening the desk", () => {
     await act(async () => {});
     playEnding();
     expect(container.textContent).toBe("not ready to view yet");
+  });
+
+  it("doesn't turn a viewer away while the server can't answer (restarting for an update): it asks again", async () => {
+    auth.loading = false;
+    auth.currentUser = { email: "friend@example.com" };
+    me = { status: 502, body: "<html>Bad gateway</html>" };
+    const Desk = () => `THE APP, look only: ${useLookOnly() ? "yes" : "no"}`;
+    const { container } = render(createElement(AuthGuard, null, createElement(Desk)));
+    await act(async () => {});
+    playEnding();
+    expect(container.textContent).toBe("trying again");
+    // Offline on the next try: still trying.
+    me = null;
+    await act(async () => vi.advanceTimersByTime(RETRY_MS));
+    expect(container.textContent).toBe("trying again");
+    // The server's back.
+    me = { status: 200, body: { success: true, role: "viewer", email: "friend@example.com" } };
+    await act(async () => vi.advanceTimersByTime(RETRY_MS));
+    expect(container.textContent).toBe("THE APP, look only: yes");
+    // Let in: nothing more to ask.
+    const asked = vi.mocked(apiFetch).mock.calls.length;
+    await act(async () => vi.advanceTimersByTime(RETRY_MS * 3));
+    expect(vi.mocked(apiFetch).mock.calls.length).toBe(asked);
+  });
+
+  it("asks again about an account turned away when the app comes back on screen (the owner may have added it)", async () => {
+    auth.loading = false;
+    auth.currentUser = { email: "friend@example.com" };
+    me = { status: 403, body: { success: false, code: "UNAUTHORIZED" } };
+    const { container } = render(createElement(AuthGuard, null, "THE APP"));
+    await act(async () => {});
+    playEnding();
+    expect(container.textContent).toBe("the login screen");
+    me = { status: 200, body: { success: true, role: "viewer", email: "friend@example.com" } };
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(container.textContent).toBe("THE APP");
+  });
+});
+
+describe("what the server's answer means for an account other than the owner's", () => {
+  it("turns it away only on the server's refusal", () => {
+    expect(accessFrom(200, { role: "viewer" })).toBe("viewer");
+    expect(accessFrom(503, { code: "NO_DESK" })).toBe("not-ready");
+    expect(accessFrom(403, { code: "UNAUTHORIZED" })).toBe("denied");
+    // An account on the server's own list that isn't the app's owner: not a viewer.
+    expect(accessFrom(200, { role: "owner" })).toBe("denied");
+    // No answer: offline, a restart, a token that couldn't be fetched.
+    expect(accessFrom(0, null)).toBe("unreachable");
+    expect(accessFrom(502, null)).toBe("unreachable");
+    expect(accessFrom(401, { code: "UNAUTHORIZED" })).toBe("unreachable");
   });
 });

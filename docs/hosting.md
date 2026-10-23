@@ -299,7 +299,8 @@ with that account, and see it in look-only mode (Settings says **Look only**).
 If you haven't opened the app since this update, they're told to try again
 later: the server learns which desk is yours when you next open it.
 
-**To change the list**, set `VIEWER_EMAILS` again with the new list. **To stop
+**To change the list**, set `VIEWER_EMAILS` again with the whole new list: it
+replaces the old one, so keep every email that should still look. **To stop
 everyone looking**: `fly secrets unset VIEWER_EMAILS -a nexus-desk-vinodleo`.
 
 ## Checking it works
