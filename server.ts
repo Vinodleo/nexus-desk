@@ -2,7 +2,7 @@ import "./server/instrument";
 import express, { type Request, type Response } from "express";
 import compression from "compression";
 import path from "path";
-import { requireAuth } from "./server/auth";
+import { requireAuth, whoAmI, type AuthedRequest } from "./server/auth";
 import { attachWebSocketServer } from "./server/realtime";
 import { startCoinDcxRelay } from "./server/marketRelay";
 import {
@@ -81,6 +81,11 @@ app.use(scannerRouter);
 app.use(pushRouter);
 app.use(telegramRouter);
 app.use(tradeBookRouter);
+
+// Who's signed in: the owner, or a look-only viewer of the owner's desk (server/auth.ts).
+app.get("/api/me", (req: Request, res: Response) => {
+  res.json({ success: true, ...whoAmI(req as AuthedRequest) });
+});
 
 // Where the server runs and whether its saved state survives restarts.
 app.get("/api/server/status", (_req: Request, res: Response) => {

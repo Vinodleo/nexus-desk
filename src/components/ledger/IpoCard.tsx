@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useLookOnly } from "../../context/LookOnly";
 import { apiFetch } from "../../services/apiClient";
 import { DEFAULT_UPI_CUTOFF, HOLD_DAYS, STRONG_OPEN, addDays, dayLabel, istDay, timeLabel, type IpoBids, type IpoPlan, type IpoRecord } from "../../shared/ipo";
 import { Card } from "./ui";
@@ -108,6 +109,8 @@ const RecordLine: React.FC<{ label: string; rec: IpoRecord; testId: string }> = 
 
 export const IpoCard: React.FC = () => {
   const view = useLabFeed("/api/ipos", isIpoView, () => true, 5 * 60_000);
+  // A look-only account sees the IPOs; "I got shares" is the owner's.
+  const lookOnly = useLookOnly();
   // "I got shares" as the server last took it, until the feed's next look.
   const [heldNow, setHeldNow] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -194,7 +197,7 @@ export const IpoCard: React.FC = () => {
                 <p className="m-0 text-xs leading-relaxed tabular-nums" data-testid={`ipo-plan-${r.symbol}`}>
                   {planText(r, today)}
                 </p>
-                {!finished && (
+                {!finished && !lookOnly && (
                   <button
                     type="button"
                     aria-pressed={held}

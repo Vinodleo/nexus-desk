@@ -272,6 +272,30 @@ to your Telegram chat, so one missed on the phone still arrives
 To stop it: **Unlink** in Settings, or block the bot in Telegram. To remove
 the bot: `fly secrets unset TELEGRAM_BOT_TOKEN -a nexus-desk-vinodleo`.
 
+### Look-only access for others
+
+People you list can open your desk and see everything: the Floor, the Book
+with its amounts, the Lab and Learning. They can't change anything: no
+trades, closes, Stop all, limits or settings. The server refuses every change
+from them, not just the app (`server/auth.ts`). They get no pop-ups or
+Telegram messages. Your real CoinDCX balance, live orders and Telegram link
+stay yours alone.
+
+**To let someone look**, in Cloud Shell, with their Google account emails
+(comma-separated):
+
+```
+fly secrets set VIEWER_EMAILS="friend@gmail.com,other@gmail.com" -a nexus-desk-vinodleo
+```
+
+The app restarts. They open the desk's address, tap **Continue with Google**
+with that account, and see it in look-only mode (Settings says **Look only**).
+If you haven't opened the app since this update, they're told to try again
+later: the server learns which desk is yours when you next open it.
+
+**To change the list**, set `VIEWER_EMAILS` again with the new list. **To stop
+everyone looking**: `fly secrets unset VIEWER_EMAILS -a nexus-desk-vinodleo`.
+
 ## Checking it works
 
 - **In the app, Settings → Server:**

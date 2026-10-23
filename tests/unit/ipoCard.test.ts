@@ -11,6 +11,7 @@ import { ipoPlan, ipoRecord } from "../../src/shared/ipo";
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
 const { IpoCard, planText } = await import("../../src/components/ledger/IpoCard");
+const { LookOnlyContext } = await import("../../src/context/LookOnly");
 
 const row = (over: Record<string, unknown>) => ({
   symbol: "HOTCO", name: "Hot Co", opens: "2026-10-19", closes: "2026-10-21", priceLow: 95, priceHigh: 100, lotSize: 150, lotCost: 15_000,
@@ -81,6 +82,12 @@ describe("the IPO card", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "✓ I got shares: alerts on" }).getAttribute("aria-pressed")).toBe("true"));
     const [, init] = vi.mocked(apiFetch).mock.calls.find(([p]) => p === "/api/ipos/held")!;
     expect(JSON.parse(String(init!.body))).toEqual({ symbol: "WAITCO", held: true });
+  });
+
+  it("on a look-only account shows the IPOs without 'I got shares'", async () => {
+    render(createElement(LookOnlyContext.Provider, { value: true }, createElement(IpoCard)));
+    expect((await screen.findByTestId("ipo-plan-WAITCO")).textContent).toContain("Allotment");
+    expect(screen.queryByRole("button", { name: "I got shares" })).toBeNull();
   });
 
   it("shows the rule's paper record, picked against skipped", async () => {

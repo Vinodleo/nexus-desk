@@ -13,7 +13,27 @@ async function idToken(): Promise<string | null> {
   }
 }
 
+/** What a look-only account is told when something would change the desk. */
+export const LOOK_ONLY_TEXT = "This account can look at the desk but not change anything.";
+
+let lookOnly = false;
+
+/**
+ * A look-only account (the server's VIEWER_EMAILS): from now on requests that
+ * would change something aren't sent (the server refuses them anyway), so the
+ * app's background saves don't fail one by one.
+ */
+export function setLookOnly(on: boolean): void {
+  lookOnly = on;
+}
+
 export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  if (lookOnly && (init.method ?? "GET").toUpperCase() !== "GET") {
+    return new Response(JSON.stringify({ success: false, error: LOOK_ONLY_TEXT, code: "LOOK_ONLY" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   const headers = new Headers(init.headers);
   const token = await idToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);

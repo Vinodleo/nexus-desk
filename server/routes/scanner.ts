@@ -36,7 +36,13 @@ router.post("/api/desk/state", validate({ body: deskStateBody }), (req: Request,
 // has never saved its own adopts autopilot and the kill switch from here.
 router.get("/api/desk/state", (req: Request, res: Response) => {
   const desk = getDeskState(uidOf(req));
-  res.json({ success: true, desk: desk ? { autopilot: desk.autopilot, killSwitch: desk.killSwitch, updatedAt: desk.updatedAt } : null });
+  // The limits too: a look-only viewer's app shows the owner's.
+  res.json({
+    success: true,
+    desk: desk
+      ? { autopilot: desk.autopilot, killSwitch: desk.killSwitch, updatedAt: desk.updatedAt, marketLimits: desk.riskLimits.marketLimits ?? null, tradingMode: desk.tradingMode ?? null }
+      : null,
+  });
 });
 
 // Whether the server is scanning, and every scan since `since` (ms).

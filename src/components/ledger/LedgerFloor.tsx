@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useLookOnly } from "../../context/LookOnly";
 import { Settings, Power, ShieldCheck, ShieldAlert, ChevronRight, ChevronDown, AlertTriangle } from "lucide-react";
 import type { Position } from "../../types";
 import { useLiveTickers } from "../../hooks/useLiveTickers";
@@ -555,6 +556,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
   onClose,
   state = "stay",
 }) => {
+  const lookOnly = useLookOnly();
   // "Half banked" pops up when half is banked while this row is on screen,
   // and "Stop raised" when the stop moves your way (banking half raises it
   // too: then only "Half banked" is said, so the two don't overlap).
@@ -676,14 +678,16 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
         </div>
         <div className="flex items-center justify-between gap-3">
           <span className={`text-xs ${closing ? `font-semibold ${tone}` : "text-muted"}`}>{closing ? "Closed" : positionNote(p)}</span>
-          {/* Closes only when held, so a stray tap can't close a trade. */}
-          <HoldButton
-            label="Hold to close"
-            keepHoldingLabel="Keep holding to close"
-            onHold={() => onClose(p)}
-            className="shrink-0 min-h-[36px] px-3 rounded-full border border-danger-line bg-danger-soft text-loss text-xs font-semibold"
-            fillClassName="bg-loss/25"
-          />
+          {/* Closes only when held, so a stray tap can't close a trade. A look-only account can't. */}
+          {!lookOnly && (
+            <HoldButton
+              label="Hold to close"
+              keepHoldingLabel="Keep holding to close"
+              onHold={() => onClose(p)}
+              className="shrink-0 min-h-[36px] px-3 rounded-full border border-danger-line bg-danger-soft text-loss text-xs font-semibold"
+              fillClassName="bg-loss/25"
+            />
+          )}
         </div>
       </div>
     </li>
@@ -691,6 +695,7 @@ const PositionRow: React.FC<{ position: Position; onClose: (p: Position) => void
 };
 
 export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
+  const lookOnly = useLookOnly();
   const {
     isLive,
     equity,
@@ -801,7 +806,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
                 : "Off · you approve every trade"}
             </div>
           </div>
-          <Switch checked={props.autopilotOn} onChange={props.onAutopilotChange} label="Autopilot" disabled={props.stopped} />
+          <Switch checked={props.autopilotOn} onChange={props.onAutopilotChange} label="Autopilot" disabled={props.stopped || lookOnly} />
         </div>
         {serverAutopilot && (
           <div className="flex flex-col gap-1.5">
@@ -842,7 +847,7 @@ export const LedgerFloor: React.FC<LedgerFloorProps> = (props) => {
               </div>
             )}
           </div>
-          {props.stopped ? (
+          {lookOnly ? null : props.stopped ? (
             <button
               type="button"
               onClick={props.onToggleStop}

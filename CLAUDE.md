@@ -75,7 +75,14 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   cloud copy. It replaced "Run in the background" (wake lock, silent audio, a play/pause the server made pointless) and
   "Security and access" (role picker).
   Sign-in (`LoginScreen`): the opening screen's N tile, floating (`nx-float`) among a few faint dots, with Continue with
-  Google at the bottom; another account is turned away there.
+  Google at the bottom; another account is turned away there, unless the server lists it as look only (below).
+  **Look only** (owner's ask, 23 Oct): accounts on the server's `VIEWER_EMAILS` (a Fly secret, docs/hosting.md) see the
+  owner's whole desk and change nothing. The sign-in guard asks `/api/me` (`AuthGuard`, `LookOnlyContext`, `useLookOnly`),
+  the app sends no request but a GET (`setLookOnly` in `apiClient.ts`, answered `LOOK_ONLY` there), plays the auditor
+  role (the "Look only" toasts), never scans or runs the autopilot, shows the owner's autopilot, Stop all, limits and
+  paper or live mode from `/api/desk/state` (every 5 minutes), and hides what would change something: Settings keeps only
+  a Look only note, the theme, This phone, the version and Sign out; Stop all, Resume, Hold to close, the autopilot
+  switch and the IPO card's "I got shares" are gone. No pop-ups.
   The opening screen (`LoadingScreen`, over the page from `AuthGuard`): dots scattered over the screen fly into an N
   in pen order (`N_DOTS`); once signed in (`ready`) and the dots have landed (`FINALE_EARLIEST_MS`), the dots shrink
   away as a tile grows over them, the lettered N appears on it only once they're gone (owner's ask: no dots on the logo;
@@ -113,6 +120,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume
   (`NEXUS_DATA_DIR`), so it keeps working with the app closed.
+  - Look only (`server/auth.ts`): `VIEWER_EMAILS` pass the token check as viewers. Their requests are served as the
+    owner's desk (`req.user.uid` is the owner's, learned when the owner signs in and kept in `desk_owner.json`, else the
+    only desk the server holds; until then 503 `NO_DESK`), every request but a GET is refused (403 `LOOK_ONLY`), and so are
+    the GETs in `OWNER_ONLY` (the CoinDCX balance, live orders, the Telegram link). Their sockets get the owner's events
+    (`deskUidFor`). An email on both lists is the owner's.
   - The scanner runs after every 5-minute candle close (`server/scanner/`), on Indian and US stocks in their hours.
     Coins aren't scanned on 5-minute candles (owner's call, 5 Oct: with CoinDCX's real fee none pass the costs check;
     `fiveMinuteCoinsScanned`, `_setFiveMinuteCoins` for the tests of that path): coins trade on the daily check, which
