@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 
-const { LedgerBook, dayLabel, moveLine, summarizeTrades } = await import("../../src/components/ledger/LedgerBook");
+const { LedgerBook, dayLabel, moveLine, summarizeTrades, tradeStory } = await import("../../src/components/ledger/LedgerBook");
 const { LedgerRisk } = await import("../../src/components/ledger/LedgerRisk");
 const { apiFetch } = await import("../../src/services/apiClient");
 import type { FailureInjectionState, HistoricalTrade, RiskCalculation } from "../../src/types";
@@ -107,6 +107,27 @@ describe("a trade that opens into a card", () => {
     expect(line.textContent).toContain("Went +1.0R your way at best and −0.5R against at worst; closed at +0.5R before fees.");
     // From −1R (the stop) to +1R: +0.5R is three-quarters along.
     expect((screen.getByTestId("exit-dot") as HTMLElement).style.left).toBe("75%");
+  });
+
+  it("says what happened in plain words from the trade's own record", () => {
+    // A breakout that ran to +3R and gave back 1R before its 20-day low.
+    // Risk ₹70 on 0.035 coins: 1R is ₹2,000 a coin.
+    const breakout = measured({ strategy: "breakout", exitReason: "TRAILING_STOP", highestPrice: 271000, lowestPrice: 264000, exitPrice: 269000, realizedPnl: 130.7, feesPaid: 9.3 });
+    expect(tradeStory(breakout)).toBe(
+      "Bought on a close above its 55-day high. It went +3.0R your way at best and −0.5R against at worst. Sold on a close below its 20-day low at +1.9R. It gave back 1.0R from its best."
+    );
+    // A stop at −1R that slipped past it, and fees that added to the loss.
+    const stopped = trade("lost", -79.3, NOW, { riskAtOpen: 70, setupName: "Opening range", exitReason: "STOP_LOSS", stopAtExit: 263000, fillAtExit: 262800 });
+    expect(tradeStory(stopped)).toBe(
+      "A 5-minute Opening range setup. The stop closed it at about −1R: the loss it was sized for, 0.08% past the stop as the price moved through it. Fees added ₹9 to the loss."
+    );
+    // A small winner whose fees took a big share.
+    const thin = trade("thin", 10, NOW, { riskAtOpen: 70, timeframe: "1d", setupName: "Pullback", exitReason: "TAKE_PROFIT", feesPaid: 20 });
+    expect(tradeStory(thin)).toBe("A daily Pullback setup. It reached its target at +0.1R. Fees took ₹20, 67% of what it made before fees.");
+    // In the trade's details.
+    render(createElement(LedgerBook, { trades: [breakout], risk: null, now: NOW }));
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByTestId("trade-story").textContent).toContain("Sold on a close below its 20-day low at +1.9R.");
   });
 
   it("leaves the line out for older trades without the record", () => {

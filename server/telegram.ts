@@ -96,6 +96,15 @@ async function call(method: string, params: Record<string, unknown>, timeoutMs?:
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+/**
+ * A pop-up as a Telegram message: its title in bold, its lines, and a link to
+ * the desk when the server knows its address (APP_URL).
+ */
+export function telegramText(message: TelegramMessage, appUrl = process.env.APP_URL ?? ""): string {
+  const link = /^https:\/\/[^\s"<>]+$/.test(appUrl) ? `\n<a href="${escapeHtml(appUrl)}">Open Nexus Desk ›</a>` : "";
+  return `<b>${escapeHtml(message.title)}</b>\n${escapeHtml(message.body)}${link}`;
+}
+
 /** Users with a linked chat (server-wide news goes to them too). */
 export function telegramUsers(): string[] {
   return telegramConfigured() ? Object.keys(linkedChats()) : [];
@@ -105,7 +114,7 @@ export function telegramUsers(): string[] {
 export function sendTelegram(uid: string | undefined, message: TelegramMessage): Promise<boolean> {
   const chat = uid && telegramConfigured() ? linkedChats()[uid] : undefined;
   if (!uid || !chat) return Promise.resolve(false);
-  const params = { chat_id: chat.chatId, text: `<b>${escapeHtml(message.title)}</b>\n${escapeHtml(message.body)}`, parse_mode: "HTML", disable_web_page_preview: true };
+  const params = { chat_id: chat.chatId, text: telegramText(message), parse_mode: "HTML", disable_web_page_preview: true };
   const send = async (): Promise<boolean> => {
     try {
       try {

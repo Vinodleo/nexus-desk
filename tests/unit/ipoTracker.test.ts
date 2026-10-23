@@ -241,6 +241,11 @@ describe("from listing day, for whoever got shares", () => {
     w.sessions.HOTCO = [{ day: "2026-10-26", open: 130, high: 140, low: 125, close: 138 }];
     await at("2026-10-26T16:00:00");
     expect(ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")!.plan!.stop).toBe(125);
+    // The card's price path: the issue price and the sessions since listing.
+    expect(ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")).toMatchObject({
+      issuePrice: 100,
+      sessions: [{ day: "2026-10-26", open: 130, high: 140, low: 125, close: 138 }],
+    });
 
     w.quotes.HOTCO = { open: 137, low: 126, ltp: 127 };
     await at("2026-10-27T11:00:00");

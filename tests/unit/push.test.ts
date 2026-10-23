@@ -98,41 +98,56 @@ describe("sending", () => {
     expect(push.hasSubscription("u2", sub(2).endpoint)).toBe(false);
   });
 
-  it("says what was bought, at what, with its stop and target", () => {
+  it("says what was bought, its size, its stop and what it risks, its target and why", () => {
     const m = push.tradeOpenedMessage(
       { id: "p1", symbol: "SOL/INR", direction: "LONG", quantity: 0.86, entryPrice: 11600, stopLoss: 11450, takeProfit: 11900, setupName: "Chen Conservative Trend" },
       "server"
     );
-    expect(m.title).toBe("Bought SOL/INR");
-    expect(m.body).toBe("0.86 @ ₹11,600 (₹9,976) · stop ₹11,450 · target ₹11,900 · Chen Conservative Trend · opened by the server");
+    expect(m.title).toBe("Bought SOL · 5-minute (paper)");
+    expect(m.body).toBe(
+      "Size ₹9,976 (0.86 at ₹11,600)\nStop ₹11,450: −1R is −₹129 · target ₹11,900 (+2.0R)\nWhy: Chen Conservative Trend's setup · opened by the server"
+    );
     expect(m.tag).toBe("open-p1");
+    // A slower strategy: no target, its own reason, and always the server's.
+    const fund = push.tradeOpenedMessage(
+      { id: "p2", symbol: "GLD.US", direction: "LONG", quantity: 0.92, entryPrice: 21600, stopLoss: 21000, takeProfit: 0, strategy: "breakout" },
+      "server"
+    );
+    expect(fund).toMatchObject({ title: "Bought GLD · Funds breakout (paper)", body: "Size ₹19,872 (0.92 at ₹21,600)\nStop ₹21,000: −1R is −₹552 · no target\nWhy: above its 55-day high" });
   });
 });
 
 describe("when a trade closes", () => {
-  it("says the result, why it closed, the price, how long it was held and the trader", () => {
+  it("says the result in R and rupees, what it kept after fees, how long it was held, the trader and why", () => {
     const m = push.tradeClosedMessage({
       positionId: "p9", symbol: "SOL/INR", direction: "LONG", quantity: 0.86, exitPrice: 11650, realizedPnl: 42.1,
-      exitReason: "TRAILING_STOP", holdingDurationMinutes: 38, setupName: "Chen Conservative Trend",
+      exitReason: "TRAILING_STOP", holdingDurationMinutes: 38, setupName: "Chen Conservative Trend", riskAtOpen: 129, feesPaid: 11.8,
     });
     expect(m).toEqual({
-      title: "SOL/INR closed +₹42.1",
-      body: "Trailing stop · sold 0.86 @ ₹11,650 · held 38 min · Chen Conservative Trend",
+      title: "Sold SOL · +0.3R, +₹42.1",
+      body: "Kept ₹42.1 after ₹11.8 fees · held 38 min\n0.86 at ₹11,650 · 5-minute traders · Chen Conservative Trend\nWhy: trailing stop",
       tag: "close-p9",
       url: "/",
     });
-    expect(push.tradeClosedMessage({ positionId: "p", symbol: "ZEC/INR", direction: "LONG", quantity: 0.061, exitPrice: 151230, realizedPnl: -178.28, exitReason: "STOP_LOSS", holdingDurationMinutes: 75 }).title).toBe("ZEC/INR closed −₹178.28");
-    expect(push.tradeClosedMessage({ positionId: "p", symbol: "A/INR", direction: "LONG", quantity: 1, exitPrice: 1, realizedPnl: 1, exitReason: "EXPIRY_TIME", holdingDurationMinutes: 75 }).body).toMatch(/held 1 h 15 min/);
+    // Without its risk or fees (an older record), the rupees alone.
+    expect(push.tradeClosedMessage({ positionId: "p", symbol: "ZEC/INR", direction: "LONG", quantity: 0.061, exitPrice: 151230, realizedPnl: -178.28, exitReason: "STOP_LOSS", holdingDurationMinutes: 75 })).toMatchObject({
+      title: "Sold ZEC · −₹178.28",
+      body: expect.stringMatching(/^Lost ₹178.28 · held 1 h 15 min\n/),
+    });
+    // Weeks, in days.
+    expect(push.tradeClosedMessage({ positionId: "p", symbol: "GLD.US", direction: "LONG", quantity: 1, exitPrice: 1, realizedPnl: 2140, exitReason: "TRAILING_STOP", holdingDurationMinutes: 23 * 1440, strategy: "breakout", riskAtOpen: 1189 }).title).toBe(
+      "Sold GLD · +1.8R, +₹2,140"
+    );
   });
 
   it("says a slower strategy's own sale in its own words, as the Book does (neither trails its stop)", () => {
     const close = (strategy?: "breakout" | "momentum", exitReason: "TRAILING_STOP" | "STOP_LOSS" = "TRAILING_STOP") =>
       push.tradeClosedMessage({ positionId: "p", symbol: "MA.US", direction: "LONG", quantity: 1.7497, exitPrice: 58441.23, realizedPnl: 2252.51, exitReason, holdingDurationMinutes: 10081, strategy }).body;
-    expect(close("momentum")).toMatch(/^Left the top 3 · sold 1.7497 @ ₹58,441.23/);
-    expect(close("breakout")).toMatch(/^Below its 20-day low · sold/);
+    expect(close("momentum")).toBe("Kept ₹2,252.51 · held 7 days\n1.7497 at ₹58,441.23 · US momentum\nWhy: left the top 3");
+    expect(close("breakout")).toMatch(/· US breakout\nWhy: below its 20-day low$/);
     // A stop hit is still a stop, and a 5-minute trader's trailing stop is one.
-    expect(close("momentum", "STOP_LOSS")).toMatch(/^Stop loss · /);
-    expect(close(undefined)).toMatch(/^Trailing stop · /);
+    expect(close("momentum", "STOP_LOSS")).toMatch(/\nWhy: stop loss$/);
+    expect(close(undefined)).toMatch(/\nWhy: trailing stop$/);
   });
 
   it("pops up when the guardian closes it", async () => {
@@ -143,7 +158,7 @@ describe("when a trade closes", () => {
     });
     guardian.evaluateDaemonPositions("SOL/INR", 98.5);
     await vi.waitFor(() =>
-      expect(sent.find((s) => s.payload.tag === "close-g1")?.payload).toMatchObject({ title: expect.stringMatching(/^SOL\/INR closed −₹/), body: expect.stringMatching(/^Stop loss · sold 2 @ ₹98.5/) })
+      expect(sent.find((s) => s.payload.tag === "close-g1")?.payload).toMatchObject({ title: expect.stringMatching(/^Sold SOL · −₹/), body: expect.stringMatching(/^Lost ₹[\d.]+ after ₹[\d.]+ fees · held \d+ min\n2 at ₹98.5 · 5-minute traders.*\nWhy: stop loss$/) })
     );
   });
 });
@@ -156,7 +171,7 @@ describe("when the server's momentum check sells a trade", () => {
       quantity: 1.7497, stopLoss: 54000, takeProfit: 0, openTime: new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString(),
     } as any);
     guardian.closeServerPosition("m1", 58441.23, "TRAILING_STOP");
-    await vi.waitFor(() => expect(sent.find((s) => s.payload.tag === "close-m1")?.payload.body).toMatch(/^Left the top 3 · sold 1.7497/));
+    await vi.waitFor(() => expect(sent.find((s) => s.payload.tag === "close-m1")?.payload.body).toMatch(/\nWhy: left the top 3$/));
   });
 });
 
@@ -169,7 +184,7 @@ describe("when a trade opens", () => {
   it("pops up for a position the server's autopilot opens", async () => {
     push.addSubscription("u1", sub(4));
     guardian.openServerPosition("u1", { ...position({ id: "srv-1" }), currentPrice: 100 } as any);
-    await vi.waitFor(() => expect(sent.some((s) => s.payload.title === "Bought SOL/INR" && /opened by the server/.test(s.payload.body))).toBe(true));
+    await vi.waitFor(() => expect(sent.some((s) => s.payload.title === "Bought SOL · 5-minute (paper)" && /opened by the server/.test(s.payload.body))).toBe(true));
   });
 
   it("pops up once for a position the app just opened, not for old ones re-sent", async () => {

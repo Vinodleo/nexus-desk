@@ -1,9 +1,8 @@
 import React from "react";
 import type { HistoricalTrade } from "../../types";
 import { marketOf } from "../../shared/marketLimits";
-import { isFundSymbol } from "../../shared/funds";
 import { COIN_FEE_PER_SIDE } from "../../shared/tradeMath";
-import { slowExitWords } from "../../shared/tradeMessages";
+import { slowExitWords, strategyLabel } from "../../shared/tradeMessages";
 import { Card } from "./ui";
 import { EXIT_LABEL, formatMoney } from "./format";
 import { RollingDigits } from "./motion";
@@ -108,11 +107,8 @@ export const MoneyWaterfall: React.FC<{ trades: HistoricalTrade[] }> = ({ trades
 };
 
 /** A closed trade's strategy, in words. */
-export function strategyOf(t: HistoricalTrade): string {
-  if (t.strategy === "momentum") return "US momentum";
-  if (t.strategy === "breakout") return isFundSymbol(t.symbol) ? "Funds breakout" : marketOf(t.symbol) === "coins" ? "Coin breakout" : "US breakout";
-  if (t.timeframe === "1d") return "Daily traders";
-  return "5-minute traders";
+export function strategyOf(t: Pick<HistoricalTrade, "strategy" | "symbol" | "timeframe">): string {
+  return strategyLabel(t);
 }
 
 const BADGE: Record<string, string> = {

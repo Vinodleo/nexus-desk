@@ -138,7 +138,10 @@ describe("US momentum trades", () => {
     // No time limit in the replay: a year, as breakout's (not the daily traders' 30 days).
     expect(nvda.expectedHoldingTimeMinutes).toBe(holdMinutesFor({ strategy: "breakout" }));
     expect(nvda.expectedHoldingTimeMinutes).toBe(365 * 24 * 60);
-    expect(tradeOpenedMessage(nvda, "server")).toMatchObject({ title: "Bought NVDA.US (momentum, paper)", body: expect.stringContaining("no target") });
+    expect(tradeOpenedMessage(nvda, "server")).toMatchObject({
+      title: "Bought NVDA · US momentum (paper)",
+      body: expect.stringMatching(/no target\nWhy: one of the week's 3 strongest risers$/),
+    });
     expect(nvda.partialQuantity).toBeUndefined();
     // Each session spans about 2% of the price: the stop 3 ATR (about 6%) below.
     expect(1 - nvda.stopLoss / nvda.entryPrice).toBeCloseTo(0.06, 2);

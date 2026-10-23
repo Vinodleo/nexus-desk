@@ -62,7 +62,7 @@ describe("daily trades' exits", () => {
     const proposal = { symbol: "SOL/INR", setup, metaScore: { confidence: 0.55 } } as unknown as TradeProposal;
     const position = positionFromProposal({ proposal, entryPrice: 100, units: 0.5 }, { id: "pos-1", atr: 5, trailProfile: "tight", now: 0 });
     expect(position).toMatchObject({ timeframe: "1d", expectedHoldingTimeMinutes: DAILY_HOLD_MINUTES, trailMode: "TREND_RUNNER", atrAtEntry: 5 });
-    expect(tradeOpenedMessage({ ...position, id: "pos-1" }, "server").title).toBe("Bought SOL/INR (daily, paper)");
+    expect(tradeOpenedMessage({ ...position, id: "pos-1" }, "server").title).toBe("Bought SOL · daily (paper)");
   });
 });
 
@@ -353,7 +353,7 @@ describe("breakout 55/20 paper trades", () => {
     // Sized to the coin limits like any coin trade: ₹50 lost at the stop.
     expect((p.entryPrice - p.stopLoss) * p.quantity).toBeLessThanOrEqual(50.01);
     expect(daily._dailyCoinsState().runs.u.picks).toEqual([{ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "opened" }]);
-    expect(tradeOpenedMessage(p, "server")).toMatchObject({ title: "Bought SOL/INR (breakout, paper)", body: expect.stringContaining("no target") });
+    expect(tradeOpenedMessage(p, "server")).toMatchObject({ title: "Bought SOL · Coin breakout (paper)", body: expect.stringContaining("no target") });
 
     // The guardian keeps its first stop: at +3R nothing trails and nothing is banked.
     const { evaluateDaemonPositions } = await import("../../server/guardian");
@@ -455,10 +455,10 @@ describe("breakout 55/20 paper trades", () => {
       expect(liveEntry).toHaveBeenCalledWith(expect.objectContaining({ userId: "u", symbol: "SOL/INR", side: "buy", price: 10000 }));
       const [held] = [...daemonPositions.values()];
       expect(held).toMatchObject({ symbol: "SOL/INR", strategy: "breakout", isLiveOrder: true, entryPrice: 10005, trailProfile: "fixed" });
-      expect(tradeOpenedMessage(held, "server").title).toBe("Bought SOL/INR (breakout, live)");
+      expect(tradeOpenedMessage(held, "server").title).toBe("Bought SOL · Coin breakout (live)");
       expect(daily._dailyCoinsState().runs.u.picks).toEqual([{ symbol: "SOL/INR", trader: "Breakout 55/20", outcome: "opened" }]);
       // Paper trades still say so.
-      expect(tradeOpenedMessage({ ...held, isLiveOrder: false }, "server").title).toBe("Bought SOL/INR (breakout, paper)");
+      expect(tradeOpenedMessage({ ...held, isLiveOrder: false }, "server").title).toBe("Bought SOL · Coin breakout (paper)");
     } finally {
       vi.stubEnv("LIVE_TRADING_ENABLED", "false");
     }

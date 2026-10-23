@@ -4,7 +4,7 @@ import { pnlTone } from "./format";
 import { rSigned } from "./LedgerBreakdown";
 import { useLabFeed } from "./labFeed";
 import { Fold, LabChip } from "./labUi";
-import { CheckPicks, shortName, SlotsMeter, waitedForSlot, when, type DailyCoinsView } from "./DailyCoinsCard";
+import { CheckPicks, NextCheck, RecordLine, shortName, SlotsMeter, waitedForSlot, when, type DailyCoinsView } from "./DailyCoinsCard";
 
 // Momentum, top 3, on US stocks (server/scanner/usMomentum.ts): the server's
 // check on each week's last US session at 3:45 pm New York, this week's top 3
@@ -32,26 +32,18 @@ export const UsMomentumCard: React.FC = () => {
   const { run, gate } = view;
 
   return (
-    <Card aria-label="US momentum trades" className="flex flex-col gap-2">
-      <div>
-        <div className="text-sm font-semibold">US momentum, top 3 (paper)</div>
-        <div className="text-xs tabular-nums text-muted" data-testid="momentum-status">
-          {run ? `Last check ${when(run.at)} · next ${when(view.nextAt)}` : `First check ${when(view.nextAt)}`}
+    <Card aria-label="US momentum trades" className="flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-base font-bold">US momentum, top 3 (paper)</div>
+          <div className="text-xs text-muted">The week's last US session, 3:45 pm New York</div>
         </div>
+        {gate && <LabChip status={gate.on ? "trading" : "paused"}>{gate.on ? "Trading" : "Paused"}</LabChip>}
       </div>
+      <NextCheck nextAt={view.nextAt} testId="momentum-status">
+        {run ? `Last check ${when(run.at)} · next ${when(view.nextAt)}` : `First check ${when(view.nextAt)}`}
+      </NextCheck>
 
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums" data-testid="momentum-record">
-        {gate ? (
-          <>
-            <span className="text-muted">
-              Record since 2016: {gate.trades} trades · <span className={`font-semibold ${pnlTone(gate.avgR)}`}>{rSigned(gate.avgR)}</span>
-            </span>
-            <LabChip status={gate.on ? "trading" : "paused"}>{gate.on ? "Trading" : "Paused"}</LabChip>
-          </>
-        ) : (
-          <span className="text-muted">Waits for the stocks' replay since 2016 to finish.</span>
-        )}
-      </div>
 
       {run?.marketUp !== undefined && (
         <div className="p-2.5 rounded-xl bg-inset flex flex-col gap-1.5" data-testid="momentum-top">
@@ -92,6 +84,8 @@ export const UsMomentumCard: React.FC = () => {
       )}
 
       {run && <CheckPicks run={run} testId="momentum-picks" empty="Nothing to buy or sell that week." />}
+
+      <RecordLine since="2016" gate={gate} testId="momentum-record" />
 
       <Fold title="How the weekly check works">
         <div className="text-xs text-muted leading-relaxed">

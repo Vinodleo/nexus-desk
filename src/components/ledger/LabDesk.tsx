@@ -120,9 +120,33 @@ export const ChecksTimeline: React.FC = () => {
   );
 };
 
-/** The checks' full cards, folded under the timeline: tap to open. They stay mounted, so they've loaded when opened. */
-export const CheckDetails: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export type CheckTab = "coins" | "us" | "funds" | "momentum";
+const CHECK_TAB_KEY = "nx-check-tab";
+function savedCheckTab(ids: CheckTab[]): CheckTab {
+  try {
+    const t = localStorage.getItem(CHECK_TAB_KEY);
+    return ids.find((id) => id === t) ?? ids[0];
+  } catch {
+    return ids[0];
+  }
+}
+
+/**
+ * The checks' full cards, folded under the timeline: tap to open, then a tab
+ * per check (the last one picked remembered on this device). Every card stays
+ * mounted, so each has loaded by the time it's shown.
+ */
+export const CheckDetails: React.FC<{ tabs: readonly { id: CheckTab; label: string; node: React.ReactNode }[] }> = ({ tabs }) => {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<CheckTab>(() => savedCheckTab(tabs.map((t) => t.id)));
+  const pick = (t: CheckTab) => {
+    setTab(t);
+    try {
+      localStorage.setItem(CHECK_TAB_KEY, t);
+    } catch {
+      // Private mode: the pick lasts this visit.
+    }
+  };
   return (
     <section aria-label="Each check in full" className="flex flex-col">
       <button
@@ -136,7 +160,14 @@ export const CheckDetails: React.FC<{ children: React.ReactNode }> = ({ children
       </button>
       <div className={`nx-fold${open ? " nx-fold-open" : ""}`} data-testid="check-details" inert={!open}>
         <div>
-          <div className="flex flex-col gap-4 pt-4">{children}</div>
+          <div className="flex flex-col gap-3 pt-4">
+            <Segmented label="Which check" options={tabs} value={tab} onChange={pick} />
+            {tabs.map((t) => (
+              <div key={t.id} hidden={t.id !== tab} data-testid={`check-tab-${t.id}`}>
+                {t.node}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
