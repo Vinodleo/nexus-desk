@@ -135,6 +135,7 @@ describe("look only", () => {
     ["the live orders' state", "GET", "/api/live/positions"],
     ["the backups", "GET", "/api/backups"],
     ["restoring a backup", "POST", "/api/backups/restore"],
+    ["the server's log", "GET", "/api/server-log"],
   ])("refuses a viewer %s", async (_n, method, url) => {
     await ownerSignsIn();
     as("friend-uid", "friend@example.com");

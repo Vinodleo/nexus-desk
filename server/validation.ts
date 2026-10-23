@@ -70,6 +70,13 @@ export const ipoHeldBody = z.object({
   held: z.boolean(),
 });
 
+// ---------- server log ----------
+
+export const serverLogQuery = z.object({
+  problems: z.enum(["0", "1"]).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+
 // ---------- backups ----------
 
 export const restoreBackupBody = z.object({
