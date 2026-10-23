@@ -84,10 +84,10 @@ describe("the IPO card", () => {
     expect(JSON.parse(String(init!.body))).toEqual({ symbol: "WAITCO", held: true });
   });
 
-  it("on a look-only account shows the IPOs without 'I got shares'", async () => {
+  it("on a look-only account offers 'I got shares' too: its own selling alerts", async () => {
     render(createElement(LookOnlyContext.Provider, { value: true }, createElement(IpoCard)));
     expect((await screen.findByTestId("ipo-plan-WAITCO")).textContent).toContain("Allotment");
-    expect(screen.queryByRole("button", { name: "I got shares" })).toBeNull();
+    expect(screen.getByRole("button", { name: "I got shares" })).toBeTruthy();
   });
 
   it("shows the rule's paper record, picked against skipped", async () => {

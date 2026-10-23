@@ -183,3 +183,35 @@ describe("when a trade opens", () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe("pop-ups for look-only accounts", () => {
+  it("sends them the IPO alerts (and what's sent to them) but not the desk's own news, and nothing once removed", async () => {
+    const auth = await import("../../server/auth");
+    vi.stubEnv("ALLOWED_EMAILS", "owner@example.com");
+    vi.stubEnv("VIEWER_EMAILS", "friend@example.com");
+    fs.writeFileSync(path.join(dataDir, "desk_viewers.json"), JSON.stringify({ v1: "friend@example.com", v2: "gone@example.com" }));
+    auth._resetAuth();
+    for (const [uid, n] of [["owner-1", 101], ["v1", 102], ["v2", 103]] as const) {
+      await fetch(`${base}/api/push/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-uid": uid },
+        body: JSON.stringify({ subscription: sub(n) }),
+      });
+    }
+    // Only this test's three devices (earlier tests subscribed others).
+    const to = () => sent.map((s) => s.endpoint.split("/").pop()!).filter((n) => ["101", "102", "103"].includes(n)).sort();
+
+    sent.length = 0;
+    await push.notifyEveryone({ title: "Backup failed", body: "" });
+    expect(to()).toEqual(["101"]);
+
+    sent.length = 0;
+    await push.notifyEveryone({ title: "Apply today: Hot Co IPO", body: "" }, { viewers: true });
+    expect(to()).toEqual(["101", "102"]);
+
+    sent.length = 0;
+    expect(await push.notifyUser("v1", { title: "Hot Co listed +30%: sell half", body: "" })).toBe(1);
+    expect(await push.notifyUser("v2", { title: "Hot Co listed +30%: sell half", body: "" })).toBe(0);
+    expect(to()).toEqual(["102"]);
+  });
+});

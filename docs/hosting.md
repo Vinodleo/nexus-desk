@@ -277,9 +277,15 @@ the bot: `fly secrets unset TELEGRAM_BOT_TOKEN -a nexus-desk-vinodleo`.
 People you list can open your desk and see everything: the Floor, the Book
 with its amounts, the Lab and Learning. They can't change anything: no
 trades, closes, Stop all, limits or settings. The server refuses every change
-from them, not just the app (`server/auth.ts`). They get no pop-ups or
-Telegram messages. Your real CoinDCX balance, live orders and Telegram link
-stay yours alone.
+from them, not just the app (`server/auth.ts`). Your real CoinDCX balance and
+live orders stay yours alone.
+
+**IPO alerts for them:** in their Settings → IPO alerts they can turn on pop-ups
+on their phone and link their own Telegram (to your bot). They then get the
+"Apply today" alert when an IPO fits the rule, and, if they tap "I got shares"
+on an IPO, its selling alerts. Your trade alerts, the Sunday summary and the
+server's warnings stay yours. Once you take someone off the list, nothing more
+is sent to them.
 
 **To let someone look**, in Cloud Shell, with their Google account emails
 (comma-separated):

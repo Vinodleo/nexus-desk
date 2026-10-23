@@ -1,4 +1,5 @@
 import { auth } from "./firebase";
+import { isViewerOwnRoute } from "../shared/lookOnly";
 
 // All calls to our own /api routes go through here so they carry the
 // signed-in user's Firebase ID token; the server rejects anything without one.
@@ -21,14 +22,15 @@ let lookOnly = false;
 /**
  * A look-only account (the server's VIEWER_EMAILS): from now on requests that
  * would change something aren't sent (the server refuses them anyway), so the
- * app's background saves don't fail one by one.
+ * app's background saves don't fail one by one. Its own alerts and IPOs
+ * (VIEWER_OWN_ROUTES) still go.
  */
 export function setLookOnly(on: boolean): void {
   lookOnly = on;
 }
 
 export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  if (lookOnly && (init.method ?? "GET").toUpperCase() !== "GET") {
+  if (lookOnly && (init.method ?? "GET").toUpperCase() !== "GET" && !isViewerOwnRoute(input)) {
     return new Response(JSON.stringify({ success: false, error: LOOK_ONLY_TEXT, code: "LOOK_ONLY" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
