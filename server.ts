@@ -18,6 +18,7 @@ import { router as scannerRouter } from "./server/routes/scanner";
 import { router as pushRouter } from "./server/routes/push";
 import { router as telegramRouter } from "./server/routes/telegram";
 import { router as viewersRouter } from "./server/routes/viewers";
+import { router as backupsRouter } from "./server/routes/backups";
 import { router as tradeBookRouter, loadTradeBook } from "./server/tradeBook";
 import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
@@ -36,7 +37,7 @@ import { alpacaStatus } from "./server/alpaca";
 import { reviewerStatus } from "./server/tradeReviewer";
 import { fxStatus } from "./server/fx";
 import { startUsPrices } from "./server/usPrices";
-import { backupStatus, restoreIfAsked, startBackups } from "./server/backup";
+import { backupStatus, restoreIfAsked, setRestart, startBackups } from "./server/backup";
 import { coinDcxCheckStatus, startCoinDcxCheck } from "./server/coinDcxCheck";
 import { notifyEveryone, notifyUser } from "./server/push";
 import { startWeeklySummary } from "./server/weeklySummary";
@@ -82,6 +83,7 @@ app.use(scannerRouter);
 app.use(pushRouter);
 app.use(telegramRouter);
 app.use(viewersRouter);
+app.use(backupsRouter);
 app.use(tradeBookRouter);
 
 // Who's signed in: the owner, or a look-only viewer of the owner's desk (server/auth.ts).
@@ -117,11 +119,20 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.exit(0);
   });
 }
+// A restore asked for in Settings: the state in memory saved first (it's kept
+// aside with the rest), then a restart, which takes the request at start-up.
+setRestart(() => {
+  console.log("[Backup] Restarting to restore a backup.");
+  saveDaemonStateToDisk();
+  saveScannerState();
+  process.exit(1);
+});
 
 // Start server with Vite middleware in dev or static files in production
 async function startServer() {
-  // RESTORE_BACKUP=YYYY-MM-DD puts that day's backup back (once), then
-  // restarts so every part of the server loads the restored files.
+  // A restore asked for in Settings, or RESTORE_BACKUP=YYYY-MM-DD, puts that
+  // day's backup back (once), then restarts so every part of the server
+  // loads the restored files.
   if (await restoreIfAsked()) {
     console.log("[Backup] Restarting to load the restored files.");
     process.exit(1);

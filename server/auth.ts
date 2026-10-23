@@ -147,8 +147,8 @@ export function deskUidFor(decoded: DecodedIdToken): string | null {
   return deskOwnerUid();
 }
 
-/** Reads a viewer can't make: real money at CoinDCX, live orders, and who else may look. */
-const OWNER_ONLY = ["/api/coindcx/balances", "/api/live/", "/api/viewers"];
+/** Reads a viewer can't make: real money at CoinDCX, live orders, who else may look, and the backups. */
+const OWNER_ONLY = ["/api/coindcx/balances", "/api/live/", "/api/viewers", "/api/backups"];
 
 // ---------- viewers who have signed in ----------
 
