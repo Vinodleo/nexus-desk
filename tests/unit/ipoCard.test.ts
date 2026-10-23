@@ -10,7 +10,7 @@ import { ipoPlan, ipoRecord } from "../../src/shared/ipo";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
-const { IpoCard, planText } = await import("../../src/components/ledger/IpoCard");
+const { IpoCard, planText, ipoSteps, PricePath } = await import("../../src/components/ledger/IpoCard");
 const { LookOnlyContext } = await import("../../src/context/LookOnly");
 
 const row = (over: Record<string, unknown>) => ({
@@ -60,13 +60,21 @@ describe("the IPO card", () => {
     const hot = await screen.findByTestId("ipo-bidding-HOTCO");
     expect(hot.textContent).toContain("Fits the rule");
     expect(hot.textContent).toContain("Closes today, 7 pm · ₹95–100 · lot ₹15,000");
-    expect(hot.textContent).toContain("Institutions45×");
-    expect(hot.textContent).toContain("Whole issue22×");
+    expect(hot.textContent).toContain("Institutions45× · needs 20×");
+    expect(hot.textContent).toContain("Whole issue22× · needs 10×");
+    // The time left to apply as a ring: 2:10 pm, UPI approvals close at 7 pm.
+    expect(hot.querySelector("[data-testid=ipo-countdown]")!.getAttribute("aria-label")).toBe("4h 50m left to apply, until 7 pm");
+    // Its road: bidding now, then allotment, listing and the sale.
+    const steps = screen.getByTestId("ipo-steps-HOTCO");
+    expect(steps.querySelector("[aria-current=step]")!.textContent).toBe("BidMon–Wed");
     expect(hot.textContent).toContain("Apply and approve the UPI request by 7 pm today.");
     const cold = screen.getByTestId("ipo-bidding-COLDCO");
     expect(cold.textContent).toContain("Not yet");
     expect(cold.textContent).toContain("2.4×");
     expect(cold.textContent).not.toContain("Apply and approve");
+    // Its ring is grey: the time matters less to an issue that doesn't fit.
+    expect(hot.querySelector("[data-testid=ipo-countdown] .stroke-gain")).not.toBeNull();
+    expect(cold.querySelector("[data-testid=ipo-countdown] .stroke-muted")).not.toBeNull();
     // Coming up: each on its own row, the name and price band on top and the bidding days under it.
     expect(screen.getByTestId("ipo-upcoming-NEXTCO").tagName).toBe("LI");
     expect(screen.getByTestId("ipo-upcoming-band-NEXTCO").textContent).toBe("₹95–100");
@@ -95,14 +103,51 @@ describe("the IPO card", () => {
 
   it("shows the rule's paper record, picked against skipped", async () => {
     render(createElement(IpoCard));
-    expect((await screen.findByTestId("ipo-record-picked")).textContent).toBe("Picked: 1 listed · 1 made money+27% · +₹4,000 a lot");
-    expect(screen.getByTestId("ipo-record-skipped").textContent).toContain("Skipped: 1 listed");
+    expect((await screen.findByTestId("ipo-record-picked")).textContent).toBe("Rule picked+27% avg1 listed · 1 made money · +₹4,000 a lot");
+    expect(screen.getByTestId("ipo-record-skipped").textContent).toContain("Rule skipped");
+    expect(screen.getByTestId("ipo-record-skipped").textContent).toContain("1 listed");
   });
 
   it("says when NSE couldn't be read", async () => {
     vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...view, lastError: "NSE's site answered 403 without cookies" })));
     render(createElement(IpoCard));
     expect((await screen.findByTestId("ipo-error")).textContent).toBe("Couldn't read NSE: NSE's site answered 403 without cookies");
+  });
+});
+
+describe("an issue's road and its price after listing", () => {
+  it("fills each step once it's past", () => {
+    const waiting = row({ closes: "2026-10-20", fit: true, allotmentOn: "2026-10-21", listsOn: "2026-10-23" });
+    expect(ipoSteps(waiting as any, "2026-10-21").map((x) => [x.label, x.done, x.now])).toEqual([
+      ["Bid", true, false],
+      ["Allotment", false, true],
+      ["Listing", false, false],
+      ["Sell", false, false],
+    ]);
+    const sold = row({ opens: "2026-10-05", closes: "2026-10-07", allotmentOn: "2026-10-08", listsOn: "2026-10-12", listedOn: "2026-10-12", open: 204, plan: listed });
+    expect(ipoSteps(sold as any, "2026-10-21").every((x) => x.done)).toBe(true);
+  });
+
+  it("draws the price since listing against the issue price, and nothing without the sessions", () => {
+    const plan = ipoPlan(100, 150, [
+      { day: "2026-10-26", open: 130, high: 140, low: 125, close: 138 },
+      { day: "2026-10-27", open: 138, high: 139, low: 120, close: 122 },
+    ])!;
+    const r = row({ listedOn: "2026-10-26", open: 130, openPct: 0.3, plan, issuePrice: 100, sessions: [
+      { day: "2026-10-26", open: 130, high: 140, low: 125, close: 138 },
+      { day: "2026-10-27", open: 138, high: 139, low: 120, close: 122 },
+    ] });
+    const { container } = render(createElement(PricePath, { r: r as any }));
+    const svg = screen.getByTestId("ipo-path-HOTCO");
+    expect(svg.getAttribute("aria-label")).toBe("Price since listing: 3 points, last ₹122 against the ₹100 issue price");
+    // The open, the first close and the second; the rule's two sales marked.
+    expect(svg.querySelector("polyline")!.getAttribute("points")!.split(" ")).toHaveLength(3);
+    expect(svg.querySelectorAll("circle")).toHaveLength(2);
+    // Its dashed lines named under it.
+    expect(container.textContent).toBe("issue ₹100listing day's low ₹125sold");
+    cleanup();
+    render(createElement(PricePath, { r: row({}) as any }));
+    expect(screen.queryByTestId("ipo-path-HOTCO")).toBeNull();
   });
 });
 

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
-const { DailyCoinsCard } = await import("../../src/components/ledger/DailyCoinsCard");
+const { DailyCoinsCard, NextCheck, pickChips } = await import("../../src/components/ledger/DailyCoinsCard");
 
 afterEach(cleanup);
 const reply = (body: unknown) => new Response(JSON.stringify(body));
@@ -46,6 +46,12 @@ describe("Daily coin trades", () => {
       "↑AVAX Sofia Range Scalpopened",
       "○LINK Sofia Range Scalpnot openedwould exceed 2 open coin trades at once",
       "‖ETH Kenji Extreme Reversionpausedonly 8 replayed setups (needs 10)",
+    ]);
+    // What it did, at a glance.
+    expect(within(screen.getByTestId("daily-picks-chips")).getAllByText(/./).map((c) => c.textContent)).toEqual([
+      "Bought AVAX",
+      "Waited LINK",
+      "Paused ETH",
     ]);
     expect(screen.getByText("Couldn't read: MON.")).toBeTruthy();
     // Both coin slots are taken: LINK waited for one, and the way to more is in Settings.
@@ -145,5 +151,29 @@ describe("Daily coin trades", () => {
     const { container } = render(createElement(DailyCoinsCard));
     await new Promise((r) => setTimeout(r, 0));
     expect(container.innerHTML).toBe("");
+  });
+
+  it("sums up what a check did in a chip an outcome, the first three named", () => {
+    const pick = (symbol: string, outcome: "opened" | "sold" | "kept" | "waiting" | "paused") => ({ symbol, trader: "Breakout 55/20", outcome });
+    expect(
+      pickChips([pick("SOL/INR", "kept"), pick("BTC/INR", "opened"), pick("AAPL.US", "sold"), pick("ETH/INR", "kept"), pick("XRP/INR", "kept"), pick("ADA/INR", "kept")])
+    ).toEqual([
+      { outcome: "opened", text: "Bought BTC" },
+      { outcome: "sold", text: "Sold AAPL" },
+      { outcome: "kept", text: "Kept SOL, ETH, XRP +1" },
+    ]);
+    expect(pickChips([])).toEqual([]);
+  });
+
+  it("counts down to the next check", () => {
+    const now = Date.parse("2026-10-23T19:00:00Z");
+    const { rerender } = render(createElement(NextCheck, { nextAt: now + (6 * 60 + 12) * 60_000, now, testId: "x" }, "Last check …"));
+    expect(screen.getByTestId("x-next").textContent).toMatch(/^Next check in 6 h 12 m/);
+    expect(screen.getByTestId("x").textContent).toBe("Last check …");
+    // Momentum's weekly check, days away.
+    rerender(createElement(NextCheck, { nextAt: now + (3 * 24 + 5) * 3_600_000 + 20 * 60_000, now, testId: "x" }, "Last check …"));
+    expect(screen.getByTestId("x-next").textContent).toBe("Next check in 3 d 5 h");
+    rerender(createElement(NextCheck, { nextAt: now - 60_000, now, testId: "x" }, "Last check …"));
+    expect(screen.getByTestId("x-next").textContent).toBe("Checking about now");
   });
 });

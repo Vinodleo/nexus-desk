@@ -126,26 +126,42 @@ export function moveLine(t: HistoricalTrade): { lo: number; hi: number; bestR: n
 
 const signedR = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(1)}R`;
 
-/** The move line, drawn outward from the entry when the card opens; the close drops on last. */
+/** The move line, drawn outward from the entry when the card opens; the close drops on last. Its marks are named underneath. */
 const HowItMoved: React.FC<{ trade: HistoricalTrade }> = ({ trade: t }) => {
   const m = moveLine(t);
   if (!m) return null;
   const x = (r: number) => (r - m.lo) / (m.hi - m.lo);
   const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
+  const won = t.realizedPnl > 0;
   return (
-    <div className="flex flex-col gap-1.5" data-testid="how-it-moved">
-      <div className="text-xs text-muted">How it moved</div>
-      <div className="relative h-5" aria-hidden="true">
-        <div className="absolute inset-x-0 top-2 h-1 rounded-full bg-line" />
-        <div className="absolute top-2 h-1 rounded-l-full bg-loss/40 nx-grow-left" style={{ left: pct(x(-m.worstR)), width: pct(x(0) - x(-m.worstR)) }} />
-        <div className="absolute top-2 h-1 rounded-r-full bg-gain/40 nx-grow" style={{ left: pct(x(0)), width: pct(x(m.bestR) - x(0)) }} />
-        <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-loss" style={{ left: pct(x(-1)) }} />
-        <div className="absolute top-[3px] w-0.5 h-3.5 -ml-px bg-muted" style={{ left: pct(x(0)) }} />
+    <div className="flex flex-col gap-2" data-testid="how-it-moved">
+      <div className="text-xs font-bold text-muted uppercase tracking-[0.08em]">How it moved, in R</div>
+      <div className="relative h-8" aria-hidden="true">
+        <div className="absolute inset-x-0 top-3.5 h-1.5 rounded-full bg-line" />
+        <div className="absolute top-3.5 h-1.5 rounded-l-full bg-loss/40 nx-grow-left" style={{ left: pct(x(-m.worstR)), width: pct(x(0) - x(-m.worstR)) }} />
+        <div className="absolute top-3.5 h-1.5 rounded-r-full bg-gain/40 nx-grow" style={{ left: pct(x(0)), width: pct(x(m.bestR) - x(0)) }} />
+        <div className="absolute top-1.5 w-0.5 h-5 -ml-px bg-loss" style={{ left: pct(x(-1)) }} />
+        <div className="absolute top-1.5 w-0.5 h-5 -ml-px bg-muted" style={{ left: pct(x(0)) }} />
+        {m.bestR > 0 && <div className="absolute top-2 w-3 h-3 -ml-1.5 rounded-full border-2 border-ink bg-surface" style={{ left: pct(x(m.bestR)) }} />}
         <div
           data-testid="exit-dot"
-          className={`absolute top-[3px] w-3.5 h-3.5 -ml-[7px] rounded-full border-2 border-surface nx-exit-pop ${t.realizedPnl > 0 ? "bg-gain" : "bg-loss"}`}
+          className={`absolute top-1 w-6 h-6 -ml-3 rounded-full border-[3px] border-surface nx-exit-pop ${won ? "bg-gain" : "bg-loss"}`}
           style={{ left: pct(x(m.exitR)) }}
         />
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted tabular-nums">
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-loss" aria-hidden="true" />
+          stop −1R
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full border-2 border-ink" aria-hidden="true" />
+          best {signedR(m.bestR)}
+        </span>
+        <span className={`flex items-center gap-1 font-semibold ${won ? "text-gain" : "text-loss"}`}>
+          <span className={`w-2 h-2 rounded-full ${won ? "bg-gain" : "bg-loss"}`} aria-hidden="true" />
+          closed {signedR(m.exitR)}
+        </span>
       </div>
       <p className="m-0 text-xs leading-relaxed">
         Went {signedR(m.bestR)} your way at best and {signedR(-m.worstR)} against at worst; closed at {signedR(m.exitR)} before fees.
@@ -154,13 +170,61 @@ const HowItMoved: React.FC<{ trade: HistoricalTrade }> = ({ trade: t }) => {
   );
 };
 
+/**
+ * What happened to a closed trade, in plain words from its own record: why
+ * it was bought, how far it went each way, how it ended and what that cost
+ * or kept, and what fees took.
+ */
+export function tradeStory(t: HistoricalTrade): string {
+  const r = resultR(t);
+  const m = moveLine(t);
+  const fees = t.feesPaid || 0;
+  const why =
+    t.strategy === "breakout"
+      ? "Bought on a close above its 55-day high."
+      : t.strategy === "momentum"
+        ? "Bought as one of the week's 3 strongest risers."
+        : t.timeframe === "1d"
+          ? `A daily ${t.setupName || "trader's"} setup.`
+          : `A 5-minute ${t.setupName || "trader's"} setup.`;
+  const path = m ? ` It went ${signedR(m.bestR)} your way at best and ${signedR(-m.worstR)} against at worst.` : "";
+  const at = r !== null ? ` at ${signedR(r)}` : "";
+  const slip = stopSlip(t);
+  const end =
+    t.exitReason === "STOP_LOSS"
+      ? r !== null && r <= -0.9
+        ? ` The stop closed it at about −1R: the loss it was sized for${slip && slip.pct >= 0.05 ? `, ${slip.pct.toFixed(2)}% past the stop as the price moved through it` : ""}.`
+        : ` Its stop closed it${at}.`
+      : t.exitReason === "TRAILING_STOP"
+        ? t.strategy === "breakout"
+          ? ` Sold on a close below its 20-day low${at}.`
+          : t.strategy === "momentum"
+            ? ` Sold when it left the top 3${at}.`
+            : ` The trailing stop closed it${at}.`
+        : t.exitReason === "TAKE_PROFIT"
+          ? ` It reached its target${at}.`
+          : t.exitReason === "EXPIRY_TIME"
+            ? ` Closed at its time limit${at}.`
+            : ` You closed it${at}.`;
+  const gaveBack = m && m.bestR >= 1 && m.bestR - m.exitR >= 0.5 ? ` It gave back ${(m.bestR - m.exitR).toFixed(1)}R from its best.` : "";
+  const gross = t.realizedPnl + fees;
+  const feeWords =
+    fees > 0 && gross > 0 && fees / gross >= 0.25
+      ? ` Fees took ${formatMoney(fees, { decimals: 0 })}, ${Math.round((fees / gross) * 100)}% of what it made before fees.`
+      : fees > 0 && gross <= 0
+        ? ` Fees added ${formatMoney(fees, { decimals: 0 })} to the loss.`
+        : "";
+  return `${why}${path}${end}${gaveBack}${feeWords}`;
+}
+
 /** The result in R after fees (what the trade made over what it risked); null without the risk recorded. */
 export const resultR = (t: HistoricalTrade): number | null => ((t.riskAtOpen ?? 0) > 0 ? t.realizedPnl / t.riskAtOpen! : null);
 
-const Fact: React.FC<{ label: string; children: React.ReactNode; className?: string; wide?: boolean }> = ({ label, children, className = "", wide }) => (
-  <div className={wide ? "col-span-3" : ""}>
-    <dt className="text-[11px] text-muted">{label}</dt>
-    <dd className={`m-0 text-[13px] font-semibold ${className}`}>{children}</dd>
+/** One line of a trade's money: what, then the figure on the right. */
+const Fact: React.FC<{ label: string; children: React.ReactNode; className?: string }> = ({ label, children, className = "" }) => (
+  <div className="flex items-baseline justify-between gap-3 py-2">
+    <dt className="text-[13px] text-muted shrink-0">{label}</dt>
+    <dd className={`m-0 text-[13px] font-semibold text-right ${className}`}>{children}</dd>
   </div>
 );
 
@@ -227,35 +291,32 @@ const TradeRow: React.FC<{
           <div>
             <div className="mx-3.5 mb-3.5 p-3 rounded-[14px] bg-inset flex flex-col gap-3">
               <HowItMoved trade={t} />
-              <dl className="m-0 grid grid-cols-3 gap-x-2 gap-y-2.5 tabular-nums">
-                <Fact label="Bought at">{formatPrice(t.direction === "LONG" ? t.entryPrice : t.exitPrice)}</Fact>
-                <Fact label="Sold at">{formatPrice(t.direction === "LONG" ? t.exitPrice : t.entryPrice)}</Fact>
+              <dl className="m-0 rounded-[14px] bg-surface border border-line px-3 tabular-nums [&>div+div]:border-t [&>div+div]:border-line">
+                <Fact label="Bought">
+                  {formatPrice(t.direction === "LONG" ? t.entryPrice : t.exitPrice)} · {t.quantity} · {formatMoney(t.moneyPlaced, { decimals: 0 })}
+                </Fact>
+                <Fact label="Sold">{formatPrice(t.direction === "LONG" ? t.exitPrice : t.entryPrice)}</Fact>
                 <Fact label="Held">{heldFor(t)}</Fact>
                 <Fact label="Before fees">{formatMoney(t.realizedPnl + fees, { signed: true, decimals: 0 })}</Fact>
-                <Fact label="Fees">{formatMoney(fees, { decimals: 0 })}</Fact>
-                <Fact label="Kept" className={tone}>
-                  {formatMoney(t.realizedPnl, { signed: true, decimals: 0 })}
-                </Fact>
-                <Fact label="Money placed">{formatMoney(t.moneyPlaced, { decimals: 0 })}</Fact>
-                <Fact label="Return" className={tone}>
-                  {formatPct(t.realizedPnlPercent)}
-                </Fact>
-                <Fact label={t.direction === "LONG" ? "Long" : "Short"}>{t.quantity}</Fact>
-                <Fact label="Setup" wide>
-                  {t.setupName}
+                <Fact label="Fees">−{formatMoney(fees, { decimals: 0 })}</Fact>
+                <Fact label="Kept" className={`${tone} text-[15px]`}>
+                  {formatMoney(t.realizedPnl, { signed: true, decimals: 0 })} · {formatPct(t.realizedPnlPercent)}
                 </Fact>
                 {stopSlip(t) && (
-                  <Fact label="Stop → sold at" wide>
+                  <Fact label="Stop → sold at">
                     {formatPrice(t.stopAtExit!)} → {formatPrice(t.fillAtExit!)}
                     {stopSlip(t)!.pct >= 0.05 && (
-                      <span className="text-loss font-normal">
-                        {" "}
-                        · {stopSlip(t)!.pct.toFixed(2)}% past the stop: the price moved through it between checks
+                      <span className="block text-loss font-normal text-xs">
+                        {stopSlip(t)!.pct.toFixed(2)}% past the stop: the price moved through it between checks
                       </span>
                     )}
                   </Fact>
                 )}
               </dl>
+              <div className="flex flex-col gap-1" data-testid="trade-story">
+                <div className="text-xs font-bold text-muted uppercase tracking-[0.08em]">What happened</div>
+                <p className="m-0 text-[13px] leading-relaxed">{tradeStory(t)}</p>
+              </div>
               <TradeAutopsyCard trade={t} onUpdateTrade={onUpdateTrade} />
             </div>
           </div>

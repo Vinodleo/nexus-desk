@@ -35,8 +35,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     market sessions and the server's scheduled checks with their next times; the check times live in `src/shared/deskDay.ts`
     and the server reads them there), what each check did last as one timeline, newest first, with chips for what it
     bought, sold, kept or left waiting (`ChecksTimeline`, `checkTags`, `LabDesk.tsx`), the IPOs (`IpoCard`, below), and folded
-    under it ("Each check in full", `CheckDetails`) the daily coin check with its coin slots (`DailyCoinsCard`), the US breakout check
-    (`UsBreakoutCard`), the funds' breakout check (`FundsBreakoutCard`) and the weekly US momentum check (`UsMomentumCard`).
+    under it ("Each check in full", `CheckDetails`) a tab per check (Coins, US, Funds, Momentum; the last one picked remembered
+    per device): the daily coin check (`DailyCoinsCard`), the US breakout check (`UsBreakoutCard`), the funds' breakout check
+    (`FundsBreakoutCard`) and the weekly US momentum check (`UsMomentumCard`), each with whether it trades, the next check
+    counted down (`NextCheck`, `checkCountdown`), its slots as squares (`SlotsMeter`), chips for what it did (`pickChips`)
+    over each pick and why, and its record (`RecordLine`).
   - **Records:** the scorecard first (`PaperScorecard`, `services/paperScorecard.ts`): coin breakout's, US breakout's,
     the funds' breakout's, US momentum's and the daily coin traders' real paper trades from the Book against their replays,
     each on one line in R (the replay a ring, paper a dot gliding there from it when the tab shows, luck's reach shaded once
@@ -73,7 +76,12 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   the server's latest lines newest first by day in India time, all or warnings and errors, looked at again every 15 s
   while open). **Desk: Read access** (`ReadAccess`, `useViewers`): the accounts let look, whether each
   has signed in, an email to add, and ✕ then Remove to shut one out. Then pop-ups and the theme, the desk's links (the desk brief, This phone), the
-  version and Sign out. **This phone** (`ThisPhoneSheet`): the account and Sign out, that the server does the trading,
+  version and Sign out. **The desk brief** (`CommanderModal`, `deskBrief.ts`, owner's ask, 23 Oct), worked out on the phone
+  from the desk's own records: the day in a headline and three figures (today, open trades, loss limit used), what needs
+  the owner (trading stopped, the loss limit 80%+ used, an IPO that fits closing today before its cutoff, a failed backup,
+  a stalled scanner), what each strategy did today (bought, sold with how and in R, holds), what every stop hitting
+  would take, chips that answer "Why did X sell?", "What's next?" and "How much is at risk?", and the commander's (Gemini's)
+  market note under it. It can't open or close trades. **This phone** (`ThisPhoneSheet`): the account and Sign out, that the server does the trading,
   the pop-ups and where the CoinDCX keys are, a role other than the owner's offered back ("Allow everything again"),
   old keys in Firestore if any, recent activity in plain words (`activityOf`, `activityTime`) and, folded, the memory's
   cloud copy. It replaced "Run in the background" (wake lock, silent audio, a play/pause the server made pointless) and
@@ -114,7 +122,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   the day's total. Each row has its strategy's badge (`strategyBadge`), how it ended (`exitWords`: a breakout's own sale
   reads "Below its 20-day low", momentum's "Left the top 3"; both are recorded as trailing-stop exits; the pop-ups, so
   Telegram, and the "While you were away" card say the same, `slowExitWords`) and its result in
-  R after fees (`resultR`); tapping one opens how it moved in R, bought and sold, held, before fees, fees and kept. An
+  R after fees (`resultR`); tapping one opens how it moved in R (the stop, its best and where it closed, `moveLine`), its
+  numbers a row each (bought, sold, held, before fees, fees, kept, the stop against the fill), and what happened in plain
+  words (`tradeStory`: why it was bought, how far it went, how it ended, what it gave back, what fees took). The prices
+  between aren't kept, so it's a line in R, not a chart over time. An
   empty month offers the last one with trades. Book → Breakdown (last 7 days, this month or all, `tradesIn`):
   where the money went (`MoneyWaterfall`, `moneyFlow`: what was kept, then won and lost before fees, the fees; what
   coin fees took), each strategy's result either side of the middle (`ByStrategy`, `strategyOf`), the win rate on a
@@ -196,7 +207,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     the owner's own bot (`TELEGRAM_BOT_TOKEN`, a Fly secret), the chat linked from Settings with a one-time code
     (`t.me/<bot>?start=<code>`, 10 minutes; the server reads the bot's messages only while one waits) and kept in
     `telegram.json`. `notifyUser` and `notifyEveryone` send to both; sends go one at a time, a 429 waits once, a chat that
-    blocked the bot (403) is forgotten.
+    blocked the bot (403) is forgotten. Telegram adds a link to the desk when `APP_URL` is set (`telegramText`). Every trade
+    pop-up has one shape (owner's ask, 23 Oct; `src/shared/tradeMessages.ts`): a headline ("Bought NVDA · US breakout
+    (paper)", "Sold GLD · +1.8R, +₹2,140"), then the size and what −1R is with the target or none (opened) or what was kept
+    or lost after fees and how long it was held (closed), the strategy (`strategyLabel`, the Book's words), and "Why: …".
   - The weekly summary (`server/weeklySummary.ts`): a pop-up each Sunday at 10 am India time per desk, from the trades
     the server recorded (its own closes and the app's): the week's closed, won, still open and what they made, and each slower strategy's paper trades
     so far against its replay (`paperScore`, a strategy clearly behind named first). Sent late after a restart until
@@ -395,7 +409,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
   day's low, or 7 days on from 3 pm (`HOLD_DAYS`). The paper record (`ipoPlan`, `ipoRecord`): every listed issue as one
   lot at the top of its band (about ₹15,000 of shares where NSE gives no lot, `lotShares`), after Angel One's selling
-  charges, before tax, picked against skipped. State `ipo.json`.
+  charges, before tax, picked against skipped. State `ipo.json`. The card: each issue bidding with a ring counting down
+  to the UPI cutoff on its last day (`CountdownRing`, from 2 pm; grey on one that doesn't fit), each group's bids on a
+  log scale against the rule's bar, and its road (bid, allotment, listing, sale; `ipoSteps`); each recent one with its
+  price since listing against the issue price and the listing day's low, the rule's sales marked (`PricePath`, from the
+  sessions the server keeps, `issuePrice` and `sessions` on each row); the rule's record as two tiles, picked and skipped.
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if

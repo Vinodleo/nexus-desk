@@ -46,7 +46,9 @@ describe("US breakout trades", () => {
     expect(screen.getByTestId("us-slots").textContent).toBe(
       "Breakout slots: 2 of 2 in useNVDA waited for a free slot. To take more, raise Settings → US stocks: breakout trades at once."
     );
-    expect(screen.getByTestId("us-record").textContent).toBe("Record since 2016: 554 trades · +0.39R●Trading");
+    expect(screen.getByTestId("us-record").textContent).toBe("Record since 2016+0.39R · 554 trades");
+    // Trading or paused, said at the top of the card.
+    expect(screen.getByTestId("us-status").closest("[aria-label]")?.textContent).toContain("●Trading");
     expect(screen.getByText(/at 3:45 pm New York/)).toBeTruthy();
   });
 
@@ -54,7 +56,9 @@ describe("US breakout trades", () => {
     vi.mocked(apiFetch).mockResolvedValue(reply(view({ run: null, gate: { trader: "Breakout 55/20", trades: 554, avgR: -0.02, on: false } })));
     render(createElement(UsBreakoutCard));
     expect((await screen.findByTestId("us-status")).textContent).toMatch(/^First check /);
-    expect(screen.getByTestId("us-record").textContent).toBe("Record since 2016: 554 trades · −0.02R‖Paused");
+    expect(screen.getByTestId("us-record").textContent).toBe("Record since 2016−0.02R · 554 trades");
+    // Trading or paused, said at the top of the card.
+    expect(screen.getByTestId("us-status").closest("[aria-label]")?.textContent).toContain("‖Paused");
     cleanup();
 
     // Breakout switched off in Settings.
@@ -98,7 +102,9 @@ describe("funds breakout trades (gold, bonds and the rest)", () => {
     render(createElement(FundsBreakoutCard));
     expect((await screen.findByTestId("funds-status")).textContent).toMatch(/^Last check .+ · 16 funds · next /);
     expect(screen.getByText("Funds breakout 55/20 (paper)")).toBeTruthy();
-    expect(screen.getByTestId("funds-record").textContent).toBe("Record since 2016: 443 trades · +0.54R●Trading");
+    expect(screen.getByTestId("funds-record").textContent).toBe("Record since 2016+0.54R · 443 trades");
+    // Trading or paused, said at the top of the card.
+    expect(screen.getByTestId("funds-status").closest("[aria-label]")?.textContent).toContain("●Trading");
     expect(screen.getByTestId("funds-slots").textContent).toBe(
       "Funds breakout slots: 1 of 1 in useTLT waited for a free slot. To take more, raise Settings → US stocks: funds breakout trades at once."
     );

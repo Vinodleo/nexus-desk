@@ -57,7 +57,9 @@ describe("US momentum trades", () => {
     expect(screen.getByTestId("momentum-slots").textContent).toBe(
       "Momentum slots: 2 of 2 in useJPM waited for a free slot. To take more, raise Settings → US stocks: momentum trades at once."
     );
-    expect(screen.getByTestId("momentum-record").textContent).toBe("Record since 2016: 341 trades · +0.26R●Trading");
+    expect(screen.getByTestId("momentum-record").textContent).toBe("Record since 2016+0.26R · 341 trades");
+    // Trading or paused, said at the top of the card.
+    expect(screen.getByTestId("momentum-status").closest("[aria-label]")?.textContent).toContain("●Trading");
     expect(screen.getByText(/rose over the last 90 trading days/)).toBeTruthy();
   });
 
@@ -78,7 +80,9 @@ describe("US momentum trades", () => {
     vi.mocked(apiFetch).mockResolvedValue(reply(view({ run: null, gate: { trader: "Momentum, top 3", trades: 341, avgR: -0.02, on: false } })));
     render(createElement(UsMomentumCard));
     expect((await screen.findByTestId("momentum-status")).textContent).toMatch(/^First check /);
-    expect(screen.getByTestId("momentum-record").textContent).toBe("Record since 2016: 341 trades · −0.02R‖Paused");
+    expect(screen.getByTestId("momentum-record").textContent).toBe("Record since 2016−0.02R · 341 trades");
+    // Trading or paused, said at the top of the card.
+    expect(screen.getByTestId("momentum-status").closest("[aria-label]")?.textContent).toContain("‖Paused");
     cleanup();
 
     // Momentum switched off in Settings.

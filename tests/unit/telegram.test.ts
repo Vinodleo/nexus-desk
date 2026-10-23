@@ -95,6 +95,16 @@ describe("linking Telegram", () => {
     expect(sends()).toHaveLength(3);
   });
 
+  it("ends each message with a link to the desk when the server knows its address", () => {
+    const m = { title: "Sold GLD · +1.8R, +₹2,140", body: "Kept ₹2,140 after ₹20 fees · held 23 days\nWhy: below its 20-day low" };
+    expect(telegram.telegramText(m, "https://nexus-desk-vinodleo.fly.dev")).toBe(
+      '<b>Sold GLD · +1.8R, +₹2,140</b>\nKept ₹2,140 after ₹20 fees · held 23 days\nWhy: below its 20-day low\n<a href="https://nexus-desk-vinodleo.fly.dev">Open Nexus Desk ›</a>'
+    );
+    // No address (or the example's placeholder): no link.
+    expect(telegram.telegramText(m, "")).not.toContain("<a ");
+    expect(telegram.telegramText(m, "MY_APP_URL")).not.toContain("<a ");
+  });
+
   it("links only its own code, from a private chat, before it expires", async () => {
     const old = await telegram.startTelegramLink("u1", 1000);
     if (!("url" in old)) throw new Error(old.error);

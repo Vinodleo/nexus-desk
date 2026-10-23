@@ -1489,6 +1489,19 @@ export default function App() {
   );
   liveScanReportRef.current = serverScanner.handleLiveReport;
   const serverStatus = useServerStatus(isSettingsOpen);
+  // What the desk brief is worked out from: the app's own records (deskBrief).
+  const briefDesk = useMemo(
+    () => ({
+      closed: closedTrades,
+      positions: activePositions,
+      todayPnl: dailyRealizedPnl,
+      lossLimit: currentRiskCalculation.hardDailyLossLimit,
+      todayLoss: currentRiskCalculation.currentDailyLoss,
+      stopped: killSwitchActive,
+      server: serverStatus,
+    }),
+    [closedTrades, activePositions, dailyRealizedPnl, currentRiskCalculation.hardDailyLossLimit, currentRiskCalculation.currentDailyLoss, killSwitchActive, serverStatus]
+  );
   const tradeNotifications = useTradeNotifications();
   const appTheme = useTheme();
   // Trades already in the Book when the app opened: only closes after that bump the Book tab.
@@ -1988,6 +2001,7 @@ export default function App() {
         onClose={() => setIsCommanderModalOpen(false)}
         summaryText={commanderBrief}
         isLoading={commanderLoading}
+        desk={briefDesk}
       />
 
 

@@ -455,6 +455,9 @@ export interface IpoRow {
   plan: IpoPlan | null;
   /** This user said they got shares. */
   held: boolean;
+  /** The top of the price band (what one lot is bought at), and the sessions since listing, for the card's price path. */
+  issuePrice: number | null;
+  sessions: IpoSession[];
 }
 
 export interface IpoView {
@@ -498,6 +501,8 @@ function rowOf(ipo: TrackedIpo, uid: string): IpoRow {
     openPct: ipo.open !== null && issue !== null ? listingOpen(issue, ipo.open).pct : null,
     plan: planOf(ipo),
     held: uid in ipo.holders,
+    issuePrice: issue,
+    sessions: ipo.sessions.slice(0, HOLD_DAYS + 3),
   };
 }
 

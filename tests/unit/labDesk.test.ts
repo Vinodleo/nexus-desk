@@ -72,19 +72,47 @@ describe("what the checks did", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("folds each check's full card away under the timeline, open on a tap", () => {
-    render(createElement(CheckDetails, null, createElement("p", null, "the US card")));
+  it("folds each check's full card away under the timeline, open on a tap, a tab each", () => {
+    const tabs = [
+      { id: "coins" as const, label: "Coins", node: createElement("p", null, "the coins card") },
+      { id: "us" as const, label: "US", node: createElement("p", null, "the US card") },
+    ];
+    render(createElement(CheckDetails, { tabs }));
     const toggle = screen.getByRole("button", { name: "Each check in full" });
     const fold = screen.getByTestId("check-details");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(fold.className).not.toContain("nx-fold-open");
     // Kept in the page (it loads meanwhile) but out of reach while folded.
-    expect(fold.textContent).toBe("the US card");
+    expect(fold.textContent).toContain("the US card");
     expect(fold.hasAttribute("inert")).toBe(true);
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(fold.className).toContain("nx-fold-open");
     expect(fold.hasAttribute("inert")).toBe(false);
+    // Coins first; a tap on US shows its card alone.
+    expect(screen.getByTestId("check-tab-coins").hidden).toBe(false);
+    expect(screen.getByTestId("check-tab-us").hidden).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "US" }));
+    expect(screen.getByRole("button", { name: "US" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("check-tab-coins").hidden).toBe(true);
+    expect(screen.getByTestId("check-tab-us").hidden).toBe(false);
+  });
+
+  it("remembers the check last picked on this device", () => {
+    localStorage.setItem("nx-check-tab", "us");
+    const tabs = [
+      { id: "coins" as const, label: "Coins", node: createElement("p", null, "the coins card") },
+      { id: "us" as const, label: "US", node: createElement("p", null, "the US card") },
+    ];
+    const { unmount } = render(createElement(CheckDetails, { tabs }));
+    expect(screen.getByTestId("check-tab-us").hidden).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Coins" }));
+    expect(localStorage.getItem("nx-check-tab")).toBe("coins");
+    unmount();
+    localStorage.setItem("nx-check-tab", "nonsense");
+    render(createElement(CheckDetails, { tabs }));
+    expect(screen.getByTestId("check-tab-coins").hidden).toBe(false);
+    localStorage.removeItem("nx-check-tab");
   });
 });
 

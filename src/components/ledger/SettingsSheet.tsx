@@ -1327,7 +1327,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
         <Label delay={380}>Desk</Label>
         <Group label="Desk" delay={380}>
           {!lookOnly && (
-            <LinkRow label="Desk brief" sub="Ask the commander to explain the book" icon={<MessageSquare className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenDeskBrief} />
+            <LinkRow label="Desk brief" sub="Today, what needs you and what each strategy did" icon={<MessageSquare className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenDeskBrief} />
           )}
           <LinkRow label="This phone" sub="Your account, recent activity and the memory's cloud copy" icon={<Smartphone className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenPhone} />
           {pwa.isInstallable && !pwa.isInstalled && (

@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { Clock } from "lucide-react";
 import { Card } from "./ui";
+import { untilText } from "./FloorDesk";
 import { pnlTone } from "./format";
 import { rSigned } from "./LedgerBreakdown";
 import { useLabFeed } from "./labFeed";
-import { Fold } from "./labUi";
+import { Fold, LabChip } from "./labUi";
 
 // Coin trades on daily candles (server/scanner/dailyCoins.ts): the server's
 // check once a day, what it found and did, how many coin slots are in use,
@@ -80,13 +82,14 @@ export const SlotsMeter: React.FC<{ used: number; max: number; waited: string[];
         {label} slots: off. Settings → {setting}: {row} turns them on.
       </div>
     );
+  // A square a slot: filled while in use, dashed while free (as Settings → Your limits shows them).
   const segments = Math.min(max, 12);
-  const width = segments <= 4 ? "w-6" : segments <= 8 ? "w-3.5" : "w-2";
+  const size = segments <= 6 ? "w-7 h-7 rounded-lg" : "w-4 h-4 rounded-md";
   return (
     <div className="p-2.5 rounded-xl bg-inset flex items-center gap-3" data-testid={testId}>
-      <div className="flex gap-1 shrink-0" aria-hidden="true">
+      <div className="flex flex-wrap gap-1.5 shrink-0 max-w-[50%]" aria-hidden="true">
         {Array.from({ length: segments }, (_, k) => (
-          <span key={k} className={`${width} h-2.5 rounded-full ${k < used ? "bg-accent" : "bg-surface border border-line"}`} />
+          <span key={k} className={`${size} ${k < used ? "bg-accent" : "border-[1.5px] border-dashed border-line"}`} />
         ))}
       </div>
       <div className="text-xs leading-snug min-w-0">
@@ -103,8 +106,83 @@ export const SlotsMeter: React.FC<{ used: number; max: number; waited: string[];
   );
 };
 
-/** What a check found and did, each pick with its sign and why, then what couldn't be read. */
+/** How long until a check, in days and hours once it's a day or more away (momentum's is weekly). */
+export function checkCountdown(at: number, now: number): string {
+  const h = Math.floor((at - now) / 3_600_000);
+  return h >= 24 ? `in ${Math.floor(h / 24)} d ${h % 24} h` : untilText(at, now);
+}
+
+/** The check's next run counted down (each half minute), with what it last did under it. */
+export const NextCheck: React.FC<{ nextAt: number; testId: string; children?: React.ReactNode; now?: number }> = ({ nextAt, testId, children, now }) => {
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (now !== undefined) return;
+    const id = window.setInterval(() => setTick(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [now]);
+  const at = now ?? tick;
+  return (
+    <div className="flex items-center gap-3 rounded-2xl bg-inset p-3">
+      <Clock className="w-5 h-5 shrink-0 text-accent" strokeWidth={1.8} aria-hidden="true" />
+      <div className="min-w-0">
+        <div className="text-sm font-semibold tabular-nums" data-testid={`${testId}-next`}>
+          {nextAt > at ? `Next check ${checkCountdown(nextAt, at)}` : "Checking about now"}
+        </div>
+        <div className="text-xs text-muted tabular-nums" data-testid={testId}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CHIP: Record<Pick["outcome"], { word: string; cls: string }> = {
+  opened: { word: "Bought", cls: "bg-gain/15 text-gain" },
+  kept: { word: "Kept", cls: "bg-accent-soft text-accent" },
+  sold: { word: "Sold", cls: "bg-loss/15 text-loss" },
+  waiting: { word: "Waited", cls: "bg-warn-soft text-warn-ink" },
+  paused: { word: "Paused", cls: "bg-inset text-muted" },
+};
+
+/** A strategy's replayed record, the bar it must clear to trade: its average a trade and how many trades. */
+export const RecordLine: React.FC<{ since: string; gate: { trades: number; avgR: number } | null | undefined; testId: string }> = ({ since, gate, testId }) => (
+  <div className="flex flex-wrap items-baseline justify-between gap-x-2 tabular-nums" data-testid={testId}>
+    {gate ? (
+      <>
+        <span className="text-xs font-bold text-muted uppercase tracking-[0.08em]">Record since {since}</span>
+        <span className="text-sm font-semibold">
+          <span className={pnlTone(gate.avgR)}>{rSigned(gate.avgR)}</span> · {gate.trades} trades
+        </span>
+      </>
+    ) : (
+      <span className="text-xs text-muted">Waits for the stocks' replay since {since} to finish.</span>
+    )}
+  </div>
+);
+
+/** What a check did, at a glance: a chip an outcome naming what it did that to (the first three, then how many more). */
+export function pickChips(picks: Pick[]): { outcome: Pick["outcome"]; text: string }[] {
+  const order: Pick["outcome"][] = ["opened", "sold", "kept", "waiting", "paused"];
+  return order.flatMap((outcome) => {
+    const names = [...new Set(picks.filter((p) => p.outcome === outcome).map((p) => shortName(p.symbol)))];
+    if (names.length === 0) return [];
+    const shown = names.slice(0, 3).join(", ");
+    return [{ outcome, text: `${CHIP[outcome].word} ${shown}${names.length > 3 ? ` +${names.length - 3}` : ""}` }];
+  });
+}
+
+/** What a check found and did: chips at a glance, then each pick with its sign and why, then what couldn't be read. */
 export const CheckPicks: React.FC<{ run: NonNullable<DailyCoinsView["run"]>; testId: string; empty: string }> = ({ run, testId, empty }) => (
+  <div className="flex flex-col gap-2">
+    {run.picks.length > 0 && (
+      <div className="flex flex-wrap gap-1.5" data-testid={`${testId}-chips`}>
+        {pickChips(run.picks).map((c) => (
+          <span key={c.outcome} className={`text-xs font-semibold rounded-full px-2.5 py-1 ${CHIP[c.outcome].cls}`}>
+            {c.text}
+          </span>
+        ))}
+      </div>
+    )}
   <div className="flex flex-col gap-1" data-testid={testId}>
     {run.note && <div className="text-xs text-warn">{run.note}</div>}
     {run.picks.length === 0 ? (
@@ -131,6 +209,7 @@ export const CheckPicks: React.FC<{ run: NonNullable<DailyCoinsView["run"]>; tes
     )}
     {run.failed.length > 0 && <div className="text-[11px] text-muted">Couldn't read: {run.failed.map(shortName).join(", ")}.</div>}
   </div>
+  </div>
 );
 
 export const DailyCoinsCard: React.FC = () => {
@@ -146,13 +225,17 @@ export const DailyCoinsCard: React.FC = () => {
   const trading = on.length + (view.breakout?.on ? 1 : 0);
 
   return (
-    <Card aria-label="Daily coin trades" className="flex flex-col gap-2">
-      <div>
-        <div className="text-sm font-semibold">Daily coin trades (paper)</div>
-        <div className="text-xs tabular-nums text-muted" data-testid="daily-status">
-          {run ? `Last check ${when(run.at)} · ${run.coins} coins · next ${when(view.nextAt)}` : `First check ${when(view.nextAt)}`}
+    <Card aria-label="Daily coin trades" className="flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-base font-bold">Coin breakout 55/20</div>
+          <div className="text-xs text-muted">Each day just after 5:30 am, paper or live</div>
         </div>
+        {view.breakout && <LabChip status={view.breakout.on ? "trading" : "paused"}>{view.breakout.on ? "Trading" : "Paused"}</LabChip>}
       </div>
+      <NextCheck nextAt={view.nextAt} testId="daily-status">
+        {run ? `Last check ${when(run.at)} · ${run.coins} coins · next ${when(view.nextAt)}` : `First check ${when(view.nextAt)}`}
+      </NextCheck>
 
       {view.coinSlots && <SlotsMeter used={view.coinSlots.used} max={view.coinSlots.max} waited={waited} label="Coin" setting="Coins" testId="daily-slots" />}
       {view.coinSlots?.breakout && (
@@ -168,6 +251,8 @@ export const DailyCoinsCard: React.FC = () => {
       )}
 
       {run && <CheckPicks run={run} testId="daily-picks" empty="No setups that day." />}
+
+      {view.breakout && <RecordLine since="2018" gate={view.breakout} testId="daily-record" />}
 
       {all > 0 && (
         <Fold title={`Which traders trade (${trading} of ${all})`}>

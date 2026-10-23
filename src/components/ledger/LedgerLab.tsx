@@ -27,7 +27,7 @@ import { FundsBreakoutCard, UsBreakoutCard } from "./UsBreakoutCard";
 import { UsMomentumCard } from "./UsMomentumCard";
 import { PaperScorecard } from "./PaperScorecard";
 import { LabSummary, type LabTab } from "./LabSummary";
-import { ChecksTimeline, CheckDetails, StrategyRecords } from "./LabDesk";
+import { ChecksTimeline, CheckDetails, StrategyRecords, type CheckTab } from "./LabDesk";
 import { runExitComparison } from "../../services/exitComparison";
 import type { TrailProfileId } from "../../shared/trailingStop";
 
@@ -60,6 +60,13 @@ const LAB_TABS: { id: LabTab; label: string }[] = [
   { id: "records", label: "Records" },
   { id: "tests", label: "Tests" },
   { id: "tools", label: "Tools" },
+];
+/** Each check's full card, a tab each under "Each check in full". */
+const CHECK_TABS: { id: CheckTab; label: string; node: React.ReactNode }[] = [
+  { id: "coins", label: "Coins", node: <DailyCoinsCard /> },
+  { id: "us", label: "US", node: <UsBreakoutCard /> },
+  { id: "funds", label: "Funds", node: <FundsBreakoutCard /> },
+  { id: "momentum", label: "Momentum", node: <UsMomentumCard /> },
 ];
 const TAB_KEY = "nx-lab-tab";
 function savedTab(): LabTab {
@@ -286,12 +293,7 @@ export const LedgerLab: React.FC<LedgerLabProps> = ({
         <DeskDayCard />
         <ChecksTimeline />
         <IpoCard />
-        <CheckDetails>
-          <DailyCoinsCard />
-          <UsBreakoutCard />
-          <FundsBreakoutCard />
-          <UsMomentumCard />
-        </CheckDetails>
+        <CheckDetails tabs={CHECK_TABS} />
       </section>
 
       <section {...panel("records")}>

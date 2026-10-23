@@ -3,6 +3,9 @@
 // trade it closes itself). A pop-up's tag names its trade, so the same close
 // reported by both replaces rather than doubles.
 
+import { isFundSymbol } from "./funds";
+import { marketOf } from "./marketLimits";
+
 export interface TradeMessage {
   title: string;
   body: string;
@@ -34,15 +37,58 @@ const EXIT_WORDS: Record<string, string> = {
   MANUAL: "Closed by you",
 };
 
+/**
+ * Which strategy a trade is, in the words the Book uses: the slower ones by
+ * name (a fund's breakout apart from a stock's or a coin's), else the daily or
+ * 5-minute traders.
+ */
+export function strategyLabel(t: { strategy?: string; symbol: string; timeframe?: string }): string {
+  if (t.strategy === "momentum") return "US momentum";
+  if (t.strategy === "breakout") return isFundSymbol(t.symbol) ? "Funds breakout" : marketOf(t.symbol) === "coins" ? "Coin breakout" : "US breakout";
+  if (t.timeframe === "1d") return "Daily traders";
+  return "5-minute traders";
+}
+
+/** A coin or stock without its market's suffix ("SOL", "NVDA"). */
+const shortSymbol = (s: string) => s.replace(/\/INR$|\.US$|-EQ$/, "");
+const rText = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(1)}R`;
+const slow = (strategy?: string) => strategy === "breakout" || strategy === "momentum";
+
+function heldText(mins: number): string {
+  if (mins < 60) return `${mins} min`;
+  if (mins < 48 * 60) return `${Math.floor(mins / 60)} h ${mins % 60} min`;
+  return `${Math.round(mins / 1440)} days`;
+}
+
+/**
+ * Every trade pop-up has one shape (owner's ask, 23 Oct): a headline (what,
+ * and for a close its result), then how much and what it risks or kept, then
+ * why. Telegram adds a link to the desk.
+ */
 export function tradeOpenedMessage(
   p: { id: string; symbol: string; direction: "LONG" | "SHORT"; quantity: number; entryPrice: number; stopLoss: number; takeProfit: number; setupName?: string; timeframe?: string; strategy?: string; isLiveOrder?: boolean },
   by: "server" | "app"
 ): TradeMessage {
+  const label = strategyLabel(p).replace(/^(Daily|5-minute) traders$/, (_, k: string) => k.toLowerCase());
+  const risk = Math.abs(p.entryPrice - p.stopLoss) * p.quantity;
+  const targetR = risk > 0 ? (Math.abs(p.takeProfit - p.entryPrice) * p.quantity) / risk : 0;
+  const why =
+    p.strategy === "breakout"
+      ? "above its 55-day high"
+      : p.strategy === "momentum"
+        ? "one of the week's 3 strongest risers"
+        : p.setupName
+          ? `${p.setupName}'s ${p.timeframe === "1d" ? "daily " : ""}setup`
+          : undefined;
   return {
-    title: `${p.direction === "LONG" ? "Bought" : "Sold short"} ${p.symbol}${p.strategy === "breakout" || p.strategy === "momentum" ? ` (${p.strategy}, ${p.isLiveOrder ? "live" : "paper"})` : p.timeframe === "1d" ? " (daily, paper)" : ""}`,
-    body: `${p.quantity} @ ${inr(p.entryPrice)} (${inr(p.quantity * p.entryPrice)}) · stop ${inr(p.stopLoss)} · ${p.strategy === "breakout" || p.strategy === "momentum" ? "no target" : `target ${inr(p.takeProfit)}`}${
-      p.setupName ? ` · ${p.setupName}` : ""
-    }${by === "server" ? " · opened by the server" : ""}`,
+    title: `${p.direction === "LONG" ? "Bought" : "Sold short"} ${shortSymbol(p.symbol)} · ${label} (${p.isLiveOrder ? "live" : "paper"})`,
+    body: [
+      `Size ${inr(p.quantity * p.entryPrice)} (${p.quantity} at ${inr(p.entryPrice)})`,
+      `Stop ${inr(p.stopLoss)}: −1R is −${inr(risk)} · ${slow(p.strategy) ? "no target" : `target ${inr(p.takeProfit)} (+${targetR.toFixed(1)}R)`}`,
+      [why && `Why: ${why}`, by === "server" && !slow(p.strategy) ? "opened by the server" : undefined].filter(Boolean).join(" · "),
+    ]
+      .filter(Boolean)
+      .join("\n"),
     tag: `open-${p.id}`,
     url: "/",
   };
@@ -59,13 +105,21 @@ export function tradeClosedMessage(t: {
   holdingDurationMinutes?: number;
   setupName?: string;
   strategy?: string;
+  timeframe?: string;
+  /** What a loss at the first stop would have been, for the result in R; the fees, after which the result is. */
+  riskAtOpen?: number;
+  feesPaid?: number;
 }): TradeMessage {
   const held = t.holdingDurationMinutes;
+  const r = t.riskAtOpen && t.riskAtOpen > 0 ? t.realizedPnl / t.riskAtOpen : undefined;
+  const exit = slowExitWords(t.exitReason, t.strategy) ?? EXIT_WORDS[t.exitReason] ?? t.exitReason;
   return {
-    title: `${t.symbol} closed ${signed(t.realizedPnl)}`,
-    body: `${slowExitWords(t.exitReason, t.strategy) ?? EXIT_WORDS[t.exitReason] ?? t.exitReason} · ${t.direction === "LONG" ? "sold" : "bought back"} ${t.quantity} @ ${inr(t.exitPrice)}${
-      held !== undefined ? ` · held ${held < 60 ? `${held} min` : `${Math.floor(held / 60)} h ${held % 60} min`}` : ""
-    }${t.setupName ? ` · ${t.setupName}` : ""}`,
+    title: `${t.direction === "LONG" ? "Sold" : "Bought back"} ${shortSymbol(t.symbol)} · ${r !== undefined ? `${rText(r)}, ` : ""}${signed(t.realizedPnl)}`,
+    body: [
+      `${t.realizedPnl >= 0 ? "Kept" : "Lost"} ${inr(t.realizedPnl)}${t.feesPaid !== undefined ? ` after ${inr(t.feesPaid)} fees` : ""}${held !== undefined ? ` · held ${heldText(held)}` : ""}`,
+      `${t.quantity} at ${inr(t.exitPrice)} · ${strategyLabel(t)}${t.setupName && !slow(t.strategy) ? ` · ${t.setupName}` : ""}`,
+      `Why: ${exit.charAt(0).toLowerCase()}${exit.slice(1)}`,
+    ].join("\n"),
     tag: `close-${t.positionId}`,
     url: "/",
   };

@@ -240,7 +240,7 @@ export function openAppPosition(uid: string, p: DaemonPosition): AppPositionOutc
     for (const held of daemonPositions.values()) if (held.userId === uid && held.symbol === p.symbol) return "held";
   }
   // Tell the user's devices. (Only a fresh one: an old position re-sent isn't news.)
-  if (Date.now() - Date.parse(p.openTime) < NEW_POSITION_NOTIFY_MS) void notifyUser(uid, tradeOpenedMessage(p, "app"));
+  if (Date.now() - Date.parse(p.openTime) < NEW_POSITION_NOTIFY_MS) void notifyUser(uid, tradeOpenedMessage({ ...p, isLiveOrder: isLive }, "app"));
   // Opened by the server is the server's mark, never the app's claim.
   const { openedByServer: _claimed, ...fromApp } = p;
   daemonPositions.set(p.id, { ...fromApp, userId: uid, isLiveOrder: isLive, ...(isLive ? { quantity: live!.quantity } : {}) });
