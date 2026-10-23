@@ -77,7 +77,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Sign-in (`LoginScreen`): the opening screen's N tile, floating (`nx-float`) among a few faint dots, with Continue with
   Google at the bottom; another account is turned away there, unless the server lists it as look only (below).
   **Look only** (owner's ask, 23 Oct): accounts on the server's `VIEWER_EMAILS` (a Fly secret, docs/hosting.md) see the
-  owner's whole desk and change nothing. The sign-in guard asks `/api/me` (`AuthGuard`, `LookOnlyContext`, `useLookOnly`),
+  owner's whole desk and change nothing. The sign-in guard asks `/api/me` (`AuthGuard`, `LookOnlyContext`, `useLookOnly`; only the server's refusal turns an
+  account away: no answer, as while it restarts, is asked again every 5 s, `accessFrom`, and one turned away is asked
+  again when the app comes back on screen),
   the app sends no request but a GET (`setLookOnly` in `apiClient.ts`, answered `LOOK_ONLY` there), plays the auditor
   role (the "Look only" toasts), never scans or runs the autopilot, shows the owner's autopilot, Stop all, limits and
   paper or live mode from `/api/desk/state` (every 5 minutes), and hides what would change something: Settings keeps only

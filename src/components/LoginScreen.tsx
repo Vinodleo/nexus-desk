@@ -28,7 +28,8 @@ const LOGIN_DOTS = [
 // Sign-in: the opening screen's N tile, floating, with the Google button at
 // the bottom where a thumb reaches it. `notReady`: a look-only account whose
 // owner hasn't opened the desk since the server learned to show it.
-export const LoginScreen: React.FC<{ notReady?: boolean }> = ({ notReady = false }) => {
+// `unreachable`: the server couldn't be asked about the account (it's asked again).
+export const LoginScreen: React.FC<{ notReady?: boolean; unreachable?: boolean }> = ({ notReady = false, unreachable = false }) => {
   const { signInWithGoogle, logout, loading, currentUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
@@ -88,8 +89,16 @@ export const LoginScreen: React.FC<{ notReady?: boolean }> = ({ notReady = false
         {wrongAccount ? (
           <div className="bg-surface border border-line rounded-2xl p-4 flex flex-col gap-3">
             <div className="flex gap-2.5 text-sm">
-              <ShieldAlert className="w-5 h-5 shrink-0 text-loss" strokeWidth={1.8} />
-              {notReady ? (
+              {unreachable ? (
+                <Loader2 className="w-5 h-5 shrink-0 text-muted animate-spin" strokeWidth={1.8} />
+              ) : (
+                <ShieldAlert className="w-5 h-5 shrink-0 text-loss" strokeWidth={1.8} />
+              )}
+              {unreachable ? (
+                <span>
+                  Couldn't reach the desk to check <strong>{currentUser.email}</strong>. Trying again…
+                </span>
+              ) : notReady ? (
                 <span>
                   <strong>{currentUser.email}</strong> can look at this desk once its owner has opened it again. Try again later.
                 </span>

@@ -80,6 +80,14 @@ describe("LoginScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use a different account" }));
     expect(auth.value.logout).toHaveBeenCalled();
   });
+
+  it("says it's trying again, not that there's no access, when the desk couldn't be reached", () => {
+    auth.value.currentUser = { uid: "x", email: "friend@example.com" };
+    render(createElement(LoginScreen, { unreachable: true }));
+    expect(screen.getByText(/Couldn't reach the desk to check/).textContent).toBe("Couldn't reach the desk to check friend@example.com. Trying again…");
+    expect(screen.queryByText(/doesn't have access/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Use a different account" })).toBeTruthy();
+  });
 });
 
 describe("ThisPhoneSheet", () => {
