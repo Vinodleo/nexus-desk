@@ -17,6 +17,7 @@ import { router as agentsRouter } from "./server/routes/agents";
 import { router as scannerRouter } from "./server/routes/scanner";
 import { router as pushRouter } from "./server/routes/push";
 import { router as telegramRouter } from "./server/routes/telegram";
+import { router as viewersRouter } from "./server/routes/viewers";
 import { router as tradeBookRouter, loadTradeBook } from "./server/tradeBook";
 import { loadDeskStates } from "./server/scanner/deskState";
 import { saveScannerState, scannerHeartbeat, startServerScanner } from "./server/scanner/scannerService";
@@ -80,6 +81,7 @@ app.use(agentsRouter);
 app.use(scannerRouter);
 app.use(pushRouter);
 app.use(telegramRouter);
+app.use(viewersRouter);
 app.use(tradeBookRouter);
 
 // Who's signed in: the owner, or a look-only viewer of the owner's desk (server/auth.ts).

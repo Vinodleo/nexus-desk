@@ -68,7 +68,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   fewer than are open, and the most the market may hold and lose at once. **Connections:** CoinDCX (the test live order
   folded under it), Alpaca, Angel One, Gemini and Telegram (Link opens the bot with a one-time code; then Test or
   Unlink; `useTelegramLink`), each with a status dot. **Server:** a tile each, opened on a
-  tap; one with a problem stays open. Then pop-ups and the theme, the desk's links (the desk brief, This phone), the
+  tap; one with a problem stays open. **Desk: Read access** (`ReadAccess`, `useViewers`): the accounts let look, whether each
+  has signed in, an email to add, and ✕ then Remove to shut one out. Then pop-ups and the theme, the desk's links (the desk brief, This phone), the
   version and Sign out. **This phone** (`ThisPhoneSheet`): the account and Sign out, that the server does the trading,
   the pop-ups and where the CoinDCX keys are, a role other than the owner's offered back ("Allow everything again"),
   old keys in Firestore if any, recent activity in plain words (`activityOf`, `activityTime`) and, folded, the memory's
@@ -76,7 +77,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   "Security and access" (role picker).
   Sign-in (`LoginScreen`): the opening screen's N tile, floating (`nx-float`) among a few faint dots, with Continue with
   Google at the bottom; another account is turned away there, unless the server lists it as look only (below).
-  **Look only** (owner's ask, 23 Oct): accounts on the server's `VIEWER_EMAILS` (a Fly secret, docs/hosting.md) see the
+  **Look only** (owner's ask, 23 Oct): accounts the owner lets look (Settings → Desk: Read access, below, or the server's
+  `VIEWER_EMAILS`, a Fly secret, docs/hosting.md) see the
   owner's whole desk and change nothing. The sign-in guard asks `/api/me` (`AuthGuard`, `LookOnlyContext`, `useLookOnly`; only the server's refusal turns an
   account away: no answer, as while it restarts, is asked again every 5 s, `accessFrom`, and one turned away is asked
   again when the app comes back on screen),
@@ -123,7 +125,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   their routes through `labFeed.ts`: all tabs stay mounted and one request per route serves every card.
 - **Server:** Express in `server.ts` and `server/`. It stays running on Fly with its state on a volume
   (`NEXUS_DATA_DIR`), so it keeps working with the app closed.
-  - Look only (`server/auth.ts`): `VIEWER_EMAILS` pass the token check as viewers. Their requests are served as the
+  - Look only (`server/auth.ts`): `VIEWER_EMAILS`, less the ones removed in Settings and plus the ones added there
+    (`desk_viewer_emails.json`, `viewerEmails`, `addViewer`, `removeViewer`, at most `MAX_VIEWERS` 20; `/api/viewers`,
+    owner only), pass the token check as viewers; one removed has its sockets closed at once (`closeSocketsOf`). Their requests are served as the
     owner's desk (`req.user.uid` is the owner's, learned when the owner signs in and kept in `desk_owner.json`, else the
     only desk the server holds; until then 503 `NO_DESK`), every request but a GET is refused (403 `LOOK_ONLY`), and so are
     the GETs in `OWNER_ONLY` (the CoinDCX balance, live orders). Their sockets get the owner's events (`deskUidFor`). An

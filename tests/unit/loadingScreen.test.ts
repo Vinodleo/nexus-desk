@@ -229,6 +229,29 @@ describe("opening the desk", () => {
     });
     expect(container.textContent).toBe("THE APP");
   });
+
+  it("shuts out a viewer the owner has taken off the list when the app comes back on screen, not on a blip", async () => {
+    auth.loading = false;
+    auth.currentUser = { email: "friend@example.com" };
+    me = { status: 200, body: { success: true, role: "viewer", email: "friend@example.com" } };
+    const { container } = render(createElement(AuthGuard, null, "THE APP"));
+    await act(async () => {});
+    playEnding();
+    expect(container.textContent).toBe("THE APP");
+    // Offline, or the server restarting: still in.
+    me = null;
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(container.textContent).toBe("THE APP");
+    // Taken off the list.
+    me = { status: 403, body: { success: false, code: "UNAUTHORIZED" } };
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(container.textContent).toBe("the login screen");
+    expect(setLookOnly).toHaveBeenLastCalledWith(false);
+  });
 });
 
 describe("what the server's answer means for an account other than the owner's", () => {

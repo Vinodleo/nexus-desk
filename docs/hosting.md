@@ -287,21 +287,28 @@ on an IPO, its selling alerts. Your trade alerts, the Sunday summary and the
 server's warnings stay yours. Once you take someone off the list, nothing more
 is sent to them.
 
-**To let someone look**, in Cloud Shell, with their Google account emails
-(comma-separated):
+**To let someone look**: Settings → **Desk: Read access**, type their Google
+account's email and tap **Add**. They open the desk's address, tap **Continue
+with Google** with that account, and see it in look-only mode (Settings says
+**Look only**). The list shows whether each has signed in yet. If you haven't
+opened the app since the look-only update, they're told to try again later:
+the server learns which desk is yours when you next open it.
+
+**To stop someone looking**: tap the ✕ by their email, then **Remove**. They're
+shut out at once: their next request is refused, their live updates stop, and
+their app goes back to the sign-in screen when they next return to it.
+
+The list is kept on the server (`desk_viewer_emails.json`, in the daily
+backup). Emails can also be set from Cloud Shell, comma-separated:
 
 ```
 fly secrets set VIEWER_EMAILS="friend@gmail.com,other@gmail.com" -a nexus-desk-vinodleo
 ```
 
-The app restarts. They open the desk's address, tap **Continue with Google**
-with that account, and see it in look-only mode (Settings says **Look only**).
-If you haven't opened the app since this update, they're told to try again
-later: the server learns which desk is yours when you next open it.
-
-**To change the list**, set `VIEWER_EMAILS` again with the whole new list: it
-replaces the old one, so keep every email that should still look. **To stop
-everyone looking**: `fly secrets unset VIEWER_EMAILS -a nexus-desk-vinodleo`.
+Settings shows those too. Adding or removing in Settings goes on top of that
+secret: an email removed in Settings stays out, even while the secret still
+lists it, until it's added again in Settings. Setting `VIEWER_EMAILS` again
+replaces the secret's whole list.
 
 ## Checking it works
 
