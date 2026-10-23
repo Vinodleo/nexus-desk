@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useLookOnly } from "../../context/LookOnly";
 import { AlertTriangle, DownloadCloud, Loader2, UploadCloud } from "lucide-react";
 import { syncToFirebase, syncFromFirebase, hasLegacyExchangeKeys, deleteLegacyExchangeKeys } from "../../services/storagePersistenceService";
 import { apiFetch } from "../../services/apiClient";
@@ -87,6 +88,7 @@ const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, ch
 
 export const ThisPhoneSheet: React.FC<{ isOpen: boolean; onClose: () => void; popups?: NotifyState }> = ({ isOpen, onClose, popups }) => {
   const { currentUser, userProfile, userRole, switchUserRole, logout, recentAudits, logSecurityAudit } = useAuth();
+  const lookOnly = useLookOnly();
   const [status, setStatus] = useState<CoinDcxServerStatus | null>(null);
   const [hasLegacyKeys, setHasLegacyKeys] = useState(false);
   const [deletingLegacy, setDeletingLegacy] = useState(false);
@@ -178,7 +180,11 @@ export const ThisPhoneSheet: React.FC<{ isOpen: boolean; onClose: () => void; po
         </p>
       </div>
 
-      {userRole !== "commander" && (
+      {lookOnly ? (
+        <p className="m-0 p-3.5 rounded-[18px] bg-accent-soft text-[13px] leading-relaxed" data-testid="look-only-phone">
+          <strong>Look only.</strong> This account sees the owner's desk and can't change anything.
+        </p>
+      ) : userRole !== "commander" && (
         <div className="flex flex-col gap-2 p-3.5 rounded-[18px] bg-warn-soft text-warn-ink text-[13px] leading-relaxed">
           <p className="m-0">
             This phone is set to <strong>{userRole === "auditor" ? "look only" : "approve and close only"}</strong>, so some buttons won't

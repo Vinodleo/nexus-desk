@@ -8,13 +8,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = { currentUser: null as { email: string } | null, loading: true };
 vi.mock("../../src/context/AuthContext", () => ({ useAuth: () => auth }));
-vi.mock("../../src/components/LoginScreen", () => ({ LoginScreen: () => "the login screen" }));
+vi.mock("../../src/components/LoginScreen", () => ({ LoginScreen: ({ notReady }: { notReady?: boolean }) => (notReady ? "not ready to view yet" : "the login screen") }));
 vi.mock("../../src/shared/owner", () => ({ isOwner: (email?: string) => email === "owner@example.com" }));
+// Who the server says a signed-in account other than the owner is (/api/me).
+let me: { status: number; body: unknown } = { status: 403, body: { success: false, code: "UNAUTHORIZED" } };
+const setLookOnly = vi.fn();
+vi.mock("../../src/services/apiClient", () => ({
+  apiFetch: vi.fn(async () => new Response(JSON.stringify(me.body), { status: me.status })),
+  setLookOnly: (on: boolean) => setLookOnly(on),
+}));
 
 const { LoadingScreen, N_DOTS, FINALE_EARLIEST_MS, FINALE_MS, LEAVE_MS, DOT_SHRINK_MS, DOT_RIPPLE_MS, LOGO_AT_MS } = await import(
   "../../src/components/LoadingScreen"
 );
 const { AuthGuard } = await import("../../src/AuthGuard");
+const { useLookOnly } = await import("../../src/context/LookOnly");
 
 const reducedMotion = (on: boolean) =>
   Object.defineProperty(window, "matchMedia", { configurable: true, value: (q: string) => ({ matches: on && q.includes("reduce"), addEventListener() {}, removeEventListener() {} }) });
@@ -133,11 +141,47 @@ describe("opening the desk", () => {
     expect(container.textContent).toBe("THE APP");
   });
 
-  it("shows the login screen after the ending for anyone but the owner", () => {
+  it("shows the login screen after the ending for anyone but the owner", async () => {
     auth.loading = false;
     auth.currentUser = { email: "someone@example.com" };
+    me = { status: 403, body: { success: false, code: "UNAUTHORIZED" } };
     const { container } = render(createElement(AuthGuard, null, "THE APP"));
+    await act(async () => {});
     playEnding();
     expect(container.textContent).toBe("the login screen");
+    expect(setLookOnly).toHaveBeenLastCalledWith(false);
+  });
+
+  it("lets in an account the owner lets look, in look-only mode", async () => {
+    auth.loading = false;
+    auth.currentUser = { email: "friend@example.com" };
+    me = { status: 200, body: { success: true, role: "viewer", email: "friend@example.com" } };
+    const Desk = () => `THE APP, look only: ${useLookOnly() ? "yes" : "no"}`;
+    const { container } = render(createElement(AuthGuard, null, createElement(Desk)));
+    // Asking the server: the opening screen waits.
+    expect(container.textContent).not.toContain("THE APP");
+    await act(async () => {});
+    playEnding();
+    expect(container.textContent).toBe("THE APP, look only: yes");
+    expect(setLookOnly).toHaveBeenLastCalledWith(true);
+  });
+
+  it("the owner isn't look only", () => {
+    auth.loading = false;
+    auth.currentUser = { email: "owner@example.com" };
+    const Desk = () => `THE APP, look only: ${useLookOnly() ? "yes" : "no"}`;
+    const { container } = render(createElement(AuthGuard, null, createElement(Desk)));
+    playEnding();
+    expect(container.textContent).toBe("THE APP, look only: no");
+  });
+
+  it("says when the desk isn't ready to view yet", async () => {
+    auth.loading = false;
+    auth.currentUser = { email: "friend@example.com" };
+    me = { status: 503, body: { success: false, code: "NO_DESK" } };
+    const { container } = render(createElement(AuthGuard, null, "THE APP"));
+    await act(async () => {});
+    playEnding();
+    expect(container.textContent).toBe("not ready to view yet");
   });
 });

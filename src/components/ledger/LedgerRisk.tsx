@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useLookOnly } from "../../context/LookOnly";
 import { XCircle, Loader2 } from "lucide-react";
 import type { CoinDcxServerStatus, FailureInjectionState, Position, RiskCalculation } from "../../types";
 import { apiFetch } from "../../services/apiClient";
@@ -76,6 +77,7 @@ const DRILLS: { key: keyof FailureInjectionState; label: string; sub: string }[]
 ];
 
 export const LedgerRisk: React.FC<LedgerRiskProps> = (props) => {
+  const lookOnly = useLookOnly();
   const { riskCalc: r, coinDcxStatus: status } = props;
   const live = status?.liveRisk;
   const [check, setCheck] = useState<{ state: "idle" | "checking" | "ok" | "failed"; error?: string }>({ state: "idle" });
@@ -159,7 +161,7 @@ export const LedgerRisk: React.FC<LedgerRiskProps> = (props) => {
           </div>
         </div>
       </div>
-      {props.stopped ? (
+      {lookOnly ? null : props.stopped ? (
         <button
           type="button"
           onClick={props.onToggleStop}

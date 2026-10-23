@@ -1,3 +1,6 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const verifyIdToken = vi.fn();
@@ -7,15 +10,23 @@ vi.mock("firebase-admin/auth", () => ({ getAuth: () => ({ verifyIdToken }) }));
 type Auth = typeof import("../../server/auth");
 let auth: Auth;
 
+let dir: string;
+
 beforeEach(async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-auth-"));
+  vi.stubEnv("NEXUS_DATA_DIR", dir);
   vi.stubEnv("ALLOWED_EMAILS", "Owner@Example.com, second@example.com");
+  vi.stubEnv("VIEWER_EMAILS", "Friend@Example.com");
   verifyIdToken.mockReset();
   vi.resetModules();
   auth = await import("../../server/auth");
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 const token = (claims: Record<string, unknown>) => verifyIdToken.mockResolvedValue({ uid: "u1", ...claims });
 
@@ -71,5 +82,116 @@ describe("requireAuth middleware", () => {
     await auth.requireAuth({ headers: {} } as any, r, next);
     expect(r.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe("look only", () => {
+  const res = () => {
+    const r: any = {};
+    r.status = vi.fn(() => r);
+    r.json = vi.fn(() => r);
+    return r;
+  };
+  const as = (uid: string, email: string) => verifyIdToken.mockResolvedValue({ uid, email, email_verified: true });
+  const ask = async (method: string, url: string) => {
+    const req: any = { headers: { authorization: "Bearer t" }, method, originalUrl: url };
+    const r = res();
+    const next = vi.fn();
+    await auth.requireAuth(req, r, next);
+    return { req, r, next };
+  };
+  /** The owner opens the app: the server learns whose desk viewers see. */
+  const ownerSignsIn = async () => {
+    as("owner-uid", "owner@example.com");
+    await ask("GET", "/api/daemon/state");
+  };
+
+  it("lets a viewer in, and only a viewer or the owner", async () => {
+    as("friend-uid", "friend@example.com");
+    await expect(auth.verifyToken("t")).resolves.toMatchObject({ uid: "friend-uid" });
+    expect(auth.roleOf({ email: "Friend@Example.com" })).toBe("viewer");
+    expect(auth.roleOf({ email: "owner@example.com" })).toBe("owner");
+    as("x", "stranger@example.com");
+    await expect(auth.verifyToken("t")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("serves a viewer's reads as the owner's desk", async () => {
+    await ownerSignsIn();
+    as("friend-uid", "friend@example.com");
+    const { req, next } = await ask("GET", "/api/daemon/state?x=1");
+    expect(next).toHaveBeenCalled();
+    expect(req.user.uid).toBe("owner-uid");
+    expect(req.viewer).toEqual({ uid: "friend-uid", email: "friend@example.com" });
+    expect(auth.whoAmI(req)).toEqual({ role: "viewer", email: "friend@example.com" });
+  });
+
+  it.each([
+    ["opening a trade", "POST", "/api/execute-trade"],
+    ["closing a trade", "POST", "/api/daemon/close"],
+    ["changing the desk's settings", "POST", "/api/desk/state"],
+    ["a live order", "POST", "/api/live/test-order"],
+    ["anything but a read", "DELETE", "/api/anything"],
+    ["the real CoinDCX balance", "GET", "/api/coindcx/balances"],
+    ["the live orders' state", "GET", "/api/live/positions"],
+    ["the owner's Telegram link", "GET", "/api/telegram"],
+  ])("refuses a viewer %s", async (_n, method, url) => {
+    await ownerSignsIn();
+    as("friend-uid", "friend@example.com");
+    const { r, next } = await ask(method, url);
+    expect(next).not.toHaveBeenCalled();
+    expect(r.status).toHaveBeenCalledWith(403);
+    expect(r.json).toHaveBeenCalledWith(expect.objectContaining({ code: "LOOK_ONLY" }));
+  });
+
+  it("leaves the owner's own requests as they were", async () => {
+    as("owner-uid", "owner@example.com");
+    const { req, next } = await ask("POST", "/api/execute-trade");
+    expect(next).toHaveBeenCalled();
+    expect(req.user.uid).toBe("owner-uid");
+    expect(req.viewer).toBeUndefined();
+    expect(auth.whoAmI(req)).toEqual({ role: "owner", email: "owner@example.com" });
+  });
+
+  it("an email on both lists is the owner's", async () => {
+    vi.stubEnv("VIEWER_EMAILS", "owner@example.com");
+    as("owner-uid", "owner@example.com");
+    const { next } = await ask("POST", "/api/execute-trade");
+    expect(next).toHaveBeenCalled();
+  });
+
+  it("keeps the owner's desk across a restart, and says when it isn't known yet", async () => {
+    as("friend-uid", "friend@example.com");
+    const before = await ask("GET", "/api/daemon/state");
+    expect(before.r.status).toHaveBeenCalledWith(503);
+    expect(before.next).not.toHaveBeenCalled();
+
+    await ownerSignsIn();
+    vi.resetModules();
+    auth = await import("../../server/auth");
+    as("friend-uid", "friend@example.com");
+    const after = await ask("GET", "/api/daemon/state");
+    expect(after.req.user.uid).toBe("owner-uid");
+  });
+
+  it("before the owner signs in, takes the only desk the server holds", async () => {
+    const { setDeskState } = await import("../../server/scanner/deskState");
+    setDeskState("owner-uid", {} as any);
+    as("friend-uid", "friend@example.com");
+    const { req } = await ask("GET", "/api/daemon/state");
+    expect(req.user.uid).toBe("owner-uid");
+  });
+
+  it("a second allowed account isn't the desk viewers see", async () => {
+    as("second-uid", "second@example.com");
+    await ask("GET", "/api/daemon/state");
+    await ownerSignsIn();
+    as("friend-uid", "friend@example.com");
+    expect((await ask("GET", "/api/book")).req.user.uid).toBe("owner-uid");
+  });
+
+  it("gives a viewer's socket the owner's events", async () => {
+    await ownerSignsIn();
+    expect(auth.deskUidFor({ uid: "friend-uid", email: "friend@example.com" } as any)).toBe("owner-uid");
+    expect(auth.deskUidFor({ uid: "owner-uid", email: "owner@example.com" } as any)).toBe("owner-uid");
   });
 });

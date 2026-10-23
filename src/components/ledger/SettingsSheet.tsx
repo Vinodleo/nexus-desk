@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useLookOnly } from "../../context/LookOnly";
 import { X, RefreshCw, ChevronRight, ChevronDown, Check, Lock, Minus, Plus, MessageSquare, Smartphone, Download } from "lucide-react";
 import type { CoinDcxAccountBalance, CoinDcxServerStatus, TradingExecutionMode } from "../../types";
 import { useAuth } from "../../context/AuthContext";
@@ -615,6 +616,7 @@ const LinkRow: React.FC<{ label: string; sub?: string; icon: React.ReactNode; on
 );
 
 export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
+  const lookOnly = useLookOnly();
   const { currentUser, logout } = useAuth();
   const pwa = usePWAInstall();
   const [confirmLive, setConfirmLive] = useState(false);
@@ -738,6 +740,18 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
           )}
         </header>
 
+        {lookOnly ? (
+          <>
+            <Label delay={80}>Look only</Label>
+            <Group label="Look only" delay={80} className="px-4">
+              <p className="m-0 py-3.5 text-sm leading-relaxed" data-testid="look-only-note">
+                This account sees the owner's desk: its trades, money, Lab and records. It can't change anything: no trades, closes,
+                limits or settings, and the pop-ups stay the owner's.
+              </p>
+            </Group>
+          </>
+        ) : (
+          <>
         <Label delay={80}>Trading</Label>
         <Group label="Trading" delay={80}>
           <div className="py-3 flex flex-col gap-2.5">
@@ -1125,12 +1139,14 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             ]}
           />
         </section>
+          </>
+        )}
 
-        {(props.notifications || (props.theme && props.onThemeChange)) && (
+        {((props.notifications && !lookOnly) || (props.theme && props.onThemeChange)) && (
           <>
             <Label delay={320}>Pop-ups and look</Label>
             <Group label="Pop-ups and look" delay={320} className="px-4 [&>*+*]:border-t [&>*+*]:border-line">
-              {props.notifications && (
+              {props.notifications && !lookOnly && (
                 <div className="flex items-center gap-3 min-h-16 py-2.5">
                   <span className="flex-1 min-w-0">
                     <span className="block text-sm font-semibold">Trade pop-ups</span>
@@ -1210,7 +1226,9 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
 
         <Label delay={380}>Desk</Label>
         <Group label="Desk" delay={380}>
-          <LinkRow label="Desk brief" sub="Ask the commander to explain the book" icon={<MessageSquare className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenDeskBrief} />
+          {!lookOnly && (
+            <LinkRow label="Desk brief" sub="Ask the commander to explain the book" icon={<MessageSquare className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenDeskBrief} />
+          )}
           <LinkRow label="This phone" sub="Your account, recent activity and the memory's cloud copy" icon={<Smartphone className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={props.onOpenPhone} />
           {pwa.isInstallable && !pwa.isInstalled && (
             <LinkRow label="Install the app" sub="Add Nexus Desk to your home screen" icon={<Download className="w-[17px] h-[17px]" strokeWidth={1.8} />} onClick={() => void pwa.install()} />

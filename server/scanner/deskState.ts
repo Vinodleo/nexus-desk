@@ -81,6 +81,11 @@ export function getDeskState(uid: string): DeskState | undefined {
   return desks.get(uid);
 }
 
+/** Every user whose settings the server holds. */
+export function deskUids(): string[] {
+  return [...desks.keys()];
+}
+
 /** Users the scanner should scan for: scanning on and heard from in the last week. */
 export function scanningDesks(now: number = Date.now()): [string, DeskState][] {
   const WEEK = 7 * 24 * 60 * 60 * 1000;

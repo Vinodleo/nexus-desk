@@ -24,7 +24,12 @@ describe("desk controls", () => {
 
   it("come from the server on a device that has none", async () => {
     apiFetch.mockResolvedValue(new Response(JSON.stringify({ success: true, desk: { autopilot: true, killSwitch: true, updatedAt: 1 } })));
-    expect(await fetchServerDeskControls()).toEqual({ autopilot: true, killSwitch: true });
+    expect(await fetchServerDeskControls()).toEqual({ autopilot: true, killSwitch: true, marketLimits: null, tradingMode: null });
+    // The limits and mode too (a look-only account shows the owner's).
+    apiFetch.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, desk: { autopilot: false, killSwitch: false, marketLimits: { coins: { maxOpenTrades: 2 } }, tradingMode: "PAPER" } }))
+    );
+    expect(await fetchServerDeskControls()).toEqual({ autopilot: false, killSwitch: false, marketLimits: { coins: { maxOpenTrades: 2 } }, tradingMode: "PAPER" });
     apiFetch.mockResolvedValue(new Response(JSON.stringify({ success: true, desk: null })));
     expect(await fetchServerDeskControls()).toBeNull();
     apiFetch.mockRejectedValue(new Error("offline"));

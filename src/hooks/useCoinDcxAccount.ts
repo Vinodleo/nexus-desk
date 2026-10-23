@@ -123,6 +123,8 @@ export function useCoinDcxAccount(notify: (toast: ExecutionToast) => void) {
   return {
     tradingMode,
     handleToggleTradingMode,
+    /** Shows the owner's paper or live mode on a look-only account (not saved, not sent). */
+    adoptTradingMode: setTradingMode,
     coinDcxStatus,
     refreshCoinDcxStatus,
     coinDcxBalance,

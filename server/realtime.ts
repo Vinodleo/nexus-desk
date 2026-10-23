@@ -1,10 +1,11 @@
 import type { Server } from "http";
 import WebSocket, { WebSocketServer } from "ws";
-import { verifyToken } from "./auth";
+import { deskUidFor, verifyToken } from "./auth";
 
 // WebSocket fan-out. A client must send {"type":"AUTH","token":"<Firebase ID
 // token>"} as its first message within 10s; until then it receives nothing,
-// and it is closed if the token is missing or not allowed.
+// and it is closed if the token is missing or not allowed. A look-only
+// viewer's socket gets the owner's events (it can send nothing after AUTH).
 
 type AuthedSocket = WebSocket & { isAuthed?: boolean; uid?: string };
 
@@ -25,7 +26,7 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
         const msg = JSON.parse(raw.toString());
         if (msg?.type !== "AUTH") throw new Error("Expected AUTH message");
         const decoded = await verifyToken(msg.token);
-        socket.uid = decoded.uid;
+        socket.uid = deskUidFor(decoded) ?? undefined;
         socket.isAuthed = true;
         clearTimeout(authTimer);
         socket.send(JSON.stringify({ type: "AUTH_OK" }));

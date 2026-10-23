@@ -73,7 +73,7 @@ import {
   playProfitTargetSound,
   playStopLossSound,
 } from "./utils/audioFeedback";
-import { apiFetch } from "./services/apiClient";
+import { apiFetch, LOOK_ONLY_TEXT } from "./services/apiClient";
 import { computeClosedTradePnl } from "./shared/tradeMath";
 import { blendedExitPrice, openQuantity, planPartialQuantity, riskAtOpen } from "./shared/exitRules";
 import { ruleFor } from "./services/marketRulesStore";
@@ -88,6 +88,7 @@ import { useCoinDcxAccount } from "./hooks/useCoinDcxAccount";
 import { useGuardianSync, withGuardianPosition } from "./hooks/useGuardianSync";
 import { reportCloseToServer } from "./services/serverClose";
 import { useBookUpload } from "./hooks/useBookUpload";
+import { useLookOnly } from "./context/LookOnly";
 import { useServerBook, withOwnClose } from "./hooks/useServerBook";
 import { useDailyTelemetry } from "./hooks/useDailyTelemetry";
 import { useLiveFeed } from "./hooks/useLiveFeed";
@@ -100,7 +101,7 @@ import { useEventWindow } from "./hooks/useEventWindow";
 import { useTrailProfile } from "./hooks/useTrailProfile";
 import { showLocalTradePopup, useTradeNotifications } from "./hooks/useTradeNotifications";
 import { tradeClosedMessage } from "./shared/tradeMessages";
-import { slowStrategyOf } from "./shared/marketLimits";
+import { cleanMarketLimits, slowStrategyOf } from "./shared/marketLimits";
 import { holdMinutesFor, trailsAsRunner } from "./shared/coinHolds";
 import { atrForExits as sharedAtrForExits, autopilotOpeningsLastHour, autopilotQueue, newPositionId, PHONE_SCAN_HOLD_REASON, positionFromProposal, selectAutopilotTrades } from "./services/autopilot";
 import { buildCalibrator } from "./services/calibration";
@@ -114,7 +115,10 @@ function atrForExits(proposal: TradeProposal): number {
 }
 
 export default function App() {
-  const { userRole, logSecurityAudit, currentUser, loading } = useAuth();
+  const { userRole: chosenRole, logSecurityAudit, currentUser, loading } = useAuth();
+  // A look-only account sees the owner's desk and changes nothing (server/auth.ts).
+  const lookOnly = useLookOnly();
+  const userRole = lookOnly ? "auditor" : chosenRole;
   const [isPhoneSheetOpen, setIsPhoneSheetOpen] = useState<boolean>(false);
 
   // Navigation: Floor, Queue, Book, Lab, Learning
@@ -165,6 +169,7 @@ export default function App() {
   const {
     tradingMode,
     handleToggleTradingMode,
+    adoptTradingMode,
     coinDcxStatus,
     refreshCoinDcxStatus,
     coinDcxBalance,
@@ -599,6 +604,24 @@ export default function App() {
     tradingMode === "LIVE_COINDCX" && coinDcxBalance.totalInr > 0 ? coinDcxBalance.totalInr : equity;
   const { policy: riskPolicy, limits: riskLimits, setLimits: setRiskLimits } = useRiskPolicy(effectiveEquity);
 
+  // A look-only account shows the owner's autopilot, kill switch, limits and
+  // paper or live mode as the server holds them, looked at again every 5 minutes.
+  useEffect(() => {
+    if (!lookOnly) return;
+    const adopt = () =>
+      void fetchServerDeskControls().then((desk) => {
+        if (!desk) return;
+        setDecisionMode(desk.autopilot ? "AUTO_WITHIN_LIMITS" : "MANUAL");
+        setKillSwitchActive(desk.killSwitch);
+        setFailureState((prev) => ({ ...prev, globalKillSwitchActive: desk.killSwitch }));
+        if (desk.marketLimits) setRiskLimits({ marketLimits: cleanMarketLimits(desk.marketLimits) });
+        if (desk.tradingMode) adoptTradingMode(desk.tradingMode);
+      });
+    adopt();
+    const timer = setInterval(adopt, 5 * 60_000);
+    return () => clearInterval(timer);
+  }, [lookOnly, setRiskLimits, adoptTradingMode]);
+
   const currentRiskCalculation = useMemo<RiskCalculation>(() => {
     const currentExposure = activePositions.reduce((acc, p) => acc + (p.entryPrice * openQuantity(p)), 0);
     const exposureFraction = effectiveEquity > 0 ? currentExposure / effectiveEquity : 0;
@@ -909,9 +932,10 @@ export default function App() {
       if (userRole === "auditor") {
         setExecutionToast({
           id: `toast-${Date.now()}`,
-          title: "Security Clearance Restricted",
-          message:
-            "Auditor clearance is read-only. Switch to Desk Trader or Commander to manually close positions.",
+          title: lookOnly ? "Look only" : "Security Clearance Restricted",
+          message: lookOnly
+            ? LOOK_ONLY_TEXT
+            : "Auditor clearance is read-only. Switch to Desk Trader or Commander to manually close positions.",
           type: "WARNING",
           timestamp: new Date().toLocaleTimeString(),
         });
@@ -923,7 +947,7 @@ export default function App() {
       );
       closePositionWithAutopsy(pos, pos.currentPrice, "MANUAL");
     },
-    [closePositionWithAutopsy, userRole, logSecurityAudit]
+    [closePositionWithAutopsy, userRole, lookOnly, logSecurityAudit]
   );
 
   // Execute Limit Order & Start Trade Upon Approval (Manual or Autonomous Self-Approval)
@@ -932,9 +956,10 @@ export default function App() {
       if (userRole === "auditor") {
         setExecutionToast({
           id: `toast-${Date.now()}`,
-          title: "Security Clearance Restricted",
-          message:
-            "Auditor clearance is read-only. Switch to Desk Trader or Commander to approve orders.",
+          title: lookOnly ? "Look only" : "Security Clearance Restricted",
+          message: lookOnly
+            ? LOOK_ONLY_TEXT
+            : "Auditor clearance is read-only. Switch to Desk Trader or Commander to approve orders.",
           type: "WARNING",
           timestamp: new Date().toLocaleTimeString(),
         });
@@ -1167,7 +1192,7 @@ export default function App() {
         setActiveTab("floor");
       }
     },
-    [killSwitchActive, userRole, logSecurityAudit, tradingMode, coinDcxStatus, fetchCoinDcxBalance]
+    [killSwitchActive, userRole, lookOnly, logSecurityAudit, tradingMode, coinDcxStatus, fetchCoinDcxBalance]
   );
 
   // Batch Auto-Approval Engine:
@@ -1287,7 +1312,8 @@ export default function App() {
   // approved automatically, within the limits; ones this phone's own scan found wait for you.
   // Paper only: in Live mode every trade waits for you (the server's autopilot is paper-only too).
   useEffect(() => {
-    if (decisionMode !== "AUTO_WITHIN_LIMITS" || killSwitchActive || tradingMode === "LIVE_COINDCX") return;
+    // A look-only account shows the owner's autopilot; it doesn't run it.
+    if (lookOnly || decisionMode !== "AUTO_WITHIN_LIMITS" || killSwitchActive || tradingMode === "LIVE_COINDCX") return;
 
     // What this phone's own scan found waits for you, with why.
     const { take: pendingProposals, hold } = autopilotQueue(proposalQueue);
@@ -1306,6 +1332,7 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [
+    lookOnly,
     decisionMode,
     proposalQueue,
     killSwitchActive,
@@ -1317,9 +1344,10 @@ export default function App() {
     if (userRole === "auditor") {
       setExecutionToast({
         id: `toast-${Date.now()}`,
-        title: "Security Clearance Restricted",
-        message:
-          "Auditor clearance is read-only. Switch to Desk Trader or Commander to veto proposals.",
+        title: lookOnly ? "Look only" : "Security Clearance Restricted",
+        message: lookOnly
+          ? LOOK_ONLY_TEXT
+          : "Auditor clearance is read-only. Switch to Desk Trader or Commander to veto proposals.",
         type: "WARNING",
         timestamp: new Date().toLocaleTimeString(),
       });
@@ -1505,7 +1533,8 @@ export default function App() {
   // close event missed (and the first candles after start-up); coins whose
   // latest candle was already scanned are skipped.
   useEffect(() => {
-    if (!isContinuousScanActive) return;
+    // A look-only account never scans: the desk is the owner's.
+    if (!isContinuousScanActive || lookOnly) return;
     const scanNew = (symbols?: string[]) => {
       // Wait for the first candles; until then every coin would count as "no data".
       if (!liveMarketStream.isReady) return;
@@ -1521,7 +1550,7 @@ export default function App() {
       clearInterval(backstop);
       clearTimeout(first);
     };
-  }, [isContinuousScanActive]);
+  }, [isContinuousScanActive, lookOnly]);
 
   // Follow every setup the scanner found on real candles, to measure what
   // the filters skip (see shadowTracker). Resolved after each candle close,
@@ -1612,9 +1641,10 @@ export default function App() {
     if (userRole === "auditor") {
       setExecutionToast({
         id: `toast-${Date.now()}`,
-        title: "Security Clearance Restricted",
-        message:
-          "Auditor clearance is read-only. Switch to Commander to engage or disengage the Kill Switch.",
+        title: lookOnly ? "Look only" : "Security Clearance Restricted",
+        message: lookOnly
+          ? LOOK_ONLY_TEXT
+          : "Auditor clearance is read-only. Switch to Commander to engage or disengage the Kill Switch.",
         type: "WARNING",
         timestamp: new Date().toLocaleTimeString(),
       });
@@ -1650,12 +1680,13 @@ export default function App() {
   };
 
   const handleDecisionModeChange = (mode: DecisionMode) => {
-    if (userRole === "auditor" && mode === "AUTO_WITHIN_LIMITS") {
+    if (lookOnly || (userRole === "auditor" && mode === "AUTO_WITHIN_LIMITS")) {
       setExecutionToast({
         id: `toast-${Date.now()}`,
-        title: "Security Clearance Restricted",
-        message:
-          "Auditor clearance cannot enable Autonomous Self-Approval mode. Switch to Commander role.",
+        title: lookOnly ? "Look only" : "Security Clearance Restricted",
+        message: lookOnly
+          ? LOOK_ONLY_TEXT
+          : "Auditor clearance cannot enable Autonomous Self-Approval mode. Switch to Commander role.",
         type: "WARNING",
         timestamp: new Date().toLocaleTimeString(),
       });

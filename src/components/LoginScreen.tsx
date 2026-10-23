@@ -26,8 +26,9 @@ const LOGIN_DOTS = [
 ];
 
 // Sign-in: the opening screen's N tile, floating, with the Google button at
-// the bottom where a thumb reaches it.
-export const LoginScreen: React.FC = () => {
+// the bottom where a thumb reaches it. `notReady`: a look-only account whose
+// owner hasn't opened the desk since the server learned to show it.
+export const LoginScreen: React.FC<{ notReady?: boolean }> = ({ notReady = false }) => {
   const { signInWithGoogle, logout, loading, currentUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
@@ -88,9 +89,15 @@ export const LoginScreen: React.FC = () => {
           <div className="bg-surface border border-line rounded-2xl p-4 flex flex-col gap-3">
             <div className="flex gap-2.5 text-sm">
               <ShieldAlert className="w-5 h-5 shrink-0 text-loss" strokeWidth={1.8} />
-              <span>
-                <strong>{currentUser.email}</strong> doesn't have access to this desk.
-              </span>
+              {notReady ? (
+                <span>
+                  <strong>{currentUser.email}</strong> can look at this desk once its owner has opened it again. Try again later.
+                </span>
+              ) : (
+                <span>
+                  <strong>{currentUser.email}</strong> doesn't have access to this desk.
+                </span>
+              )}
             </div>
             <button
               type="button"
@@ -113,7 +120,7 @@ export const LoginScreen: React.FC = () => {
             </button>
             {error && <p className="m-0 text-[13px] text-loss text-center">{error}</p>}
             <p className="m-0 text-xs text-muted leading-relaxed text-center">
-              Only the owner's account opens the desk. Google's two-step check guards it.
+              Only the owner's account, and accounts the owner lets look, open the desk. Google's two-step check guards it.
             </p>
           </>
         )}
