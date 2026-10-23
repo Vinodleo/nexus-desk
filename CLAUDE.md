@@ -66,7 +66,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   (Coins, India, US): amount per trade, most to lose and trades at once stepped with − and + (tapping the figure opens
   every choice), the slower strategies' own slots as squares, a dot in each one in use (`positions`) and a note when
   fewer than are open, and the most the market may hold and lose at once. **Connections:** CoinDCX (the test live order
-  folded under it), Alpaca, Angel One, Gemini and Telegram (Link opens the bot with a one-time code; then Test or
+  folded under it), Alpaca, Angel One, Gemini and Telegram (Link opens the bot with a one-time code, in the Telegram app itself, `tg://`,
+  `telegramLinkParts`; if it doesn't open, the `/start` message to copy and send by hand; then Test or
   Unlink; `useTelegramLink`), each with a status dot. **Server:** a tile each, opened on a
   tap; one with a problem stays open. **Desk: Read access** (`ReadAccess`, `useViewers`): the accounts let look, whether each
   has signed in, an email to add, and ✕ then Remove to shut one out. Then pop-ups and the theme, the desk's links (the desk brief, This phone), the

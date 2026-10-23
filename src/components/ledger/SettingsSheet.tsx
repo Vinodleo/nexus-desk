@@ -34,7 +34,7 @@ import { nseTakesEntries } from "../../shared/nse";
 import { usTakesEntries } from "../../shared/usMarket";
 import { coinProblemLine } from "../../shared/coinDcxCheck";
 import { LiveTestCard } from "./LiveTestCard";
-import { useTelegramLink } from "../../hooks/useTelegramLink";
+import { telegramLinkParts, useTelegramLink } from "../../hooks/useTelegramLink";
 import { useViewers } from "../../hooks/useViewers";
 import { ReadAccess } from "./ReadAccess";
 
@@ -522,7 +522,18 @@ const TelegramConnection: React.FC<{ telegram: ReturnType<typeof useTelegramLink
   linkedText,
   setup,
 }) => {
+  // The /start message last copied (a new link's message reads "Copy" again).
+  const [copied, setCopied] = useState<string | null>(null);
   if (telegram.state && !telegram.state.configured && !setup) return null;
+  const parts = telegram.url ? telegramLinkParts(telegram.url) : null;
+  // If Telegram doesn't open, the same /start message sent to the bot by hand links the chat too.
+  const startMessage = parts ? `/start ${parts.code}` : null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(startMessage!);
+      setCopied(startMessage);
+    } catch {}
+  };
   return (
     <Connection
       initials="TG"
@@ -540,7 +551,18 @@ const TelegramConnection: React.FC<{ telegram: ReturnType<typeof useTelegramLink
             </button>
           </>
         ) : telegram.url ? (
-          "Tap Start in Telegram to finish linking…"
+          <>
+            Tap Start in Telegram to finish linking…
+            {parts && (
+              <span className="block mt-1" data-testid="telegram-by-hand">
+                Telegram not opening? Send @{parts.bot} this message:{" "}
+                <span className="font-mono text-ink break-all select-all">{startMessage}</span>{" "}
+                <button type="button" onClick={() => void copy()} className="underline cursor-pointer text-accent font-semibold">
+                  {copied === startMessage ? "Copied" : "Copy"}
+                </button>
+              </span>
+            )}
+          </>
         ) : (
           offer
         ))
@@ -555,7 +577,12 @@ const TelegramConnection: React.FC<{ telegram: ReturnType<typeof useTelegramLink
           Test
         </button>
       ) : telegram.url ? (
-        <a href={telegram.url} target="_blank" rel="noopener noreferrer" className={`${pillButton} border-accent text-accent no-underline`}>
+        // The Telegram app's own link, so the phone opens the app rather than t.me's web page.
+        <a
+          href={parts?.appUrl ?? telegram.url}
+          {...(parts ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+          className={`${pillButton} border-accent text-accent no-underline`}
+        >
           Open Telegram
         </a>
       ) : (
