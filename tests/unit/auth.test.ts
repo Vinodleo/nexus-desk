@@ -224,3 +224,89 @@ describe("look only", () => {
     expect(auth.deskUidFor({ uid: "owner-uid", email: "owner@example.com" } as any)).toBe("owner-uid");
   });
 });
+
+describe("read access, from Settings", () => {
+  const as = (uid: string, email: string) => verifyIdToken.mockResolvedValue({ uid, email, email_verified: true });
+  const ask = async (method: string, url: string) => {
+    const req: any = { headers: { authorization: "Bearer t" }, method, originalUrl: url };
+    const r: any = {};
+    r.status = vi.fn(() => r);
+    r.json = vi.fn(() => r);
+    const next = vi.fn();
+    await auth.requireAuth(req, r, next);
+    return { req, r, next };
+  };
+
+  it("lists everyone who may look, and whether each has signed in", async () => {
+    expect(auth.listViewers()).toEqual([{ email: "friend@example.com", signedIn: false }]);
+    as("owner-uid", "owner@example.com");
+    await ask("GET", "/api/book");
+    as("friend-uid", "friend@example.com");
+    await ask("GET", "/api/book");
+    expect(auth.listViewers()).toEqual([{ email: "friend@example.com", signedIn: true }]);
+  });
+
+  it("lets an added email look, kept across a restart", async () => {
+    as("new-uid", "new@example.com");
+    await expect(auth.verifyToken("t")).rejects.toMatchObject({ status: 403 });
+    expect(auth.addViewer(" New@Example.com ")).toEqual({ ok: true });
+    await expect(auth.verifyToken("t")).resolves.toMatchObject({ uid: "new-uid" });
+    expect(auth.roleOf({ email: "new@example.com" })).toBe("viewer");
+    vi.resetModules();
+    auth = await import("../../server/auth");
+    await expect(auth.verifyToken("t")).resolves.toMatchObject({ uid: "new-uid" });
+    expect(auth.listViewers().map((v) => v.email)).toEqual(["friend@example.com", "new@example.com"]);
+  });
+
+  it("shuts a removed one out at once, even one on VIEWER_EMAILS, until added again", async () => {
+    as("owner-uid", "owner@example.com");
+    await ask("GET", "/api/book");
+    as("friend-uid", "friend@example.com");
+    await ask("GET", "/api/book");
+    expect(auth.removeViewer("friend@example.com")).toBe(true);
+    await expect(auth.verifyToken("t")).rejects.toMatchObject({ status: 403 });
+    expect((await ask("GET", "/api/book")).r.status).toHaveBeenCalledWith(403);
+    // Its alerts stop too.
+    expect(auth.viewerStatus("friend-uid")).toBe("removed");
+    expect(auth.listViewers()).toEqual([]);
+    // Still out after a restart, though VIEWER_EMAILS has it.
+    vi.resetModules();
+    auth = await import("../../server/auth");
+    await expect(auth.verifyToken("t")).rejects.toMatchObject({ status: 403 });
+    expect(auth.removeViewer("friend@example.com")).toBe(false);
+    expect(auth.addViewer("friend@example.com")).toEqual({ ok: true });
+    await expect(auth.verifyToken("t")).resolves.toMatchObject({ uid: "friend-uid" });
+    expect(auth.viewerStatus("friend-uid")).toBe("active");
+  });
+
+  it("removes one added in Settings", async () => {
+    auth.addViewer("new@example.com");
+    expect(auth.removeViewer("NEW@example.com")).toBe(true);
+    as("new-uid", "new@example.com");
+    await expect(auth.verifyToken("t")).rejects.toMatchObject({ status: 403 });
+    expect(auth.listViewers().map((v) => v.email)).toEqual(["friend@example.com"]);
+  });
+
+  it("won't add the owner's own account, or more than the most", () => {
+    expect(auth.addViewer("owner@example.com")).toEqual({ ok: false, error: expect.stringContaining("owner's account") });
+    expect(auth.addViewer("second@example.com").ok).toBe(false);
+    for (let i = 1; i < auth.MAX_VIEWERS; i++) expect(auth.addViewer(`p${i}@example.com`)).toEqual({ ok: true });
+    expect(auth.listViewers()).toHaveLength(auth.MAX_VIEWERS);
+    expect(auth.addViewer("one-more@example.com")).toEqual({ ok: false, error: expect.stringContaining(`At most ${auth.MAX_VIEWERS}`) });
+    // One already on it is fine.
+    expect(auth.addViewer("p1@example.com")).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["see who may look", "GET", "/api/viewers"],
+    ["add someone", "POST", "/api/viewers"],
+    ["remove someone", "POST", "/api/viewers/remove"],
+  ])("doesn't let a viewer %s", async (_n, method, url) => {
+    as("owner-uid", "owner@example.com");
+    await ask("GET", "/api/book");
+    as("friend-uid", "friend@example.com");
+    const { r, next } = await ask(method, url);
+    expect(next).not.toHaveBeenCalled();
+    expect(r.status).toHaveBeenCalledWith(403);
+  });
+});

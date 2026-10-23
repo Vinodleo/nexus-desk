@@ -22,7 +22,9 @@ import { deskUids } from "./scanner/deskState";
 // Telegram and IPO routes act for the viewer's own uid (VIEWER_OWN_ROUTES),
 // and the viewers who have signed in are kept (desk_viewers.json) so the
 // server sends them the IPO alerts and nothing else, and nothing once the
-// owner takes them off the list.
+// owner takes them off the list. The owner adds and removes them in Settings
+// too (owner's ask, 23 Oct; desk_viewer_emails.json): those changes go on top
+// of VIEWER_EMAILS, so one removed there stays out until added again.
 
 export interface AuthedRequest extends Request {
   user?: DecodedIdToken;
@@ -48,7 +50,14 @@ function emailList(value: string | undefined): Set<string> {
 }
 
 const allowedEmails = () => emailList(process.env.ALLOWED_EMAILS);
-const viewerEmails = () => emailList(process.env.VIEWER_EMAILS);
+/** Who may look: VIEWER_EMAILS, less the ones removed in Settings, plus the ones added there. */
+const viewerEmails = (): Set<string> => {
+  const emails = emailList(process.env.VIEWER_EMAILS);
+  const { added, removed } = settingsChanges();
+  for (const e of removed) emails.delete(e);
+  for (const e of added) emails.add(e);
+  return emails;
+};
 
 if (allowedEmails().size === 0) {
   console.warn(
@@ -138,8 +147,8 @@ export function deskUidFor(decoded: DecodedIdToken): string | null {
   return deskOwnerUid();
 }
 
-/** Reads a viewer can't make: real money at CoinDCX and live orders. */
-const OWNER_ONLY = ["/api/coindcx/balances", "/api/live/"];
+/** Reads a viewer can't make: real money at CoinDCX, live orders, and who else may look. */
+const OWNER_ONLY = ["/api/coindcx/balances", "/api/live/", "/api/viewers"];
 
 // ---------- viewers who have signed in ----------
 
@@ -181,6 +190,81 @@ export function viewerStatus(uid: string): "active" | "removed" | null {
   const email = viewerList()[uid];
   if (email === undefined) return null;
   return viewerEmails().has(email) && !allowedEmails().has(email) ? "active" : "removed";
+}
+
+// ---------- read access, from Settings ----------
+
+const LOOKERS_FILE = "desk_viewer_emails.json";
+/** The most accounts that may look at the desk. */
+export const MAX_VIEWERS = 20;
+let changes: { added: string[]; removed: string[] } | null = null;
+
+function settingsChanges(): { added: string[]; removed: string[] } {
+  if (changes) return changes;
+  try {
+    const file = path.join(dataDir(), LOOKERS_FILE);
+    const saved = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
+    const list = (v: unknown) => (Array.isArray(v) ? v.filter((e): e is string => typeof e === "string").map((e) => e.toLowerCase()) : []);
+    changes = { added: list(saved?.added), removed: list(saved?.removed) };
+  } catch {
+    changes = { added: [], removed: [] };
+  }
+  return changes;
+}
+
+function saveSettingsChanges(next: { added: string[]; removed: string[] }): void {
+  fs.mkdirSync(dataDir(), { recursive: true });
+  fs.writeFileSync(path.join(dataDir(), LOOKERS_FILE), JSON.stringify(next), "utf8");
+  changes = next;
+}
+
+export interface ViewerRow {
+  email: string;
+  /** Has signed in at least once. */
+  signedIn: boolean;
+}
+
+/** Everyone who may look (Settings → Desk: Read access), and whether each has signed in. */
+export function listViewers(): ViewerRow[] {
+  const seen = new Set(Object.values(viewerList()));
+  const owners = allowedEmails();
+  return [...viewerEmails()]
+    .filter((email) => !owners.has(email))
+    .sort()
+    .map((email) => ({ email, signedIn: seen.has(email) }));
+}
+
+/** Lets an email look at the desk; an error in words if it can't. */
+export function addViewer(raw: string): { ok: true } | { ok: false; error: string } {
+  const email = raw.trim().toLowerCase();
+  if (allowedEmails().has(email)) return { ok: false, error: "That's the owner's account: it has the whole desk already." };
+  if (viewerEmails().has(email)) return { ok: true };
+  if (listViewers().length >= MAX_VIEWERS) return { ok: false, error: `At most ${MAX_VIEWERS} people can look. Remove someone first.` };
+  const now = settingsChanges();
+  const fromFly = emailList(process.env.VIEWER_EMAILS).has(email);
+  try {
+    saveSettingsChanges({
+      added: fromFly ? now.added : [...now.added, email],
+      removed: now.removed.filter((e) => e !== email),
+    });
+  } catch (err) {
+    console.warn("[Auth] Couldn't save the read access list:", err);
+    return { ok: false, error: "The server couldn't save the list. Try again." };
+  }
+  return { ok: true };
+}
+
+/** Stops an email looking (at once: its next request is refused); false if it wasn't on the list. */
+export function removeViewer(raw: string): boolean {
+  const email = raw.trim().toLowerCase();
+  if (!viewerEmails().has(email)) return false;
+  const now = settingsChanges();
+  const fromFly = emailList(process.env.VIEWER_EMAILS).has(email);
+  saveSettingsChanges({
+    added: now.added.filter((e) => e !== email),
+    removed: fromFly && !now.removed.includes(email) ? [...now.removed, email] : now.removed,
+  });
+  return true;
 }
 
 function bearerToken(req: Request): string | undefined {
@@ -239,4 +323,5 @@ export function whoAmI(req: AuthedRequest): { role: DeskRole; email: string } {
 export function _resetAuth(): void {
   ownerUid = undefined;
   viewers = null;
+  changes = null;
 }

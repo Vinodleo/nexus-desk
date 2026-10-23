@@ -70,6 +70,12 @@ export const ipoHeldBody = z.object({
   held: z.boolean(),
 });
 
+// ---------- read access ----------
+
+export const viewerEmailBody = z.object({
+  email: z.string().trim().toLowerCase().max(254).email(),
+});
+
 // ---------- guardian ----------
 
 /** A position the app opens, sent with its order (/api/execute-trade). */

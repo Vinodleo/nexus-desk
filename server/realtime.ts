@@ -7,7 +7,7 @@ import { deskUidFor, verifyToken } from "./auth";
 // and it is closed if the token is missing or not allowed. A look-only
 // viewer's socket gets the owner's events (it can send nothing after AUTH).
 
-type AuthedSocket = WebSocket & { isAuthed?: boolean; uid?: string };
+type AuthedSocket = WebSocket & { isAuthed?: boolean; uid?: string; email?: string };
 
 let wss: WebSocketServer | null = null;
 
@@ -27,6 +27,7 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
         if (msg?.type !== "AUTH") throw new Error("Expected AUTH message");
         const decoded = await verifyToken(msg.token);
         socket.uid = deskUidFor(decoded) ?? undefined;
+        socket.email = decoded.email?.toLowerCase();
         socket.isAuthed = true;
         clearTimeout(authTimer);
         socket.send(JSON.stringify({ type: "AUTH_OK" }));
@@ -39,6 +40,20 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
   });
 
   return wss;
+}
+
+/** Closes an account's sockets (one taken off who may look): a new one is refused at AUTH. */
+export function closeSocketsOf(email: string): number {
+  if (!wss) return 0;
+  let closed = 0;
+  wss.clients.forEach((client) => {
+    const s = client as AuthedSocket;
+    if (s.email === email.trim().toLowerCase()) {
+      s.close(4403, "Unauthorized");
+      closed++;
+    }
+  });
+  return closed;
 }
 
 // Market data: every authenticated client.

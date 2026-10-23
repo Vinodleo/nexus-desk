@@ -35,6 +35,8 @@ import { usTakesEntries } from "../../shared/usMarket";
 import { coinProblemLine } from "../../shared/coinDcxCheck";
 import { LiveTestCard } from "./LiveTestCard";
 import { useTelegramLink } from "../../hooks/useTelegramLink";
+import { useViewers } from "../../hooks/useViewers";
+import { ReadAccess } from "./ReadAccess";
 
 export interface SettingsSheetProps {
   /** Pop-up notifications when a trade opens (this device). */
@@ -684,6 +686,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
   const [restarted, setRestarted] = useState<number | null>(null);
   const [testOpen, setTestOpen] = useState(false);
   const telegram = useTelegramLink(props.isOpen);
+  const viewers = useViewers(props.isOpen && !lookOnly);
   // Opens as a circle from the gear (and closes back into it); without the
   // gear's place, or with reduced motion, it rises and fades as before.
   const origin = props.from ?? null;
@@ -1190,6 +1193,15 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = (props) => {
             ]}
           />
         </section>
+
+        {viewers.viewers !== null && (
+          <>
+            <Label delay={300}>Desk: Read access</Label>
+            <Group label="Desk: Read access" delay={300}>
+              <ReadAccess list={viewers} />
+            </Group>
+          </>
+        )}
           </>
         )}
 
