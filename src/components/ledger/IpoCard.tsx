@@ -113,22 +113,27 @@ const BidScale: React.FC = () => (
 /** India's minutes past midnight now. */
 const indiaMinutes = (now: number) => Math.floor(((now + 330 * 60_000) % 86_400_000) / 60_000);
 
+/** The countdown ring's size, its circle's radius and stroke, and its label's size: room inside for the widest label ("18h 59m"). */
+export const RING = { size: 88, r: 37, stroke: 6, labelPx: 14 } as const;
+
 /** The time left to apply on the last day, as a ring that empties from 2 pm to the UPI cutoff. */
 export const CountdownRing: React.FC<{ cutoff: number; now: number; fits?: boolean }> = ({ cutoff, now, fits = true }) => {
   const left = Math.max(0, cutoff - indiaMinutes(now));
   const window = Math.max(1, cutoff - APPLY_ALERT_FROM);
   const share = Math.min(1, left / window);
-  const R = 30;
+  const { size, r: R, stroke } = RING;
   const C = 2 * Math.PI * R;
   const text = left >= 60 ? `${Math.floor(left / 60)}h ${left % 60}m` : `${left}m`;
   return (
-    <div className="relative w-[76px] h-[76px] shrink-0" role="img" aria-label={`${text} left to apply, until ${timeLabel(cutoff)}`} data-testid="ipo-countdown">
-      <svg width="76" height="76" viewBox="0 0 76 76" aria-hidden="true" className="-rotate-90">
-        <circle cx="38" cy="38" r={R} fill="none" className="stroke-inset" strokeWidth="7" />
-        <circle cx="38" cy="38" r={R} fill="none" className={!fits ? "stroke-muted" : share < 0.25 ? "stroke-loss" : "stroke-gain"} strokeWidth="7" strokeLinecap="round" strokeDasharray={`${share * C} ${C}`} />
+    <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={`${text} left to apply, until ${timeLabel(cutoff)}`} data-testid="ipo-countdown">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={R} fill="none" className="stroke-inset" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={R} fill="none" className={!fits ? "stroke-muted" : share < 0.25 ? "stroke-loss" : "stroke-gain"} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${share * C} ${C}`} />
       </svg>
-      <span className="absolute inset-0 flex flex-col items-center justify-center leading-none">
-        <span className="font-display text-[15px] font-semibold tabular-nums">{text}</span>
+      <span className="absolute inset-0 flex flex-col items-center justify-center leading-none whitespace-nowrap">
+        <span className="font-display font-semibold tabular-nums" style={{ fontSize: RING.labelPx }} data-testid="ipo-countdown-time">
+          {text}
+        </span>
         <span className="text-[10px] text-muted mt-0.5">to {timeLabel(cutoff)}</span>
       </span>
     </div>
@@ -233,18 +238,31 @@ export function planText(r: IpoRow, today: string): string {
   return `${opened} Half sold at the open; the rest is sold under ${price(p.stop!)} or on ${dayLabel(addDays(r.listedOn, HOLD_DAYS))}.`;
 }
 
-/** The rule's record one way (picked or skipped): its average a lot, big, over how many listed and made money. */
-const RecordTile: React.FC<{ label: string; rec: IpoRecord; testId: string }> = ({ label, rec, testId }) => (
+/**
+ * The issues the rule called one way that have listed but aren't in its
+ * record yet: the record counts an issue once every share is sold (half is
+ * kept after a strong open, up to a week).
+ */
+export function listedNotCounted(recent: IpoRow[], picked: boolean): string[] {
+  return recent.filter((r) => r.fit === picked && r.listedOn !== null && !r.plan?.result).map((r) => r.name);
+}
+
+const notCountedText = (names: string[]) =>
+  names.length === 1 ? `${names[0]} listed: it counts once the rest is sold` : `${names.length} listed: they count once sold`;
+
+/** The rule's record one way (picked or skipped): its average a lot, big, over how many listed and made money; and any listed but not yet counted. */
+const RecordTile: React.FC<{ label: string; rec: IpoRecord; waiting: string[]; testId: string }> = ({ label, rec, waiting, testId }) => (
   <div className="min-w-0 rounded-[16px] bg-inset p-3 flex flex-col gap-0.5 tabular-nums" data-testid={testId}>
     <span className="text-xs text-muted">{label}</span>
     {rec.count === 0 ? (
-      <span className="text-[13px] text-muted">none listed yet</span>
+      <span className="text-[13px] text-muted">{waiting.length > 0 ? notCountedText(waiting) : "none listed yet"}</span>
     ) : (
       <>
         <span className={`font-display text-xl font-semibold ${pnlTone(rec.avgRupees)}`}>{pct(rec.avgPct)} avg</span>
         <span className="text-[11px] text-muted">
-          {rec.count} listed · {rec.won} made money · {rupees(rec.avgRupees, true)} a lot
+          {rec.count} listed · {rec.won} made money · <span className="whitespace-nowrap">{rupees(rec.avgRupees, true)} a lot</span>
         </span>
+        {waiting.length > 0 && <span className="text-[11px] text-muted">{waiting.length === 1 ? `${waiting[0]} counts once sold` : `${waiting.length} more count once sold`}</span>}
       </>
     )}
   </div>
@@ -413,8 +431,8 @@ export const IpoCard: React.FC = () => {
       <div className="flex flex-col gap-1.5">
         <div className="text-xs font-semibold">The rule on paper (one lot each)</div>
         <div className="grid grid-cols-2 gap-2">
-          <RecordTile label="Rule picked" rec={view.record.picked} testId="ipo-record-picked" />
-          <RecordTile label="Rule skipped" rec={view.record.skipped} testId="ipo-record-skipped" />
+          <RecordTile label="Rule picked" rec={view.record.picked} waiting={listedNotCounted(view.recent, true)} testId="ipo-record-picked" />
+          <RecordTile label="Rule skipped" rec={view.record.skipped} waiting={listedNotCounted(view.recent, false)} testId="ipo-record-skipped" />
         </div>
         {view.record.rows.length > 0 && (
           <Fold title="Each listed issue">

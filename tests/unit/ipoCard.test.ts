@@ -10,7 +10,7 @@ import { ipoPlan, ipoRecord } from "../../src/shared/ipo";
 
 vi.mock("../../src/services/apiClient", () => ({ apiFetch: vi.fn(), authenticateSocket: vi.fn() }));
 const { apiFetch } = await import("../../src/services/apiClient");
-const { IpoCard, planText, ipoSteps, PricePath } = await import("../../src/components/ledger/IpoCard");
+const { IpoCard, planText, ipoSteps, PricePath, CountdownRing, listedNotCounted } = await import("../../src/components/ledger/IpoCard");
 const { LookOnlyContext } = await import("../../src/context/LookOnly");
 
 const row = (over: Record<string, unknown>) => ({
@@ -106,6 +106,43 @@ describe("the IPO card", () => {
     expect((await screen.findByTestId("ipo-record-picked")).textContent).toBe("Rule picked+27% avg1 listed · 1 made money · +₹4,000 a lot");
     expect(screen.getByTestId("ipo-record-skipped").textContent).toContain("Rule skipped");
     expect(screen.getByTestId("ipo-record-skipped").textContent).toContain("1 listed");
+    // The amount a lot stays on one line (it broke after its sign on a phone).
+    expect(screen.getByText("+₹4,000 a lot").className).toContain("whitespace-nowrap");
+  });
+
+  it("says a listed issue the record doesn't count yet, while the rest is held (as Jio Platforms on 29 Oct)", async () => {
+    // Listed 21% up: half sold at the open, the rest held above the listing day's low.
+    const jioPlan = ipoPlan(1119, 13, [{ day: "2026-10-20", open: 1358, high: 1400, low: 1357, close: 1390 }])!;
+    expect(jioPlan.result).toBeNull();
+    const jio = row({ symbol: "JPL", name: "Jio Platforms", priceHigh: 1119, fit: true, listedOn: "2026-10-20", open: 1358, openPct: 0.21, plan: jioPlan });
+    vi.mocked(apiFetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ ...view, recent: [...view.recent, jio], record: { ...view.record, picked: ipoRecord([]) } }))
+    );
+    render(createElement(IpoCard));
+    expect((await screen.findByTestId("ipo-record-picked")).textContent).toBe("Rule pickedJio Platforms listed: it counts once the rest is sold");
+    // Not yet listed (Wait Co) isn't waiting to count.
+    expect(listedNotCounted(view.recent as any, true)).toEqual([]);
+    // A tile with a record says the ones still to count under it.
+    const skippedWaiting = row({ symbol: "SLOWCO", name: "Slow Co", fit: false, listedOn: "2026-10-20", open: 1358, openPct: 0.21, plan: null });
+    expect(listedNotCounted([...view.recent, skippedWaiting] as any, false)).toEqual(["Slow Co"]);
+    cleanup();
+    vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...view, recent: [...view.recent, skippedWaiting] })));
+    render(createElement(IpoCard));
+    expect((await screen.findByTestId("ipo-record-skipped")).textContent).toMatch(/1 listed · 1 made money · .+ a lotSlow Co counts once sold$/);
+    expect(screen.getByTestId("ipo-record-picked").textContent).toBe("Rule picked+27% avg1 listed · 1 made money · +₹4,000 a lot");
+  });
+
+  it("leaves room in the countdown ring for its widest time (seen touching the ring on a phone, 29 Oct)", () => {
+    // From midnight to a 7 pm cutoff: up to "18h 59m", 7 characters.
+    render(createElement(CountdownRing, { cutoff: 19 * 60, now: Date.parse("2026-10-21T00:01:00+05:30") }));
+    const ring = screen.getByTestId("ipo-countdown");
+    expect(ring.getAttribute("aria-label")).toBe("18h 59m left to apply, until 7 pm");
+    const circle = ring.querySelector("circle")!;
+    const inside = 2 * (Number(circle.getAttribute("r")) - Number(circle.getAttribute("stroke-width")) / 2);
+    const label = ring.querySelector("span > span") as HTMLElement;
+    const px = parseFloat(label.style.fontSize) || Number(/text-\[(\d+)px\]/.exec(label.className)?.[1]);
+    // Fraunces at this size: about 0.62 of its size a character, and a few pixels clear of the stroke.
+    expect(inside).toBeGreaterThanOrEqual("18h 59m".length * 0.62 * px + 4);
   });
 
   it("says when NSE couldn't be read", async () => {
