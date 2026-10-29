@@ -413,7 +413,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   to the UPI cutoff on its last day (`CountdownRing`, from 2 pm; grey on one that doesn't fit), each group's bids on a
   log scale against the rule's bar, and its road (bid, allotment, listing, sale; `ipoSteps`); each recent one with its
   price since listing against the issue price and the listing day's low, the rule's sales marked (`PricePath`, from the
-  sessions the server keeps, `issuePrice` and `sessions` on each row); the rule's record as two tiles, picked and skipped.
+  sessions the server keeps, `issuePrice` and `sessions` on each row); the rule's record as two tiles, picked and skipped,
+  each naming the issues listed but not counted yet (`listedNotCounted`: the record counts an issue once every share is sold).
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if
