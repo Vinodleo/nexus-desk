@@ -186,8 +186,8 @@ async function startServer() {
   startIpoTracker({
     source: nseIpoSource,
     prices: angelIpoPrices,
-    // The apply alert goes to the look-only accounts too (their own pop-ups and Telegram).
-    notifyAll: (message) => void notifyEveryone(message, { viewers: true }),
+    // The apply alert and the listing result go to the look-only accounts too (their own pop-ups and Telegram).
+    notifyAll: (message, except) => void notifyEveryone(message, { viewers: true, except }),
     notify: (uid, message) => void notifyUser(uid, message),
   });
   startDailyLongJob();

@@ -39,6 +39,8 @@ interface World {
   quotes: Record<string, { open: number; low: number; ltp: number } | null>;
   sessions: Record<string, IpoSession[]>;
   everyone: PushMessage[];
+  /** Who each message to everyone left out. */
+  except: string[][];
   sent: { uid: string; message: PushMessage }[];
   listFails?: boolean;
 }
@@ -64,7 +66,10 @@ const deps = (): IpoDeps => ({
       return (w.sessions[symbol] ?? []).filter((s) => s.day >= fromDay && (s.day < today || (s.day === today && closed)));
     },
   },
-  notifyAll: (message) => w.everyone.push(message),
+  notifyAll: (message, except = []) => {
+    w.everyone.push(message);
+    w.except.push(except);
+  },
   notify: (uid, message) => w.sent.push({ uid, message }),
 });
 const at = async (when: string) => {
@@ -83,6 +88,7 @@ beforeEach(() => {
     quotes: {},
     sessions: {},
     everyone: [],
+    except: [],
     sent: [],
   };
 });
@@ -309,6 +315,55 @@ describe("from listing day, for whoever got shares", () => {
     expect(row.listedOn).toBe("2026-10-26");
     expect(row.open).toBe(130);
     expect(row.plan!.stop).toBe(125);
+  });
+});
+
+describe("the listing result, for everyone", () => {
+  it("at the open says how each issue listed and the rule's call, to all but those who got shares, once", async () => {
+    await closed();
+    ipo.setHolding("u", "HOTCO", true, dir);
+    w.everyone = [];
+    w.except = [];
+    await at("2026-10-26T09:50:00");
+    expect(w.everyone).toEqual([]);
+    w.quotes.HOTCO = { open: 130, low: 128, ltp: 133 };
+    w.quotes.COLDCO = { open: 204, low: 199, ltp: 201 };
+    await at("2026-10-26T10:05:00");
+    expect(w.everyone).toEqual([
+      {
+        title: "Hot Co listed +30%",
+        body: 'It opened at ₹130 against the ₹100 issue price. The rule picked it: its paper lot sold half at the open and keeps the rest while it stays above the listing day\'s low. Got shares? Tap "I got shares" in the Lab for when to sell.',
+        tag: "ipo-HOTCO",
+        url: "/",
+      },
+      {
+        title: "Cold Co listed +2%",
+        body: 'It opened at ₹204 against the ₹200 issue price. The rule skipped it (institutions bid 3.0×, the whole issue 2.4×). Got shares? Tap "I got shares" in the Lab for when to sell.',
+        tag: "ipo-COLDCO",
+        url: "/",
+      },
+    ]);
+    // Hot Co's holder gets their own alert instead.
+    expect(w.except).toEqual([["u"], []]);
+    expect(w.sent.map((s) => [s.uid, s.message.title])).toEqual([["u", "Hot Co listed +30%: sell half"]]);
+    await at("2026-10-26T10:20:00");
+    w.sessions.HOTCO = [{ day: "2026-10-26", open: 130, high: 140, low: 125, close: 138 }];
+    await at("2026-10-26T16:00:00");
+    expect(w.everyone).toHaveLength(2);
+  });
+
+  it("says the day when the server finds the listing late, and nothing for issues listed before", async () => {
+    await closed();
+    w.sessions.HOTCO = [{ day: "2026-10-26", open: 130, high: 140, low: 125, close: 138 }];
+    w.quotes.HOTCO = { open: 138, low: 136, ltp: 140 };
+    w.everyone = [];
+    await at("2026-10-27T10:30:00");
+    expect(w.everyone.map((m) => m.title)).toEqual(["Hot Co listed +30%"]);
+    expect(w.everyone[0].body).toMatch(/^It opened at ₹130 on Mon 26 Oct against the ₹100 issue price\./);
+    // After a restart the listed issue isn't news again.
+    ipo._resetIpoTracker(dir);
+    await at("2026-10-27T10:45:00");
+    expect(w.everyone).toHaveLength(1);
   });
 });
 

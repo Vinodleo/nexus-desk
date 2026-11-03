@@ -116,8 +116,8 @@ export interface IpoDeps {
   dir: () => string;
   source: IpoSource;
   prices: IpoPrices;
-  /** To everyone (the apply alert). */
-  notifyAll: (message: PushMessage) => void;
+  /** To everyone (the apply alert, the listing result), but the users in `except`. */
+  notifyAll: (message: PushMessage, except?: string[]) => void;
   /** To one holder (listing-day and after). */
   notify: (uid: string, message: PushMessage) => void;
 }
@@ -216,6 +216,28 @@ export function openMessage(ipo: TrackedIpo, open: number): PushMessage {
         tag: `ipo-${ipo.symbol}`,
         url: "/",
       };
+}
+
+/**
+ * How an issue listed, to everyone who didn't say they got shares (they get
+ * their own alert at the open): the open against the issue price, and the
+ * rule's call on it with what its paper lot did.
+ */
+export function listingMessage(ipo: TrackedIpo, open: number, listedOn: string, today: string): PushMessage {
+  const issue = issuePriceOf(ipo)!;
+  const { pct, strong } = listingOpen(issue, open);
+  const when = listedOn === today ? "" : ` on ${dayLabel(listedOn)}`;
+  const call = ipo.fit
+    ? strong
+      ? "The rule picked it: its paper lot sold half at the open and keeps the rest while it stays above the listing day's low."
+      : "The rule picked it: under 10% up, its paper lot sold it all at the open."
+    : `The rule skipped it (institutions bid ${times(ipo.bids?.qib ?? null)}, the whole issue ${times(ipo.bids?.total ?? null)}).`;
+  return {
+    title: `${ipo.name} listed ${pctText(pct)}`,
+    body: `It opened at ${price(open)}${when} against the ${price(issue)} issue price. ${call} Got shares? Tap "I got shares" in the Lab for when to sell.`,
+    tag: `ipo-${ipo.symbol}`,
+    url: "/",
+  };
 }
 
 /** After listing day: the price went under the listing day's low. */
@@ -367,6 +389,7 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
       // Listing: the open from the day's quote, during the session. Past the
       // expected day, an earlier session (a server down at the listing) comes first.
       const due = expectedListing(ipo.closes);
+      const wasListed = ipo.listedOn !== null;
       if (ipo.listedOn === null && today >= due && marketDay && minutes >= LISTING_TRADES_FROM && minutes < NSE_CLOSE) {
         try {
           const q = await deps.prices.quote(ipo.symbol);
@@ -397,6 +420,11 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
         } catch (err: any) {
           console.warn(`[IPO] Couldn't read ${ipo.symbol}'s sessions:`, err?.message ?? err);
         }
+      }
+
+      // Found listed in this check: its result to everyone but its holders (their own alert says it).
+      if (!wasListed && ipo.listedOn !== null && ipo.open !== null && issuePriceOf(ipo) !== null) {
+        deps.notifyAll(listingMessage(ipo, ipo.open, ipo.listedOn, today), Object.keys(ipo.holders));
       }
 
       if (marketDay && minutes >= NSE_OPEN && minutes < NSE_CLOSE) await holderAlerts(deps, ipo, today, minutes);

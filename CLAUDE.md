@@ -404,6 +404,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   The rule (`IPO_RULE`): institutions (QIBs) bid 20×+ and the whole issue 10×+; on the last bidding day from 2 pm until
   10 minutes before the UPI cutoff, while it fits, one alert to everyone to apply, look-only accounts included
   (`APPLY_ALERT_FROM`, `upiCutoffOf`, 5 pm if unknown). Its call is made 45 minutes after the cutoff (`fit`).
+  When an issue lists (its open read from 10 am, or found later from its sessions), one alert, pop-up and Telegram, to
+  everyone but those who said they got shares (their own alert at the open says it), look-only accounts included: how
+  it opened against the issue price, the day if found late, and the rule's call (`listingMessage`, `notifyEveryone`'s `except`).
   Allotment T+1, listing T+3 weekdays (`expectedListing`); prices after listing from Angel One (`fetchListingQuote`,
   `fetchListingCandles`: EQ or BE lines). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
@@ -411,8 +414,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   lot at the top of its band (about ₹15,000 of shares where NSE gives no lot, `lotShares`), after Angel One's selling
   charges, before tax, picked against skipped. State `ipo.json`. The card: each issue bidding with a ring counting down
   to the UPI cutoff on its last day (`CountdownRing`, from 2 pm; grey on one that doesn't fit), each group's bids on a
-  log scale against the rule's bar, and its road (bid, allotment, listing, sale; `ipoSteps`); each recent one with its
-  price since listing against the issue price and the listing day's low, the rule's sales marked (`PricePath`, from the
+  log scale against the rule's bar, and its road (bid, allotment, listing, sale; `ipoSteps`); each recent one with when it
+  listed ("Listed today") and the rule's call, its price since listing against the issue price and the listing day's low, the rule's sales marked (`PricePath`, from the
   sessions the server keeps, `issuePrice` and `sessions` on each row); the rule's record as two tiles, picked and skipped,
   each naming the issues listed but not counted yet (`listedNotCounted`: the record counts an issue once every share is sold).
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
