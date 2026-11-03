@@ -156,6 +156,19 @@ describe("the IPO card", () => {
     expect(screen.getByTestId("ipo-recent-NEWCO").textContent).toContain("+30%");
   });
 
+  it("links to the allotment check from allotment day until the issue lists", async () => {
+    const later = row({ symbol: "LATECO", name: "Late Co", fit: true, closes: "2026-10-21", allotmentOn: "2026-10-22", listsOn: "2026-10-26" });
+    vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...view, recent: [...view.recent, later] })));
+    render(createElement(IpoCard));
+    // Wait Co's allotment was due today (21 Oct); Late Co's is tomorrow; Old Co has listed.
+    const link = (await screen.findByTestId("ipo-allotment-WAITCO")) as HTMLAnchorElement;
+    expect(link.textContent).toBe("Check allotment on BSE ›");
+    expect(link.href).toBe("https://www.bseindia.com/investors/appli_check.aspx");
+    expect(link.target).toBe("_blank");
+    expect(screen.queryByTestId("ipo-allotment-LATECO")).toBeNull();
+    expect(screen.queryByTestId("ipo-allotment-OLDCO")).toBeNull();
+  });
+
   it("says when NSE couldn't be read", async () => {
     vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...view, lastError: "NSE's site answered 403 without cookies" })));
     render(createElement(IpoCard));

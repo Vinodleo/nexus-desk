@@ -318,14 +318,61 @@ describe("from listing day, for whoever got shares", () => {
   });
 });
 
+describe("the allotment reminder", () => {
+  it("the evening allotment is due, for an issue the rule picked, to all but those who said they got shares, once", async () => {
+    await closed();
+    ipo.setHolding("u", "HOTCO", true, dir);
+    w.everyone = [];
+    w.except = [];
+    // Bidding closed Wed 21 Oct: allotment Thu 22, from 7 pm.
+    await at("2026-10-22T18:30:00");
+    expect(w.everyone).toEqual([]);
+    await at("2026-10-22T19:05:00");
+    expect(w.everyone).toEqual([
+      {
+        title: "Hot Co: allotment is out",
+        body:
+          "See whether you got shares in your broker's app, or with your PAN on BSE: https://www.bseindia.com/investors/appli_check.aspx. " +
+          'Got them? Tap "I got shares" in the Lab for when to sell. It lists Mon 26 Oct, from 10 am.',
+        tag: "ipo-HOTCO",
+        url: "/",
+      },
+    ]);
+    // Cold Co (skipped by the rule) gets none; Hot Co's holder already knows.
+    expect(w.except).toEqual([["u"]]);
+    await at("2026-10-22T19:20:00");
+    await at("2026-10-23T09:00:00");
+    expect(w.everyone).toHaveLength(1);
+  });
+
+  it("comes late after a server down at the time, but not once the issue lists", async () => {
+    await closed();
+    w.everyone = [];
+    await at("2026-10-23T09:00:00");
+    expect(w.everyone.map((m) => m.title)).toEqual(["Hot Co: allotment is out"]);
+
+    fs.rmSync(path.join(dir, "ipo.json"), { force: true });
+    ipo._resetIpoTracker();
+    await closed();
+    w.everyone = [];
+    w.quotes.HOTCO = { open: 130, low: 128, ltp: 133 };
+    w.quotes.COLDCO = { open: 204, low: 199, ltp: 201 };
+    await at("2026-10-26T10:05:00");
+    expect(w.everyone.map((m) => m.title)).toEqual(["Hot Co listed +30%", "Cold Co listed +2%"]);
+  });
+});
+
 describe("the listing result, for everyone", () => {
   it("at the open says how each issue listed and the rule's call, to all but those who got shares, once", async () => {
     await closed();
     ipo.setHolding("u", "HOTCO", true, dir);
     w.everyone = [];
     w.except = [];
+    // No check since bidding closed: the allotment reminder comes late, before the listing.
     await at("2026-10-26T09:50:00");
-    expect(w.everyone).toEqual([]);
+    expect(w.everyone.map((m) => m.title)).toEqual(["Hot Co: allotment is out"]);
+    w.everyone = [];
+    w.except = [];
     w.quotes.HOTCO = { open: 130, low: 128, ltp: 133 };
     w.quotes.COLDCO = { open: 204, low: 199, ltp: 201 };
     await at("2026-10-26T10:05:00");

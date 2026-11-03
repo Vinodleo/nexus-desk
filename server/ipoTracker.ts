@@ -3,6 +3,8 @@ import path from "path";
 import { formatMoney } from "../src/components/ledger/format";
 import { istParts, NSE_CLOSE, NSE_OPEN } from "../src/shared/nse";
 import {
+  ALLOTMENT_ALERT_AT,
+  ALLOTMENT_CHECK_URL,
   APPLY_ALERT_FROM,
   APPLY_ALERT_LEAD,
   DEFAULT_UPI_CUTOFF,
@@ -32,7 +34,8 @@ import type { PushMessage } from "./push";
 // The IPO tracker (src/shared/ipo.ts has the rule): NSE's main-board issues
 // bidding now and coming up, how many times over each group has bid, an
 // alert on an issue's last bidding day when it fits the rule (apply before
-// the UPI cutoff NSE's page gives), and from listing day, for whoever said they got shares, when to sell
+// the UPI cutoff NSE's page gives), a reminder the evening allotment is due,
+// the listing result for everyone, and from listing day, for whoever said they got shares, when to sell
 // half or all of it, when the price goes under the listing day's low, and a
 // week on. Every listed issue's result under the rule, one lot at the issue
 // price, is kept as the rule's paper record. Alerts only: it applies for
@@ -90,6 +93,8 @@ export interface TrackedIpo extends IpoListing {
   fit: boolean | null;
   /** The apply alert went out. */
   alerted: boolean;
+  /** The allotment reminder went out (issues the rule picked). */
+  allotmentAlerted?: boolean;
   listedOn: string | null;
   /** The listing open, once it has traded. */
   open: number | null;
@@ -116,7 +121,7 @@ export interface IpoDeps {
   dir: () => string;
   source: IpoSource;
   prices: IpoPrices;
-  /** To everyone (the apply alert, the listing result), but the users in `except`. */
+  /** To everyone (the apply alert, the allotment reminder, the listing result), but the users in `except`. */
   notifyAll: (message: PushMessage, except?: string[]) => void;
   /** To one holder (listing-day and after). */
   notify: (uid: string, message: PushMessage) => void;
@@ -194,6 +199,18 @@ export function applyMessage(ipo: TrackedIpo): PushMessage {
     body:
       `Institutions bid ${times(ipo.bids?.qib ?? null)}, the whole issue ${times(ipo.bids?.total ?? null)}, retail ${times(ipo.bids?.retail ?? null)}.${lotText} ` +
       `Apply and approve the UPI request by ${timeLabel(upiCutoffOf(ipo))}. Allotment ${dayLabel(allotmentDay(ipo.closes))}, listing ${dayLabel(expectedListing(ipo.closes))}.`,
+    tag: `ipo-${ipo.symbol}`,
+    url: "/",
+  };
+}
+
+/** The evening of allotment day, for an issue the rule picked: see whether you got shares. */
+export function allotmentMessage(ipo: TrackedIpo): PushMessage {
+  return {
+    title: `${ipo.name}: allotment is out`,
+    body:
+      `See whether you got shares in your broker's app, or with your PAN on BSE: ${ALLOTMENT_CHECK_URL}. ` +
+      `Got them? Tap "I got shares" in the Lab for when to sell. It lists ${dayLabel(expectedListing(ipo.closes))}, from 10 am.`,
     tag: `ipo-${ipo.symbol}`,
     url: "/",
   };
@@ -390,6 +407,16 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
       // expected day, an earlier session (a server down at the listing) comes first.
       const due = expectedListing(ipo.closes);
       const wasListed = ipo.listedOn !== null;
+
+      // Allotment: for an issue the rule picked, a reminder from the evening it's due until it lists
+      // (later after a server down at the time), to all but those who already said they got shares.
+      const allotted = allotmentDay(ipo.closes);
+      const allotmentOut = today > allotted || (today === allotted && minutes >= ALLOTMENT_ALERT_AT);
+      const beforeListing = today < due || (today === due && minutes < LISTING_TRADES_FROM);
+      if (ipo.fit && !ipo.allotmentAlerted && ipo.listedOn === null && allotmentOut && beforeListing) {
+        deps.notifyAll(allotmentMessage(ipo), Object.keys(ipo.holders));
+        ipo.allotmentAlerted = true;
+      }
       if (ipo.listedOn === null && today >= due && marketDay && minutes >= LISTING_TRADES_FROM && minutes < NSE_CLOSE) {
         try {
           const q = await deps.prices.quote(ipo.symbol);

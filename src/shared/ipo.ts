@@ -101,6 +101,11 @@ export const istDay = (ms: number) => new Date(ms + IST_OFFSET_MS).toISOString()
 export const allotmentDay = (closes: string) => addWeekdays(closes, 1);
 export const expectedListing = (closes: string) => addWeekdays(closes, 3);
 
+/** The allotment reminder goes from this time (India minutes) on the allotment day, when registrars have usually posted it. */
+export const ALLOTMENT_ALERT_AT = 19 * 60;
+/** Where anyone can see whether they got shares, by PAN or application number: BSE's allotment status page. */
+export const ALLOTMENT_CHECK_URL = "https://www.bseindia.com/investors/appli_check.aspx";
+
 /** One session's prices after listing. */
 export interface IpoSession {
   day: string;

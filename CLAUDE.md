@@ -404,6 +404,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   The rule (`IPO_RULE`): institutions (QIBs) bid 20×+ and the whole issue 10×+; on the last bidding day from 2 pm until
   10 minutes before the UPI cutoff, while it fits, one alert to everyone to apply, look-only accounts included
   (`APPLY_ALERT_FROM`, `upiCutoffOf`, 5 pm if unknown). Its call is made 45 minutes after the cutoff (`fit`).
+  For an issue the rule picked, a reminder the evening allotment is due (from 7 pm, `ALLOTMENT_ALERT_AT`; later after a
+  server down, until it lists), to all but its holders, look-only accounts included: check in your broker's app or on
+  BSE's allotment page (`ALLOTMENT_CHECK_URL`, also a link on the card's issues from allotment day until they list;
+  `allotmentMessage`, `allotmentAlerted`). The server can't check allotment itself (a PAN and a captcha).
   When an issue lists (its open read from 10 am, or found later from its sessions), one alert, pop-up and Telegram, to
   everyone but those who said they got shares (their own alert at the open says it), look-only accounts included: how
   it opened against the issue price, the day if found late, and the rule's call (`listingMessage`, `notifyEveryone`'s `except`).

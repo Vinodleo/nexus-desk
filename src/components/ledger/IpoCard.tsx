@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { apiFetch } from "../../services/apiClient";
 import {
+  ALLOTMENT_CHECK_URL,
   APPLY_ALERT_FROM,
   DEFAULT_UPI_CUTOFF,
   HOLD_DAYS,
@@ -391,17 +392,30 @@ export const IpoCard: React.FC = () => {
                 </p>
                 <Steps r={r} today={today} />
                 {!finished && (
-                  <button
-                    type="button"
-                    aria-pressed={held}
-                    disabled={busy === r.symbol}
-                    onClick={() => void hold(r.symbol, !held)}
-                    className={`self-start min-h-9 px-3 rounded-full text-xs font-semibold cursor-pointer border ${
-                      held ? "bg-accent text-on-accent border-accent" : "border-line text-ink"
-                    } disabled:opacity-60`}
-                  >
-                    {held ? "✓ I got shares: alerts on" : "I got shares"}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <button
+                      type="button"
+                      aria-pressed={held}
+                      disabled={busy === r.symbol}
+                      onClick={() => void hold(r.symbol, !held)}
+                      className={`self-start min-h-9 px-3 rounded-full text-xs font-semibold cursor-pointer border ${
+                        held ? "bg-accent text-on-accent border-accent" : "border-line text-ink"
+                      } disabled:opacity-60`}
+                    >
+                      {held ? "✓ I got shares: alerts on" : "I got shares"}
+                    </button>
+                    {r.listedOn === null && today >= r.allotmentOn && (
+                      <a
+                        href={ALLOTMENT_CHECK_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-semibold text-accent no-underline"
+                        data-testid={`ipo-allotment-${r.symbol}`}
+                      >
+                        Check allotment on BSE ›
+                      </a>
+                    )}
+                  </div>
                 )}
               </section>
             );
