@@ -87,6 +87,9 @@ describe("the IPO card", () => {
     expect(screen.getByTestId("ipo-plan-OLDCO").textContent).toMatch(/^Listed Mon 12 Oct at ₹204 \(\+2%\)\. The rule sold all at ₹204: \+₹\d+ a lot \(\+\d+%\)\.$/);
     // A finished one has nothing to hold.
     expect(screen.getByTestId("ipo-recent-OLDCO").querySelector("button")).toBeNull();
+    // When it listed, and the rule's call on it; Wait Co hasn't listed.
+    expect(screen.getByTestId("ipo-listed-OLDCO").textContent).toBe("Listed Mon 12 Oct · the rule skipped it");
+    expect(screen.queryByTestId("ipo-listed-WAITCO")).toBeNull();
 
     const button = screen.getByRole("button", { name: "I got shares" });
     fireEvent.click(button);
@@ -143,6 +146,14 @@ describe("the IPO card", () => {
     const px = parseFloat(label.style.fontSize) || Number(/text-\[(\d+)px\]/.exec(label.className)?.[1]);
     // Fraunces at this size: about 0.62 of its size a character, and a few pixels clear of the stroke.
     expect(inside).toBeGreaterThanOrEqual("18h 59m".length * 0.62 * px + 4);
+  });
+
+  it("says an issue that listed today, and that the rule picked it", async () => {
+    const today = row({ symbol: "NEWCO", name: "New Co", fit: true, listedOn: "2026-10-21", open: 130, openPct: 0.3 });
+    vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...view, recent: [...view.recent, today] })));
+    render(createElement(IpoCard));
+    expect((await screen.findByTestId("ipo-listed-NEWCO")).textContent).toBe("Listed today · the rule picked it");
+    expect(screen.getByTestId("ipo-recent-NEWCO").textContent).toContain("+30%");
   });
 
   it("says when NSE couldn't be read", async () => {

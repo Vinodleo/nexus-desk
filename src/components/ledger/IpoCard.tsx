@@ -370,7 +370,15 @@ export const IpoCard: React.FC = () => {
                 data-testid={`ipo-recent-${r.symbol}`}
               >
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-[15px] font-bold">{r.name}</span>
+                  <span className="min-w-0 flex flex-col">
+                    <span className="text-[15px] font-bold">{r.name}</span>
+                    {r.listedOn !== null && (
+                      <span className="text-xs text-muted" data-testid={`ipo-listed-${r.symbol}`}>
+                        {r.listedOn === today ? <span className="font-semibold text-accent">Listed today</span> : `Listed ${dayLabel(r.listedOn)}`} ·{" "}
+                        {r.fit ? "the rule picked it" : "the rule skipped it"}
+                      </span>
+                    )}
+                  </span>
                   {r.openPct !== null ? (
                     <span className={`font-display text-lg font-semibold tabular-nums ${pnlTone(r.openPct)}`}>{pct(r.openPct)}</span>
                   ) : (

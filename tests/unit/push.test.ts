@@ -223,6 +223,10 @@ describe("pop-ups for look-only accounts", () => {
     sent.length = 0;
     await push.notifyEveryone({ title: "Apply today: Hot Co IPO", body: "" }, { viewers: true });
     expect(to()).toEqual(["101", "102"]);
+    // A listing result goes to everyone but those who got shares (their own alert says it).
+    sent.length = 0;
+    await push.notifyEveryone({ title: "Hot Co listed +30%", body: "" }, { viewers: true, except: ["v1"] });
+    expect(to()).toEqual(["101"]);
 
     sent.length = 0;
     expect(await push.notifyUser("v1", { title: "Hot Co listed +30%: sell half", body: "" })).toBe(1);

@@ -128,11 +128,13 @@ async function pushToDevices(uid: string, message: PushMessage): Promise<number>
 /**
  * Sends to every subscribed device and linked Telegram chat of the desk's
  * own accounts (server-wide news, like a failed backup). With `viewers`, to
- * the look-only accounts still on the list too (the IPO apply alert).
+ * the look-only accounts still on the list too (the IPO apply alert and
+ * listing result). Never to the accounts in `except`.
  */
-export async function notifyEveryone(message: PushMessage, opts: { viewers?: boolean } = {}): Promise<number> {
+export async function notifyEveryone(message: PushMessage, opts: { viewers?: boolean; except?: string[] } = {}): Promise<number> {
   let sent = 0;
   for (const uid of new Set([...Object.keys(subscriptions()), ...telegramUsers()])) {
+    if (opts.except?.includes(uid)) continue;
     const viewer = viewerStatus(uid);
     if (viewer && !(opts.viewers && viewer === "active")) continue;
     sent += await notifyUser(uid, message);
