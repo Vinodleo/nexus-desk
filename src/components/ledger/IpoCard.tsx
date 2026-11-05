@@ -50,6 +50,8 @@ interface IpoRow {
   openPct: number | null;
   plan: IpoPlan | null;
   held: boolean;
+  /** This user closed it on their card (absent from older servers). */
+  closed?: boolean;
   /** The top of the band and the sessions since listing (absent from older servers). */
   issuePrice?: number | null;
   sessions?: IpoSession[];
@@ -222,6 +224,14 @@ export const PricePath: React.FC<{ r: IpoRow }> = ({ r }) => {
   );
 };
 
+/** A closed issue in a line: how it listed and what the rule's lot made, or when it's allotted and lists. */
+export function closedLine(r: IpoRow, today: string): string {
+  if (r.listedOn === null || r.open === null) return planText(r, today);
+  const when = r.listedOn === today ? "today" : dayLabel(r.listedOn);
+  const made = r.plan?.result ? `; the rule's lot ${rupees(r.plan.result.rupees, true)}` : "";
+  return `Listed ${when} at ${price(r.open)} (${pct(r.openPct ?? 0)})${made}.`;
+}
+
 /** What the rule did with the lot, or does next, in a line. */
 export function planText(r: IpoRow, today: string): string {
   const p = r.plan;
@@ -269,10 +279,15 @@ const RecordTile: React.FC<{ label: string; rec: IpoRecord; waiting: string[]; t
   </div>
 );
 
+const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <h3 className="m-0 mt-1 text-xs font-semibold">{children}</h3>
+);
+
 export const IpoCard: React.FC = () => {
   const view = useLabFeed("/api/ipos", isIpoView, () => true, 5 * 60_000);
   // "I got shares" as the server last took it, until the feed's next look.
   const [heldNow, setHeldNow] = useState<Record<string, boolean>>({});
+  const [closedNow, setClosedNow] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   if (!view) return null;
@@ -289,14 +304,54 @@ export const IpoCard: React.FC = () => {
         body: JSON.stringify({ symbol, held }),
       });
       const data = await res.json();
-      if (data?.success) setHeldNow((h) => ({ ...h, [symbol]: held }));
-      else setError(data?.error || "The server didn't take it.");
+      if (data?.success) {
+        setHeldNow((h) => ({ ...h, [symbol]: held }));
+        // Holding it opens it again on the card.
+        if (held) setClosedNow((c) => ({ ...c, [symbol]: false }));
+      } else setError(data?.error || "The server didn't take it.");
     } catch (err: any) {
       setError(err?.message || "Couldn't reach the server.");
     } finally {
       setBusy(null);
     }
   };
+
+  const close = async (symbol: string) => {
+    setBusy(symbol);
+    setError(null);
+    try {
+      const res = await apiFetch("/api/ipos/closed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, closed: true }),
+      });
+      const data = await res.json();
+      if (data?.success) {
+        setClosedNow((c) => ({ ...c, [symbol]: true }));
+        setHeldNow((h) => ({ ...h, [symbol]: false }));
+      } else setError(data?.error || "The server didn't take it.");
+    } catch (err: any) {
+      setError(err?.message || "Couldn't reach the server.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  // After bidding: yours (you said you got shares) on the card in full, the rest under Closed.
+  const isHeld = (r: IpoRow) => (heldNow[r.symbol] ?? r.held) && !(closedNow[r.symbol] ?? r.closed ?? false);
+  const yours = view.recent.filter(isHeld);
+  const closedRows = view.recent.filter((r) => !isHeld(r));
+  const allotmentLink = (r: IpoRow) =>
+    r.listedOn === null && today >= r.allotmentOn ? (
+      <a
+        href={ALLOTMENT_CHECK_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-xs font-semibold text-accent no-underline"
+        data-testid={`ipo-allotment-${r.symbol}`}
+      >
+        Check allotment on BSE ›
+      </a>
+    ) : null;
 
   const nothing = view.bidding.length === 0 && view.upcoming.length === 0 && view.recent.length === 0;
   return (
@@ -314,6 +369,7 @@ export const IpoCard: React.FC = () => {
       )}
       {nothing && <p className="m-0 text-xs text-muted">No main-board IPOs bidding or coming up.</p>}
 
+      {view.bidding.length > 0 && <SectionTitle>Bidding now</SectionTitle>}
       {view.bidding.map((r) => {
         const lastDay = r.closes === today;
         const cutoffMin = r.upiCutoff ?? DEFAULT_UPI_CUTOFF;
@@ -357,12 +413,11 @@ export const IpoCard: React.FC = () => {
         );
       })}
 
-      {view.recent.length > 0 && (
+      {yours.length > 0 && (
         <div className="flex flex-col gap-2">
-          <div className="text-xs font-semibold">Allotment and listing</div>
-          {view.recent.map((r) => {
+          <SectionTitle>Your IPOs</SectionTitle>
+          {yours.map((r) => {
             const finished = !!r.plan?.result;
-            const held = heldNow[r.symbol] ?? r.held;
             return (
               <section
                 key={r.symbol}
@@ -391,32 +446,28 @@ export const IpoCard: React.FC = () => {
                   {planText(r, today)}
                 </p>
                 <Steps r={r} today={today} />
-                {!finished && (
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  {!finished && (
                     <button
                       type="button"
-                      aria-pressed={held}
+                      aria-pressed={true}
                       disabled={busy === r.symbol}
-                      onClick={() => void hold(r.symbol, !held)}
-                      className={`self-start min-h-9 px-3 rounded-full text-xs font-semibold cursor-pointer border ${
-                        held ? "bg-accent text-on-accent border-accent" : "border-line text-ink"
-                      } disabled:opacity-60`}
+                      onClick={() => void hold(r.symbol, false)}
+                      className="min-h-9 px-3 rounded-full text-xs font-semibold cursor-pointer border bg-accent text-on-accent border-accent disabled:opacity-60"
                     >
-                      {held ? "✓ I got shares: alerts on" : "I got shares"}
+                      ✓ I got shares: alerts on
                     </button>
-                    {r.listedOn === null && today >= r.allotmentOn && (
-                      <a
-                        href={ALLOTMENT_CHECK_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-semibold text-accent no-underline"
-                        data-testid={`ipo-allotment-${r.symbol}`}
-                      >
-                        Check allotment on BSE ›
-                      </a>
-                    )}
-                  </div>
-                )}
+                  )}
+                  <button
+                    type="button"
+                    disabled={busy === r.symbol}
+                    onClick={() => void close(r.symbol)}
+                    className="min-h-9 px-3 rounded-full text-xs font-semibold cursor-pointer border border-line text-ink disabled:opacity-60"
+                  >
+                    Close
+                  </button>
+                  {allotmentLink(r)}
+                </div>
               </section>
             );
           })}
@@ -429,8 +480,8 @@ export const IpoCard: React.FC = () => {
       )}
 
       {view.upcoming.length > 0 && (
-        <div className="flex flex-col">
-          <div className="text-xs font-semibold mb-1">Coming up</div>
+        <section aria-label="Coming up" className="rounded-[18px] border border-line px-3.5 py-2 flex flex-col">
+          <SectionTitle>Coming up</SectionTitle>
           {/* One issue a row: its name and price band on top, its bidding days under it. */}
           <ul className="m-0 p-0 list-none [&>*+*]:border-t [&>*+*]:border-line">
             {view.upcoming.map((r) => (
@@ -447,7 +498,47 @@ export const IpoCard: React.FC = () => {
               </li>
             ))}
           </ul>
-        </div>
+        </section>
+      )}
+
+
+      {closedRows.length > 0 && (
+        <section aria-label="Closed" className="flex flex-col">
+          <SectionTitle>Closed</SectionTitle>
+          {/* Bidding over and not yours: the rule's call, how it listed, and "I got shares" to bring one back up. */}
+          <ul className="m-0 p-0 list-none [&>*+*]:border-t [&>*+*]:border-line">
+            {closedRows.map((r) => {
+              const finished = !!r.plan?.result;
+              const byYou = closedNow[r.symbol] ?? r.closed ?? false;
+              return (
+                <li key={r.symbol} className="py-2.5 flex flex-col gap-1.5" data-testid={`ipo-closed-${r.symbol}`}>
+                  <span className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0 text-[13px] font-semibold">{r.name}</span>
+                    <LabChip status={r.fit ? "passes" : "off"}>{r.fit ? "Rule: apply" : "Rule: skip"}</LabChip>
+                  </span>
+                  <span className="text-xs text-muted tabular-nums" data-testid={`ipo-closed-line-${r.symbol}`}>
+                    {closedLine(r, today)}
+                    {byYou ? " Closed by you." : ""}
+                  </span>
+                  {!finished && (
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <button
+                        type="button"
+                        aria-pressed={false}
+                        disabled={busy === r.symbol}
+                        onClick={() => void hold(r.symbol, true)}
+                        className="min-h-8 px-3 rounded-full text-xs font-semibold cursor-pointer border border-line text-ink disabled:opacity-60"
+                      >
+                        I got shares
+                      </button>
+                      {allotmentLink(r)}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
 
       <div className="flex flex-col gap-1.5">
@@ -481,7 +572,9 @@ export const IpoCard: React.FC = () => {
         <p className="m-0 text-xs text-muted leading-relaxed">
           Tap "I got shares" once you're allotted. On listing day it opens at 10 am: if it's {Math.round(STRONG_OPEN * 100)}% or more above the
           issue price, sell half and keep the rest; under that, sell it all. The rest is sold if the price goes under the listing day's low,
-          and {HOLD_DAYS} days after listing at the latest. An alert comes for each.
+          and {HOLD_DAYS} days after listing at the latest. An alert comes for each. Once bidding is over, only the issues you got shares in
+          stay on the card under Your IPOs; the rest go under Closed, with the rule's call, and "I got shares" there brings one back. Close
+          takes one off your card and stops its alerts to you.
         </p>
         <p className="m-0 text-xs text-muted leading-relaxed">
           The record follows every main-board issue as if one lot was allotted at the top of its price band (about ₹15,000 of shares

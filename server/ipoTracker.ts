@@ -106,6 +106,8 @@ export interface TrackedIpo extends IpoListing {
   done: boolean;
   /** Whoever said they got shares, with the alerts sent them ("open", "stop", "week"). */
   holders: Record<string, string[]>;
+  /** Whoever closed it on their card: done with it, no more of its alerts. */
+  closedBy?: string[];
 }
 
 interface IpoState {
@@ -414,7 +416,7 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
       const allotmentOut = today > allotted || (today === allotted && minutes >= ALLOTMENT_ALERT_AT);
       const beforeListing = today < due || (today === due && minutes < LISTING_TRADES_FROM);
       if (ipo.fit && !ipo.allotmentAlerted && ipo.listedOn === null && allotmentOut && beforeListing) {
-        deps.notifyAll(allotmentMessage(ipo), Object.keys(ipo.holders));
+        deps.notifyAll(allotmentMessage(ipo), [...Object.keys(ipo.holders), ...(ipo.closedBy ?? [])]);
         ipo.allotmentAlerted = true;
       }
       if (ipo.listedOn === null && today >= due && marketDay && minutes >= LISTING_TRADES_FROM && minutes < NSE_CLOSE) {
@@ -451,7 +453,7 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
 
       // Found listed in this check: its result to everyone but its holders (their own alert says it).
       if (!wasListed && ipo.listedOn !== null && ipo.open !== null && issuePriceOf(ipo) !== null) {
-        deps.notifyAll(listingMessage(ipo, ipo.open, ipo.listedOn, today), Object.keys(ipo.holders));
+        deps.notifyAll(listingMessage(ipo, ipo.open, ipo.listedOn, today), [...Object.keys(ipo.holders), ...(ipo.closedBy ?? [])]);
       }
 
       if (marketDay && minutes >= NSE_OPEN && minutes < NSE_CLOSE) await holderAlerts(deps, ipo, today, minutes);
@@ -477,8 +479,27 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
 export function setHolding(uid: string, symbol: string, held: boolean, dir: string = dataDir()): boolean {
   const ipo = state.ipos.find((i) => i.symbol === symbol);
   if (!ipo || ipo.fit === null || ipo.done) return false;
-  if (held) ipo.holders[uid] ??= [];
-  else delete ipo.holders[uid];
+  if (held) {
+    ipo.holders[uid] ??= [];
+    ipo.closedBy = (ipo.closedBy ?? []).filter((u) => u !== uid);
+  } else delete ipo.holders[uid];
+  save(dir);
+  return true;
+}
+
+/**
+ * Closes (or opens again) an issue on this user's card once bidding is over:
+ * closed, it's no longer theirs to hold and none of its alerts go to them.
+ * False if there's no such issue.
+ */
+export function setClosed(uid: string, symbol: string, closed: boolean, dir: string = dataDir()): boolean {
+  const ipo = state.ipos.find((i) => i.symbol === symbol);
+  if (!ipo || ipo.fit === null) return false;
+  const others = (ipo.closedBy ?? []).filter((u) => u !== uid);
+  if (closed) {
+    delete ipo.holders[uid];
+    ipo.closedBy = [...others, uid];
+  } else ipo.closedBy = others;
   save(dir);
   return true;
 }
@@ -510,6 +531,8 @@ export interface IpoRow {
   plan: IpoPlan | null;
   /** This user said they got shares. */
   held: boolean;
+  /** This user closed it on their card. */
+  closed: boolean;
   /** The top of the price band (what one lot is bought at), and the sessions since listing, for the card's price path. */
   issuePrice: number | null;
   sessions: IpoSession[];
@@ -556,6 +579,7 @@ function rowOf(ipo: TrackedIpo, uid: string): IpoRow {
     openPct: ipo.open !== null && issue !== null ? listingOpen(issue, ipo.open).pct : null,
     plan: planOf(ipo),
     held: uid in ipo.holders,
+    closed: (ipo.closedBy ?? []).includes(uid),
     issuePrice: issue,
     sessions: ipo.sessions.slice(0, HOLD_DAYS + 3),
   };

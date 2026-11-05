@@ -81,26 +81,55 @@ describe("the IPO card", () => {
     expect(screen.getByTestId("ipo-upcoming-days-NEXTCO").textContent).toBe("Tue 27 Oct to Thu 29 Oct");
   });
 
-  it("says when an issue lists and what the rule did, and takes 'I got shares'", async () => {
+  it("keeps only the issues you got shares in on the card; the rest are closed, with the rule's call", async () => {
     render(createElement(IpoCard));
-    expect((await screen.findByTestId("ipo-plan-WAITCO")).textContent).toBe("Allotment Wed 21 Oct, listing Fri 23 Oct.");
-    expect(screen.getByTestId("ipo-plan-OLDCO").textContent).toMatch(/^Listed Mon 12 Oct at ₹204 \(\+2%\)\. The rule sold all at ₹204: \+₹\d+ a lot \(\+\d+%\)\.$/);
+    // Bidding over and not held: under Closed, with the rule's call and where it's at.
+    expect((await screen.findByTestId("ipo-closed-line-WAITCO")).textContent).toBe("Allotment Wed 21 Oct, listing Fri 23 Oct.");
+    expect(screen.getByTestId("ipo-closed-WAITCO").textContent).toContain("Rule: apply");
+    expect(screen.getByTestId("ipo-closed-line-OLDCO").textContent).toMatch(/^Listed Mon 12 Oct at ₹204 \(\+2%\); the rule's lot \+₹\d+\.$/);
+    expect(screen.getByTestId("ipo-closed-OLDCO").textContent).toContain("Rule: skip");
     // A finished one has nothing to hold.
-    expect(screen.getByTestId("ipo-recent-OLDCO").querySelector("button")).toBeNull();
-    // When it listed, and the rule's call on it; Wait Co hasn't listed.
-    expect(screen.getByTestId("ipo-listed-OLDCO").textContent).toBe("Listed Mon 12 Oct · the rule skipped it");
-    expect(screen.queryByTestId("ipo-listed-WAITCO")).toBeNull();
+    expect(screen.getByTestId("ipo-closed-OLDCO").querySelector("button")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Your IPOs" })).toBeNull();
 
-    const button = screen.getByRole("button", { name: "I got shares" });
-    fireEvent.click(button);
+    // "I got shares" brings it up onto the card in full, its alerts on.
+    fireEvent.click(screen.getByRole("button", { name: "I got shares" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "✓ I got shares: alerts on" }).getAttribute("aria-pressed")).toBe("true"));
     const [, init] = vi.mocked(apiFetch).mock.calls.find(([p]) => p === "/api/ipos/held")!;
     expect(JSON.parse(String(init!.body))).toEqual({ symbol: "WAITCO", held: true });
+    expect(screen.getByRole("heading", { name: "Your IPOs" })).toBeTruthy();
+    expect(screen.getByTestId("ipo-plan-WAITCO").textContent).toBe("Allotment Wed 21 Oct, listing Fri 23 Oct.");
+    expect(screen.queryByTestId("ipo-closed-WAITCO")).toBeNull();
+
+    // Close takes it off the card again, closed by you.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.getByTestId("ipo-closed-line-WAITCO").textContent).toBe("Allotment Wed 21 Oct, listing Fri 23 Oct. Closed by you."));
+    const [, closeInit] = vi.mocked(apiFetch).mock.calls.find(([p]) => p === "/api/ipos/closed")!;
+    expect(JSON.parse(String(closeInit!.body))).toEqual({ symbol: "WAITCO", closed: true });
+    expect(screen.queryByTestId("ipo-recent-WAITCO")).toBeNull();
+  });
+
+  it("shows a held issue on the card from the server, and one you closed under Closed", async () => {
+    vi.mocked(apiFetch).mockImplementation(async () =>
+      new Response(JSON.stringify({ ...view, recent: [{ ...view.recent[0], held: true }, { ...view.recent[1], closed: true }] }))
+    );
+    render(createElement(IpoCard));
+    expect(await screen.findByTestId("ipo-recent-WAITCO")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+    expect(screen.getByTestId("ipo-closed-line-OLDCO").textContent).toMatch(/Closed by you\.$/);
+  });
+
+  it("keeps the issues coming up in a section of their own", async () => {
+    render(createElement(IpoCard));
+    const upcoming = await screen.findByRole("region", { name: "Coming up" });
+    expect(upcoming.textContent).toContain("Next Co");
+    expect(upcoming.textContent).not.toContain("Wait Co");
+    expect(screen.getByRole("heading", { name: "Bidding now" })).toBeTruthy();
   });
 
   it("on a look-only account offers 'I got shares' too: its own selling alerts", async () => {
     render(createElement(LookOnlyContext.Provider, { value: true }, createElement(IpoCard)));
-    expect((await screen.findByTestId("ipo-plan-WAITCO")).textContent).toContain("Allotment");
+    expect((await screen.findByTestId("ipo-closed-line-WAITCO")).textContent).toContain("Allotment");
     expect(screen.getByRole("button", { name: "I got shares" })).toBeTruthy();
   });
 
@@ -149,11 +178,16 @@ describe("the IPO card", () => {
   });
 
   it("says an issue that listed today, and that the rule picked it", async () => {
-    const today = row({ symbol: "NEWCO", name: "New Co", fit: true, listedOn: "2026-10-21", open: 130, openPct: 0.3 });
+    const today = row({ symbol: "NEWCO", name: "New Co", fit: true, held: true, listedOn: "2026-10-21", open: 130, openPct: 0.3 });
     vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...view, recent: [...view.recent, today] })));
     render(createElement(IpoCard));
     expect((await screen.findByTestId("ipo-listed-NEWCO")).textContent).toBe("Listed today · the rule picked it");
     expect(screen.getByTestId("ipo-recent-NEWCO").textContent).toContain("+30%");
+    // Not held, it's closed, the same said in a line.
+    cleanup();
+    vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...view, recent: [{ ...today, held: false }] })));
+    render(createElement(IpoCard));
+    expect((await screen.findByTestId("ipo-closed-line-NEWCO")).textContent).toBe("Listed today at ₹130 (+30%).");
   });
 
   it("links to the allotment check from allotment day until the issue lists", async () => {
