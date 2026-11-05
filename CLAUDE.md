@@ -416,11 +416,14 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
   day's low, or 7 days on from 3 pm (`HOLD_DAYS`). The paper record (`ipoPlan`, `ipoRecord`): every listed issue as one
   lot at the top of its band (about ₹15,000 of shares where NSE gives no lot, `lotShares`), after Angel One's selling
-  charges, before tax, picked against skipped. State `ipo.json`. The card: each issue bidding with a ring counting down
+  charges, before tax, picked against skipped. State `ipo.json`. The card (owner's ask, 5 Nov), in sections: Bidding now, each with a ring counting down
   to the UPI cutoff on its last day (`CountdownRing`, from 2 pm; grey on one that doesn't fit), each group's bids on a
-  log scale against the rule's bar, and its road (bid, allotment, listing, sale; `ipoSteps`); each recent one with when it
-  listed ("Listed today") and the rule's call, its price since listing against the issue price and the listing day's low, the rule's sales marked (`PricePath`, from the
-  sessions the server keeps, `issuePrice` and `sessions` on each row); the rule's record as two tiles, picked and skipped,
+  log scale against the rule's bar, and its road (bid, allotment, listing, sale; `ipoSteps`); Your IPOs, only the ones
+  this user said they got shares in, each with "Close" beside "I got shares" (`/api/ipos/closed`, `setClosed`, `closedBy`:
+  off their card, and none of its alerts to them), when it listed ("Listed today") and the rule's call, its price since listing against the issue price and the listing day's low, the rule's sales marked (`PricePath`, from the
+  sessions the server keeps, `issuePrice` and `sessions` on each row); Coming up, a box of its own; Closed, every other
+  issue with its bidding over, a line each with the rule's call and how it listed (`closedLine`), "I got shares" bringing
+  one back up; the rule's record as two tiles, picked and skipped,
   each naming the issues listed but not counted yet (`listedNotCounted`: the record counts an issue once every share is sold).
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on

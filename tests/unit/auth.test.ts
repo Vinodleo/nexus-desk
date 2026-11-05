@@ -151,6 +151,7 @@ describe("look only", () => {
     ["linking its Telegram", "POST", "/api/telegram/link"],
     ["the IPOs, with its own 'I got shares'", "GET", "/api/ipos"],
     ["'I got shares'", "POST", "/api/ipos/held"],
+    ["closing an IPO on its card", "POST", "/api/ipos/closed"],
   ])("lets a viewer set up %s as itself", async (_n, method, url) => {
     await ownerSignsIn();
     as("friend-uid", "friend@example.com");

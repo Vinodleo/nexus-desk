@@ -318,6 +318,46 @@ describe("from listing day, for whoever got shares", () => {
   });
 });
 
+describe("closing an issue on your card", () => {
+  it("takes it off your card once bidding is over: no longer held, none of its alerts to you", async () => {
+    await at("2026-10-20T11:00:00");
+    expect(ipo.setClosed("u", "HOTCO", true, dir)).toBe(false);
+    await closed();
+    ipo.setHolding("u", "HOTCO", true, dir);
+    ipo.setHolding("v", "HOTCO", true, dir);
+    expect(ipo.setClosed("u", "HOTCO", true, dir)).toBe(true);
+    expect(ipo.setClosed("u", "NOPE", true, dir)).toBe(false);
+    const mine = ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")!;
+    expect([mine.held, mine.closed]).toEqual([false, true]);
+    const theirs = ipo.ipoView("v", w.now).recent.find((r) => r.symbol === "HOTCO")!;
+    expect([theirs.held, theirs.closed]).toEqual([true, false]);
+
+    // Allotment and listing: nothing to the one who closed it; the holder gets their own alert.
+    w.everyone = [];
+    w.except = [];
+    await at("2026-10-22T19:05:00");
+    expect(w.except).toEqual([["v", "u"]]);
+    w.quotes.HOTCO = { open: 130, low: 128, ltp: 133 };
+    await at("2026-10-26T10:05:00");
+    expect(w.except.slice(1)).toEqual([["v", "u"]]);
+    expect(w.sent.map((s) => [s.uid, s.message.title])).toEqual([["v", "Hot Co listed +30%: sell half"]]);
+  });
+
+  it("opens again with 'I got shares', or on its own", async () => {
+    await closed();
+    ipo.setClosed("u", "HOTCO", true, dir);
+    ipo.setHolding("u", "HOTCO", true, dir);
+    expect(ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")).toMatchObject({ held: true, closed: false });
+    ipo.setClosed("u", "HOTCO", true, dir);
+    ipo.setClosed("u", "HOTCO", false, dir);
+    expect(ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")).toMatchObject({ held: false, closed: false });
+    // Kept across a restart.
+    ipo.setClosed("u", "HOTCO", true, dir);
+    ipo._resetIpoTracker(dir);
+    expect(ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")!.closed).toBe(true);
+  });
+});
+
 describe("the allotment reminder", () => {
   it("the evening allotment is due, for an issue the rule picked, to all but those who said they got shares, once", async () => {
     await closed();

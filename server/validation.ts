@@ -70,6 +70,11 @@ export const ipoHeldBody = z.object({
   held: z.boolean(),
 });
 
+export const ipoClosedBody = z.object({
+  symbol: z.string().regex(/^[A-Z0-9&-]{1,20}$/, "must be an NSE symbol"),
+  closed: z.boolean(),
+});
+
 // ---------- server log ----------
 
 export const serverLogQuery = z.object({
