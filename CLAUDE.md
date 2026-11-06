@@ -424,7 +424,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   sessions the server keeps, `issuePrice` and `sessions` on each row); Coming up, a box of its own; Closed, every other
   issue with its bidding over, a line each with the rule's call and how it listed (`closedLine`), "I got shares" bringing
   one back up; the rule's record as two tiles, picked and skipped,
-  each naming the issues listed but not counted yet (`listedNotCounted`: the record counts an issue once every share is sold).
+  each naming the issues listed but not counted yet (`listedNotCounted`: the record counts an issue once every share is sold),
+  and folded under them each listed issue on two lines (its name and how it did; when it listed, the rule's call and the rupees a lot).
 - **Machine-learning test (Lab):** `server/history/mlTest.ts` trains gradient-boosted trees (`src/services/setupModel.ts`)
   on the saved setups: the older months train, the next 3 tune, the latest 6 judge (never seen). It runs separately on
   the daily coin setups since 2017 (`MlSource` "daily": a year to tune, the latest year to judge, `ml_test_daily.json`). A market passes only if

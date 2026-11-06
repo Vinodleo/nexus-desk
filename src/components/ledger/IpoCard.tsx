@@ -549,16 +549,23 @@ export const IpoCard: React.FC = () => {
         </div>
         {view.record.rows.length > 0 && (
           <Fold title="Each listed issue">
-            {view.record.rows.map((x) => (
-              <div key={x.symbol} className="flex items-baseline justify-between gap-2 text-xs tabular-nums">
-                <span>
-                  {x.name} <span className="text-muted">· {dayLabel(x.listedOn)} · {x.fit ? "picked" : "skipped"}</span>
-                </span>
-                <span className={`font-semibold ${pnlTone(x.rupees)}`}>
-                  {pct(x.pct)} · {rupees(x.rupees, true)}
-                </span>
-              </div>
-            ))}
+            {/* One issue a row: its name and what the lot made on top, when it listed, the rule's call and the rupees under it. */}
+            <ul className="m-0 p-0 list-none [&>*+*]:border-t [&>*+*]:border-line">
+              {view.record.rows.map((x) => (
+                <li key={x.symbol} className="py-2 flex flex-col gap-0.5 text-xs tabular-nums" data-testid={`ipo-record-row-${x.symbol}`}>
+                  <span className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0 text-[13px] font-medium">{x.name}</span>
+                    <span className={`shrink-0 whitespace-nowrap text-[13px] font-semibold ${pnlTone(x.rupees)}`}>{pct(x.pct)}</span>
+                  </span>
+                  <span className="flex items-baseline justify-between gap-3 text-muted">
+                    <span className="min-w-0">
+                      Listed {dayLabel(x.listedOn)} · rule {x.fit ? "picked" : "skipped"}
+                    </span>
+                    <span className={`shrink-0 whitespace-nowrap ${pnlTone(x.rupees)}`}>{rupees(x.rupees, true)} a lot</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
           </Fold>
         )}
       </div>
