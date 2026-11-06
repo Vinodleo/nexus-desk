@@ -142,6 +142,17 @@ describe("the IPO card", () => {
     expect(screen.getByText("+₹4,000 a lot").className).toContain("whitespace-nowrap");
   });
 
+  it("lists each listed issue on two lines: name and how it did, then when it listed, the rule's call and the rupees", async () => {
+    render(createElement(IpoCard));
+    const row = await screen.findByTestId("ipo-record-row-OLDCO");
+    expect(row.tagName).toBe("LI");
+    const [top, bottom] = Array.from(row.children) as HTMLElement[];
+    expect(top.textContent).toMatch(/^Old Co\+\d+%$/);
+    expect(bottom.textContent).toMatch(/^Listed Mon 12 Oct · rule skipped\+₹\d+ a lot$/);
+    // The figures never break mid-number (it wrapped after "+" on a phone).
+    for (const line of [top, bottom]) expect((line.lastElementChild as HTMLElement).className).toContain("whitespace-nowrap");
+  });
+
   it("says a listed issue the record doesn't count yet, while the rest is held (as Jio Platforms on 29 Oct)", async () => {
     // Listed 21% up: half sold at the open, the rest held above the listing day's low.
     const jioPlan = ipoPlan(1119, 13, [{ day: "2026-10-20", open: 1358, high: 1400, low: 1357, close: 1390 }])!;
