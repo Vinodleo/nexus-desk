@@ -119,6 +119,18 @@ describe("closes the app asks for (by hand)", () => {
     expect(guardian.closedTradesFor("u6").filter((t) => t.positionId === "c-1")).toHaveLength(1);
   });
 
+  it("closes a US position at the guardian's own price of it (the rate it was bought at), whatever rate the app's is in", async () => {
+    const fx = await import("../../server/fx");
+    fx._setUsdInr(84);
+    guardian.openAppPosition("u6", trade("c-us", "AAPL.US"));
+    guardian.evaluateDaemonPositions("AAPL.US", 95);
+    // An app from before the change marks it at today's rate, which has moved.
+    fx._setUsdInr(83);
+    const res = await (await close("c-us", 93.87)).json();
+    expect(res).toMatchObject({ success: true, event: { positionId: "c-us", exitPrice: 95, exitReason: "MANUAL" } });
+    fx._setUsdInr(null);
+  });
+
   it("answers 404 for a position it never held, or someone else's", async () => {
     expect((await close("nope", 100)).status).toBe(404);
     guardian.openAppPosition("u6", trade("c-3", "XRP/INR"));

@@ -12,6 +12,8 @@ import { notifyUser, tradeClosedMessage, tradeOpenedMessage } from "./push";
 
 import { validate, closedEventsQuery, daemonCloseBody } from "./validation";
 import { slowStrategyOf } from "../src/shared/marketLimits";
+import { isUsSymbol } from "../src/shared/usMarket";
+import { usdInr } from "./fx";
 import { addToBook, recordInBook } from "./tradeBook";
 import type { SlowStrategy } from "../src/types";
 
@@ -58,7 +60,36 @@ export interface DaemonPosition {
   timeframe?: "1d";
   /** A slower classic strategy's: breakout 55/20's (scanner/dailyCoins.ts, usBreakout.ts sell it on a close below the 20-day low) or US momentum's (scanner/usMomentum.ts sells it once it leaves the top 3). */
   strategy?: SlowStrategy;
+  /**
+   * A US position's USD/INR rate: the one it was bought at, and every price
+   * of it since (its stop, its extremes, its exit) is in rupees at that
+   * rate, so the rupee moving doesn't move it. Set by the server, never
+   * trusted from the client.
+   */
+  fxRate?: number;
 }
+
+/**
+ * A market price in rupees at today's USD/INR rate, as this position prices
+ * it: a US position's at the rate it was bought at (its dollar price times
+ * that rate), anything else's as it is. A US position from before the rate
+ * was kept takes today's the first time it's priced: nothing about it jumps,
+ * and from then on only its dollar price moves it.
+ */
+export function inPositionRupees(pos: DaemonPosition, marketPrice: number, rateNow: number | null = usdInr()): number {
+  if (!isUsSymbol(pos.symbol) || !rateNow) return marketPrice;
+  if (!pos.fxRate) {
+    pos.fxRate = rateNow;
+    scheduleDaemonDiskSave(10_000);
+  }
+  return (marketPrice * pos.fxRate) / rateNow;
+}
+
+/** The rate a US position opened now is priced at (none for anything else, or before a rate is known). */
+const fxRateFor = (symbol: string): { fxRate?: number } => {
+  const rate = isUsSymbol(symbol) ? usdInr() : null;
+  return rate ? { fxRate: rate } : {};
+};
 
 export interface DaemonClosedTrade {
   id: string;
@@ -241,9 +272,9 @@ export function openAppPosition(uid: string, p: DaemonPosition): AppPositionOutc
   }
   // Tell the user's devices. (Only a fresh one: an old position re-sent isn't news.)
   if (Date.now() - Date.parse(p.openTime) < NEW_POSITION_NOTIFY_MS) void notifyUser(uid, tradeOpenedMessage({ ...p, isLiveOrder: isLive }, "app"));
-  // Opened by the server is the server's mark, never the app's claim.
-  const { openedByServer: _claimed, ...fromApp } = p;
-  daemonPositions.set(p.id, { ...fromApp, userId: uid, isLiveOrder: isLive, ...(isLive ? { quantity: live!.quantity } : {}) });
+  // Opened by the server and the rate it's priced at are the server's marks, never the app's claim.
+  const { openedByServer: _claimed, fxRate: _rate, ...fromApp } = p;
+  daemonPositions.set(p.id, { ...fromApp, ...fxRateFor(p.symbol), userId: uid, isLiveOrder: isLive, ...(isLive ? { quantity: live!.quantity } : {}) });
   saveDaemonStateToDisk();
   return "taken";
 }
@@ -276,8 +307,10 @@ router.post("/api/daemon/close", validate({ body: daemonCloseBody }), (req: Requ
   const { positionId, price, reason } = req.body as { positionId: string; price: number; reason: ExitReason };
   const pos = daemonPositions.get(positionId);
   if (pos && pos.userId === uid) {
-    pos.currentPrice = price;
-    const closed = executeDaemonExit(pos, price, reason, { byApp: true });
+    // A US position closes at the guardian's own price of it (rupees at the rate it was bought at), whatever rate the app's is in.
+    const at = pos.fxRate && pos.currentPrice > 0 ? pos.currentPrice : price;
+    pos.currentPrice = at;
+    const closed = executeDaemonExit(pos, at, reason, { byApp: true });
     return res.json({ success: true, event: closed });
   }
   const earlier = daemonClosedTrades.find((t) => t.positionId === positionId && t.userId === uid);
@@ -402,8 +435,9 @@ setExchangeStopListener({
 export function closeServerPosition(id: string, price: number, reason: ExitReason, opts: { byApp?: boolean } = {}): boolean {
   const pos = daemonPositions.get(id);
   if (!pos || !(price > 0)) return false;
-  pos.currentPrice = price;
-  executeDaemonExit(pos, price, reason, opts);
+  const at = inPositionRupees(pos, price);
+  pos.currentPrice = at;
+  executeDaemonExit(pos, at, reason, opts);
   return true;
 }
 
@@ -418,7 +452,7 @@ export function closedTradesFor(uid: string): DaemonClosedTrade[] {
  */
 export function openServerPosition(uid: string, position: DaemonPosition, opts: { live?: boolean } = {}): void {
   // Live only when the server itself just placed and registered the order (server/liveEntry.ts).
-  const pos: DaemonPosition = { ...position, userId: uid, isLiveOrder: !!opts.live, openedByServer: true };
+  const pos: DaemonPosition = { ...position, ...fxRateFor(position.symbol), userId: uid, isLiveOrder: !!opts.live, openedByServer: true };
   daemonPositions.set(pos.id, pos);
   saveDaemonStateToDisk();
   broadcastToUser(uid, { type: "POSITION_OPENED", data: pos });
@@ -448,7 +482,7 @@ export function evaluateDaemonPositions(symbol: string, currentPrice: number, qu
   for (const pos of daemonPositions.values()) {
     if (pos.symbol !== symbol) continue;
 
-    const price = quote ? closeoutPrice(pos.direction, quote) : currentPrice;
+    const price = inPositionRupees(pos, quote ? closeoutPrice(pos.direction, quote) : currentPrice);
     const before = guardStateKey(pos);
     const exitReason = applyGuardianTick(pos, price);
     if (exitReason) {
