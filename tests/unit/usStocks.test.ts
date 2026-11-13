@@ -355,6 +355,76 @@ describe("US stocks on the server", () => {
     expect(typicalSpread("NVDA.US")).toBeCloseTo(spread, 9);
   });
 
+  it("prices a US position at the rate it was bought at: the rupee moving doesn't stop it out, or change what it made", async () => {
+    const guardian = await import("../../server/guardian");
+    const { pollUsPrices } = await import("../../server/usPrices");
+    const fx = await import("../../server/fx");
+    fx._setUsdInr(USDINR, now);
+    // A bond fund's kind of stop: 0.6% under the entry.
+    const entry = (usdAt(now) + 0.02) * USDINR;
+    guardian.openServerPosition("owner", {
+      id: "fx1", symbol: "AAPL.US", direction: "LONG", entryPrice: entry, currentPrice: entry, quantity: 2, stopLoss: entry * 0.994,
+      initialStopLoss: entry * 0.994, takeProfit: 1e9, trailProfile: "fixed", strategy: "breakout", openTime: new Date(now).toISOString(),
+      expectedHoldingTimeMinutes: 525_600,
+    });
+    expect(guardian.daemonPositions.get("fx1")!.fxRate).toBe(USDINR);
+    // The rupee gains 1.2% overnight; the stock's dollar price hasn't moved.
+    fx._setUsdInr(83, now);
+    await pollUsPrices(now);
+    const held = guardian.daemonPositions.get("fx1")!;
+    expect(held).toBeDefined();
+    expect(held.currentPrice).toBeCloseTo((usdAt(now) - 0.02) * USDINR, 4);
+    // Its own check sells it at the bid in today's rupees: recorded at its own rate, so the 4 cents of spread are all it lost.
+    expect(guardian.closeServerPosition("fx1", (usdAt(now) - 0.02) * 83, "TRAILING_STOP")).toBe(true);
+    const closed = guardian.closedTradesFor("owner").find((t) => t.positionId === "fx1")!;
+    expect(closed.exitPrice).toBeCloseTo((usdAt(now) - 0.02) * USDINR, 4);
+    expect(closed.grossPnl).toBeCloseTo(-0.04 * USDINR * 2, 4);
+  });
+
+  it("still stops a US position out when its dollar price falls to the stop", async () => {
+    const guardian = await import("../../server/guardian");
+    const fx = await import("../../server/fx");
+    fx._setUsdInr(USDINR, now);
+    guardian.openServerPosition("owner", {
+      id: "fx2", symbol: "MSFT.US", direction: "LONG", entryPrice: 250 * USDINR, currentPrice: 250 * USDINR, quantity: 1, stopLoss: 245 * USDINR,
+      initialStopLoss: 245 * USDINR, takeProfit: 1e9, trailProfile: "fixed", strategy: "breakout", openTime: new Date(now).toISOString(),
+      expectedHoldingTimeMinutes: 525_600,
+    });
+    // The rupee weakens 2%: $244.90 is ₹20,984 today, above the ₹20,580 stop, but under the stop in dollars.
+    fx._setUsdInr(85.68, now);
+    guardian.evaluateDaemonPositions("MSFT.US", 244.9 * 85.68);
+    expect(guardian.daemonPositions.has("fx2")).toBe(false);
+    expect(guardian.closedTradesFor("owner").find((t) => t.positionId === "fx2")).toMatchObject({ exitReason: "STOP_LOSS" });
+    expect(guardian.closedTradesFor("owner").find((t) => t.positionId === "fx2")!.exitPrice).toBeCloseTo(244.9 * USDINR, 4);
+  });
+
+  it("takes today's rate for a US position from before rates were kept, and never the app's word for it", async () => {
+    const guardian = await import("../../server/guardian");
+    const fx = await import("../../server/fx");
+    fx._setUsdInr(USDINR, now);
+    const old = {
+      id: "old1", userId: "owner", symbol: "NVDA.US", direction: "LONG" as const, entryPrice: 21000, currentPrice: 21000, quantity: 1, stopLoss: 20000,
+      takeProfit: 1e9, trailProfile: "fixed", strategy: "breakout" as const, openTime: new Date(now).toISOString(), expectedHoldingTimeMinutes: 525_600,
+    };
+    guardian.daemonPositions.set("old1", { ...old });
+    // First priced: nothing about it jumps.
+    guardian.evaluateDaemonPositions("NVDA.US", 20900);
+    expect(guardian.daemonPositions.get("old1")).toMatchObject({ fxRate: USDINR, currentPrice: 20900 });
+    // From then on only its dollar price moves it.
+    fx._setUsdInr(80, now);
+    guardian.evaluateDaemonPositions("NVDA.US", (20900 / USDINR) * 80);
+    expect(guardian.daemonPositions.get("old1")!.currentPrice).toBeCloseTo(20900, 6);
+    // Opened from the app: the server's rate, whatever the app sent. A coin has none.
+    fx._setUsdInr(USDINR, now);
+    expect(guardian.openAppPosition("owner", { ...old, id: "app1", symbol: "AMZN.US", fxRate: 1 })).toBe("taken");
+    expect(guardian.daemonPositions.get("app1")!.fxRate).toBe(USDINR);
+    expect(guardian.openAppPosition("owner", { ...old, id: "app2", symbol: "SOL/INR", fxRate: 1 })).toBe("taken");
+    expect(guardian.daemonPositions.get("app2")!.fxRate).toBeUndefined();
+    guardian.evaluateDaemonPositions("SOL/INR", 20500);
+    expect(guardian.daemonPositions.get("app2")).toMatchObject({ currentPrice: 20500 });
+    expect(guardian.daemonPositions.get("app2")!.fxRate).toBeUndefined();
+  });
+
   it("does nothing outside US hours but load candles once after a restart", async () => {
     const { setDeskState } = await import("../../server/scanner/deskState");
     const { runScanCycle, reportsSince } = await import("../../server/scanner/scannerService");

@@ -305,6 +305,12 @@ export interface Position {
   stopLoss: number;
   takeProfit: number;
   initialTakeProfit?: number;
+  /**
+   * A US position's USD/INR rate (the server's mark): the one it was bought
+   * at, and all its prices are in rupees at that rate, so only its dollar
+   * price moves it. Its price here comes from the guardian, not the live ticks.
+   */
+  fxRate?: number;
   /** The stop at open; +1R is measured from it. */
   initialStopLoss?: number;
   /** How much to bank at +1R (paper positions), fitted to CoinDCX's quantity step. */

@@ -44,14 +44,16 @@ export function markedPosition<T extends Position>(pos: T, price: number): T {
 /**
  * The price to judge a position on: with a fresh quote, what it could be
  * closed at (the bid for a long, the ask for a short); otherwise the latest
- * trade price.
+ * trade price. None for a US position priced at its own rate.
  */
 export function markPriceFor(
-  pos: Pick<Position, "symbol" | "direction">,
+  pos: Pick<Position, "symbol" | "direction" | "fxRate">,
   prices: Record<string, number>,
   quotes: Map<string, Quote>,
   now: number = Date.now()
 ): number | undefined {
+  // A US position is priced at the rate it was bought at; the live ticks are at today's. Its price is the guardian's.
+  if (pos.fxRate) return undefined;
   const q = quotes.get(pos.symbol);
   return isFreshQuote(q, now) ? closeoutPrice(pos.direction, q) : priceForPosition(pos, prices);
 }

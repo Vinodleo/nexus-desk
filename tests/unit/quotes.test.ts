@@ -60,6 +60,9 @@ describe("quotes", () => {
     // Without a fresh quote, the trade price.
     expect(markPriceFor({ symbol: "BTC/INR", direction: "LONG" }, prices, quotes, now + QUOTE_FRESH_MS + 1)).toBe(q.ask);
     expect(markPriceFor({ symbol: "ETH/INR", direction: "LONG" }, { "ETH/INR": 5 }, quotes, now)).toBe(5);
+    // A US position priced at the rate it was bought at: the ticks are at today's, so its price is the guardian's.
+    expect(markPriceFor({ symbol: "AAPL.US", direction: "LONG", fxRate: 84 }, { "AAPL.US": 21000 }, quotes, now)).toBeUndefined();
+    expect(markPriceFor({ symbol: "AAPL.US", direction: "LONG" }, { "AAPL.US": 21000 }, quotes, now)).toBe(21000);
   });
 });
 

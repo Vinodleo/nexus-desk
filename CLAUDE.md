@@ -169,6 +169,14 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
     and the app drops it. The app sends nothing else: the server is the only copy of the trades (owner's call,
     9 Oct, done in steps: closes recorded, opens through it, the trade book, then the push of the app's open trades
     and its bookkeeping removed).
+  - US positions are priced at the USD/INR rate they were bought at (owner's ask to stop leaks, 13 Nov; `fxRate` on the
+    position, the server's mark, `inPositionRupees` in `guardian.ts`): the stop, the extremes, the exit and so the P&L are
+    the dollar ones times that rate, as the replays that approved breakout and momentum are in dollars alone. Before, a
+    stop set in rupees was judged at each day's rate, so the rupee gaining could stop a trade out with its dollar price
+    unmoved (a bond fund's stop is under 1% away). A position from before takes the rate of its first pricing; the US
+    checks' sales come at today's rate and are converted; the app takes these positions' prices from the guardian, not
+    the ticks (`markPriceFor`), and a close by hand is at the guardian's price. Entries and the 20-day low were always
+    one rate against the same day's candles.
   - The trade book (`server/tradeBook.ts`): every closed trade per user, kept for good (`trade_book.json`, in the daily
     backup; `BOOK_MAX_TRADES`), one per position: the guardian's closes (`recordInBook`, its own and the app's) and the
     app's uploads of the closes it holds that the book may not (from before the book, or made while the server
