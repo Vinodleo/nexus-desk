@@ -7,6 +7,29 @@ import { freshQuote } from "./quotes";
 
 // Streams live CoinDCX prices into currentPrices, the position guardian and
 // every authenticated WebSocket client.
+
+/**
+ * A message the feed can't use is noted in the log at most this often, with how
+ * many there were. CoinDCX's price-change messages name no coin ({"p","T","pr"}),
+ * and noting each one (about one a second) filled the server's log, pushing
+ * everything else out of it within 80 minutes (17 Nov).
+ */
+export const PRICE_NOTE_EVERY_MS = 60 * 60 * 1000;
+
+/** Notes something at most once per PRICE_NOTE_EVERY_MS, counting the times in between. */
+function hourlyNote(note: (count: number, example: unknown) => void): (example: unknown) => void {
+  let lastAt = Number.NEGATIVE_INFINITY;
+  let count = 0;
+  return (example) => {
+    count++;
+    const now = Date.now();
+    if (now - lastAt < PRICE_NOTE_EVERY_MS) return;
+    note(count, example);
+    lastAt = now;
+    count = 0;
+  };
+}
+
 export function startCoinDcxRelay() {
   // Connect to Binance live ticker stream
   // We use the same CoinDCX Polling logic for the top ticker tape
@@ -103,6 +126,11 @@ export function startCoinDcxRelay() {
     broadcast({ type: 'TICK', data: { [sym]: price }, is24h: source === 'price-change' });
   }
 
+  const namelessNote = hourlyNote((count, inner) =>
+    console.warn(`[CoinDCX WS] price-change messages name no coin, so they're skipped (${count} in the last hour). One:`, JSON.stringify(inner).slice(0, 200))
+  );
+  const unreadableNote = hourlyNote((count, err) => console.warn(`[CoinDCX WS] price-change parse error (${count} in the last hour):`, err));
+
   dcxSocket.on("price-change", (data: any) => {
     try {
       const payload = typeof data === 'string' ? JSON.parse(data) : data;
@@ -112,9 +140,9 @@ export function startCoinDcxRelay() {
       if (rawSym && rawPrice !== undefined) {
         broadcastRealTick(rawSym, rawPrice, 'price-change');
       } else {
-        console.warn('[CoinDCX WS] price-change payload shape unrecognized:', JSON.stringify(inner).slice(0, 200));
+        namelessNote(inner);
       }
-    } catch (e) { console.warn('[CoinDCX WS] price-change parse error', e); }
+    } catch (e) { unreadableNote(e); }
   });
 
   dcxSocket.on("new-trade", (data: any) => {
