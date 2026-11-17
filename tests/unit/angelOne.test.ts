@@ -60,6 +60,10 @@ function angel(url: string, init?: RequestInit): Response {
     return new Response(JSON.stringify({ status: false, message: "Invalid Token", errorcode: "AG8001", data: null }));
   }
   if (p.endsWith("/searchScrip")) {
+    // A name Angel One doesn't know is an error, not an empty list (as for MKSONS, 17 Nov 2026).
+    if (body.searchscrip === "MKSONS") {
+      return new Response(JSON.stringify({ status: false, message: "Scrip not found in scrip master cache for the given exchange", errorcode: "AB4047", data: null }));
+    }
     // A new listing trading trade-for-trade at first: only its BE line.
     if (body.searchscrip === "NEWCO") return ok([{ exchange: "NSE", tradingsymbol: "NEWCO-BE", symboltoken: "777" }, { tradingsymbol: "NEWCOLTD-EQ", symboltoken: "778" }]);
     return ok(body.searchscrip === "SBIN" ? [{ exchange: "NSE", tradingsymbol: "SBIN-EQ", symboltoken: "3045" }, { tradingsymbol: "SBIN-BE", symboltoken: "9" }] : []);
@@ -124,6 +128,17 @@ describe("Angel One client", () => {
     // Found once: not searched again this run.
     await angelOne.listingTokenFor("NEWCO");
     expect(calls.filter((c) => c.path.endsWith("/searchScrip") && c.body.searchscrip === "NEWCO")).toHaveLength(1);
+  });
+
+  it("takes a name it doesn't know as not listed, not as a failure (an IPO bid under another symbol)", async () => {
+    // M. K. Sons Fine Jewels bid as MKSONS and trades as MKJEWELS: Angel One answers AB4047 for MKSONS.
+    expect(await angelOne.listingTokenFor("MKSONS")).toBeNull();
+    expect(await angelOne.fetchListingQuote("MKSONS")).toBeNull();
+    expect(await angelOne.fetchListingCandles("MKSONS", now - 86_400_000, now)).toEqual([]);
+    expect(await angelOne.tokenFor("MKSONS")).toBeNull();
+    // Other refusals still fail.
+    rateLimitNext = 1;
+    await expect(angelOne.listingTokenFor("OTHERCO")).rejects.toThrow(/exceeding access rate/);
   });
 
   it("makes the RFC 6238 one-time code", () => {

@@ -209,7 +209,8 @@ async function call<T>(kind: string, pathname: string, body: unknown): Promise<T
     lastError = `Angel One asked to slow down (${kind} requests); pausing them for a minute.`;
   }
   if (!res.ok || reply.status === false || reply.data === undefined || reply.data === null) {
-    throw new Error(`Angel One ${pathname.split("/").pop()}: ${reply.message || `HTTP ${res.status}`}${reply.errorcode ? ` (${reply.errorcode})` : ""}`);
+    const err = new Error(`Angel One ${pathname.split("/").pop()}: ${reply.message || `HTTP ${res.status}`}${reply.errorcode ? ` (${reply.errorcode})` : ""}`);
+    throw Object.assign(err, { errorcode: reply.errorcode || undefined });
   }
   // Working again: an earlier problem no longer applies.
   lastError = null;
@@ -258,12 +259,25 @@ export async function tokenFor(symbol: string): Promise<string | null> {
   return pending;
 }
 
+/** Angel One's answer for a name it doesn't list: an error ("Scrip not found in scrip master cache"), not an empty list. */
+const SCRIP_NOT_FOUND = "AB4047";
+
+/** NSE lines whose symbol matches, none for a name Angel One doesn't know. */
+async function searchScrip(symbol: string): Promise<{ tradingsymbol?: string; symboltoken?: string }[]> {
+  try {
+    const found = await call<{ tradingsymbol?: string; symboltoken?: string }[]>("search", "/rest/secure/angelbroking/order/v1/searchScrip", {
+      exchange: "NSE",
+      searchscrip: symbol,
+    });
+    return Array.isArray(found) ? found : [];
+  } catch (err: any) {
+    if (err?.errorcode === SCRIP_NOT_FOUND) return [];
+    throw err;
+  }
+}
+
 async function searchToken(symbol: string): Promise<string | null> {
-  const found = await call<{ tradingsymbol?: string; symboltoken?: string }[]>("search", "/rest/secure/angelbroking/order/v1/searchScrip", {
-    exchange: "NSE",
-    searchscrip: symbol,
-  });
-  const match = (Array.isArray(found) ? found : []).find((r) => r.tradingsymbol === `${symbol}-EQ`);
+  const match = (await searchScrip(symbol)).find((r) => r.tradingsymbol === `${symbol}-EQ`);
   if (!match?.symboltoken) {
     unknownSymbols.add(symbol);
     console.warn(`[AngelOne] ${symbol} isn't listed on NSE at Angel One; skipping it.`);
@@ -284,11 +298,8 @@ const listingTokens = new Map<string, string>();
 export async function listingTokenFor(symbol: string): Promise<string | null> {
   const known = listingTokens.get(symbol) ?? loadTokens()[symbol];
   if (known) return known;
-  const found = await call<{ tradingsymbol?: string; symboltoken?: string }[]>("search", "/rest/secure/angelbroking/order/v1/searchScrip", {
-    exchange: "NSE",
-    searchscrip: symbol,
-  });
-  const rows = Array.isArray(found) ? found : [];
+  // A name Angel One doesn't know (not listed yet, or listed under another symbol): null, so the tracker can look further.
+  const rows = await searchScrip(symbol);
   const match = rows.find((r) => r.tradingsymbol === `${symbol}-EQ`) ?? rows.find((r) => r.tradingsymbol === `${symbol}-BE`);
   if (!match?.symboltoken) return null;
   listingTokens.set(symbol, match.symboltoken);
