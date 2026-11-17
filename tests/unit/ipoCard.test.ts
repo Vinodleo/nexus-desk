@@ -214,10 +214,34 @@ describe("the IPO card", () => {
     expect(screen.queryByTestId("ipo-allotment-OLDCO")).toBeNull();
   });
 
-  it("says when NSE couldn't be read", async () => {
+  it("says when NSE couldn't be read, and how to check by hand meanwhile", async () => {
     vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...view, lastError: "NSE's site answered 403 without cookies" })));
     render(createElement(IpoCard));
     expect((await screen.findByTestId("ipo-error")).textContent).toBe("Couldn't read NSE: NSE's site answered 403 without cookies");
+    expect(screen.getByTestId("ipo-check-by-hand").textContent).toBe(
+      "Meanwhile check on NSE (IPOs on NSE ›, then the issue's bid details): on its last bidding day after 2 pm, apply if institutions (QIB) bid 20× or more and the whole issue 10× or more.",
+    );
+    cleanup();
+    // With nothing read, the card doesn't claim there are no IPOs.
+    const empty = { ...view, bidding: [], upcoming: [], recent: [] };
+    vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ ...empty, lastError: "The operation was aborted due to timeout" })));
+    render(createElement(IpoCard));
+    expect((await screen.findByTestId("ipo-nothing")).textContent).toBe("None read: NSE isn't answering the server.");
+    cleanup();
+    vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify(empty)));
+    render(createElement(IpoCard));
+    expect((await screen.findByTestId("ipo-nothing")).textContent).toBe("No main-board IPOs bidding or coming up.");
+  });
+
+  it("links to NSE's IPO page, to check the issues and their bids by hand", async () => {
+    render(createElement(IpoCard));
+    const link = (await screen.findByTestId("ipo-nse-link")) as HTMLAnchorElement;
+    expect(link.textContent).toBe("IPOs on NSE ›");
+    expect(link.href).toBe("https://www.nseindia.com/market-data/all-upcoming-issues-ipo");
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toBe("noopener noreferrer");
+    // No error, no note.
+    expect(screen.queryByTestId("ipo-check-by-hand")).toBeNull();
   });
 });
 
