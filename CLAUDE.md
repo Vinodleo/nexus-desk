@@ -243,7 +243,10 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   - The server's log (`server/serverLog.ts`, started by `server/instrument.ts`, owner's ask, 23 Oct, in place of
     `fly logs`): every console line, masked like the error reports (`scrubText`), as a JSON line in `logs/server.log`
     on the volume (moved to `server.log.1` past `LOG_MAX_BYTES`, so about a megabyte, lines before a restart or crash
-    included; a folder, so not backed up). `/api/server-log` (owner only) reads the latest, newest first.
+    included; a folder, so not backed up). `/api/server-log` (owner only) reads the latest, newest first. CoinDCX's live
+    feed (`server/marketRelay.ts`) sends price-change messages that name no coin: they're skipped and noted at most
+    hourly with a count (`PRICE_NOTE_EVERY_MS`; noting each, about one a second, filled the log in 80 minutes, 17 Nov).
+    Coin prices come from its trade messages, and held coins' stops from the order book every 3 s (`server/quotes.ts`).
   - Error reports (`server/errorReports.ts`, loaded first by `server/instrument.ts`): with `SENTRY_DSN` set (a Fly
     secret; docs/hosting.md), the server's crashes, route errors and every `console.error` go to Sentry (org and
     project `nexus-desk`), errors only. No request headers, cookies or bodies; tokens, keys, secrets and emails
