@@ -420,7 +420,11 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   everyone but those who said they got shares (their own alert at the open says it), look-only accounts included: how
   it opened against the issue price, the day if found late, and the rule's call (`listingMessage`, `notifyEveryone`'s `except`).
   Allotment T+1, listing T+3 weekdays (`expectedListing`); prices after listing from Angel One (`fetchListingQuote`,
-  `fetchListingCandles`: EQ or BE lines). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
+  `fetchListingCandles`: EQ or BE lines). An issue doesn't always trade under the symbol it was bid for (M. K. Sons Fine
+  Jewels bid as MKSONS, trades as MKJEWELS, 4 Nov; it and Bombay Coated were never seen listing): once its own symbol
+  finds no price on or after its listing day, NSE's list of listed shares names it by company, listed since bidding
+  opened (`EQUITY_L.csv` on its archive site, read at most hourly; `listedSymbol`, `symbolForName`, `companyKey`), kept
+  as `listedAs` (`tradesAs`, `foundListedSymbol`). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
   day's low, or 7 days on from 3 pm (`HOLD_DAYS`). The paper record (`ipoPlan`, `ipoRecord`): every listed issue as one
   lot at the top of its band (about ₹15,000 of shares where NSE gives no lot, `lotShares`), after Angel One's selling

@@ -43,6 +43,10 @@ interface World {
   except: string[][];
   sent: { uid: string; message: PushMessage }[];
   listFails?: boolean;
+  /** The symbol each company's shares trade under, by name (NSE's list of listed shares), and the names asked. */
+  listed?: Record<string, string>;
+  askedNames?: string[];
+  listedFails?: boolean;
 }
 
 let w: World;
@@ -56,6 +60,11 @@ const deps = (): IpoDeps => ({
     },
     bids: async (symbol, now) => w.bids[symbol]?.(now) ?? null,
     detail: async (symbol) => w.details[symbol] ?? { lotSize: null, upiCutoff: null },
+    listedSymbol: async (name) => {
+      (w.askedNames ??= []).push(name);
+      if (w.listedFails) throw new Error("The operation was aborted due to timeout");
+      return w.listed?.[name] ?? null;
+    },
   },
   prices: {
     quote: async (symbol) => w.quotes[symbol] ?? null,
@@ -315,6 +324,67 @@ describe("from listing day, for whoever got shares", () => {
     expect(row.listedOn).toBe("2026-10-26");
     expect(row.open).toBe(130);
     expect(row.plan!.stop).toBe(125);
+  });
+});
+
+describe("an issue trading under another symbol than it was bid for", () => {
+  // M. K. Sons Fine Jewels bid on NSE as MKSONS and trades as MKJEWELS (4 Nov 2026):
+  // its own symbol finds no price, so the server never saw it list.
+  it("finds it by its name, then its listing, its alerts and its record go on under that symbol", async () => {
+    await closed();
+    w.everyone = [];
+    ipo.setHolding("u", "HOTCO", true, dir);
+    w.listed = { "Hot Co": "HOTJEWEL" };
+    w.quotes.HOTJEWEL = { open: 130, low: 128, ltp: 133 };
+    w.quotes.COLDCO = { open: 204, low: 199, ltp: 201 };
+    await at("2026-10-26T10:05:00");
+    const row = () => ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")!;
+    expect(row()).toMatchObject({ listedOn: "2026-10-26", open: 130 });
+    expect(w.everyone.map((m) => m.title)).toEqual(["Hot Co listed +30%", "Cold Co listed +2%"]);
+    expect(w.sent.map((s) => s.message.title)).toEqual(["Hot Co listed +30%: sell half"]);
+    // Only the one its own symbol didn't find was looked up by name.
+    expect(w.askedNames).toEqual(["Hot Co"]);
+
+    w.sessions.HOTJEWEL = [{ day: "2026-10-26", open: 130, high: 140, low: 125, close: 138 }];
+    await at("2026-10-26T16:00:00");
+    expect(row().plan!.stop).toBe(125);
+    w.quotes.HOTJEWEL = { open: 137, low: 122, ltp: 123 };
+    await at("2026-10-27T11:15:00");
+    expect(w.sent.map((s) => s.message.title)).toEqual(["Hot Co listed +30%: sell half", "Hot Co fell below its listing-day low: sell the rest"]);
+    // Kept across a restart: not asked again.
+    ipo._resetIpoTracker(dir);
+    await at("2026-10-27T11:30:00");
+    expect(w.askedNames).toEqual(["Hot Co"]);
+  });
+
+  it("finds one listed days ago from its sessions, and says the day", async () => {
+    await closed();
+    w.listed = { "Hot Co": "HOTJEWEL" };
+    w.sessions.HOTJEWEL = [
+      { day: "2026-10-26", open: 130, high: 140, low: 125, close: 138 },
+      { day: "2026-10-27", open: 137, high: 141, low: 131, close: 139 },
+    ];
+    // A weekend first: no session today, so the sessions are asked for.
+    await at("2026-10-31T11:00:00");
+    const row = ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")!;
+    expect(row).toMatchObject({ listedOn: "2026-10-26", open: 130 });
+    expect(row.plan!.stop).toBe(125);
+    expect(w.everyone.map((m) => m.title)).toContain("Hot Co listed +30%");
+    expect(w.everyone.find((m) => m.title === "Hot Co listed +30%")!.body).toMatch(/^It opened at ₹130 on Mon 26 Oct/);
+  });
+
+  it("keeps looking when NSE's list can't be read, or doesn't have it yet", async () => {
+    await closed();
+    w.quotes.HOTJEWEL = { open: 130, low: 128, ltp: 133 };
+    w.listedFails = true;
+    await at("2026-10-26T10:05:00");
+    expect(ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")!.listedOn).toBeNull();
+    w.listedFails = false;
+    await at("2026-10-26T10:20:00");
+    expect(ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")!.listedOn).toBeNull();
+    w.listed = { "Hot Co": "HOTJEWEL" };
+    await at("2026-10-26T10:35:00");
+    expect(ipo.ipoView("u", w.now).recent.find((r) => r.symbol === "HOTCO")!.listedOn).toBe("2026-10-26");
   });
 });
 
