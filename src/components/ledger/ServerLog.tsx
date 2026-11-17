@@ -1,13 +1,17 @@
 import React, { useState } from "react";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, Download, RefreshCw } from "lucide-react";
 import { Segmented } from "./ui";
 import { indiaClock, indiaDay } from "./format";
 import { useServerLog, type LogLine } from "../../hooks/useServerLog";
+import { apiFetch } from "../../services/apiClient";
+import { logFileName, logFileText, saveTextFile } from "../../services/logFile";
+import { LOG_DOWNLOAD_LINES } from "../../shared/serverLog";
 
 // Settings → Server → Recent log (owner's ask, 23 Oct): what the server wrote
 // lately, newest first, in place of `fly logs` in Cloud Shell. Keys, tokens
 // and emails are masked by the server. Warnings and errors stand out, and can
-// be shown alone.
+// be shown alone. Download saves the lines shown (every one the server keeps)
+// as a text file to send on (owner's ask, 17 Nov).
 
 const tone: Record<LogLine["level"], string> = { info: "text-ink", warn: "text-warn", error: "text-loss" };
 
@@ -16,6 +20,34 @@ export const ServerLog: React.FC = () => {
   const [view, setView] = useState<"all" | "problems">("all");
   const log = useServerLog(open, view === "problems");
   const lines = log.lines ?? [];
+  const [reading, setReading] = useState(false);
+  /** A file read but not yet saved: the browser wanted a fresh tap to share it. */
+  const [pending, setPending] = useState<{ name: string; text: string } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const save = async (file: { name: string; text: string }) => {
+    const result = await saveTextFile(file.name, file.text);
+    setPending(result === "needs-tap" ? file : null);
+    setNote(result === "downloaded" ? `Saved as ${file.name}.` : null);
+  };
+
+  const download = async () => {
+    const problems = view === "problems";
+    setNote(null);
+    setPending(null);
+    setReading(true);
+    try {
+      const res = await apiFetch(`/api/server-log?limit=${LOG_DOWNLOAD_LINES}${problems ? "&problems=1" : ""}`);
+      const data = res.ok ? await res.json() : null;
+      if (!data?.success || !Array.isArray(data.lines)) throw new Error("no log");
+      const now = Date.now();
+      await save({ name: logFileName(now), text: logFileText(data.lines, problems, now) });
+    } catch {
+      setNote("Couldn't read the log to save it.");
+    } finally {
+      setReading(false);
+    }
+  };
 
   return (
     <div className="bg-surface border border-line rounded-[18px] px-3.5">
@@ -42,15 +74,40 @@ export const ServerLog: React.FC = () => {
             />
             <div className="flex items-center justify-between gap-2 text-xs text-muted">
               <span>{log.updatedAt ? `Newest first · looked ${indiaClock(log.updatedAt, true)}` : "Newest first"}</span>
+              <span className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => void download()}
+                  disabled={reading}
+                  className="h-8 px-3 rounded-full border border-line text-xs font-semibold text-ink flex items-center gap-1.5 hover:bg-inset cursor-pointer disabled:opacity-60"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {reading ? "Reading…" : "Download"}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Look again"
+                  onClick={() => void log.refresh()}
+                  className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-inset cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 ${log.loading ? "motion-safe:animate-spin" : ""}`} />
+                </button>
+              </span>
+            </div>
+            {pending && (
               <button
                 type="button"
-                aria-label="Look again"
-                onClick={() => void log.refresh()}
-                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-inset cursor-pointer"
+                onClick={() => void save(pending)}
+                className="min-h-10 rounded-full bg-ink text-canvas text-sm font-semibold cursor-pointer"
               >
-                <RefreshCw className={`w-4 h-4 ${log.loading ? "motion-safe:animate-spin" : ""}`} />
+                Save or send the log
               </button>
-            </div>
+            )}
+            {note && (
+              <p className="m-0 text-xs text-muted" role="status">
+                {note}
+              </p>
+            )}
 
             {log.lines === undefined ? (
               <p className="m-0 text-sm text-muted">Reading the log…</p>

@@ -4,6 +4,7 @@ import path from "path";
 import type { AddressInfo } from "net";
 import express from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LOG_DOWNLOAD_LINES } from "../../src/shared/serverLog";
 
 // The server's recent log for Settings → Server → Recent log: every console
 // line kept on the volume, masked, the older ones moved aside, read newest
@@ -97,7 +98,9 @@ describe("the server's log", () => {
         lines: [{ at: 2, level: "warn", text: "two" }, { at: 1, level: "info", text: "one" }],
       });
       expect((await (await fetch(`${base}/api/server-log?problems=1&limit=1`)).json()).lines.map((l: { text: string }) => l.text)).toEqual(["two"]);
-      expect((await fetch(`${base}/api/server-log?limit=9999`)).status).toBe(400);
+      // The download asks for every line kept at once; more than that is refused.
+      expect((await fetch(`${base}/api/server-log?limit=${LOG_DOWNLOAD_LINES}`)).status).toBe(200);
+      expect((await fetch(`${base}/api/server-log?limit=${LOG_DOWNLOAD_LINES + 1}`)).status).toBe(400);
     } finally {
       server.close();
     }

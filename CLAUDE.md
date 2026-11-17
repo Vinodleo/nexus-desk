@@ -74,7 +74,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Unlink; `useTelegramLink`), each with a status dot. **Server:** a tile each, opened on a
   tap; one with a problem stays open; under them, Restore a backup (below) and Recent log (`ServerLog`, `useServerLog`:
   the server's latest lines newest first by day in India time, all or warnings and errors, looked at again every 15 s
-  while open). **Desk: Read access** (`ReadAccess`, `useViewers`): the accounts let look, whether each
+  while open; Download, owner's ask, 17 Nov: every kept line of the ones shown as a text file, each with its India day and
+  time, to the phone's share sheet where it has one, else a download, `logFileText`, `saveTextFile`, `LOG_DOWNLOAD_LINES`). **Desk: Read access** (`ReadAccess`, `useViewers`): the accounts let look, whether each
   has signed in, an email to add, and ✕ then Remove to shut one out. Then pop-ups and the theme, the desk's links (the desk brief, This phone), the
   version and Sign out. **The desk brief** (`CommanderModal`, `deskBrief.ts`, owner's ask, 23 Oct), worked out on the phone
   from the desk's own records: the day in a headline and three figures (today, open trades, loss limit used), what needs
