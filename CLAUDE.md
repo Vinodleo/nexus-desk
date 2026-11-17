@@ -425,7 +425,8 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   Jewels bid as MKSONS, trades as MKJEWELS, 4 Nov; it and Bombay Coated were never seen listing): once its own symbol
   finds no price on or after its listing day, NSE's list of listed shares names it by company, listed since bidding
   opened (`EQUITY_L.csv` on its archive site, read at most hourly; `listedSymbol`, `symbolForName`, `companyKey`), kept
-  as `listedAs` (`tradesAs`, `foundListedSymbol`). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
+  as `listedAs` (`tradesAs`, `foundListedSymbol`). Angel One answers a name it doesn't know with an error ("Scrip not
+  found", AB4047), not an empty list: `searchScrip` takes that as none, so the lookup by name runs (it never did, 17 Nov). Whoever taps "I got shares" (`/api/ipos/held`, `setHolding`) gets: at the listing
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
   day's low, or 7 days on from 3 pm (`HOLD_DAYS`). The paper record (`ipoPlan`, `ipoRecord`): every listed issue as one
   lot at the top of its band (about ₹15,000 of shares where NSE gives no lot, `lotShares`), after Angel One's selling
