@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { z, type ZodTypeAny } from "zod";
+import { LOG_DOWNLOAD_LINES } from "../src/shared/serverLog";
 
 // Request validation. Each route declares the shape it accepts; anything else
 // is rejected with 400 before the handler runs. Parsed values replace
@@ -79,7 +80,7 @@ export const ipoClosedBody = z.object({
 
 export const serverLogQuery = z.object({
   problems: z.enum(["0", "1"]).optional(),
-  limit: z.coerce.number().int().min(1).max(500).optional(),
+  limit: z.coerce.number().int().min(1).max(LOG_DOWNLOAD_LINES).optional(),
 });
 
 // ---------- backups ----------

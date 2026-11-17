@@ -11,6 +11,8 @@ const { apiFetch } = await import("../../src/services/apiClient");
 const { ServerLog } = await import("../../src/components/ledger/ServerLog");
 const { LOG_REFRESH_MS } = await import("../../src/hooks/useServerLog");
 const { indiaClock, indiaDay } = await import("../../src/components/ledger/format");
+const { logFileName, logFileText } = await import("../../src/services/logFile");
+const { LOG_DOWNLOAD_LINES } = await import("../../src/shared/serverLog");
 
 const lines = [
   { at: Date.parse("2026-10-23T11:00:05Z"), level: "error", text: "[Backup] Failed: Upload refused (403 AccessDenied)" },
@@ -91,5 +93,83 @@ describe("the server's recent log in Settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Look again" }));
     await flush();
     expect(screen.getByText("Couldn't read the server's log.")).toBeTruthy();
+  });
+
+  it("downloads the lines shown as a text file, each with its day and time in India", async () => {
+    const saved = Date.parse("2026-11-17T05:50:00Z"); // 11:20 am in India
+    expect(logFileName(saved)).toBe("nexus-desk-log-2026-11-17-1120.txt");
+    expect(logFileText(lines.slice(0, 2) as never, true, saved)).toBe(
+      [
+        "Nexus Desk server log (warnings and errors)",
+        "Saved Tue 17 Nov, 11:20 am India time · 2 lines, newest first",
+        "Keys, tokens and emails are masked by the server.",
+        "",
+        "Fri 23 Oct 4:30:05 pm  ERROR  [Backup] Failed: Upload refused (403 AccessDenied)",
+        "Fri 23 Oct 4:10:00 pm  WARN   [IPO] Couldn't read NSE's issues: timeout",
+        "",
+      ].join("\n"),
+    );
+
+    // No share sheet (a computer): a download, every line the server keeps of the ones shown.
+    const created: Blob[] = [];
+    const clicked: string[] = [];
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: (b: Blob) => (created.push(b), "blob:log"), revokeObjectURL: () => {} }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this.download);
+    });
+    render(createElement(ServerLog));
+    fireEvent.click(screen.getByRole("button", { name: "Recent log" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Warnings and errors" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await flush();
+    expect(apiFetch).toHaveBeenLastCalledWith(`/api/server-log?limit=${LOG_DOWNLOAD_LINES}&problems=1`);
+    expect(clicked).toHaveLength(1);
+    expect(clicked[0]).toMatch(/^nexus-desk-log-\d{4}-\d{2}-\d{2}-\d{4}\.txt$/);
+    expect(created[0].type).toBe("text/plain");
+    expect(screen.getByRole("status").textContent).toBe(`Saved as ${clicked[0]}.`);
+    click.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("hands it to the phone's share sheet, asking for a tap when the browser wants one", async () => {
+    const shared: File[][] = [];
+    let refuse = true;
+    const share = vi.fn(async (data: ShareData) => {
+      if (refuse) {
+        refuse = false;
+        throw Object.assign(new Error("needs a tap"), { name: "NotAllowedError" });
+      }
+      shared.push(data.files ?? []);
+    });
+    Object.assign(navigator, { share, canShare: () => true });
+    try {
+      render(createElement(ServerLog));
+      fireEvent.click(screen.getByRole("button", { name: "Recent log" }));
+      await flush();
+      fireEvent.click(screen.getByRole("button", { name: "Download" }));
+      await flush();
+      expect(apiFetch).toHaveBeenLastCalledWith(`/api/server-log?limit=${LOG_DOWNLOAD_LINES}`);
+      // Safari wanted a fresh tap: one to save it.
+      fireEvent.click(screen.getByRole("button", { name: "Save or send the log" }));
+      await flush();
+      expect(shared).toHaveLength(1);
+      expect(shared[0][0].name).toMatch(/^nexus-desk-log-.*\.txt$/);
+      expect(screen.queryByRole("button", { name: "Save or send the log" })).toBeNull();
+    } finally {
+      delete (navigator as { share?: unknown }).share;
+      delete (navigator as { canShare?: unknown }).canShare;
+    }
+  });
+
+  it("says when the log can't be read to save it", async () => {
+    render(createElement(ServerLog));
+    fireEvent.click(screen.getByRole("button", { name: "Recent log" }));
+    await flush();
+    vi.mocked(apiFetch).mockImplementation(async () => new Response("Not found", { status: 404 }));
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await flush();
+    expect(screen.getByRole("status").textContent).toBe("Couldn't read the log to save it.");
   });
 });
