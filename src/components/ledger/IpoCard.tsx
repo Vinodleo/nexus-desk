@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { apiFetch } from "../../services/apiClient";
 import {
   ALLOTMENT_CHECK_URL,
+  NSE_IPO_URL,
   APPLY_ALERT_FROM,
   DEFAULT_UPI_CUTOFF,
   HOLD_DAYS,
@@ -356,18 +357,39 @@ export const IpoCard: React.FC = () => {
   const nothing = view.bidding.length === 0 && view.upcoming.length === 0 && view.recent.length === 0;
   return (
     <Card aria-label="IPOs" className="flex flex-col gap-3">
-      <div>
-        <div className="text-sm font-semibold">IPOs</div>
-        <div className="text-xs tabular-nums text-muted" data-testid="ipo-status">
-          NSE main board · alerts only{view.lastCheckAt ? ` · last look ${when(view.lastCheckAt)}` : ""}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">IPOs</div>
+          <div className="text-xs tabular-nums text-muted" data-testid="ipo-status">
+            NSE main board · alerts only{view.lastCheckAt ? ` · last look ${when(view.lastCheckAt)}` : ""}
+          </div>
         </div>
+        <a
+          href={NSE_IPO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 pt-0.5 text-xs font-semibold text-accent no-underline"
+          data-testid="ipo-nse-link"
+        >
+          IPOs on NSE ›
+        </a>
       </div>
       {view.lastError && (
-        <p className="m-0 text-xs text-warn-ink bg-warn-soft rounded-lg px-2 py-1.5" data-testid="ipo-error">
-          Couldn't read NSE: {view.lastError}
+        <div className="text-xs text-warn-ink bg-warn-soft rounded-lg px-2 py-1.5 flex flex-col gap-1">
+          <p className="m-0" data-testid="ipo-error">
+            Couldn't read NSE: {view.lastError}
+          </p>
+          <p className="m-0" data-testid="ipo-check-by-hand">
+            Meanwhile check on NSE (IPOs on NSE ›, then the issue's bid details): on its last bidding day after 2 pm, apply if
+            institutions (QIB) bid {view.rule.qib}× or more and the whole issue {view.rule.total}× or more.
+          </p>
+        </div>
+      )}
+      {nothing && (
+        <p className="m-0 text-xs text-muted" data-testid="ipo-nothing">
+          {view.lastError ? "None read: NSE isn't answering the server." : "No main-board IPOs bidding or coming up."}
         </p>
       )}
-      {nothing && <p className="m-0 text-xs text-muted">No main-board IPOs bidding or coming up.</p>}
 
       {view.bidding.length > 0 && <SectionTitle>Bidding now</SectionTitle>}
       {view.bidding.map((r) => {

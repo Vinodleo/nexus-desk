@@ -105,6 +105,8 @@ export const expectedListing = (closes: string) => addWeekdays(closes, 3);
 export const ALLOTMENT_ALERT_AT = 19 * 60;
 /** Where anyone can see whether they got shares, by PAN or application number: BSE's allotment status page. */
 export const ALLOTMENT_CHECK_URL = "https://www.bseindia.com/investors/appli_check.aspx";
+/** NSE's IPO page: the issues bidding now and coming up, each with its bids by group (QIB, NII, retail), to check by hand. */
+export const NSE_IPO_URL = "https://www.nseindia.com/market-data/all-upcoming-issues-ipo";
 
 /** One session's prices after listing. */
 export interface IpoSession {

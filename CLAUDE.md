@@ -430,7 +430,9 @@ and opens them on an autopilot within the owner's limits. It is **paper trading 
   open (10 am) sell half if it opened 10%+ up (`STRONG_OPEN`), else sell it all; then sell the rest under the listing
   day's low, or 7 days on from 3 pm (`HOLD_DAYS`). The paper record (`ipoPlan`, `ipoRecord`): every listed issue as one
   lot at the top of its band (about ₹15,000 of shares where NSE gives no lot, `lotShares`), after Angel One's selling
-  charges, before tax, picked against skipped. State `ipo.json`. The card (owner's ask, 5 Nov), in sections: Bidding now, each with a ring counting down
+  charges, before tax, picked against skipped. State `ipo.json`. The card links to NSE's IPO page by its title ("IPOs on
+  NSE ›", `NSE_IPO_URL`, owner's ask, 17 Nov), and while NSE can't be read (it times out on the server, 17 Nov) says so,
+  how to check the rule there by hand, and "None read" rather than "No IPOs". The card (owner's ask, 5 Nov), in sections: Bidding now, each with a ring counting down
   to the UPI cutoff on its last day (`CountdownRing`, from 2 pm; grey on one that doesn't fit), each group's bids on a
   log scale against the rule's bar, and its road (bid, allotment, listing, sale; `ipoSteps`); Your IPOs, only the ones
   this user said they got shares in, each with "Close" beside "I got shares" (`/api/ipos/closed`, `setClosed`, `closedBy`:
