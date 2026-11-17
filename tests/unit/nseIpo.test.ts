@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bidsFrom, clockMinutes, detailFrom, listingFrom, nseDay, nseIpoSource, priceBand, _resetNseIpo } from "../../server/nseIpo";
+import { bidsFrom, clockMinutes, companyKey, detailFrom, listedShares, listingFrom, nseDay, nseIpoSource, priceBand, symbolForName, _resetNseIpo } from "../../server/nseIpo";
 
 // NSE's IPO pages as the tracker reads them: dates, price bands, the issue
 // lists (SME left out), the table of how many times over each group bid,
@@ -103,5 +103,51 @@ describe("reading NSE", () => {
   it("says when the home page sets no cookies", async () => {
     vi.stubGlobal("fetch", async () => new Response("Access denied", { status: 403 }));
     await expect(nseIpoSource.issues(0)).rejects.toThrow("NSE's site answered 403 without cookies");
+  });
+});
+
+// NSE's list of listed shares (EQUITY_L.csv, its header and rows' form): an
+// issue doesn't always trade under the symbol it was bid for. M. K. Sons Fine
+// Jewels bid as MKSONS and listed on 4 Nov 2026 as MKJEWELS.
+const EQUITY_L = [
+  "\uFEFFSYMBOL,NAME OF COMPANY, SERIES, DATE OF LISTING, PAID UP VALUE, MARKET LOT, ISIN NUMBER, FACE VALUE",
+  "20MICRONS,20 Microns Limited,EQ,06-OCT-2008,5,1,INE144J01027,5",
+  "BCSSL,Bombay Coated & Special Steels Limited,EQ,05-NOV-2026,10,1,INE0ABC01011,10",
+  "MKJEWELS,M.K. Sons Fine Jewels Limited,BE,04-NOV-2026,10,1,INE0XYZ01019,10",
+  'OLDJEWEL,"M.K. Sons Fine Jewels, Limited",EQ,12-MAR-2001,10,1,INE111A01011,10',
+  "",
+].join("\r\n");
+
+describe("NSE's list of listed shares", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads the list and finds a newly listed issue by its name", () => {
+    const shares = listedShares(EQUITY_L);
+    expect(shares[0]).toEqual({ symbol: "20MICRONS", name: "20 Microns Limited", listedOn: "2008-10-06" });
+    expect(shares[3]).toEqual({ symbol: "OLDJEWEL", name: "M.K. Sons Fine Jewels, Limited", listedOn: "2001-03-12" });
+    expect(companyKey("M. K. Sons Fine Jewels")).toBe(companyKey("M.K. Sons Fine Jewels Limited"));
+    expect(companyKey("Bombay Coated and Special Steels")).toBe(companyKey("Bombay Coated & Special Steels Ltd."));
+    // Only shares listed since bidding opened: not an older company of the same name.
+    expect(symbolForName(shares, "M. K. Sons Fine Jewels", "2026-10-28")).toBe("MKJEWELS");
+    expect(symbolForName(shares, "Bombay Coated and Special Steels", "2026-10-29")).toBe("BCSSL");
+    expect(symbolForName(shares, "M. K. Sons Fine Jewels", "2026-11-05")).toBeNull();
+    expect(symbolForName(shares, "Not Listed Yet", "2026-10-28")).toBeNull();
+    expect(() => listedShares("<html>Access denied</html>")).toThrow("NSE's list of listed shares came in a form the desk can't read");
+  });
+
+  it("reads it from NSE's archive at most once an hour", async () => {
+    _resetNseIpo();
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      urls.push(url);
+      return new Response(EQUITY_L, { status: 200 });
+    });
+    expect(await nseIpoSource.listedSymbol("M. K. Sons Fine Jewels", "2026-10-28", 0)).toBe("MKJEWELS");
+    expect(await nseIpoSource.listedSymbol("Bombay Coated and Special Steels", "2026-10-29", 30 * 60_000)).toBe("BCSSL");
+    expect(urls).toEqual(["https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"]);
+    await nseIpoSource.listedSymbol("M. K. Sons Fine Jewels", "2026-10-28", 61 * 60_000);
+    expect(urls).toHaveLength(2);
+    vi.stubGlobal("fetch", async () => new Response("Access denied", { status: 403 }));
+    await expect(nseIpoSource.listedSymbol("X", "2026-10-28", 200 * 60_000)).rejects.toThrow("NSE's list of listed shares: HTTP 403");
   });
 });

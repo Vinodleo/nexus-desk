@@ -71,6 +71,8 @@ export interface IpoSource {
   bids(symbol: string, now: number): Promise<IpoBids | null>;
   /** The issue's lot and UPI cutoff. */
   detail(symbol: string, now: number): Promise<IpoDetail>;
+  /** The symbol a company's shares trade under, listed on or after `sinceDay`; null when not listed. */
+  listedSymbol(name: string, sinceDay: string, now: number): Promise<string | null>;
 }
 
 /** A listed issue's prices (Angel One). */
@@ -96,6 +98,8 @@ export interface TrackedIpo extends IpoListing {
   /** The allotment reminder went out (issues the rule picked). */
   allotmentAlerted?: boolean;
   listedOn: string | null;
+  /** The symbol it trades under when that isn't the one it was bid for (found by its name). */
+  listedAs?: string | null;
   /** The listing open, once it has traded. */
   open: number | null;
   /** Completed sessions since listing, up to the rule's last sale. */
@@ -306,6 +310,29 @@ export function planOf(ipo: TrackedIpo): IpoPlan | null {
   return ipoPlan(issue, lot.shares, ipo.sessions);
 }
 
+/** The symbol its shares trade under: the one it was bid for, unless its name found another. */
+const tradesAs = (ipo: TrackedIpo): string => ipo.listedAs ?? ipo.symbol;
+
+/**
+ * An issue doesn't always trade under the symbol it was bid for (M. K. Sons
+ * Fine Jewels bid as MKSONS, trades as MKJEWELS). Once its own finds no price
+ * on or after its listing day, the exchange's list of listed shares is asked
+ * for its name. True when that found another symbol (kept in `listedAs`).
+ */
+async function foundListedSymbol(deps: IpoDeps, ipo: TrackedIpo, now: number): Promise<boolean> {
+  if (ipo.listedAs) return false;
+  try {
+    const listed = await deps.source.listedSymbol(ipo.name, ipo.opens, now);
+    if (!listed || listed === ipo.symbol) return false;
+    ipo.listedAs = listed;
+    console.log(`[IPO] ${ipo.name} trades as ${listed}, not ${ipo.symbol}.`);
+    return true;
+  } catch (err: any) {
+    console.warn(`[IPO] Couldn't look up what ${ipo.name} trades as:`, err?.message ?? err);
+    return false;
+  }
+}
+
 async function holderAlerts(deps: IpoDeps, ipo: TrackedIpo, today: string, minutes: number): Promise<void> {
   const uids = Object.keys(ipo.holders).filter((uid) => !ipo.holders[uid].includes("done"));
   if (uids.length === 0 || ipo.open === null || ipo.listedOn === null) return;
@@ -317,7 +344,7 @@ async function holderAlerts(deps: IpoDeps, ipo: TrackedIpo, today: string, minut
   let ltp: number | null = null;
   if (today !== ipo.listedOn && strong && (stop !== null || weekDue)) {
     try {
-      ltp = (await deps.prices.quote(ipo.symbol))?.ltp ?? null;
+      ltp = (await deps.prices.quote(tradesAs(ipo)))?.ltp ?? null;
     } catch (err: any) {
       console.warn(`[IPO] Couldn't read ${ipo.symbol}'s price:`, err?.message ?? err);
     }
@@ -421,9 +448,10 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
       }
       if (ipo.listedOn === null && today >= due && marketDay && minutes >= LISTING_TRADES_FROM && minutes < NSE_CLOSE) {
         try {
-          const q = await deps.prices.quote(ipo.symbol);
+          let q = await deps.prices.quote(tradesAs(ipo));
+          if (!q && (await foundListedSymbol(deps, ipo, now))) q = await deps.prices.quote(tradesAs(ipo));
           if (q && q.open > 0) {
-            const earlier = today > due ? (await deps.prices.sessions(ipo.symbol, due, now)).filter((s) => s.day < today) : [];
+            const earlier = today > due ? (await deps.prices.sessions(tradesAs(ipo), due, now)).filter((s) => s.day < today) : [];
             ipo.listedOn = earlier[0]?.day ?? today;
             ipo.open = earlier[0]?.open ?? q.open;
             if (earlier.length > 0) ipo.sessions = earlier;
@@ -436,7 +464,8 @@ export async function runIpoCheck(deps: IpoDeps): Promise<void> {
       // After the close: the completed sessions, for the record (and the listing, if the server missed the open).
       if (today >= due && ipo.sessionsRead !== today && (minutes >= SESSION_DONE_AT || !marketDay) && planOf(ipo)?.held !== 0) {
         try {
-          const sessions = await deps.prices.sessions(ipo.symbol, ipo.listedOn ?? due, now);
+          let sessions = await deps.prices.sessions(tradesAs(ipo), ipo.listedOn ?? due, now);
+          if (sessions.length === 0 && ipo.listedOn === null && (await foundListedSymbol(deps, ipo, now))) sessions = await deps.prices.sessions(tradesAs(ipo), due, now);
           // Today's candle can come a little after the close: until it has, look again at the next check.
           if (!marketDay || sessions.some((s) => s.day === today)) ipo.sessionsRead = today;
           if (sessions.length > 0) {

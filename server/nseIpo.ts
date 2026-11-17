@@ -144,7 +144,92 @@ export function detailFrom(body: any): IpoDetail {
   return { lotSize: lotSize && lotSize > 0 ? lotSize : null, upiCutoff: clockMinutes(value(/cut-?off time for upi/i)) };
 }
 
+// NSE's list of every share listed on it (symbol, company, listing day), a
+// plain file on its archive site, no cookies. An issue doesn't always trade
+// under the symbol it was bid for (M. K. Sons Fine Jewels bid as MKSONS and
+// trades as MKJEWELS, Nov 2026), so a listed issue is found by its name here.
+const EQUITY_LIST_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv";
+/** The list is read again after this long. */
+const EQUITY_LIST_FOR_MS = 60 * 60 * 1000;
+const EQUITY_LIST_TIMEOUT_MS = 30_000;
+
+export interface ListedShare {
+  symbol: string;
+  name: string;
+  /** India day (YYYY-MM-DD). */
+  listedOn: string;
+}
+
+let equityList: { shares: ListedShare[]; at: number } | null = null;
+
+/** One CSV line's fields (quoted fields may hold commas). */
+function csvFields(line: string): string[] {
+  const out: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quoted) {
+      if (c === '"' && line[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") {
+      out.push(field);
+      field = "";
+    } else field += c;
+  }
+  out.push(field);
+  return out.map((f) => f.trim());
+}
+
+/** NSE's EQUITY_L.csv as shares (its header names the columns: SYMBOL, NAME OF COMPANY, DATE OF LISTING). */
+export function listedShares(csv: string): ListedShare[] {
+  const lines = csv.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim() !== "");
+  const head = csvFields(lines[0] ?? "").map((h) => h.toUpperCase());
+  const col = { symbol: head.indexOf("SYMBOL"), name: head.indexOf("NAME OF COMPANY"), listed: head.indexOf("DATE OF LISTING") };
+  if (col.symbol < 0 || col.name < 0 || col.listed < 0) throw new Error("NSE's list of listed shares came in a form the desk can't read");
+  const out: ListedShare[] = [];
+  for (const line of lines.slice(1)) {
+    const f = csvFields(line);
+    const symbol = (f[col.symbol] ?? "").toUpperCase();
+    const listedOn = nseDay(f[col.listed]);
+    if (symbol && listedOn && f[col.name]) out.push({ symbol, name: f[col.name], listedOn });
+  }
+  return out;
+}
+
+/** A company's name reduced for matching: "M.K. Sons Fine Jewels Limited" and "M. K. Sons Fine Jewels" are the same. */
+export const companyKey = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\b(limited|ltd)\b\.?/g, " ")
+    .replace(/[^a-z0-9]/g, "");
+
+/** The symbol of the share listed under this company's name on or after `sinceDay` (the latest such); null when none. */
+export function symbolForName(shares: ListedShare[], name: string, sinceDay: string): string | null {
+  const key = companyKey(name);
+  if (!key) return null;
+  const found = shares.filter((s) => s.listedOn >= sinceDay && companyKey(s.name) === key).sort((a, b) => b.listedOn.localeCompare(a.listedOn));
+  return found[0]?.symbol ?? null;
+}
+
+async function equityShares(now: number): Promise<ListedShare[]> {
+  if (equityList && now - equityList.at < EQUITY_LIST_FOR_MS) return equityList.shares;
+  const res = await fetchWithTimeout(EQUITY_LIST_URL, { headers: { "User-Agent": HEADERS["User-Agent"], Accept: "text/csv, */*" } }, EQUITY_LIST_TIMEOUT_MS);
+  if (!res.ok) throw new Error(`NSE's list of listed shares: HTTP ${res.status}`);
+  const shares = listedShares(await res.text());
+  equityList = { shares, at: now };
+  return shares;
+}
+
 export const nseIpoSource: IpoSource = {
+  async listedSymbol(name, sinceDay, now) {
+    return symbolForName(await equityShares(now), name, sinceDay);
+  },
   async issues(now) {
     const [current, upcoming] = await Promise.all([nseJson("/api/ipo-current-issue", now), nseJson("/api/all-upcoming-issues?category=ipo", now)]);
     const rows = [...(Array.isArray(current) ? current : []), ...(Array.isArray(upcoming) ? upcoming : [])];
@@ -177,4 +262,5 @@ export const nseIpoSource: IpoSource = {
 export function _resetNseIpo(): void {
   cookies = null;
   visiting = null;
+  equityList = null;
 }
